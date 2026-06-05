@@ -265,8 +265,6 @@ impl<'a> Snapshots<'a> {
             &arena,
         )?;
 
-        // `parse()` fails with a `ParseFailure` (error + failing-token range);
-        // only the error is needed here — the range is for diagnostics.
         let parse_result = parser.parse().map_err(|failure| failure.err)?;
         let mut ast = match parse_result {
             bun_js_parser::Result::Ast(ast) => ast,

@@ -513,10 +513,7 @@ impl JavaScript {
             Err(failure) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read
-                // `temp_log.errors` directly. The failing token's range was
-                // captured inside the parser (while the lexer was still
-                // alive) and travels here in `ParseFailure`, so the
-                // diagnostic points at the failing token.
+                // `temp_log.errors` directly.
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), failure.range, failure.err.name().as_bytes());
                 }

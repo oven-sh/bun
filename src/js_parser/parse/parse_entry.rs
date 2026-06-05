@@ -339,13 +339,9 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Error payload of [`Parser::parse`].
-///
-/// `parse()` consumes the parser by value, so by the time the caller sees the
-/// `Err` the lexer (and its current token position) is gone. The failing
-/// token's range is captured here, inside `_parse`, while the lexer is still
-/// alive, so callers can point their diagnostic at the failing token instead
-/// of `Range::None`.
+/// Error payload of [`Parser::parse`]: the error plus the failing token's
+/// range, captured while the lexer is still alive (`parse()` consumes the
+/// parser, so the caller can't read it).
 #[derive(Copy, Clone)]
 pub struct ParseFailure {
     pub err: Error,
@@ -354,8 +350,7 @@ pub struct ParseFailure {
 }
 
 impl From<Error> for ParseFailure {
-    /// Used by error paths that fail before a parser (and lexer) exists —
-    /// e.g. `P::init` inside `init_p!` — where no token range is available.
+    /// For error paths that fail before a lexer exists; no range available.
     fn from(err: Error) -> Self {
         ParseFailure {
             err,
@@ -765,10 +760,8 @@ impl<'a> Parser<'a> {
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'a, TS, false> = unsafe { __p.assume_init_mut() };
 
-        // The whole fallible parse body runs through an inner closure so that
-        // on the error path the failing token's range can still be read off
-        // `p.lexer` (which the closure only reborrows) before `P` is dropped.
-        // The range travels to callers in `ParseFailure`.
+        // Inner closure so the error path can still read the failing token's
+        // range off `p.lexer` before `P` is dropped.
         let run = |p: &mut P<'a, TS, false>| -> Result<crate::Result<'a>, Error> {
             if p.options.features.hot_module_reloading {
                 debug_assert!(!p.options.tree_shaking);
@@ -2258,9 +2251,6 @@ impl<'a> Parser<'a> {
         };
 
         run(&mut *p).map_err(|err| ParseFailure {
-            // The closure's reborrow of `p` has ended; the lexer is still
-            // alive here, so capture the failing token's range for the
-            // caller's diagnostic.
             range: p.lexer.range(),
             err,
         })

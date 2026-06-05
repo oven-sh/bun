@@ -212,24 +212,15 @@ impl us_socket_t {
     }
 
     /// Move this socket to a new group/kind, optionally resizing its ext.
-    /// Returns the (possibly relocated) socket.
-    ///
-    /// Takes a raw pointer (not `&mut self`) on purpose: the C side may
-    /// reallocate the socket, so a `&mut self` receiver would leave the caller
-    /// holding a reference to a freed allocation after the call.
+    /// Returns the (possibly relocated) socket. Raw pointer (not `&mut self`)
+    /// because the C side may reallocate.
     ///
     /// # Safety
-    /// `this` must point to a live socket. The call consumes the allocation:
-    /// `this` (and any pointer derived from it, e.g. into its ext storage) is
-    /// invalid after the call. Re-bind exclusively to the returned pointer.
-    ///
-    /// Edge case: if the socket is already closed or shut down, the C side
-    /// early-returns the OLD pointer without resizing ext or re-stamping
-    /// group/kind. The returned pointer is then the input allocation,
-    /// un-resized and still dispatched under the old kind — callers must not
-    /// repoint ext to a new owner type in that case, or events will be
-    /// dispatched on the old kind with the new ext (type confusion). Do not
-    /// adopt sockets that may be shut down.
+    /// `this` must be a live socket and is consumed: `this` and any derived
+    /// pointer (e.g. into ext) are invalid after the call; re-bind to the
+    /// returned pointer. For an already closed/shut-down socket the C side
+    /// returns the OLD pointer un-resized and un-restamped — repointing ext
+    /// then is type confusion. Do not adopt sockets that may be shut down.
     pub unsafe fn adopt(
         this: *mut us_socket_t,
         g: &mut SocketGroup,
@@ -249,17 +240,11 @@ impl us_socket_t {
     /// `us_socket_upgrade_to_tls` / `wrapTLS`.
     ///
     /// # Safety
-    /// Same contract as [`Self::adopt`]: `this` must point to a live socket
-    /// and must not be used after the call — the C side may reallocate and
-    /// return a different pointer. Re-bind exclusively to the returned
-    /// pointer (including any `ext` pointers, which must be re-derived from
-    /// the new allocation before `start_tls_handshake`).
-    ///
-    /// Edge case: the C side returns `NULL` only for already-closed sockets;
-    /// a half-shut-down socket (`shutdown(WR)`) hits [`Self::adopt`]'s
-    /// early-return and yields the OLD allocation un-resized and
-    /// un-restamped — see the caveat on [`Self::adopt`]. Do not call this on
-    /// sockets that may be shut down.
+    /// Same contract as [`Self::adopt`]: `this` is consumed; re-bind to the
+    /// returned pointer (re-derive any `ext` pointers before
+    /// `start_tls_handshake`). `NULL` is returned only for already-closed
+    /// sockets; a half-shut-down socket yields the OLD allocation un-resized
+    /// (see [`Self::adopt`]). Do not call on sockets that may be shut down.
     pub unsafe fn adopt_tls(
         this: *mut us_socket_t,
         g: &mut SocketGroup,

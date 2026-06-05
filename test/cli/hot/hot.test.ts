@@ -770,14 +770,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
 it(
   "--hot process that exits right after the watcher starts shuts down cleanly",
   async () => {
-    // Regression pin for the watcher teardown window targeted by the fix in
-    // progress for issue #30644 (deinit right after init): the file-watcher
-    // thread takes ownership of its heap state at startup and frees it during
-    // teardown; exiting immediately after start exercises the narrow window
-    // between thread spawn and the watch loop running. Repeat a few times so
-    // a racy teardown shows up as a crash or bad exit code. This pins the
-    // currently-working behavior; it is not a differential test for the Send
-    // newtype change (which is behavior-preserving by design).
+    // Exiting right after start exercises the narrow window between watcher
+    // thread spawn and the watch loop running (#30644); a racy teardown
+    // shows up as a crash or bad exit code.
     using dir = tempDir("hot-immediate-exit", {
       "exit.js": `console.log("ready");\nprocess.exit(0);\n`,
     });

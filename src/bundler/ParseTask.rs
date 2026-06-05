@@ -64,26 +64,15 @@ mod EventLoop {
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Provenance-explicit backing for [`ContentsOrFd::Contents`].
-///
-/// Neither variant owns the bytes and neither runs `Drop` — the variants exist
-/// so the keep-alive contract is visible and matchable at every site instead
-/// of hiding behind a bare `&'static [u8]`. Native-plugin
-/// (`onBeforeParse`) buffers never flow through here: they enter as
-/// `cache::Contents::External` on the `CacheEntry`, and their destructor is
-/// the separate `ParseTask::external_free_function`, moved into
-/// `Result.external` exactly once when the task completes.
+/// Backing provenance for [`ContentsOrFd::Contents`]. Neither variant owns
+/// the bytes; native-plugin (`onBeforeParse`) buffers never flow through here.
 #[derive(Copy, Clone)]
 pub enum ContentsBacking {
-    /// Truly `'static` bytes: the embedded `bun:runtime` source and the empty
-    /// placeholder.
+    /// Truly `'static` bytes (embedded sources, empty placeholder).
     Static(&'static [u8]),
-    /// Bytes kept alive by the owning `BundleV2` for the duration of the
-    /// bundle pass — `graph.input_files` source contents (see
-    /// `interned_slice`), or `free_list` allocations (decoded `data:` URLs,
-    /// JS `onLoad` plugin buffers). The `'static` here is forged at the
-    /// construction site; the real lifetime is the bundle pass, which
-    /// strictly outlives every `ParseTask`.
+    /// Bytes kept alive by the owning `BundleV2` for the bundle pass
+    /// (`graph.input_files` / `free_list`); the `'static` is forged at the
+    /// construction site.
     BundleOwned(&'static [u8]),
 }
 
@@ -104,18 +93,16 @@ pub enum ContentsOrFd {
 }
 
 impl ContentsOrFd {
-    /// Empty static contents — the `Default` placeholder.
     pub const EMPTY: ContentsOrFd = ContentsOrFd::Contents(ContentsBacking::Static(b""));
 
-    /// Contents that are genuinely `'static` (embedded sources).
+    /// Genuinely `'static` contents (embedded sources).
     #[inline]
     pub fn static_contents(bytes: &'static [u8]) -> ContentsOrFd {
         ContentsOrFd::Contents(ContentsBacking::Static(bytes))
     }
 
-    /// Contents kept alive by the owning `BundleV2` for the bundle pass
-    /// (graph `input_files` / `free_list` storage). The caller is responsible
-    /// for the keep-alive; see [`ContentsBacking::BundleOwned`].
+    /// Contents the caller keeps alive for the bundle pass; see
+    /// [`ContentsBacking::BundleOwned`].
     #[inline]
     pub fn bundle_owned(bytes: &'static [u8]) -> ContentsOrFd {
         ContentsOrFd::Contents(ContentsBacking::BundleOwned(bytes))
@@ -1557,9 +1544,8 @@ pub mod parse_worker {
                 };
             }
             ContentsOrFd::Contents(backing) => {
-                // Both `ContentsBacking` arms are caller-kept-alive borrows
-                // (static or bundle-owned) → `SharedBuffer` provenance, which
-                // `Entry::deinit` never frees.
+                // Caller-kept-alive borrows → `SharedBuffer` provenance;
+                // `Entry::deinit` never frees it.
                 let contents = backing.as_slice();
                 Ok(CacheEntry {
                     contents: crate::cache::Contents::SharedBuffer {

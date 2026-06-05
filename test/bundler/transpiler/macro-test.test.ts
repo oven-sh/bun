@@ -132,17 +132,10 @@ test("ireturnapromise", async () => {
 });
 
 test("macro entry points stay valid across GC and repeated imports", async () => {
-  // Exercise test for an internal ownership refactor (no user-visible
-  // behavior change): it cannot fail on the pre-refactor code, but a dangling
-  // entry-point label or contents shows up here as a crash or corrupted
-  // module text, especially under ASAN.
-  // Each (module, export) macro pair generates a synthetic macro entry-point
-  // source that is cached for the VM lifetime; its generated code and its
-  // label (the entry's module-path text) must stay readable while JSC loads
-  // the entry and after later garbage collections. Use a deeply nested import
-  // path (long label), several distinct macros, and forced GC between
-  // transpiles — a dangling entry-point source crashes or corrupts the output
-  // instead of printing the expected lines.
+  // Each (module, export) macro pair caches a synthetic entry-point source
+  // for the VM lifetime; its code and path label must stay readable across
+  // GCs. A dangling entry-point source crashes or corrupts output,
+  // especially under ASAN.
   const deep = "deep/".repeat(16);
   const macroModule = `
     export function one() { return 1; }

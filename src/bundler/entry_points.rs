@@ -19,8 +19,7 @@ pub mod Fs {
 }
 
 pub struct FallbackEntryPoint {
-    /// The generated code is owned by `source.contents` (`Cow::Owned`), so the
-    /// entry is not self-referential and may move freely.
+    /// Owns its contents (`Cow::Owned`); not self-referential.
     pub source: bun_ast::Source,
     // Only ever assigned the literal "" (no writer anywhere in the tree); never freed.
     pub built_code: &'static [u8],
@@ -73,10 +72,6 @@ impl FallbackEntryPoint {
         } else {
             (b"import boot from '", b"';\nboot(globalThis.__BUN_DATA__);")
         };
-        // The Source owns the rendered bytes (`Cow::Owned`), so nothing in
-        // `entry` is borrowed and the entry may move or be cloned-from freely.
-        // The path borrows the caller's `input_path` (lifetime-erased by
-        // `IntoStr`), same contract as before.
         let mut code: Vec<u8> = Vec::with_capacity(prefix.len() + input_path.len() + suffix.len());
         code.extend_from_slice(prefix);
         code.extend_from_slice(input_path);
@@ -89,14 +84,9 @@ impl FallbackEntryPoint {
 }
 
 pub struct ClientEntryPoint {
-    /// Heap backing for `source.path.text`. Boxed so the path bytes stay at a
-    /// stable address when the entry itself moves (the old inline
-    /// `path_buffer` made the entry self-referential and unmovable while
-    /// `source` was in use). Written exactly once: `generate` debug-asserts
-    /// the box is still empty, because replacing it would free the previous
-    /// allocation under any `Source` cloned from `source` (the clone
-    /// deep-copies the owned contents but copies the borrowed path). The
-    /// entry must also not be dropped while such a clone is alive.
+    /// Heap backing for `source.path.text`, address-stable across moves of
+    /// the entry. Written exactly once: replacing it would free the path
+    /// borrowed by any `Source` cloned from `source`.
     path_storage: Box<[u8]>,
     pub source: bun_ast::Source,
 }
@@ -166,9 +156,8 @@ impl ClientEntryPoint {
         TranspilerType: TranspilerLike,
     {
         let entry = self;
-        // Single-generation invariant: regenerating would free the previous
-        // `path_storage` box while a `Source` cloned from an earlier
-        // `generate` may still borrow its path text (see field doc).
+        // See `path_storage`: regenerating would free the path borrowed by an
+        // earlier `Source`.
         debug_assert!(
             entry.path_storage.is_empty(),
             "ClientEntryPoint::generate called twice on the same entry"
@@ -192,8 +181,6 @@ impl ClientEntryPoint {
             .client_css_in_js
             != ClientCssInJs::AutoOnImportCss;
 
-        // The generated code is owned by the `Source` (`Cow::Owned`), so a
-        // clone of `entry.source` carries its own copy of the contents.
         let mut code: Vec<u8> = Vec::new();
         if disable_css_imports {
             write!(
@@ -229,9 +216,7 @@ impl ClientEntryPoint {
             ext: original_path.ext,
             filename: original_path.filename,
         };
-        // Render the synthetic entry path into pooled scratch, then copy it
-        // into the entry-owned heap box so `source.path` borrows storage that
-        // is address-stable across moves of the entry (see field doc).
+        // Copy the rendered path into the entry-owned box (see `path_storage`).
         let mut scratch = bun_paths::path_buffer_pool::get();
         let generated_path =
             Self::generate_entry_point_path(scratch.as_mut_slice(), &original_path_borrowed);
@@ -347,13 +332,9 @@ impl ServerEntryPoint {
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
-    /// Heap backing for `source.path.text` (the macro label / specifier).
-    /// Boxed so the bytes are address-stable when the entry moves; the
-    /// generated code itself is owned by `source.contents` (`Cow::Owned`).
-    /// Entries are cached in `VirtualMachine.macro_entry_points` for the VM
-    /// lifetime, so the box (and the path borrowing it) is never freed while
-    /// readers exist. (The old inline `code_buffer`/`output_code_buffer`
-    /// made the entry self-referential — and 66 KB — for no benefit.)
+    /// Heap backing for `source.path.text` (the macro label), address-stable
+    /// across moves of the entry; the generated code is owned by
+    /// `source.contents`.
     label_storage: Box<[u8]>,
     pub source: bun_ast::Source,
 }
@@ -413,10 +394,8 @@ impl MacroEntryPoint {
         macro_id: i32,
         macro_label_: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Single-generation invariant: entries are generated once per cache
-        // slot (`VirtualMachine.macro_entry_points` vacant arm); regenerating
-        // would free the previous `label_storage` box under the path borrow
-        // held by `source`.
+        // Regenerating would free the `label_storage` box under the path
+        // borrow held by `source`.
         debug_assert!(
             entry.label_storage.is_empty(),
             "MacroEntryPoint::generate called twice on the same entry"
@@ -505,11 +484,6 @@ impl MacroEntryPoint {
             .map_err(|_| bun_core::err!("FormatError"))?;
         }
 
-        // The label backs `source.path.text`: copy it into the entry-owned
-        // heap box (address-stable across moves of the entry; see field doc),
-        // and let the `Source` own the generated code outright. The entry is
-        // heap-pinned in `VirtualMachine.macro_entry_points` for the VM
-        // lifetime, so the path borrow never outlives its backing.
         entry.label_storage = macro_label_.to_vec().into_boxed_slice();
         entry.source = bun_ast::Source::init_path_string_owned(&*entry.label_storage, code);
         // `Path::init` already set `text = macro_label`; only override namespace.

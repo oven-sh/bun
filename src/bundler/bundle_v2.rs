@@ -2835,10 +2835,8 @@ pub mod bv2_impl {
                 std::ptr::from_mut(this.arena().alloc(ThreadPool::default()));
             // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
 
-            // SAFETY: arena slot is live for the bundle pass; dropping the
-            // default value written above is a no-op (`WorkerPool::Unset`
-            // variant, empty workers map), so overwriting via `*pool = ...`
-            // frees nothing it shouldn't.
+            // SAFETY: arena slot is live for the bundle pass; the default
+            // value written above drops nothing.
             unsafe {
                 *pool = ThreadPool::init(&*this, thread_pool)?;
             }

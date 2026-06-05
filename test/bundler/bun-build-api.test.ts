@@ -1393,15 +1393,9 @@ test("Bun.build can be called thousands of times in one process without crashing
 }, 180_000);
 
 describe("bundler worker pool ownership", () => {
-  // Exercise test for an internal ownership refactor (no user-visible
-  // behavior change): it cannot fail on the pre-refactor code, but a
-  // regression in pool ownership shows up here as a crash/double-free,
-  // especially under ASAN.
-  // In-process `Bun.build()` borrows the process-wide worker pool, while the
-  // CLI `bun build` path creates — and must tear down — its own pool. Run both
-  // repeatedly: a double-free or leaked-ownership bug in the bundler
-  // ThreadPool's owned-vs-borrowed pool handling crashes or corrupts the
-  // following build instead of completing it.
+  // In-process `Bun.build()` borrows the process-wide worker pool; CLI
+  // `bun build` creates and tears down its own. An ownership bug shows up as
+  // a crash/double-free, especially under ASAN.
   test("repeated in-process builds (borrowed pool) stay healthy", async () => {
     const dir = tempDirWithFiles("build-pool-borrowed", {
       "entry.js": `import { value } from "./dep.js";\nconsole.log(value);`,
@@ -1437,15 +1431,10 @@ describe("bundler worker pool ownership", () => {
 });
 
 describe("bundle-owned parse-task contents", () => {
-  // Exercise test for an internal ownership refactor (no user-visible
-  // behavior change): it cannot fail on the pre-refactor code, but a stale
-  // or freed borrow on a worker thread shows up here as corrupted output or
-  // a crash, especially under ASAN.
-  // `data:` URL bodies live in the bundle's free list, and JS onLoad plugin
-  // buffers live in the graph's input-file storage; parse tasks running on
-  // worker threads only borrow them. Build repeatedly with both kinds of
-  // contents (one large enough that a stale borrow crashes loudly or produces
-  // corrupt output) and execute the result.
+  // `data:` URL bodies live in the bundle's free list and onLoad plugin
+  // buffers in the graph's input-file storage; parse tasks on worker threads
+  // only borrow them. A stale borrow shows up as corrupted output or a
+  // crash, especially under ASAN.
   test("data: URL and onLoad plugin contents stay alive for the bundle pass", async () => {
     const SIZE = 256 * 1024;
     const big = `"${Buffer.alloc(SIZE, "x").toString()}"`;
@@ -1495,13 +1484,10 @@ describe("bundle-owned parse-task contents", () => {
 });
 
 test("syntax error diagnostics point at the failing token", async () => {
-  // Pins the pre-existing contract that a plain syntax error produces a
-  // BuildMessage with a real position (the lexer logs a ranged diagnostic
-  // before the parser bails). NOTE: this does NOT cover the rarer
-  // parse-failed-with-zero-logged-errors fallback path (where the diagnostic
-  // range comes from the parse failure payload instead of a logged lexer
-  // error) — a plain syntax error like this one always logs a ranged lexer
-  // error first, so that fallback never fires here.
+  // A plain syntax error must produce a BuildMessage with a real position.
+  // Does NOT cover the parse-failed-with-zero-logged-errors fallback (range
+  // from the parse failure payload) — the lexer always logs a ranged error
+  // first here.
   const dir = tempDirWithFiles("syntax-error-position", {
     "bad.ts": `const ok = 1;\nconst broken = {;\n`,
   });

@@ -1319,9 +1319,8 @@ impl VirtualMachine {
                 // bound; the generated entry point is
                 // boxed into `macro_entry_points` and lives for the VM
                 // lifetime, and `entry_path` is only borrowed for the
-                // duration of `generate` (it is formatted into the
-                // `Source`-owned generated code; the path label backing
-                // `source.path.text` is copied into `label_storage`).
+                // duration of `generate` (it is copied into entry-owned
+                // storage).
                 let entry_path_static: &'static [u8] = bun_ast::IntoStr::into_str(entry_path);
                 MacroEntryPoint::generate(
                     &mut *ep,

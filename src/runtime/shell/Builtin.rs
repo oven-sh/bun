@@ -13,6 +13,7 @@ use crate::shell::interpreter::{
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
+use crate::shell::sandbox::SandboxAccess;
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
 
@@ -94,6 +95,11 @@ macro_rules! shell_builtins {
             /// the experimental feature flag is set.
             pub const DISABLED_ON_POSIX: &'static [Kind] = &[ $( Kind::$PD ),* ];
 
+            /// Every builtin name, in `Kind` discriminant order (used by the
+            /// sandbox policy's allow/deny validation).
+            pub const ALL_NAMES: &'static [&'static str] =
+                &[ $( $u_name, )* $( $i_name, )* $( $b_name, )* ];
+
             /// Lowercase tag for error prefixes (`"{kind}: ..."`).
             pub fn as_str(self) -> &'static str {
                 match self {
@@ -112,7 +118,7 @@ macro_rules! shell_builtins {
             }
 
             /// argv[0] → `Kind`, no POSIX gating.
-            fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
+            pub(crate) fn from_argv0_raw(s: &[u8]) -> Option<Kind> {
                 $( if s == $u_name.as_bytes() { return Some(Kind::$UV); } )*
                 $( if s == $i_name.as_bytes() { return Some(Kind::$IV); } )*
                 $( if s == $b_name.as_bytes() { return Some(Kind::$BV); } )*
@@ -162,6 +168,15 @@ macro_rules! shell_builtins {
                 written: usize,
                 err: Option<bun_sys::SystemError>,
             ) -> Yield {
+                // A cancelled sandboxed run surfaces as a write error so each
+                // builtin unwinds through its own error path (which releases
+                // registered readers etc.) instead of being torn down mid-state.
+                let err = match err {
+                    None if interp.sandbox_cancel_requested() => {
+                        Some(Interpreter::sandbox_cancel_error().to_shell_system_error())
+                    }
+                    e => e,
+                };
                 match Self::kind_of(interp, cmd) {
                     $( Kind::$UV => crate::shell::builtins::$u_mod::$UT::on_io_writer_chunk(interp, cmd, written, err), )*
                     $( Kind::$IV => crate::shell::builtins::$i_mod::$IT::on_io_writer_chunk(interp, cmd, written, err), )*
@@ -578,6 +593,25 @@ impl Builtin {
                 let cwd_fd = Self::cwd(interp, cmd);
                 let evtloop = interp.event_loop;
 
+                if let Some(policy) = interp.sandbox() {
+                    let access = if redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
+                        SandboxAccess::Read
+                    } else {
+                        SandboxAccess::Write
+                    };
+                    if !policy.check_path(Self::shell(interp, cmd).cwd(), path.as_bytes(), access) {
+                        return Some(Self::cmd_write_failing_error(
+                            interp,
+                            cmd,
+                            format_args!(
+                                "bun: {}: {} access not permitted in sandbox\n",
+                                bstr::BStr::new(path.as_bytes()),
+                                access.verb(),
+                            ),
+                        ));
+                    }
+                }
+
                 // Regular files are not pollable on linux/macos.
                 let is_pollable_default: bool = cfg!(windows);
 
@@ -861,6 +895,34 @@ impl Builtin {
         interp.child_done(parent, cmd, 1)
     }
 
+    /// Check a path argument against the sandbox policy. `Err` carries the
+    /// formatted `"{kind}: {path}: ..."` message for the builtin's
+    /// failing-error path (exit code 1).
+    pub fn sandbox_check_path(
+        interp: &Interpreter,
+        cmd: NodeId,
+        kind: Kind,
+        path: &[u8],
+        access: SandboxAccess,
+    ) -> Result<(), Vec<u8>> {
+        let Some(policy) = interp.sandbox() else {
+            return Ok(());
+        };
+        if policy.check_path(Self::shell(interp, cmd).cwd(), path, access) {
+            return Ok(());
+        }
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        let _ = write!(
+            &mut buf,
+            "{}: {}: {} access not permitted in sandbox\n",
+            kind.as_str(),
+            bstr::BStr::new(path),
+            access.verb(),
+        );
+        Err(buf)
+    }
+
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         Self::of_mut(interp, cmd).exit_code = Some(exit_code);
@@ -918,6 +980,7 @@ impl Builtin {
         if buf.is_empty() {
             return Ok(0);
         }
+        interp.sandbox_count_output(buf.len())?;
         // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);

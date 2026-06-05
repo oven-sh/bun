@@ -49,6 +49,11 @@ impl Binary {
             return interp.child_done(parent, this, right);
         }
 
+        // Sandbox cancellation: don't start (or continue past) either side.
+        if interp.sandbox_cancel_requested() {
+            return interp.child_done(parent, this, 1);
+        }
+
         if let Some(left) = left_exit {
             // Short-circuit: `&&` stops on nonzero, `||` stops on zero.
             let short = match n.op {

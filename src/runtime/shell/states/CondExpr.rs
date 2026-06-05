@@ -108,6 +108,28 @@ impl CondExpr {
                 if path_empty {
                     return interp.child_done(parent, this, 1);
                 }
+                // File tests outside the sandbox's readable prefixes answer
+                // as if the path does not exist (exit 1) without touching the
+                // filesystem, so `[[ -e ... ]]` cannot probe the host tree.
+                if let Some(policy) = interp.sandbox() {
+                    let denied = {
+                        let me = interp.as_condexpr(this);
+                        let arg = &me.args[0][..];
+                        // May already carry a trailing NUL (see below).
+                        let arg = match arg.last() {
+                            Some(&0) => &arg[..arg.len() - 1],
+                            _ => arg,
+                        };
+                        !policy.check_path(
+                            me.base.shell().cwd(),
+                            arg,
+                            crate::shell::sandbox::SandboxAccess::Read,
+                        )
+                    };
+                    if denied {
+                        return interp.child_done(parent, this, 1);
+                    }
+                }
                 // Post a
                 // `ShellCondExprStatTask` to the thread pool; the result comes
                 // back on the main thread via `on_stat_task_done`.

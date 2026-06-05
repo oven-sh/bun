@@ -61,6 +61,11 @@ impl Script {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+        // Sandbox cancellation: stop scheduling further statements (also
+        // covers subshell and command-substitution bodies, which run Scripts).
+        if interp.sandbox_cancel_requested() {
+            return Self::finish(interp, this, 1);
+        }
         let (idx, shell) = {
             let me = interp.as_script_mut(this);
             let len = Self::stmt_count_of(me);

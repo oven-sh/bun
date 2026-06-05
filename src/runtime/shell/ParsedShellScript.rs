@@ -9,6 +9,7 @@ use bun_jsc::{
 };
 
 use super::interpreter::ShellArgs;
+use super::sandbox::SandboxPolicy;
 use super::shell_body::{JsStrings, shell_cmd_from_js};
 use super::{EnvMap, EnvStr, Interpreter};
 
@@ -28,6 +29,7 @@ pub struct ParsedShellScript {
     pub export_env: JsCell<Option<EnvMap>>,
     pub quiet: Cell<bool>,
     pub cwd: Cell<Option<BunString>>,
+    pub sandbox: JsCell<Option<Box<SandboxPolicy>>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
     /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
     /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
@@ -44,6 +46,7 @@ impl Default for ParsedShellScript {
             export_env: JsCell::new(None),
             quiet: Cell::new(false),
             cwd: Cell::new(None),
+            sandbox: JsCell::new(None),
             this_jsvalue: JsRef::empty(),
             estimated_size_for_gc: 0,
         }
@@ -61,6 +64,9 @@ impl ParsedShellScript {
         }
         if let Some(cwd) = self.cwd.get() {
             size += cwd.estimated_size();
+        }
+        if let Some(sandbox) = self.sandbox.get() {
+            size += sandbox.memory_cost();
         }
         size += self.jsobjs.get().capacity() * size_of::<JSValue>();
         size
@@ -84,13 +90,15 @@ impl ParsedShellScript {
         bool,
         Option<BunString>,
         Option<EnvMap>,
+        Option<Box<SandboxPolicy>>,
     ) {
         let args = self.args.replace(None).expect("args already taken");
         let jsobjs = self.jsobjs.replace(Vec::new());
         let quiet = self.quiet.get();
         let cwd = self.cwd.take();
         let export_env = self.export_env.replace(None);
-        (args, jsobjs, quiet, cwd, export_env)
+        let sandbox = self.sandbox.replace(None);
+        (args, jsobjs, quiet, cwd, export_env, sandbox)
     }
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
@@ -131,6 +139,13 @@ impl ParsedShellScript {
     pub fn set_quiet(&self, _global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arg = callframe.argument(0);
         self.quiet.set(arg.to_boolean());
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn set_sandbox(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let policy = SandboxPolicy::from_js(global, callframe.argument(0))?;
+        self.sandbox.set(Some(policy));
         Ok(JSValue::UNDEFINED)
     }
 

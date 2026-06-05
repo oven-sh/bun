@@ -628,7 +628,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 unsafe fn load_preloads(
     vm: *mut VirtualMachine,
 ) -> Result<*mut JSInternalPromise, bun_core::Error> {
-    // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
+    // Note: reshaped for borrowck — `wait_for_module_promise` / `event_loop().tick()`
     // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
     // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
     // the raw `vm` ptr; iterate preloads by index (the `Box<[u8]>` payloads are
@@ -749,7 +749,7 @@ unsafe fn load_preloads(
 
         // ── wait ────────────────────────────────────────────────────────
         // HMR `pending_internal_promise` swap loop; non-watcher path uses
-        // `wait_for_promise` directly.
+        // `wait_for_module_promise` directly.
         {
             // SAFETY: per fn contract.
             if unsafe { &*vm }.is_watcher_enabled() {
@@ -777,7 +777,7 @@ unsafe fn load_preloads(
                     if unsafe { &*pip }.status() == PromiseStatus::Pending {
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
                         // dispatched `auto_tick` hook (same shape as the
-                        // non-watcher `wait_for_promise` arm).
+                        // non-watcher `wait_for_module_promise` arm).
                         unsafe { (*vm).auto_tick() };
                     }
                 }

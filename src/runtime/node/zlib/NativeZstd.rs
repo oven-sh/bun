@@ -49,6 +49,14 @@ mod _impl {
         pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
+        /// External-allocation footprint reported to the GC, fixed at
+        /// construction. `mode` never changes after this (only `close()` sets
+        /// it to `NONE`, on the JS thread), so the external state size is
+        /// constant for the life of the instance. Cached here as a plain
+        /// immutable field because `estimated_size` runs on the concurrent GC
+        /// marking thread, where reading `self.stream` through the `JsCell`
+        /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
+        pub estimated_external_size: usize,
     }
 
     // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
@@ -89,8 +97,9 @@ mod _impl {
                 ));
             }
 
+            let mode = NodeMode::from_int(mode_int as u8);
             let stream = Context {
-                mode: NodeMode::from_int(mode_int as u8),
+                mode,
                 ..Default::default()
             };
             Ok(Box::new(Self {
@@ -111,16 +120,23 @@ mod _impl {
                     node: Default::default(),
                     callback: unset_task_callback,
                 }),
+                estimated_external_size: Self::external_size_for(mode),
             }))
         }
 
+        /// Per-mode external-allocation footprint, fixed at construction.
+        fn external_size_for(mode: NodeMode) -> usize {
+            match mode {
+                NodeMode::ZSTD_COMPRESS => 5272,    // estimate of ZSTD_sizeof_CCtx
+                NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of ZSTD_sizeof_DCtx
+                _ => 0,
+            }
+        }
+
+        /// Called from any thread (concurrent GC marking). Reads only the
+        /// immutable `estimated_external_size` field, never `self.stream`.
         pub fn estimated_size(&self) -> usize {
-            core::mem::size_of::<Self>()
-                + match self.stream.get().mode {
-                    NodeMode::ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(self.stream.state)
-                    NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(self.stream.state)
-                    _ => 0,
-                }
+            core::mem::size_of::<Self>() + self.estimated_external_size
         }
 
         #[bun_jsc::host_fn(method)]

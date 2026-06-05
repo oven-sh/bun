@@ -92,6 +92,14 @@ mod _impl {
         pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
+        /// External-allocation footprint reported to the GC, fixed at
+        /// construction. `mode` never changes after this (only `close()` sets
+        /// it to `NONE`, on the JS thread), so the external state size is
+        /// constant for the life of the instance. Cached here as a plain
+        /// immutable field because `estimated_size` runs on the concurrent GC
+        /// marking thread, where reading `self.stream` through the `JsCell`
+        /// would alias the `&mut` held by an in-progress `with_mut` drive loop.
+        pub estimated_external_size: usize,
     }
 
     // `const impl = CompressionStream(@This())` — Zig mixin that provides
@@ -131,8 +139,9 @@ mod _impl {
                 ));
             }
 
+            let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
             let stream = Context {
-                mode: bun_zlib::NodeMode::from_int(mode_int as u8),
+                mode,
                 ..Default::default()
             };
             Ok(Box::new(Self {
@@ -151,18 +160,25 @@ mod _impl {
                     node: Default::default(),
                     callback: noop_task_callback,
                 }),
+                estimated_external_size: Self::external_size_for(mode),
             }))
         }
 
-        pub fn estimated_size(&self) -> usize {
+        /// Per-mode external-allocation footprint, fixed at construction.
+        fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
             const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
             const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
-            core::mem::size_of::<Self>()
-                + match self.stream.get().mode {
-                    bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
-                    bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
-                    _ => 0,
-                }
+            match mode {
+                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
+                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
+                _ => 0,
+            }
+        }
+
+        /// Called from any thread (concurrent GC marking). Reads only the
+        /// immutable `estimated_external_size` field, never `self.stream`.
+        pub fn estimated_size(&self) -> usize {
+            core::mem::size_of::<Self>() + self.estimated_external_size
         }
 
         #[bun_jsc::host_fn(method)]

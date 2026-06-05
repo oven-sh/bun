@@ -430,16 +430,25 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
         let atype = address_type.to_int32();
 
+        // node's createServerHandle prefers the IPv6 wildcard when no address
+        // was given (falling back to 0.0.0.0 on machines without IPv6) - on
+        // Windows that is also what makes an in-use port collide correctly,
+        // since a v4-wildcard bind does not conflict with an existing
+        // dual-stack listener there.
         let host_owned: Vec<u8> = if address.is_string() {
             let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
             let mut v = s.slice().to_vec();
             v.push(0);
             v
-        } else if atype == 6 {
-            b"::\0".to_vec()
         } else {
-            b"0.0.0.0\0".to_vec()
+            b"::\0".to_vec()
         };
+        let fallback_host: Option<&[u8]> = if address.is_string() {
+            None
+        } else {
+            Some(b"0.0.0.0\0")
+        };
+        let _ = atype;
 
         // flags bit 0 = ipv6only (matches the POSIX branch / UV_TCP_IPV6ONLY).
         let options: core::ffi::c_int = if flags & 1 != 0 {
@@ -451,7 +460,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let mut out_port: core::ffi::c_int = 0;
         let mut err: core::ffi::c_int = 0;
         // SAFETY: `host_owned` is NUL-terminated; out params are live locals.
-        let fd = unsafe {
+        let mut fd = unsafe {
             bun_uws::socket_transfer::bsd_create_bound_socket(
                 host_owned.as_ptr().cast(),
                 if port >= 0 { port } else { 0 },
@@ -460,6 +469,31 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 &mut err,
             )
         };
+        // WSAEADDRINUSE must NOT trigger the v4 fallback: on Windows a
+        // 0.0.0.0 bind does not conflict with an existing dual-stack
+        // listener, so retrying would mask the very EADDRINUSE the caller
+        // needs to see. The fallback exists for machines without IPv6.
+        const WSAEADDRINUSE: core::ffi::c_int = 10048;
+        if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX && err != WSAEADDRINUSE {
+            if let Some(v4) = fallback_host {
+                // No IPv6 support: retry the IPv4 wildcard (node does the same).
+                let mut err2: core::ffi::c_int = 0;
+                // SAFETY: as above.
+                let retry = unsafe {
+                    bun_uws::socket_transfer::bsd_create_bound_socket(
+                        v4.as_ptr().cast(),
+                        if port >= 0 { port } else { 0 },
+                        options,
+                        &mut out_port,
+                        &mut err2,
+                    )
+                };
+                if retry != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+                    err = 0;
+                    fd = retry;
+                }
+            }
+        }
         if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
             // Contract: negative uv-style errno. `err` is a WSA error code;
             // uv_translate_sys_error returns the matching negative UV_E*.

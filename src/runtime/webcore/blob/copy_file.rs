@@ -1709,17 +1709,15 @@ impl CopyFileWindows {
         };
 
         self.event_loop.ref_concurrently();
-        // Box::leak: the work pool holds a raw pointer to the task; the
-        // completion path owns and frees it (same as `WriteFileWindows::mkdirp`).
-        Box::leak(node_fs::async_::AsyncMkdirp::new(
-            node_fs::async_::AsyncMkdirp {
-                completion: on_mkdirp_complete_concurrent,
-                completion_ctx: core::ptr::from_mut(self).cast::<()>(),
-                path,
-                ..Default::default()
-            },
-        ))
-        .schedule();
+        // `AsyncMkdirp::schedule` heap-allocates the task and hands ownership
+        // to the work pool, which frees it after the completion callback
+        // returns (same as `WriteFileWindows::mkdirp`).
+        node_fs::async_::AsyncMkdirp::schedule(node_fs::async_::AsyncMkdirp {
+            completion: on_mkdirp_complete_concurrent,
+            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+            path,
+            ..Default::default()
+        });
     }
 
     fn on_mkdirp_complete(&mut self) {

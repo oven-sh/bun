@@ -81,13 +81,26 @@ test.concurrent(
   30_000,
 );
 
-test.concurrent(
-  "the exact fuzzer-minimized nested-math input parses instead of hanging",
-  async () => {
+const fuzzerInputs: [name: string, blob: string][] = [
+  [
     // 2,016 bytes of `hsl(sin(sin(sin(-Infinity + … atan2(… *min(9 *09,75 …`
     // with int-boundary numbers; hung Tokenizer::next_impl for 25s+ before the fix.
-    const blob =
-      "H4sIAAAAAAACA8soztEozsyDY13PvLTMvMySSi5tLl1DCxMTM3MTEwNzY3MDS1NTQzND0wEUTyxJzDPSAIrRVjlcDAy0coGhYsmlZWCpY24KozTpYE5BfrnGYHPTqDkDac6oMaPGDH1jSDfHKi2zqLhENz9Nt6SyIBWHqYMvv0pRwxxNZKiEyiUGAgDmlnNY4AcAAA==";
+    "min()-led atan2 chain",
+    "H4sIAAAAAAACA8soztEozsyDY13PvLTMvMySSi5tLl1DCxMTM3MTEwNzY3MDS1NTQzND0wEUTyxJzDPSAIrRVjlcDAy0coGhYsmlZWCpY24KozTpYE5BfrnGYHPTqDkDac6oMaPGDH1jSDfHKi2zqLhENz9Nt6SyIBWHqYMvv0pRwxxNZKiEyiUGAgDmlnNY4AcAAA==",
+  ],
+  [
+    // 1,840-byte variant of the same class: the chain bottoms out in a
+    // `color(from atan2(…))` token (fails with no tripwire bump at the leaf)
+    // and several `min()`s are left unclosed so their last argument swallows
+    // the next nested atan2(). Exponential before the fix (~2x per level).
+    "min()-led atan2 chain ending in color(from …)",
+    "H4sIAAAAAAAAA8soztEozsyDY10jQxNzEwtjMxNLLm0uXUMLExMzcxMTA3NjcwNLU1NDM0PTARRPLEnMM9IwNzanrXK4GBho5WbmaVhyaRlY6pibwijNYWnOqEFEhdGQCb1Rq0fT/UAmSq2BKvKS83PyizTSivJzFSAmcHFhMVuTdAgAPqXrnDAHAAA=",
+  ],
+];
+
+test.concurrent.each(fuzzerInputs)(
+  "the exact fuzzer-minimized nested-math input parses instead of hanging: %s",
+  async (_name, blob) => {
     const script = `
     const input = Buffer.from(Bun.gunzipSync(Buffer.from(${JSON.stringify(blob)}, "base64"))).toString("latin1");
     console.log(JSON.stringify(Bun.color(input, "rgba")));

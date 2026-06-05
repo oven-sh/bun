@@ -6,12 +6,21 @@ use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
+use crate::socket_context::BunSocketContextOptions;
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
 unsafe extern "C" {
     fn us_create_quic_client_context(
         loop_: *mut Loop,
+        ext_size: c_uint,
+        conn_ext: c_uint,
+        stream_ext: c_uint,
+    ) -> *mut Context;
+
+    fn us_create_quic_client_context_with_options(
+        loop_: *mut Loop,
+        options: BunSocketContextOptions,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
@@ -92,6 +101,29 @@ impl Context {
     ) -> Option<*mut Context> {
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
         let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
+        if p.is_null() { None } else { Some(p) }
+    }
+
+    /// # Safety
+    /// Same contract as [`Context::create_client`]: `loop_` must point to a live
+    /// `us_loop_t`. The string pointers inside `options` must be valid for the
+    /// duration of the call (the C side copies what it needs into the `SSL_CTX`).
+    #[inline]
+    pub unsafe fn create_client_with_options(
+        loop_: *mut Loop,
+        options: &BunSocketContextOptions,
+        ext_size: c_uint,
+        conn_ext: c_uint,
+        stream_ext: c_uint,
+    ) -> Option<*mut Context> {
+        // SAFETY: thin FFI forward; `options` is `#[repr(C)]` and `Copy`, passed
+        // by value across the FFI boundary; remaining args are POD, return is
+        // nullable.
+        let p = unsafe {
+            us_create_quic_client_context_with_options(
+                loop_, *options, ext_size, conn_ext, stream_ext,
+            )
+        };
         if p.is_null() { None } else { Some(p) }
     }
 

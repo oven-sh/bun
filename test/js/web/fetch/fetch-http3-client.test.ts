@@ -1,6 +1,6 @@
 import { gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, expiredTls, tempDir, tls } from "harness";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -440,6 +440,54 @@ describe("fetch protocol: http3", () => {
     await expect(fetch(`${base}/hello`, { protocol: "http3" } as any)).rejects.toThrow();
   });
 
+  // The harness cert is self-signed (CA:true, SAN 127.0.0.1/localhost), so it
+  // doubles as its own CA: passing it as `tls.ca` must make verification
+  // succeed with rejectUnauthorized left at its default (true), exactly like
+  // the TCP fetch path.
+  test("tls.ca is honored over forced http3", async () => {
+    const res = await fetch(`${base}/hello`, { protocol: "http3", tls: { ca: tls.cert } } as any);
+    expect(await res.text()).toBe("hello over h3");
+    expect(res.status).toBe(200);
+  });
+
+  test("wrong tls.ca is rejected over forced http3", async () => {
+    await expect(fetch(`${base}/hello`, { protocol: "http3", tls: { ca: expiredTls.cert } } as any)).rejects.toThrow();
+  });
+
+  test("sessions with different tls configs are not coalesced", async () => {
+    const withCA = { protocol: "http3", tls: { ca: tls.cert } } as any;
+    expect(await fetch(`${base}/hello`, withCA).then(r => r.text())).toBe("hello over h3");
+    // Default trust store must not piggyback on the custom-CA session.
+    await expect(fetch(`${base}/hello`, { protocol: "http3" } as any)).rejects.toThrow();
+    // And the custom-CA config keeps working (not coalesced onto any
+    // rejectUnauthorized:false session opened by earlier tests).
+    expect(await fetch(`${base}/hello`, withCA).then(r => r.text())).toBe("hello over h3");
+  });
+
+  test("client certificate (mTLS) over forced http3", async () => {
+    const mtls = Bun.serve({
+      port: 0,
+      tls: { ...tls, requestCert: true, rejectUnauthorized: true, ca: tls.cert },
+      http3: true,
+      http1: false,
+      fetch: () => new Response("mutual"),
+    });
+    try {
+      const res = await fetch(`https://127.0.0.1:${mtls.port}/`, {
+        protocol: "http3",
+        tls: { ca: tls.cert, cert: tls.cert, key: tls.key },
+      } as any);
+      expect(await res.text()).toBe("mutual");
+      expect(res.status).toBe(200);
+      // Without a client certificate the server must refuse the request.
+      await expect(
+        fetch(`https://127.0.0.1:${mtls.port}/`, { protocol: "http3", tls: { ca: tls.cert } } as any),
+      ).rejects.toThrow();
+    } finally {
+      void mtls.stop(true);
+    }
+  });
+
   test("session retired on GOAWAY: rapid serve/stop cycles", async () => {
     // Each stop(true) sends GOAWAY; the client must mark the pooled session
     // unusable so the next fetch (new port → new session) isn't disrupted by
@@ -638,7 +686,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
   // header plus the live http/3 session count after each. With the flag on,
   // fetch #1 goes over http/1.1 (sessions=0) and records Alt-Svc; fetch #2
   // goes over QUIC (sessions=1).
-  const fixture = `
+  const fixture = (opts: unknown) => `
     import { fetchH3Internals } from "bun:internal-for-testing";
     const { liveCounts } = fetchH3Internals;
     using server = Bun.serve({
@@ -648,7 +696,7 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
       fetch: () => new Response("ok"),
     });
     const url = "https://127.0.0.1:" + server.port + "/";
-    const opts = { tls: { rejectUnauthorized: false } };
+    const opts = ${JSON.stringify(opts)};
     {
       const r = await fetch(url, opts);
       await r.text();
@@ -661,8 +709,10 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     }
   `;
 
-  async function run(extra: { env?: Record<string, string>; args?: string[] }) {
-    using dir = tempDir("h3-altsvc", { "fixture.ts": fixture });
+  async function run(extra: { env?: Record<string, string>; args?: string[]; opts?: unknown }) {
+    using dir = tempDir("h3-altsvc", {
+      "fixture.ts": fixture(extra.opts ?? { tls: { rejectUnauthorized: false } }),
+    });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...(extra.args ?? []), "fixture.ts"],
       env: { ...bunEnv, ...extra.env },
@@ -698,72 +748,18 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(stdout).toMatch(/second status=200 sessions=0\n$/);
     expect(exitCode).toBe(0);
   });
-});
 
-// The HTTP/3 client cannot apply per-request TLS trust configuration (custom
-// ca / client cert+key / serverName): the QUIC context is created without it.
-// Such requests must be refused on the forced-h3 path and kept on TCP+TLS on
-// the Alt-Svc upgrade path, never connected with the options dropped.
-test("custom TLS trust options are rejected on protocol: http3 and excluded from Alt-Svc h3 upgrade", async () => {
-  // protocol: "http3" + a custom CA must reject up front (the CA cannot be
-  // honoured over QUIC), even though the connection would otherwise succeed
-  // with rejectUnauthorized: false.
-  await expect(
-    fetch(`${base}/hello`, {
-      protocol: "http3",
-      tls: { ca: tls.cert, rejectUnauthorized: false },
-    } as any),
-  ).rejects.toThrow();
-
-  // Same for an mTLS client certificate, which the h3 path would never present.
-  await expect(
-    fetch(`${base}/hello`, {
-      protocol: "http3",
-      tls: { cert: tls.cert, key: tls.key, rejectUnauthorized: false },
-    } as any),
-  ).rejects.toThrow();
-
-  // The plain h3 request shape (no trust customization) still works, so the
-  // rejections above are about the TLS options, not h3 being broken.
-  const ok = await fetch(`${base}/hello`, h3);
-  expect(await ok.text()).toBe("hello over h3");
-
-  // Alt-Svc path: with the experimental flag on, a request that carries a
-  // custom CA must keep using HTTP/1.1 over TCP (where the CA is applied)
-  // instead of upgrading onto a QUIC session that ignores it.
-  const fixture = `
-    import { fetchH3Internals } from "bun:internal-for-testing";
-    const { liveCounts } = fetchH3Internals;
-    const tlsOptions = ${JSON.stringify(tls)};
-    using server = Bun.serve({
-      port: 0,
-      tls: tlsOptions,
-      http3: true,
-      fetch: () => new Response("ok"),
+  test("custom tls.ca is honored on the Alt-Svc upgrade path", async () => {
+    // First fetch verifies the self-signed server cert against `ca` over TCP
+    // and records Alt-Svc; the second must upgrade to QUIC and verify against
+    // the same `ca` instead of the default trust store.
+    const { stdout, stderr, exitCode } = await run({
+      env: { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+      opts: { tls: { ca: tls.cert } },
     });
-    const url = "https://127.0.0.1:" + server.port + "/";
-    const opts = { tls: { ca: tlsOptions.cert, rejectUnauthorized: false } };
-    {
-      const r = await fetch(url, opts);
-      await r.text();
-      console.log("first alt-svc=%s sessions=%d", r.headers.get("alt-svc") ?? "", liveCounts().sessions);
-    }
-    {
-      const r = await fetch(url, opts);
-      await r.text();
-      console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
-    }
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", fixture],
-    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
-    stderr: "pipe",
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+    expect(stdout).toMatch(/second status=200 sessions=1\n$/);
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  // Server still advertises Alt-Svc, but with a custom CA both fetches must
-  // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
-  expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
-  expect(stdout).toMatch(/second status=200 sessions=0\n$/);
-  expect(exitCode).toBe(0);
 });

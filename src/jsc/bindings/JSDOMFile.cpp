@@ -42,13 +42,13 @@ public:
 
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
-        auto* zigGlobal = defaultGlobalObject(globalObject);
-        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto* bunGlobal = defaultGlobalObject(globalObject);
+        auto structure = createStructure(vm, globalObject, bunGlobal->functionPrototype());
         auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        object->putDirect(vm, vm.propertyNames->prototype, bunGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
         return object;
     }

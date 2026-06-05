@@ -3702,7 +3702,7 @@ impl VirtualMachine {
         };
         // Note: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
-        // instead of `BunGlobalObject__create`. Route through `init` then
+        // instead of `Bun__GlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.

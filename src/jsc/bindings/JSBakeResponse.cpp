@@ -43,7 +43,7 @@ extern JSC_CALLCONV size_t Response__estimatedSize(void* ptr);
 bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
 
-    auto* zigGlobal = static_cast<Bun::GlobalObject*>(globalObject);
+    auto* bunGlobal = static_cast<Bun::GlobalObject*>(globalObject);
     auto& vm = JSC::getVM(globalObject);
 
     // React does this:
@@ -63,7 +63,7 @@ bool isJSXElement(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObjec
         JSC::JSValue typeofValue = object->get(globalObject, typeofProperty);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (typeofValue.isSymbol() && (typeofValue == zigGlobal->bakeAdditions().reactLegacyElementSymbol(zigGlobal) || typeofValue == zigGlobal->bakeAdditions().reactElementSymbol(zigGlobal))) {
+        if (typeofValue.isSymbol() && (typeofValue == bunGlobal->bakeAdditions().reactLegacyElementSymbol(bunGlobal) || typeofValue == bunGlobal->bakeAdditions().reactElementSymbol(bunGlobal))) {
             return true;
         }
     }
@@ -300,13 +300,13 @@ Structure* createJSBakeResponseStructure(JSC::VM& vm, Bun::GlobalObject* globalO
 
 void setupJSBakeResponseClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
-    auto* zigGlobal = static_cast<Bun::GlobalObject*>(init.global);
-    auto* prototype = JSC::constructEmptyObject(zigGlobal, zigGlobal->JSResponsePrototype());
+    auto* bunGlobal = static_cast<Bun::GlobalObject*>(init.global);
+    auto* prototype = JSC::constructEmptyObject(bunGlobal, bunGlobal->JSResponsePrototype());
 
     auto* constructorStructure = JSBakeResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
     auto* constructor = JSBakeResponseConstructor::create(init.vm, constructorStructure, prototype);
 
-    auto* structure = createJSBakeResponseStructure(init.vm, zigGlobal, prototype);
+    auto* structure = createJSBakeResponseStructure(init.vm, bunGlobal, prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);

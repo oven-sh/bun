@@ -55,9 +55,9 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 #if OS(WINDOWS)
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
-        auto* zigGlobal = defaultGlobalObject(globalObject);
-        if (zigGlobal->m_processEnvObject.isInitialized()) {
-            if (object == zigGlobal->m_processEnvObject.get(zigGlobal)) {
+        auto* bunGlobal = defaultGlobalObject(globalObject);
+        if (bunGlobal->m_processEnvObject.isInitialized()) {
+            if (object == bunGlobal->m_processEnvObject.get(bunGlobal)) {
                 object->methodTable()->getOwnPropertyNames(
                     object,
                     globalObject,

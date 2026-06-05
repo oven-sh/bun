@@ -176,10 +176,10 @@ JSC_DEFINE_HOST_FUNCTION(x509CertificateConstructorConstruct, (JSGlobalObject * 
         return {};
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = bunGlobalObject->m_JSX509CertificateClassStructure.get(bunGlobalObject);
     JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSX509CertificateClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSX509CertificateClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor X509Certificate cannot be invoked without 'new'"_s);
             return {};
@@ -1195,8 +1195,8 @@ extern "C" EncodedJSValue Bun__X509__toJSLegacyEncoding(X509* cert, JSGlobalObje
 extern "C" EncodedJSValue Bun__X509__toJS(X509* cert, JSGlobalObject* globalObject)
 {
     ncrypto::X509Pointer cert_ptr(cert);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    return JSValue::encode(JSX509Certificate::create(zigGlobalObject->vm(), zigGlobalObject->m_JSX509CertificateClassStructure.get(zigGlobalObject), globalObject, WTF::move(cert_ptr)));
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    return JSValue::encode(JSX509Certificate::create(bunGlobalObject->vm(), bunGlobalObject->m_JSX509CertificateClassStructure.get(bunGlobalObject), globalObject, WTF::move(cert_ptr)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsIsX509Certificate, (JSGlobalObject * globalObject, CallFrame* callFrame))

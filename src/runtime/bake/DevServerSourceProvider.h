@@ -26,11 +26,11 @@ public:
         JSC::SourceProviderSourceType sourceType)
     {
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = uncheckedDowncast<::Bun::GlobalObject>(globalObject);
+        auto* bunGlobalObject = uncheckedDowncast<::Bun::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_globalObject = zigGlobalObject;
+        provider->m_globalObject = bunGlobalObject;
         provider->m_specifier = specifier;
-        Bun__addDevServerSourceProvider(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
+        Bun__addDevServerSourceProvider(bunGlobalObject->bunVM(), provider.ptr(), &specifier);
         return provider;
     }
 

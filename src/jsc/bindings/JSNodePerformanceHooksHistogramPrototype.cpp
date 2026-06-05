@@ -413,8 +413,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
         }
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = bunGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(bunGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);
@@ -445,8 +445,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * glo
     }
 
     // Create histogram with range for event loop delays (1ns to 1 hour)
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = bunGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(bunGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(

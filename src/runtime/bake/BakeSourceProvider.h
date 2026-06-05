@@ -21,9 +21,9 @@ public:
         JSC::SourceProviderSourceType sourceType)
     {
         auto provider = adoptRef(*new SourceProvider(source, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+        auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
-        Bun__addBakeSourceProviderSourceMap(zigGlobalObject->bunVM(), provider.ptr(), &specifier);
+        Bun__addBakeSourceProviderSourceMap(bunGlobalObject->bunVM(), provider.ptr(), &specifier);
         return provider;
     }
 

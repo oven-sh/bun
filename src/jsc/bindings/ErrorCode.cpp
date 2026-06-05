@@ -234,8 +234,8 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
-    if (auto* zigGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject))
-        return createError(vm, zigGlobalObject, code, message, jsUndefined());
+    if (auto* bunGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject))
+        return createError(vm, bunGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
     return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);

@@ -862,16 +862,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    auto process = zigGlobal->processObject();
+    auto* bunGlobal = defaultGlobalObject(globalObject);
+    auto process = bunGlobal->processObject();
 
     auto code = callFrame->argument(0);
 
     setProcessExitCodeInner(globalObject, process, code);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto exitCode = Bun__getExitCode(bunVM(zigGlobal));
-    Process__dispatchOnExit(zigGlobal, exitCode);
+    auto exitCode = Bun__getExitCode(bunVM(bunGlobal));
+    Process__dispatchOnExit(bunGlobal, exitCode);
 
     // process.reallyExit(exitCode);
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));
@@ -911,8 +911,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
 
 JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    JSValue cb = zigGlobal->processObject()->getUncaughtExceptionCaptureCallback();
+    auto* bunGlobal = defaultGlobalObject(globalObject);
+    JSValue cb = bunGlobal->processObject()->getUncaughtExceptionCaptureCallback();
     if (cb.isEmpty() || !cb.isCell()) {
         return JSValue::encode(jsBoolean(false));
     }
@@ -3249,8 +3249,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    auto* zigGlobal = defaultGlobalObject(globalObject);
-    Bun__Process__exit(zigGlobal, exitCode);
+    auto* bunGlobal = defaultGlobalObject(globalObject);
+    Bun__Process__exit(bunGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a
     // no-op when re-entered from a process.on('exit') handler).
@@ -3347,9 +3347,9 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     // Handle "var memoryUsage = process.memoryUsage; memoryUsage()"
     if (!process) [[unlikely]] {
         // Handle calling this function from inside a node:vm
-        Bun::GlobalObject* zigGlobalObject = defaultGlobalObject(lexicalGlobalObject);
+        Bun::GlobalObject* bunGlobalObject = defaultGlobalObject(lexicalGlobalObject);
 
-        return zigGlobalObject->processObject();
+        return bunGlobalObject->processObject();
     }
 
     return process;
@@ -4181,8 +4181,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill, (JSC::JSGlobalObject * globalObje
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-    VM& vm = zigGlobalObject->vm();
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+    VM& vm = bunGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue id = callFrame->argument(0);
@@ -4190,11 +4190,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "moduleName"_s, "string"_s, id);
     }
 
-    String idWtfStr = id.toWTFString(zigGlobalObject);
+    String idWtfStr = id.toWTFString(bunGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
     BunString idStr = Bun::toString(idWtfStr);
 
-    JSValue fetchResult = Bun::resolveAndFetchBuiltinModule(zigGlobalObject, &idStr);
+    JSValue fetchResult = Bun::resolveAndFetchBuiltinModule(bunGlobalObject, &idStr);
     if (fetchResult) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(fetchResult));
     }
@@ -4205,8 +4205,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject * gl
 JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    auto* process = zigGlobalObject->processObject();
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    auto* process = bunGlobalObject->processObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto emit = process->get(globalObject, Identifier::fromString(vm, "emit"_s));
     RETURN_IF_EXCEPTION(scope, {});

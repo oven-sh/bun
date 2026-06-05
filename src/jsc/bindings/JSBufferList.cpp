@@ -464,7 +464,7 @@ const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_inf
 
 JSValue getBufferList(Bun::GlobalObject* globalObject)
 {
-    return static_cast<Bun::GlobalObject*>(globalObject)->JSBufferList();
+    return globalObject->JSBufferList();
 }
 
 } // namespace WebCore

@@ -710,12 +710,12 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String wrappedString;
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-    if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+    if (bunGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         wrappedString = makeString(
-            zigGlobalObject->m_moduleWrapperStart,
+            bunGlobalObject->m_moduleWrapperStart,
             sourceString,
-            zigGlobalObject->m_moduleWrapperEnd);
+            bunGlobalObject->m_moduleWrapperEnd);
     } else {
         wrappedString = makeString(
             "(function(exports,require,module,__filename,__dirname){"_s,

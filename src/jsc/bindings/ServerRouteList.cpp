@@ -183,8 +183,8 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
     }
 
     if (!m_paramsObjectStructures.at(index)) {
-        auto* zigGlobalObject = defaultGlobalObject(globalObject);
-        auto* prototype = zigGlobalObject->m_JSBunRequestParamsPrototype.get(zigGlobalObject);
+        auto* bunGlobalObject = defaultGlobalObject(globalObject);
+        auto* prototype = bunGlobalObject->m_JSBunRequestParamsPrototype.get(bunGlobalObject);
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
         auto* structure = Structure::create(vm, globalObject, prototype, TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 

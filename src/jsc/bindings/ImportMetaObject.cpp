@@ -73,9 +73,9 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
         JSC::JSValue moduleName = callFrame->argument(0);
 
         auto doIt = [&](const WTF::String& fromStr) -> JSC::EncodedJSValue {
-            Bun::GlobalObject* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-            if (zigGlobalObject->onLoadPlugins.hasVirtualModules()) {
-                if (auto result = zigGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
+            Bun::GlobalObject* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+            if (bunGlobalObject->onLoadPlugins.hasVirtualModules()) {
+                if (auto result = bunGlobalObject->onLoadPlugins.resolveVirtualModule(fromStr, String())) {
                     if (fromStr == result.value())
                         return JSC::JSValue::encode(moduleName);
 
@@ -143,13 +143,13 @@ ImportMetaObject* ImportMetaObject::create(JSC::VM& vm, JSC::JSGlobalObject* glo
 ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, const WTF::String& url)
 {
     VM& vm = globalObject->vm();
-    Bun::GlobalObject* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+    Bun::GlobalObject* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     bool isBake = url.startsWith("bake:"_s);
 
     // Get the appropriate structure
     Structure* structure = isBake
-        ? zigGlobalObject->ImportMetaBakeObjectStructure()
-        : zigGlobalObject->ImportMetaObjectStructure();
+        ? bunGlobalObject->ImportMetaBakeObjectStructure()
+        : bunGlobalObject->ImportMetaObjectStructure();
 
     return create(vm, globalObject, structure, url);
 }

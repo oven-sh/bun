@@ -135,8 +135,8 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsNull();
         break;
     case DataCellTag::Raw: {
-        Bun::GlobalObject* zigGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-        auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
+        Bun::GlobalObject* bunGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+        auto* subclassStructure = bunGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -175,8 +175,8 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     }
     case DataCellTag::Bytea: {
-        Bun::GlobalObject* zigGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-        auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
+        Bun::GlobalObject* bunGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+        auto* subclassStructure = bunGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
         RETURN_IF_EXCEPTION(scope, {});
 

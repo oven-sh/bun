@@ -620,8 +620,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
         errorValue = createSyntaxError(globalObject, "Failed to parse JSONL"_s);
     }
 
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
-    JSObject* resultObj = constructEmptyObject(vm, zigGlobalObject->jsonlParseResultStructure());
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
+    JSObject* resultObj = constructEmptyObject(vm, bunGlobalObject->jsonlParseResultStructure());
     resultObj->putDirectOffset(vm, 0, array);
     resultObj->putDirectOffset(vm, 1, jsNumber(readBytes));
     resultObj->putDirectOffset(vm, 2, jsBoolean(result.status == JSC::StreamingJSONParseResult::Status::Complete));
@@ -1098,20 +1098,20 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 // LazyProperty wrappers for stdin/stderr/stdout
 static JSValue BunObject_lazyPropCb_wrap_stdin(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdin.getInitializedOnMainThread(zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return bunGlobalObject->m_bunStdin.getInitializedOnMainThread(bunGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stderr(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStderr.getInitializedOnMainThread(zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return bunGlobalObject->m_bunStderr.getInitializedOnMainThread(bunGlobalObject);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_stdout(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_bunStdout.getInitializedOnMainThread(zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return bunGlobalObject->m_bunStdout.getInitializedOnMainThread(bunGlobalObject);
 }
 
 #include "BunObject.lut.h"
@@ -1128,26 +1128,26 @@ const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectT
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return WebCore::JSCookie::getConstructor(vm, zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return WebCore::JSCookie::getConstructor(vm, bunGlobalObject);
 }
 
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return WebCore::JSCookieMap::getConstructor(vm, bunGlobalObject);
 }
 
 static JSValue constructSecretsObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return Bun::createSecretsObject(vm, zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return Bun::createSecretsObject(vm, bunGlobalObject);
 }
 
 static JSValue constructWebViewObject(VM& vm, JSObject* bunObject)
 {
-    auto* zigGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
-    return zigGlobalObject->m_JSWebViewClassStructure.constructor(zigGlobalObject);
+    auto* bunGlobalObject = uncheckedDowncast<Bun::GlobalObject>(bunObject->globalObject());
+    return bunGlobalObject->m_JSWebViewClassStructure.constructor(bunGlobalObject);
 }
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)

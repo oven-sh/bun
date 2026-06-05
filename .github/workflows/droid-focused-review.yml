@@ -9,6 +9,7 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+      - ".github/workflows/ub-review-packet.yml"
   workflow_dispatch:
 
 concurrency:

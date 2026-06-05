@@ -480,7 +480,9 @@ export function windowsEnv(
       // Same validation as JSEnvironmentVariableMap::defineOwnProperty on
       // POSIX: only plain, fully-permissive data descriptors are accepted.
       if ("get" in attributes || "set" in attributes) {
-        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY("'process.env' does not accept an accessor(getter/setter) descriptor");
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
+          "'process.env' does not accept an accessor(getter/setter) descriptor",
+        );
       }
       if (attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
         throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(

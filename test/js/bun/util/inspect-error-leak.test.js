@@ -22,6 +22,5 @@ test("Printing errors does not leak", () => {
   console.log(`RSS increased by ${diff} MB`);
   // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
   // retention inflate RSS even when nothing is leaking.
-  // The transpile arena retains up to 8 MiB between resets (ModuleLoader::reset_arena).
-  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 400 : 20);
+  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 400 : 10);
 }, 10_000);

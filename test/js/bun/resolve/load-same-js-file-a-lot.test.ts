@@ -121,7 +121,7 @@ for (const smol of [false, true]) {
           expect(occurrences("reset_arena: free_all")).toBe(0);
         }
       } else {
-        expect(stderr).toBe("");
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       }
       expect(exitCode).toBe(0);
     },

@@ -34,7 +34,7 @@ impl Default for Result {
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: *const E::Binary,
+    pub bin: StoreRef<E::Binary>,
 }
 
 impl SideEffects {
@@ -528,19 +528,19 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // Ideally this would reuse `p.binary_expression_simplify_stack` to avoid
-        // per-call allocation, but that `P` field is currently `ListManaged<'a, ()>`
-        // (placeholder element type — see P.rs:537); until it's reshaped to
-        // `BinaryExpressionSimplifyVisitor` we use a local Vec.
-        let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
-        stack.push(root_bin);
+        // This function recurses through `simplify_unused_expr`, so each frame
+        // only touches elements above its watermark and truncates back on exit.
+        let stack_bottom = p.binary_expression_simplify_stack.len();
+        p.binary_expression_simplify_stack
+            .push(BinaryExpressionSimplifyVisitor { bin: root_bin });
 
         // Build stack up of expressions
         let mut left: Expr = root_bin.left;
         while let ExprData::EBinary(left_bin) = left.data {
             match left_bin.op {
                 Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
-                    stack.push(left_bin);
+                    p.binary_expression_simplify_stack
+                        .push(BinaryExpressionSimplifyVisitor { bin: left_bin });
                     left = left_bin.left;
                 }
                 _ => break,
@@ -548,15 +548,16 @@ impl SideEffects {
         }
 
         // Ride the stack downwards
-        let mut i = stack.len();
+        let mut i = p.binary_expression_simplify_stack.len();
         let mut result = Self::simplify_unused_expr(p, left).unwrap_or(Expr::EMPTY);
-        while i > 0 {
+        while i > stack_bottom {
             i -= 1;
-            let top = stack[i];
-            let right = top.right;
+            let top = p.binary_expression_simplify_stack[i];
+            let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
             result = Expr::join_with_comma(result, visited_right);
         }
+        p.binary_expression_simplify_stack.truncate(stack_bottom);
 
         if result.is_missing() {
             None

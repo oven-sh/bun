@@ -1055,11 +1055,24 @@ impl Linux {
                             &[watcher_path, owner_subpath, name],
                         );
                         // Borrowck: `rel` may borrow `path_buf`,
-                        // which `walk_and_add` also borrows. Own it for the call.
+                        // which `walk_subtree` also borrows. Own it for the call.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
                         let _ = Linux::add_one(manager, watcher, child_abs, &rel_owned);
-                        Linux::walk_and_add(manager, watcher, child_abs, &rel_owned);
+                        // Entries created inside the new directory before our watch
+                        // attached never get their own IN_CREATE on this fd. Walk the
+                        // subtree: watch nested directories and synthesize a "rename"
+                        // for every discovered entry, like node's recursive watcher
+                        // does when it scans a newly added folder
+                        // (lib/internal/fs/recursive_watch.js). An entry created after
+                        // the watch attached may emit twice; per-handler ChangeEvent
+                        // coalescing absorbs back-to-back duplicates.
+                        walk_subtree::<false>(child_abs, &rel_owned, &mut |abs, entry_rel, entry_is_file| {
+                            if !entry_is_file {
+                                let _ = Linux::add_one(manager, watcher, abs, entry_rel);
+                            }
+                            watcher.emit(EventType::Rename, entry_rel, entry_is_file);
+                        });
                     }
 
                     oi += 1;

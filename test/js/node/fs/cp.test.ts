@@ -267,6 +267,9 @@ for (const [name, copy] of impls) {
 
       await copy(basename + "/from", basename + "/result", {
         filter: (src: string) => {
+          // cp resolves src before walking, so on Windows the filter sees
+          // backslash-separated paths; normalize for the assertion.
+          src = src.replaceAll("\\", "/");
           return src.endsWith("/from") || src.includes("a.txt");
         },
         recursive: true,
@@ -353,7 +356,15 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // node rejects copying a file onto itself with ERR_FS_CP_EINVAL;
+      // the regression this guards against is throwing EBUSY instead.
+      let err: any;
+      try {
+        await copy(basename + "/hey", basename + "/hey");
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }

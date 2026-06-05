@@ -79,6 +79,10 @@ async function getDirent(path) {
   return new DirentFromStats(basename(path), stat, dirname(path));
 }
 
+function sortDirents(dirents) {
+  return dirents.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
 function getDirentSync(path) {
   let stat;
   try {
@@ -227,7 +231,12 @@ class Cache {
     const promise = lazyFsPromises()
       .readdir(path, { __proto__: null, withFileTypes: true })
       .then(
-        r => r,
+        // The traversal bookkeeping (the seen-cache and the "**/.." queueing)
+        // is sensitive to the order directory entries are visited in; some
+        // orders make it drop results (reproducible in node itself by feeding
+        // it the same order). Sort entries so traversal is deterministic and
+        // matches the orders the upstream algorithm is known to handle.
+        r => sortDirents(r),
         () => [],
       );
     this.#readdirCache.set(path, promise);
@@ -240,7 +249,8 @@ class Cache {
     }
     let val;
     try {
-      val = lazyFs().readdirSync(path, { __proto__: null, withFileTypes: true });
+      // Sorted for deterministic traversal; see the comment in readdir().
+      val = sortDirents(lazyFs().readdirSync(path, { __proto__: null, withFileTypes: true }));
     } catch {
       val = [];
     }

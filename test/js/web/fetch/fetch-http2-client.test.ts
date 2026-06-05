@@ -2038,16 +2038,31 @@ test.skipIf(!isASAN)(
         process.exit(0);
       `);
       // Gate the server-side RST on the subprocess having finished eviction.
-      let stderrHead = "";
-      for await (const chunk of proc.stderr) {
-        stderrHead += Buffer.from(chunk).toString();
-        if (stderrHead.includes("evicted")) break;
+      // Read through a single reader rather than for-await (whose early exit
+      // cancels the stream): a regression's ASAN report is written to stderr
+      // AFTER this signal, and must stay readable so it lands in the failure
+      // diff below instead of being discarded.
+      const errReader = proc.stderr.getReader();
+      let stderr = "";
+      while (!stderr.includes("evicted")) {
+        const { value, done } = await errReader.read();
+        if (value) stderr += Buffer.from(value).toString();
+        if (done) break;
       }
-      expect(stderrHead).toContain("evicted");
+      expect(stderr).toContain("evicted");
       heldStream!.close(http2.constants.NGHTTP2_CANCEL);
+      // Drain the tail so any crash output becomes part of the assertion.
+      while (true) {
+        const { value, done } = await errReader.read();
+        if (value) stderr += Buffer.from(value).toString();
+        if (done) break;
+      }
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe("rst-ok");
-      expect(exitCode).toBe(0);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: "rst-ok",
+        stderr: "evicted",
+        exitCode: 0,
+      });
     } finally {
       heldStream?.destroy();
       server.close();

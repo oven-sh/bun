@@ -1239,10 +1239,11 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             (void)checkScope.tryClearException();
         else if (fatalException && !fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
-            // Bun__Process__exit does not return in a worker (it only
-            // requests termination); don't fall through into the
-            // uncaughtException emit logic, and report the exception as
-            // handled so the caller doesn't override the exit code.
+            // Bun__Process__exit is noreturn on the main thread but DOES
+            // return in a worker (it only requests termination); don't fall
+            // through into the uncaughtException emit logic, and report the
+            // exception as handled so the caller doesn't override the exit
+            // code.
             return true;
         }
     }

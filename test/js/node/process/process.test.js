@@ -106,6 +106,29 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
+it("process.env defineProperty matches assignment semantics", () => {
+  // Node's EnvDefiner delegates to the env setter after validating the
+  // descriptor: symbol keys throw a TypeError...
+  expect(() =>
+    Object.defineProperty(process.env, Symbol("env"), {
+      value: "x",
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(TypeError);
+
+  // ...and empty variable names are silently ignored
+  // (https://github.com/nodejs/node/issues/32920).
+  Object.defineProperty(process.env, "", {
+    value: "empty",
+    configurable: true,
+    writable: true,
+    enumerable: true,
+  });
+  expect(process.env[""]).toBeUndefined();
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

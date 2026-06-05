@@ -115,6 +115,17 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
         return false;
     }
 
+    // Node's EnvDefiner delegates to EnvSetter after the descriptor checks,
+    // so symbol keys throw and empty names are silently ignored, exactly
+    // like put() above.
+    auto* uid = propertyName.uid();
+    if (uid && uid->isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+    if (propertyName.publicName() && propertyName.publicName()->isEmpty())
+        return true;
+
     PropertyDescriptor coerced = descriptor;
     if (descriptor.value()) {
         JSString* string = descriptor.value().toString(globalObject);

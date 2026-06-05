@@ -493,6 +493,10 @@ export function windowsEnv(
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
       const k = p.toUpperCase();
+      // Node silently ignores an empty variable name, like the set trap.
+      if (k === "") {
+        return true;
+      }
       const value = String(attributes.value);
       // Same tracking rule as the set trap: don't gate on `k in internalEnv`,
       // because the proxy-related env-var accessors (HTTP_PROXY etc.) always

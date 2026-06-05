@@ -29,6 +29,10 @@ let nextAsyncId = 2;
 // Sequential per-process worker ids for __metadata thread_name events
 // ("[worker 1] WorkerThread"). Node starts at 1.
 let nextWorkerId = 1;
+// Synthetic tid for the PlatformWorkerThread __metadata row. Worker rows use
+// tid + workerId (first worker = 2), so keep this far out of that range to
+// avoid clobbering a worker's thread_name in last-wins trace viewers.
+const kPlatformWorkerTid = 0x7fffffff;
 // Set by CLI init and node:trace_events enable; left false for
 // inspector-session (NodeTracing) collection, which delivers events over the
 // protocol instead of writing node_trace.*.log at exit.
@@ -353,7 +357,7 @@ function emitMetadata(target: object[] = events) {
     target.push({ pid, tid: metaTid, ts, ph: "M", cat: "__metadata", name, args });
   }
   meta("thread_name", { name: "JavaScriptMainThread" }, tid);
-  meta("thread_name", { name: "PlatformWorkerThread" }, tid + 1);
+  meta("thread_name", { name: "PlatformWorkerThread" }, kPlatformWorkerTid);
   meta("version", { node: process.versions.node });
   const release: Record<string, unknown> = { name: process.release.name };
   if (process.release.lts) release.lts = process.release.lts;

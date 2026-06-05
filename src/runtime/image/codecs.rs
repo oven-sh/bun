@@ -215,9 +215,11 @@ pub struct Decoded {
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
-    /// BMP/GIF (no ICC chunk) and system backends (which already colour-
+    /// BMP/GIF (no ICC chunk), system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer
-    /// needed). The image pipeline hands this straight to the matching
+    /// needed), and CMYK/YCCK JPEGs (whose profile describes the four ink
+    /// channels, not the RGBA the codec converts them to). The image
+    /// pipeline hands this straight to the matching
     /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
     /// only have their intended colour meaning when the profile travels
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source

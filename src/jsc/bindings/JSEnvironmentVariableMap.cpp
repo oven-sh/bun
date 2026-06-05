@@ -448,12 +448,25 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
-    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
-
 #if OS(WINDOWS)
+    // On Windows process.env is wrapped in the windowsEnv Proxy (for
+    // case-insensitive lookups), whose traps intercept every operation before
+    // it would reach the exotic JSEnvironmentVariableMap method table — and
+    // whose internal setup (toJSON, Bun.inspect.custom) is incompatible with
+    // the exotic put (string coercion, symbol-key TypeError). Keep the plain
+    // object there; the Node-specific semantics live in the Proxy traps.
+    JSC::JSObject* object = nullptr;
+    if (count < 63) {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+    } else {
+        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
+    }
+
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
+#else
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");

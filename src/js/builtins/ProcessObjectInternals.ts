@@ -408,11 +408,28 @@ export function windowsEnv(
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+      if (typeof p !== "string") return undefined;
+      const k = p.toUpperCase();
+      // Own env vars first (case-insensitive); otherwise fall through to an
+      // ordinary lookup with the original key so inherited Object.prototype
+      // methods (hasOwnProperty, toString, ...) resolve like in Node.
+      if (Object.prototype.hasOwnProperty.$call(internalEnv, k)) {
+        return internalEnv[k];
+      }
+      return internalEnv[p];
     },
     set(_, p, value) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // Node's process.env throws a TypeError for symbol keys and symbol
+      // values (ToString on a Symbol throws).
+      if (typeof p === "symbol" || typeof value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = p.toUpperCase();
+      // Node silently ignores assignments to an empty variable name
+      // (https://github.com/nodejs/node/issues/32920).
+      if (k === "") {
+        return true;
+      }
       value = String(value); // If toString() throws, we want to avoid it existing in the envMapList
       // Track the key for enumeration if it isn't already there. Don't gate on
       // `k in internalEnv`: the proxy-related env-var accessors (HTTP_PROXY,
@@ -434,17 +451,25 @@ export function windowsEnv(
       return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
     },
     deleteProperty(_, p) {
+      // Deleting a symbol key is a no-op that reports success in Node.
+      if (typeof p === "symbol") {
+        return true;
+      }
       const k = String(p).toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      return typeof p !== "symbol" ? delete internalEnv[k] : false;
+      return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {
-      const k = String(p).toUpperCase();
-      $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
+      // String(symbol) does not throw (it returns the descriptive string), so
+      // reject symbol keys explicitly like the set trap does.
+      if (typeof p === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
+      const k = p.toUpperCase();
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
@@ -484,9 +509,14 @@ export function rawDebug() {
   // bypassing the process.stderr stream (which may be hijacked or broken).
   // No rest parameter: builtins are strict functions and the parser rejects
   // non-simple parameter lists.
+  // os.EOL, not "\n": Node's native _rawDebug writes through the CRT's
+  // text-mode stderr, which emits \r\n on Windows, and the upstream test
+  // asserts the platform line ending. fs.writeSync writes raw bytes, so the
+  // translation has to happen here.
   const { formatWithOptions } = require("node:util");
   const { writeSync } = require("node:fs");
-  writeSync(2, formatWithOptions({}, ...arguments) + "\n");
+  const { EOL } = require("node:os");
+  writeSync(2, formatWithOptions({}, ...arguments) + EOL);
 }
 
 export function loadEnvFile(path) {

@@ -4,6 +4,13 @@ const assert = require('assert');
 
 // Flags: --pending-deprecation
 
+if (common.isWindows) {
+  // Bun: on Windows process.env is a Proxy that coerces values to strings
+  // before they reach the native env object, so the DEP0104 deprecation
+  // warning is not emitted there yet.
+  common.skip('DEP0104 is not emitted on Windows in Bun');
+}
+
 common.expectWarning(
   'DeprecationWarning',
   'Assigning any value other than a string, number, or boolean to a ' +

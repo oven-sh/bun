@@ -216,10 +216,14 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Top exception scope: see constructFinalization.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = processObject->globalObject();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
@@ -1226,7 +1230,11 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         // Node exits with code 6 when process._fatalException has been
         // replaced with a non-function (internal fatal-exception handler
         // run-time failure).
-        auto checkScope = DECLARE_THROW_SCOPE(vm);
+        //
+        // This is an extern "C" entry point called from Rust, so use a top
+        // exception scope: a ThrowScope would simulate a re-throw on
+        // destruction that no caller on this path ever checks.
+        auto checkScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         JSValue fatalException = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (checkScope.exception()) [[unlikely]]
             (void)checkScope.tryClearException();
@@ -1601,25 +1609,28 @@ extern "C" bool Bun__NODE_NO_WARNINGS();
 // NODE_REDIRECT_WARNINGS environment variable, then stderr. Resolved once.
 static FILE* processWarningDestination(Zig::GlobalObject* globalObject)
 {
+    // call_once: workers can emit their first warning concurrently with the
+    // main thread, and a plain check-then-assign would be a data race.
     static FILE* destination = nullptr;
-    if (destination)
-        return destination;
-    destination = stderr;
-    WTF::String path;
-    BunString redirect;
-    if (Bun__Node__getRedirectWarnings(&redirect)) {
-        path = redirect.transferToWTFString();
-    } else {
-        ZigString name = toZigString("NODE_REDIRECT_WARNINGS"_s);
-        ZigString value = { nullptr, 0 };
-        if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
-            path = Zig::toStringCopy(value);
-    }
-    if (!path.isEmpty()) {
-        auto utf8 = path.utf8();
-        if (FILE* file = fopen(utf8.data(), "a"))
-            destination = file;
-    }
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [&] {
+        destination = stderr;
+        WTF::String path;
+        BunString redirect;
+        if (Bun__Node__getRedirectWarnings(&redirect)) {
+            path = redirect.transferToWTFString();
+        } else {
+            ZigString name = toZigString("NODE_REDIRECT_WARNINGS"_s);
+            ZigString value = { nullptr, 0 };
+            if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
+                path = Zig::toStringCopy(value);
+        }
+        if (!path.isEmpty()) {
+            auto utf8 = path.utf8();
+            if (FILE* file = fopen(utf8.data(), "a"))
+                destination = file;
+        }
+    });
     return destination;
 }
 
@@ -1734,23 +1745,33 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
 static JSValue constructFinalization(VM& vm, JSObject* processObject)
 {
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Top exception scope: the static-property reification machinery that
+    // calls this performs no exception checks, and a ThrowScope would
+    // simulate a re-throw on destruction that the caller never checks.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* function = JSC::JSFunction::create(vm, globalObject, processObjectInternalsCreateProcessFinalizationCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     return result;
 }
 
 static JSValue constructAllowedNodeEnvironmentFlags(VM& vm, JSObject* processObject)
 {
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Top exception scope: see constructFinalization.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* function = JSC::JSFunction::create(vm, globalObject, processObjectInternalsBuildAllowedNodeEnvironmentFlagsCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, function, JSC::getCallData(function), globalObject->globalThis(), args);
-    RETURN_IF_EXCEPTION(scope, jsUndefined());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     return result;
 }
 
@@ -1822,7 +1843,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     Bun::V::validateString(scope, globalObject, execPathValue, "execPath"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!JSC::isArray(globalObject, argsValue))
+    // Node declares execve(execPath, args = [], env = process.env), so an
+    // omitted args parameter is valid and means "no extra argv entries".
+    if (!argsValue.isUndefined() && !JSC::isArray(globalObject, argsValue))
         return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "args"_s, "Array"_s, argsValue);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1833,9 +1856,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
             execPathValue, "must be a string without null bytes"_s);
     }
 
-    JSObject* argsObject = argsValue.getObject();
-    unsigned argsLength = static_cast<unsigned>(toLength(globalObject, argsObject));
-    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* argsObject = argsValue.isUndefined() ? nullptr : argsValue.getObject();
+    unsigned argsLength = 0;
+    if (argsObject) {
+        argsLength = static_cast<unsigned>(toLength(globalObject, argsObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     Vector<CString> argvStorage;
     argvStorage.reserveInitialCapacity(argsLength);
@@ -2879,14 +2905,18 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        // Top exception scope: see constructFinalization.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return jsUndefined();
+        }
         return result;
     } else {
         return jsUndefined();
@@ -3764,7 +3794,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     }
     user = 1e6 * info.user_time.seconds + info.user_time.microseconds;
     system = 1e6 * info.system_time.seconds + info.system_time.microseconds;
-#elif OS(LINUX)
+#elif OS(LINUX) || OS(FREEBSD)
+    // FreeBSD has supported RUSAGE_THREAD since 8.1; the #else branch must
+    // stay Windows-only because uv_getrusage_thread is an aborting stub in
+    // uv-posix-stubs.c on the POSIX targets that link it.
     struct rusage threadUsage;
     if (getrusage(RUSAGE_THREAD, &threadUsage) != 0) {
         throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);
@@ -4105,7 +4138,18 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    // constructEmptyArray can throw (OOM); resolve that here instead of
+    // leaving it pending, because the static-property reification machinery
+    // that calls this performs no exception checks of its own. A ThrowScope
+    // would simulate a re-throw on destruction that the caller never checks,
+    // so use a top exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue result = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSC::jsUndefined();
+    }
+    return result;
 }
 
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
@@ -4235,17 +4279,22 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Top exception scope: see constructFinalization.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
-    RETURN_IF_EXCEPTION(scope, {});
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     auto* requireMap = globalObject->requireMap();
-    RETURN_IF_EXCEPTION(scope, {});
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     return mainModule;
 }
 
@@ -4603,7 +4652,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _debugEnd                        Process_stubEmptyFunction                           Function 0
   _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
-  _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
   _kill                            Process_functionReallyKill                          Function 2

@@ -141,6 +141,24 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("accepts an omitted args parameter", async () => {
+    // Node declares execve(execPath, args = [], env = process.env): a
+    // one-argument call is valid and must reach execve (failing with ENOENT
+    // here, not ERR_INVALID_ARG_TYPE).
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `process.execve(process.execPath + "_does_not_exist");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toContain("execve() failed: ENOENT");
+    expect(exitCode).not.toBe(0);
+  });
+
   test.skipIf(isWindows)("validates arguments", async () => {
     await using proc = Bun.spawn({
       cmd: [

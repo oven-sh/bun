@@ -817,7 +817,15 @@ function wrapThreadpoolMethod(original, traceName: string) {
       if (asyncEnabled) emitEvent("e", kThreadpoolAsyncCat, traceName);
       return callback.$apply(this, callbackArgs);
     };
-    return original.$apply(this, args);
+    try {
+      return original.$apply(this, args);
+    } catch (err) {
+      // Balance the 'b' when the call throws synchronously (argument
+      // validation, e.g. a bad zlib level or hkdf digest), mirroring
+      // wrapFsAsyncMethod — the wrapped callback never runs in that case.
+      if (asyncEnabled) emitEvent("e", kThreadpoolAsyncCat, traceName);
+      throw err;
+    }
   };
 }
 

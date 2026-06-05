@@ -664,6 +664,11 @@ pub type Socket = bun_uws::SocketHandler<false>;
 pub struct Handle {
     pub fd: Fd,
     pub js: Protected,
+    /// Close the sender's copy of the socket once the handle message
+    /// completes (ack received, or retransmissions exhausted). node detaches
+    /// and closes the local handle after NODE_HANDLE_ACK unless the caller
+    /// passed `keepOpen`.
+    pub close_on_complete: bool,
 }
 
 impl Handle {
@@ -671,6 +676,15 @@ impl Handle {
         Self {
             fd,
             js: js.protected(),
+            close_on_complete: false,
+        }
+    }
+
+    pub fn init_owned(fd: Fd, js: JSValue) -> Self {
+        Self {
+            fd,
+            js: js.protected(),
+            close_on_complete: true,
         }
     }
 }
@@ -755,6 +769,27 @@ impl SendHandle {
 
     /// Call the callback and deinit
     pub fn complete(mut self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                // The receiver owns the connection now (it holds a dup of the
+                // fd, so this close sends no FIN/RST to the peer). Call the
+                // native socket's terminate() — the uv_close() equivalent.
+                let js = handle.js.value();
+                if js.is_object() {
+                    match js.get(global, "terminate") {
+                        Ok(Some(f)) if f.is_callable() => {
+                            if f.call(global, js, &[]).is_err() {
+                                global.clear_exception();
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(_) => {
+                            global.clear_exception();
+                        }
+                    }
+                }
+            }
+        }
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
@@ -1083,6 +1118,17 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
+        // Complete sends whose ack can no longer arrive. This runs their
+        // callbacks and — for handle messages — closes the local copy of the
+        // sent socket, which would otherwise keep the event loop alive
+        // forever (node closes undeliverable handles on channel close too).
+        let global = this.get_global_this();
+        if let Some(item) = this.waiting_for_ack.take() {
+            item.complete(&global);
+        }
+        for item in std::mem::take(&mut this.queue) {
+            item.complete(&global);
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*this.owner).handle_ipc_close() };
         Ok(())
@@ -1882,13 +1928,34 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 match msg_data.get(global_this, "$hasHandle") {
                     Ok(Some(marker)) if marker.to_boolean() => {
-                        if let Some(fd) = send_queue.incoming_fd.take() {
-                            msg_data.put(
-                                global_this,
-                                b"$fd",
-                                JSValue::js_number_from_int32(fd.uv()),
-                            );
+                        // The sender parks a handle-carrying message in
+                        // `waiting_for_ack` until the receiver confirms the fd
+                        // arrived (same protocol as NODE_HANDLE). Reply at the
+                        // native layer so the sender's queue unblocks; NACK
+                        // triggers retransmission when the fd was not paired.
+                        let ack = send_queue.incoming_fd.is_some();
+                        let packet = if ack {
+                            get_ack_packet(send_queue.mode)
+                        } else {
+                            get_nack_packet(send_queue.mode)
+                        };
+                        let mut reply = SendHandle {
+                            data: StreamBuffer::default(),
+                            handle: None,
+                            callbacks: CallbackList::AckNack,
+                        };
+                        handle_oom(reply.data.write(packet));
+                        send_queue.insert_message(reply);
+                        log!("IPC call continueSend() from internal $hasHandle ack");
+                        send_queue
+                            .continue_send(global_this, ContinueSendReason::NewMessageAppended);
+                        if !ack {
+                            // Don't dispatch: the sender retransmits the
+                            // message together with the fd.
+                            return;
                         }
+                        let fd = send_queue.incoming_fd.take().unwrap();
+                        msg_data.put(global_this, b"$fd", JSValue::js_number_from_int32(fd.uv()));
                     }
                     Ok(_) => {}
                     Err(_) => {

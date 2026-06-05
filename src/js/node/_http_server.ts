@@ -215,6 +215,13 @@ function Server(options, callback): void {
   EventEmitter.$call(this);
   this[kConnectionsCheckingInterval] = { _destroyed: false };
 
+  // node's connectionListenerInternal tags every connection with the server
+  // before user listeners run; sockets injected via
+  // `server.emit("connection", socket)` rely on it.
+  this.prependListener("connection", socket => {
+    if (socket != null && typeof socket === "object") socket.server = this;
+  });
+
   this.listening = false;
   this._unref = false;
   this.maxRequestsPerSocket = 0;
@@ -466,11 +473,13 @@ Server.prototype.listen = function () {
     server.once("listening", () => {
       cluster.worker.state = "listening";
       const address = server.address();
+      const isObjectAddress = address !== null && typeof address === "object";
       const message = {
         act: "listening",
-        port: (address && address.port) || port,
+        port: (isObjectAddress && address.port) || port,
         data: null,
-        addressType: 4,
+        address: (isObjectAddress ? address.address : null) ?? host ?? null,
+        addressType: isObjectAddress && address.family === "IPv6" ? 6 : 4,
       };
       sendHelper(message, null);
     });

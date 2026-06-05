@@ -229,8 +229,11 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             return Err(global.throw(format_args!("cluster handle has invalid fd")));
         }
         message.put(global, b"$hasHandle", JSValue::TRUE);
+        // `from_uv` takes an i32 on every target (`from_native` expects u64 on
+        // Windows); this path is runtime-unreachable on Windows but must still
+        // type-check there.
         native_handle = Some(bun_jsc::ipc::Handle::init(
-            bun_sys::Fd::from_native(raw_fd),
+            bun_sys::Fd::from_uv(raw_fd),
             handle,
         ));
     }
@@ -418,7 +421,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
 
         fn last_neg_errno() -> JSValue {
-            JSValue::js_number_from_int32(-bun_core::errno())
+            JSValue::js_number_from_int32(-bun_core::ffi::errno())
         }
 
         unsafe fn close_fd(fd: c_int) {
@@ -500,7 +503,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
                     sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
                     sin6.sin6_port = (port as u16).to_be();
-                    libc::inet_pton(
+                    // The libc crate does not bind inet_pton; use the vendored
+                    // c-ares implementation (same convention as bun_core).
+                    bun_core::immutable::ares_inet_pton(
                         libc::AF_INET6,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin6.sin6_addr).cast(),
@@ -510,7 +515,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
-                    libc::inet_pton(
+                    bun_core::immutable::ares_inet_pton(
                         libc::AF_INET,
                         addr_z.as_ptr().cast(),
                         (&raw mut sin.sin_addr).cast(),

@@ -17,6 +17,10 @@ export default class RoundRobinHandle {
   handle;
   server;
   listening;
+  // worker.id -> handle sent in a `newconn` whose ack hasn't arrived yet.
+  // If that worker dies first, the ack never comes and the handle would leak
+  // (keeping the accepted socket - and the primary's event loop - alive).
+  inFlight;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
@@ -26,9 +30,13 @@ export default class RoundRobinHandle {
     this.handles = init(Object.create(null));
     this.handle = null;
     this.listening = false;
+    this.inFlight = new Map();
     // Accepted sockets start paused (no kernel reads), so the connection's
     // bytes stay in the kernel buffer until the fd is handed to a worker.
-    this.server = net.createServer({ pauseOnConnect: true }, socket => {
+    // allowHalfOpen keeps the primary's copy inert when the client sends FIN
+    // early: node's primary never reacts to EOF on a pending handle, and the
+    // worker that adopts the fd still observes the EOF itself.
+    this.server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true }, socket => {
       this.distribute(0, makeAcceptedHandle(socket));
     });
 
@@ -92,6 +100,13 @@ export default class RoundRobinHandle {
 
     this.free.delete(worker.id);
 
+    // Reclaim a connection whose newconn ack will never arrive.
+    const pending = this.inFlight.get(worker.id);
+    if (pending !== undefined) {
+      this.inFlight.delete(worker.id);
+      this.distribute(0, pending);
+    }
+
     if (this.all.size !== 0) return false;
 
     while (!isEmpty(this.handles)) {
@@ -138,7 +153,11 @@ export default class RoundRobinHandle {
 
     const message = { act: "newconn", key: this.key };
 
+    this.inFlight.set(worker.id, handle);
     sendHelper(worker.process[kHandle], message, handle, reply => {
+      // remove() may have reclaimed the handle when the worker died before
+      // acking; in that case this (late) reply must not touch it again.
+      if (!this.inFlight.delete(worker.id)) return;
       if (reply.accepted) handle.close();
       else this.distribute(0, handle); // Worker is shutting down. Send to another.
 

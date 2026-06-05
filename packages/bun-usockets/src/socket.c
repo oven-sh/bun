@@ -517,12 +517,24 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+            /* Transient: wait for writable and retry. */
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        /* Hard error (EPIPE, ECONNRESET, EBADF, ...): returning 0 here would
+         * make the caller spin on writable events forever. */
+        return -1;
+    }
+
     if (sent != length) {
         s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
-    return sent < 0 ? 0 : sent;
+    return sent;
 }
 #endif
 

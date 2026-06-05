@@ -2399,6 +2399,13 @@ Server.prototype[kRealListen] = function (
   _onListen,
   fd,
 ) {
+  if (reusePort) {
+    // `exclusive` was forced on by listen() so cluster workers skip
+    // _getServer (node semantics: reusePort implies exclusive). At bind time
+    // it must not win over reusePort: the flag computation prefers
+    // EXCLUSIVE_PORT, which would drop SO_REUSEPORT.
+    exclusive = false;
+  }
   if (path) {
     this._handle = Bun.listen({
       unix: path,
@@ -2575,6 +2582,10 @@ function listenInCluster(
       // the shared-handle refcount.
       handle.adopted = true;
       server[kClusterHandle] = handle;
+      // Tag the wrapper so Worker.prototype._disconnect() escalates through
+      // server.close() (draining the real listener) instead of calling
+      // handle.close(), which after adoption no longer closes the listener.
+      handle[kClusterOwner] = server;
       server.once("close", () => handle.close());
       server[kRealListen](
         path,
@@ -2630,6 +2641,9 @@ function onClusterConnection(err, clientHandle) {
     return;
   }
   if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    // The handle delivered over IPC is a bare fd wrapper with no
+    // getpeername/getsockname, so there is no address data for a "drop"
+    // event (node's onconnection also closes without "drop" in that case).
     clientHandle.close();
     return;
   }
@@ -2637,13 +2651,18 @@ function onClusterConnection(err, clientHandle) {
     allowHalfOpen: self.allowHalfOpen,
   });
   socket.isServer = true;
+  // Socket.prototype._destroy decrements self._connections and calls
+  // _emitCloseIfDrained because socket.server is set; no close listener
+  // needed here.
   socket.server = self;
   self._connections++;
-  socket.once("close", () => {
-    self._connections--;
-    self._emitCloseIfDrained();
-  });
   socket.connect({ fd: clientHandle.fd, pauseOnConnect: self.pauseOnConnect });
+  // Mirror ServerHandlers.open(): the constructor-supplied connection
+  // listener is invoked via a once-listener per accepted connection.
+  const connectionListener = self[bunSocketServerOptions]?.connectionListener;
+  if (typeof connectionListener === "function" && typeof self[bunTlsSymbol] !== "function") {
+    self.prependOnceListener("connection", connectionListener);
+  }
   self.emit("connection", socket);
 }
 

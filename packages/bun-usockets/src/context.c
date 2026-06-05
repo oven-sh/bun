@@ -392,6 +392,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    *error = ENOTSUP;
     return 0;
 #else
     apple_no_sigpipe(fd);
@@ -407,6 +408,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
+    }
 
     return ls;
 #endif

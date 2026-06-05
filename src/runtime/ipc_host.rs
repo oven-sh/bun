@@ -162,7 +162,18 @@ pub(crate) fn do_send(
             let fd = unsafe { (*socket).socket.get().fd() };
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                zig_handle = Some(Handle::init(fd, handle));
+                // node detaches the local socket and closes it once the
+                // receiver acks (unless keepOpen): otherwise the sender's
+                // copy keeps the event loop alive forever.
+                let keep_open = !options_.is_undefined_or_null()
+                    && options_
+                        .get(global_object, "keepOpen")?
+                        .is_some_and(|v| v.to_boolean());
+                zig_handle = Some(if keep_open {
+                    Handle::init(fd, handle)
+                } else {
+                    Handle::init_owned(fd, handle)
+                });
             }
         }
     }

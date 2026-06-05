@@ -126,7 +126,8 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 #endif
 }
 
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
+    if (max_packets > LIBUS_UDP_RECV_COUNT) max_packets = LIBUS_UDP_RECV_COUNT;
 #if defined(_WIN32)
     socklen_t addr_len = sizeof(struct sockaddr_storage);
     while (1) {
@@ -149,12 +150,12 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
-            int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+            int ret = recvmsg_x(fd, recvbuf->msgvec, max_packets, flags);
             if (ret >= 0 || errno != EINTR) return ret;
         }
     }
 
-    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; ++i) {
+    for (int i = 0; i < max_packets; ++i) {
         while (1) {
             ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
             if (ret < 0) {
@@ -166,10 +167,10 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             break;
         }
     }
-    return LIBUS_UDP_RECV_COUNT;
+    return max_packets;
 #else
     while (1) {
-        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, max_packets, flags, 0);
         if (ret >= 0 || errno != EINTR) return ret;
     }
 #endif

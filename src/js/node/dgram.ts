@@ -44,7 +44,7 @@ const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
 const async_id_symbol = Symbol("async_id_symbol");
 
-const { throwNotImplemented, ErrnoException } = require("internal/shared");
+const { throwNotImplemented, ErrnoException, kClusterOwner } = require("internal/shared");
 
 let cluster;
 const {
@@ -279,6 +279,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           }
           state.clusterHandle = handle;
           handle.adopted = true;
+          // Worker._disconnect() escalates through the owner so the adopted
+          // Bun socket actually closes (the wrapper alone only drops the
+          // primary-side refcount).
+          handle[kClusterOwner] = this;
           bunBindSocket(this, state, { fd: handle.sharedFd });
         },
       );
@@ -344,6 +348,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
           }
           state.clusterHandle = handle;
           handle.adopted = true;
+          handle[kClusterOwner] = this;
           bunBindSocket(this, state, { fd: handle.sharedFd });
         },
       );
@@ -384,6 +389,9 @@ function bunBindSocket(self, state, options) {
       ...options,
       socket: {
         data: (_socket, data, port, address) => {
+          // close() is synchronous in node: nothing is emitted after the
+          // handle is gone.
+          if (!state.handle) return;
           self.emit("message", data, {
             port: port,
             address: address,
@@ -398,6 +406,11 @@ function bunBindSocket(self, state, options) {
       },
     }).$then(
       socket => {
+        if (!state.handle) {
+          // Socket was closed while the native bind was pending.
+          socket.close();
+          return;
+        }
         if (state.unrefOnBind) {
           socket.unref();
           state.unrefOnBind = false;
@@ -764,6 +777,9 @@ Socket.prototype.close = function (callback) {
   state.receiving = false;
   state.handle.socket?.close();
   state.handle = null;
+  // node resets the bind state on close: a later send() re-binds an
+  // ephemeral socket instead of dereferencing the null handle.
+  state.bindState = BIND_STATE_UNBOUND;
   // Tell the primary to drop us from the shared-handle refcount.
   if (state.clusterHandle) {
     state.clusterHandle.close();

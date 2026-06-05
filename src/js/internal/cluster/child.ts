@@ -74,8 +74,8 @@ cluster._setupWorker = function () {
 
   function onmessage(message, handle) {
     if (message.act === "newconn") {
-      if (handle == null && typeof message.$fd === "number" && message.$fd >= 0) {
-        handle = makeConnectionHandle(message.$fd);
+      if (handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
+        handle = makeConnectionHandle(message["$fd"]);
       }
       onconnection(message, handle);
     } else if (message.act === "disconnect") worker._disconnect(true);
@@ -115,10 +115,10 @@ cluster._getServer = function (obj, options, cb) {
   send(message, (reply, handle) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
-    if (handle == null && typeof reply.$fd === "number" && reply.$fd >= 0) {
+    if (handle == null && typeof reply["$fd"] === "number" && reply["$fd"] >= 0) {
       // Shared listen socket: the primary bound it and sent the fd over the
       // IPC channel (SCM_RIGHTS); the worker does the real listen on it.
-      handle = makeSharedHandle(reply.$fd);
+      handle = makeSharedHandle(reply["$fd"]);
     }
 
     if (handle) {

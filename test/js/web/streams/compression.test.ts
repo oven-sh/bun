@@ -472,6 +472,26 @@ describe("CompressionStream Node.js compatibility", () => {
       expect(err?.code).toBe("Z_DATA_ERROR");
     });
 
+    test("trailing bytes the engine leaves unconsumed at stream end are discarded like node", async () => {
+      // The engine stops at stream end with the trailing bytes unconsumed
+      // and no error; node's drive loop treats leftover input with spare
+      // output as end-of-stream and discards it (lib/zlib.js
+      // processCallback) instead of re-feeding bytes the engine refuses.
+      // (gzip with NON-zero trailing bytes takes the multi-member path and
+      // rejects instead — pinned above; zero bytes are member padding.)
+      const payload = Buffer.from("hello");
+      const cases: Array<[string, Buffer]> = [
+        ["deflate", Buffer.concat([zlib.deflateSync(payload), Buffer.from([1])])],
+        ["deflate-raw", Buffer.concat([zlib.deflateRawSync(payload), Buffer.from([1, 2, 3])])],
+        ["gzip", Buffer.concat([zlib.gzipSync(payload), Buffer.alloc(8)])],
+        ["brotli", Buffer.concat([zlib.brotliCompressSync(payload), Buffer.from([1, 2, 3])])],
+        ["zstd", Buffer.concat([zlib.zstdCompressSync(payload), Buffer.from([1, 2, 3])])],
+      ];
+      for (const [format, input] of cases) {
+        expect([format, (await decompress(format, [input])).toString()]).toEqual([format, "hello"]);
+      }
+    });
+
     test("corrupt zstd input carries the zstd error code", async () => {
       const err = (await decompress("zstd", [new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])]).then(
         () => null,

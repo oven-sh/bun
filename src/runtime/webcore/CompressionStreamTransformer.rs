@@ -257,10 +257,15 @@ impl CompressionStreamTransformer {
                 let consumed = window_len - avail_in as usize;
                 input = &input[consumed..];
 
-                if avail_out == 0 || !input.is_empty() {
+                if avail_out == 0 || (avail_in == 0 && !input.is_empty()) {
                     // Output window exhausted before the engine finished, or
-                    // input remains past the current u32 window — keep
-                    // driving.
+                    // the engine consumed the whole u32 window and input it
+                    // has not seen remains past it — keep driving. If the
+                    // engine instead stopped mid-window with spare output, it
+                    // reached stream end: node's drive loop ends the stream
+                    // there and discards the trailing bytes (lib/zlib.js
+                    // processCallback), and re-feeding them would spin
+                    // forever on input the engine refuses to consume.
                     continue;
                 }
                 break;

@@ -360,7 +360,9 @@ describe("empty compressed responses", () => {
       // end() rather than write(): FIN the connection after the response so
       // nothing is left parked in the keep-alive pool when the server closes.
       const raw = createNetServer(socket => void socket.end(write));
-      await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+      // Explicit IPv4 loopback: a bare listen(0) can bind only the IPv6
+      // unspecified address on some hosts while the fetch targets 127.0.0.1.
+      await new Promise<void>(resolve => raw.listen(0, "127.0.0.1", () => resolve()));
       const port = (raw.address() as { port: number }).port;
       try {
         const res = await fetch(`http://127.0.0.1:${port}/`);

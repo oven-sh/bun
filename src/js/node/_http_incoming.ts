@@ -358,6 +358,9 @@ const IncomingMessagePrototype = {
     // after the stream destroyer assigned `stream.socket = null`.
     return this.socket;
   },
+  set connection(value) {
+    this.socket = value;
+  },
   get statusCode() {
     return this[statusCodeSymbol];
   },

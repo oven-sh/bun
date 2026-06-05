@@ -441,9 +441,18 @@ pub mod debug {
             // the default DLL search order (CWD, application directory) cannot
             // be injected into the crashing process.
             const DBGHELP_W: &[u16] = &[
-                b'd' as u16, b'b' as u16, b'g' as u16, b'h' as u16, b'e' as u16,
-                b'l' as u16, b'p' as u16, b'.' as u16, b'd' as u16, b'l' as u16,
-                b'l' as u16, 0,
+                b'd' as u16,
+                b'b' as u16,
+                b'g' as u16,
+                b'h' as u16,
+                b'e' as u16,
+                b'l' as u16,
+                b'p' as u16,
+                b'.' as u16,
+                b'd' as u16,
+                b'l' as u16,
+                b'l' as u16,
+                0,
             ];
             const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
             // SAFETY: DBGHELP_W is NUL-terminated; LoadLibraryExW has no other

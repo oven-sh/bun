@@ -278,8 +278,7 @@ pub(crate) fn install_isolated_packages(
                 }
             }
             for pid in scan_targets {
-                for dep_idx in
-                    pkg_dependency_slices[pid].begin()..pkg_dependency_slices[pid].end()
+                for dep_idx in pkg_dependency_slices[pid].begin()..pkg_dependency_slices[pid].end()
                 {
                     let res = resolutions[dep_idx as usize];
                     if res == invalid_package_id || set.is_set(res as usize) {

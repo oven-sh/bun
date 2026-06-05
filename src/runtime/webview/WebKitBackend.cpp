@@ -127,7 +127,7 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Bun::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
+bool HostClient::ensureSpawned(Bun::GlobalObject* bunGlobal, bool stdoutInherit, bool stderrInherit)
 {
     if (sock && !dead) return true;
 
@@ -142,12 +142,12 @@ bool HostClient::ensureSpawned(Bun::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
+    int fd = Bun__WebViewHost__ensure(bunGlobal, stdoutInherit, stderrInherit);
     if (fd < 0) {
         dead = true;
         return false;
     }
-    global = zig;
+    global = bunGlobal;
 
     // Socket group — once. Embedded; lazily linked into the loop on first
     // socket. on_open won't fire (us_socket_from_fd doesn't call it) but a

@@ -12,8 +12,8 @@ DEFINE_NATIVE_MODULE(BunApp)
 {
     INIT_NATIVE_MODULE(1);
 
-    auto* zig = static_cast<Bun::GlobalObject*>(globalObject);
-    JSValue ssrResponseConstructor = zig->bakeAdditions().JSBakeResponseConstructor(zig);
+    auto* bunGlobal = static_cast<Bun::GlobalObject*>(globalObject);
+    JSValue ssrResponseConstructor = bunGlobal->bakeAdditions().JSBakeResponseConstructor(bunGlobal);
 
     put(JSC::Identifier::fromString(vm, "Response"_s), ssrResponseConstructor);
 

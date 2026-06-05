@@ -296,12 +296,12 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& persistDir,
     bool stdoutInherit, bool stderrInherit)
 {
-    auto* zig = defaultGlobalObject(g);
+    auto* bunGlobal = defaultGlobalObject(g);
     auto& c = WK::client();
-    if (!c.ensureSpawned(zig, stdoutInherit, stderrInherit)) return nullptr;
+    if (!c.ensureSpawned(bunGlobal, stdoutInherit, stderrInherit)) return nullptr;
 
-    auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
-    JSWebView* view = create(structure, zig, WTF::move(impl));
+    auto impl = WebViewEventTarget::create(*bunGlobal->scriptExecutionContext());
+    JSWebView* view = create(structure, bunGlobal, WTF::move(impl));
     view->m_viewId = c.nextViewId++;
     c.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
     c.updateKeepAlive();
@@ -328,7 +328,7 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl, bool skipAutoDetect)
 {
-    auto* zig = defaultGlobalObject(g);
+    auto* bunGlobal = defaultGlobalObject(g);
     auto& t = CDP::transport();
 
     // Transport selection, in priority order:
@@ -342,26 +342,26 @@ JSWebView* JSWebView::createChrome(JSGlobalObject* g, Structure* structure,
     // sync/instant so the constructor stays synchronous.
     bool ok;
     if (!wsUrl.isEmpty()) {
-        ok = t.ensureConnected(zig, wsUrl, /* autoDetected */ false);
+        ok = t.ensureConnected(bunGlobal, wsUrl, /* autoDetected */ false);
     } else if (skipAutoDetect || !path.isEmpty() || !extraArgv.isEmpty()) {
-        ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+        ok = t.ensureSpawned(bunGlobal, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
     } else {
         // Auto-detect. DevToolsActivePort URL caps at
         // ws://127.0.0.1:65535/devtools/browser/<36-char-uuid> ≈ 70B.
         char buf[128];
         size_t len = Bun__Chrome__autoDetect(buf, sizeof(buf));
         if (len > 0) {
-            ok = t.ensureConnected(zig,
+            ok = t.ensureConnected(bunGlobal,
                 WTF::String::fromUTF8(std::span<const char>(buf, len)),
                 /* autoDetected */ true, userDataDir, stdoutInherit, stderrInherit);
         } else {
-            ok = t.ensureSpawned(zig, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
+            ok = t.ensureSpawned(bunGlobal, userDataDir, path, extraArgv, stdoutInherit, stderrInherit);
         }
     }
     if (!ok) return nullptr;
 
-    auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
-    JSWebView* view = create(structure, zig, WTF::move(impl));
+    auto impl = WebViewEventTarget::create(*bunGlobal->scriptExecutionContext());
+    JSWebView* view = create(structure, bunGlobal, WTF::move(impl));
     view->m_backend = WebViewBackend::Chrome;
     view->m_width = width;
     view->m_height = height;

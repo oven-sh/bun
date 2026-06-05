@@ -279,7 +279,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_handshake = nullptr,
 };
 
-bool Transport::ensureSpawned(Bun::GlobalObject* zig, const WTF::String& userDataDir,
+bool Transport::ensureSpawned(Bun::GlobalObject* bunGlobal, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit)
 {
@@ -305,7 +305,7 @@ bool Transport::ensureSpawned(Bun::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
-    int32_t fd = Bun__Chrome__ensure(zig,
+    int32_t fd = Bun__Chrome__ensure(bunGlobal,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
@@ -319,7 +319,7 @@ bool Transport::ensureSpawned(Bun::GlobalObject* zig, const WTF::String& userDat
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    m_global = zig;
+    m_global = bunGlobal;
 
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
@@ -450,7 +450,7 @@ static void wsOnClose(void* ctx, unsigned short code)
     t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
-bool Transport::ensureConnected(Bun::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
+bool Transport::ensureConnected(Bun::GlobalObject* bunGlobal, const WTF::String& wsUrl, bool autoDetected,
     const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
 {
     // Already connected — singleton semantics, first call wins.
@@ -463,7 +463,7 @@ bool Transport::ensureConnected(Bun::GlobalObject* zig, const WTF::String& wsUrl
         m_rx.clear();
         m_txQueue.clear();
     }
-    m_global = zig;
+    m_global = bunGlobal;
     m_mode = TransportMode::WebSocket;
     m_wasAutoDetected = autoDetected;
     if (autoDetected) {
@@ -472,7 +472,7 @@ bool Transport::ensureConnected(Bun::GlobalObject* zig, const WTF::String& wsUrl
         m_fallbackStderrInherit = stderrInherit;
     }
 
-    auto* ctx = zig->scriptExecutionContext();
+    auto* ctx = bunGlobal->scriptExecutionContext();
     auto result = WebCore::WebSocket::create(*ctx, wsUrl);
     if (result.hasException()) {
         m_dead = true;

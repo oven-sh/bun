@@ -3961,13 +3961,6 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }
-    // Mirror WebWorker__teardownJSCVM: with a termination request set,
-    // NapiEnv::mustDeferFinalizers() returns false, so napi finalizers swept
-    // by the collectNow() below run immediately instead of being enqueued as
-    // NapiFinalizerTasks on an event loop that will never tick again (LSan
-    // reports each never-drained task allocation as a leak — flaky in
-    // test/regression/issue/30205.test.ts under BUN_DESTRUCT_VM_ON_EXIT).
-    vm.setHasTerminationRequest();
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);

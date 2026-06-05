@@ -436,10 +436,25 @@ pub mod debug {
         static STATE: bun_threading::Guarded<State> = bun_threading::Guarded::new(State::Untried);
 
         fn init() -> State {
-            // SAFETY: the literal is NUL-terminated; LoadLibraryA has no other
+            // "dbghelp.dll\0" as UTF-16. Loaded exclusively from System32
+            // (LOAD_LIBRARY_SEARCH_SYSTEM32) so a rogue dbghelp.dll earlier in
+            // the default DLL search order (CWD, application directory) cannot
+            // be injected into the crashing process.
+            const DBGHELP_W: &[u16] = &[
+                b'd' as u16, b'b' as u16, b'g' as u16, b'h' as u16, b'e' as u16,
+                b'l' as u16, b'p' as u16, b'.' as u16, b'd' as u16, b'l' as u16,
+                b'l' as u16, 0,
+            ];
+            const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+            // SAFETY: DBGHELP_W is NUL-terminated; LoadLibraryExW has no other
             // preconditions and returns null on failure.
-            let lib =
-                unsafe { bun_sys::windows::LoadLibraryA(bun_core::zstr!("dbghelp.dll").as_ptr()) };
+            let lib = unsafe {
+                bun_sys::windows::LoadLibraryExW(
+                    DBGHELP_W.as_ptr(),
+                    core::ptr::null_mut(),
+                    LOAD_LIBRARY_SEARCH_SYSTEM32,
+                )
+            };
             if lib.is_null() {
                 return State::Failed;
             }

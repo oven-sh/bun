@@ -1,6 +1,8 @@
 'use strict';
 
 const common = require('../common');
+if (common.isWindows)
+  common.skip('Bun does not support cluster shared listening sockets on Windows');
 if (!common.hasIPv6)
   common.skip('no IPv6 support');
 

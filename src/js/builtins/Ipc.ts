@@ -146,6 +146,12 @@
  * @returns {[unknown, Serialized] | null}
  */
 export function serialize(message, handle, options) {
+  if (process.platform === "win32") {
+    // Bun cannot transfer socket handles over the IPC pipe on Windows yet
+    // (the libuv write2 path is not wired up); send the message without the
+    // handle, matching the behavior before handle passing was implemented.
+    return null;
+  }
   const net = require("node:net");
   if (handle instanceof net.Server) {
     // The Listener stays alive (protected) until the fd is flushed.

@@ -2564,14 +2564,26 @@ function listenInCluster(
     ...options,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, reply) {
     if (listeningId !== server[kClusterListeningId]) {
       handle?.close();
       return;
     }
     err = checkBindError(err, port, handle);
     if (err) {
-      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      let ex;
+      if (err === -1 && typeof reply?.errcode === "string") {
+        // The primary's bind error carried no numeric errno (Windows); use
+        // the forwarded code string instead of "Unknown system error -1".
+        ex = new Error(`bind ${reply.errcode} ${address}:${port}`);
+        ex.code = reply.errcode;
+        ex.errno = err;
+        ex.syscall = "bind";
+        ex.address = address;
+        if (port) ex.port = port;
+      } else {
+        ex = new ExceptionWithHostPort(err, "bind", address, port);
+      }
       server.emit("error", ex);
       return;
     }

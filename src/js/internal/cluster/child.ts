@@ -194,12 +194,12 @@ function shared(message, { handle, indexesKey, index }, cb) {
   };
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(message.errno, handle);
+  cb(message.errno, handle, message);
 }
 
 // Round-robin. Master distributes handles across workers.
 function rr(message, { indexesKey, index }, cb) {
-  if (message.errno) return cb(message.errno, null);
+  if (message.errno) return cb(message.errno, null, message);
 
   let key = message.key;
 
@@ -308,9 +308,13 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
       // it's primary initiated there's no need to send the
       // exitedAfterDisconnect message
       if (primaryInitiated) {
-        process.disconnect();
+        // The channel can already be gone (e.g. the primary exited right
+        // after requesting the disconnect); disconnecting twice throws.
+        if (process.connected) process.disconnect();
       } else {
-        send({ act: "exitedAfterDisconnect" }, () => process.disconnect());
+        send({ act: "exitedAfterDisconnect" }, () => {
+          if (process.connected) process.disconnect();
+        });
       }
     }
   }

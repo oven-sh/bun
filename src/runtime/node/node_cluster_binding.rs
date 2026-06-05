@@ -395,10 +395,13 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
 pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
-        let _ = frame;
-        return Err(global.throw(format_args!(
-            "node:cluster shared handles are not implemented on Windows"
-        )));
+        let _ = (frame, global);
+        // Bun cannot share bound sockets between processes on Windows (no
+        // SCM_RIGHTS equivalent is wired up). Reply with ENOTSUP so the
+        // requesting worker surfaces a normal bind error instead of the
+        // primary crashing; node's dgram clustering on Windows errors the
+        // same way (its own tests skip it there).
+        return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
     }
     #[cfg(not(windows))]
     {

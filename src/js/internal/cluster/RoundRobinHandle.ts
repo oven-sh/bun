@@ -37,6 +37,13 @@ export default class RoundRobinHandle {
     // early: node's primary never reacts to EOF on a pending handle, and the
     // worker that adopts the fd still observes the EOF itself.
     this.server = net.createServer({ pauseOnConnect: true, allowHalfOpen: true }, socket => {
+      if (process.platform === "win32") {
+        // Connections cannot be handed to workers on Windows (no handle
+        // transfer over the IPC pipe yet); reset them instead of letting
+        // them queue up forever.
+        socket.destroy();
+        return;
+      }
       this.distribute(0, makeAcceptedHandle(socket));
     });
 
@@ -87,9 +94,10 @@ export default class RoundRobinHandle {
     this.server.once("error", err => {
       // Bun's listen errors carry positive platform errnos; the cluster
       // protocol (checkBindError, getSystemErrorName) expects negative
-      // uv-style values.
+      // uv-style values. Windows errors may have no numeric errno at all;
+      // forward the code string so the worker can still build a real error.
       const errno = typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1;
-      send(errno, null);
+      send(errno, errno === -1 && typeof err.code === "string" ? { errcode: err.code } : null, null);
     });
   }
 

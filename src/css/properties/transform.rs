@@ -13,11 +13,7 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// Uses `Vec` (not an arena-backed vector) so the generated `Property` enum
-// (properties_generated.rs) stays lifetime-free. Switching back to a
-// bump-allocated payload requires threading an arena lifetime through
-// `Property<'a>` and the properties codegen crate-wide; until then this is
-// intentionally heap-allocated (see also `TransformHandler` below).
+// `Vec`, not arena-backed: the generated `Property` enum is lifetime-free.
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub v: Vec<Transform>,
@@ -958,10 +954,7 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// Lifetime-free for the same reason as `TransformList` above: the generated
-// `Property` enum has no arena lifetime, so the handler's stored values are
-// plain heap allocations. If `Property<'a>` ever gains an arena lifetime,
-// this handler should hold `TransformList<'bump>` again.
+// Lifetime-free because `Property` is (see `TransformList` above).
 #[derive(Default)]
 pub struct TransformHandler {
     pub transform: Option<(TransformList, VendorPrefix)>,

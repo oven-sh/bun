@@ -408,7 +408,7 @@ bun run ./script.sh
 
 ### `file`
 
-**File loader.** Default for all unrecognized file types.
+**File loader.** Default for all unrecognized file types in the runtime. In the bundler, unrecognized file types default to the [`url`](#url) loader instead; configure `loader: { ".ext": "file" }` to always copy files with a given extension into `outdir`.
 
 The file loader resolves the import as a path/URL to the imported file. It's commonly used for referencing media or font assets.
 
@@ -442,3 +442,27 @@ If `publicPath` is set, the import uses its value as a prefix to construct an ab
 | `"https://cdn.example.com/"` | `https://cdn.example.com/logo.svg` |
 
 <Note>The location and file name of the copied file are determined by the value of `naming.asset`.</Note>
+
+### `url`
+
+**URL loader.** Default for all unrecognized file types in the bundler.
+
+Behaves like the `file` loader, with one difference: when the file is referenced from a CSS `url(...)` and is smaller than `assetInlineLimit` (128 KB by default), it is inlined into the bundled stylesheet as a base64 `data:` URI instead of being referenced by path.
+
+```css
+/* styles.css */
+body {
+  background: url("./logo.svg");
+}
+```
+
+```css
+/* Output (logo.svg is smaller than assetInlineLimit) */
+body {
+  background: url("data:image/svg+xml;base64,...");
+}
+```
+
+Files at or above the limit, and files referenced from JavaScript or HTML, are emitted like the `file` loader. Set `assetInlineLimit: 0` to disable inlining entirely, or configure `loader: { ".svg": "file" }` to always copy a given extension.
+
+In the runtime, `url` behaves the same as `file`.

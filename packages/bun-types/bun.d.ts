@@ -2714,8 +2714,8 @@ declare module "bun" {
      * or above the threshold are emitted as separate hashed files.
      *
      * Only applies to the `url` loader (the default for extensions not
-     * otherwise configured when referenced from CSS). Extensions that use
-     * the explicit `file` loader are always emitted as physical files.
+     * otherwise configured). Extensions that use the explicit `file` loader
+     * are always emitted as physical files.
      *
      * Set to `0` to disable inlining entirely.
      *

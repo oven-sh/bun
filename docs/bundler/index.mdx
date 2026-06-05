@@ -1145,6 +1145,22 @@ A map of file extensions to built-in loader names. Use this to customize how cer
   </Tab>
 </Tabs>
 
+### assetInlineLimit
+
+The maximum size, in bytes, below which assets referenced from a CSS `url(...)` are inlined into the bundled stylesheet as base64 `data:` URIs. Files at or above the threshold are copied into `outdir` as separate hashed files.
+
+This only applies to the [`url`](/bundler/loaders#url) loader, which is the default for extensions without a configured loader. Extensions mapped to the `file` loader are always emitted as physical files. Set to `0` to disable inlining entirely.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  assetInlineLimit: 4096, // inline CSS assets smaller than 4 KB
+});
+```
+
+The default is `131072` (128 KB).
+
 ### banner
 
 A banner added to the final bundle. This can be a directive like `"use client"` for React, or a comment block such as a license.
@@ -1684,6 +1700,7 @@ interface BuildConfig {
   publicPath?: string;
   define?: Record<string, string>;
   loader?: { [k in string]: Loader };
+  assetInlineLimit?: number; // default 131072 (128 KB)
   sourcemap?: "none" | "linked" | "inline" | "external" | boolean; // default: "none", true -> "inline"
   /**
    * package.json `exports` conditions used when resolving imports

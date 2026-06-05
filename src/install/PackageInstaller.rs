@@ -1559,7 +1559,25 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let needs_install = self.force_install
+        // Initial pass only; a fetch that already completed this run leaves a
+        // fresh cache to install from instead of re-enqueueing.
+        let force_refresh_tarball = needs_verify
+            && !is_pending_package_install
+            && self
+                .manager_mut()
+                .should_refresh_tarball(dependency_id, resolution.tag)
+            && {
+                let url = match resolution.tag {
+                    resolution::Tag::RemoteTarball => {
+                        resolution.remote_tarball().slice(string_buf!())
+                    }
+                    _ => resolution.local_tarball().slice(string_buf!()),
+                };
+                !self.manager_mut().tarball_fetch_drained_this_run(url)
+            };
+
+        let needs_install = force_refresh_tarball
+            || self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
@@ -1571,6 +1589,7 @@ impl<'a> PackageInstaller<'a> {
                     self.manager_mut(),
                     package_id,
                     resolution.tag,
+                    force_refresh_tarball,
                 )
             {
                 debug_assert!(resolution.can_enqueue_install_task());

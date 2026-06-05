@@ -21,9 +21,11 @@ use crate::lifecycle_script_runner::{
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
+use crate::package_manager_real::options::OfflineMode;
+use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{DependencyID, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -465,6 +467,52 @@ impl PackageManager {
         }
 
         set
+    }
+
+    /// Whether `dependency_id` was named on the command line
+    /// (`bun add` / `bun install <pkg-or-url>` / `bun update <pkg>`) and is in
+    /// the command's update scope, the same test the resolve phase applies.
+    pub fn dependency_is_update_request(&self, dependency_id: DependencyID) -> bool {
+        if self.update_requests.is_empty() {
+            return false;
+        }
+        // `dependency_id` may be `invalid_dependency_id` (a root entry).
+        let Some(dep) = self
+            .lockfile
+            .buffers
+            .dependencies
+            .get(dependency_id as usize)
+        else {
+            return false;
+        };
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        self.update_requests
+            .iter()
+            .any(|request| request.matches(dep, string_buf))
+            && crate::update_scope::UpdateScope::of(self)
+                .contains_dependency(&self.lockfile, dependency_id)
+    }
+
+    /// Whether a URL/local tarball dependency should be re-fetched this run.
+    /// Its cache key is the URL/path, not the content, so new bytes hide behind
+    /// the same key. Requires `--force` or the dependency named on the command
+    /// line, a lockfile that can record the new hash, and network access.
+    pub fn should_refresh_tarball(&self, dependency_id: DependencyID, tag: ResolutionTag) -> bool {
+        tag.is_tarball_cache_keyed_by_url()
+            && !self.options.enable.frozen_lockfile()
+            && self.options.offline != OfflineMode::Offline
+            && (self.options.enable.force_install()
+                || self.dependency_is_update_request(dependency_id))
+    }
+
+    /// Whether a fetch for this tarball already completed this run. Extract
+    /// success takes the task's callback list but keeps the key, so an empty
+    /// list means done; a non-empty list is still in flight and a new enqueue
+    /// should join it.
+    pub fn tarball_fetch_drained_this_run(&self, url: &[u8]) -> bool {
+        self.task_queue
+            .get(&PmTask::Id::for_tarball(url))
+            .is_some_and(|callbacks| callbacks.is_empty())
     }
 }
 

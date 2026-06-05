@@ -2256,8 +2256,14 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
+        force_refresh_tarball: bool,
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
+        // A URL/local tarball's cache key is its URL/path, not its content, so a
+        // requested refresh must re-fetch. `Done` means this run already did.
+        if force_refresh_tarball && state != crate::PreinstallState::Done {
+            return true;
+        }
         match state {
             crate::PreinstallState::Done => false,
             _ => {

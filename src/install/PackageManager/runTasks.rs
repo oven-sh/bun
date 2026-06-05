@@ -9,6 +9,7 @@ use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
 use crate::extract_tarball;
+use crate::integrity::Integrity;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
@@ -1203,6 +1204,36 @@ fn run_tasks_erased(
                 bun_core::analytics::Features::extracted_packages_inc();
 
                 if cb.has_on_extract {
+                    // A refreshed tarball's integrity was recomputed from the new
+                    // bytes; persist it over the stale lockfile pin. (The resolve
+                    // phase records it via `process_extracted_tarball_package`.)
+                    if package_id != INVALID_PACKAGE_ID
+                        && manager.should_refresh_tarball(dependency_id, resolution.tag)
+                    {
+                        let new_integrity = task.data_extract().integrity;
+                        if new_integrity.tag.is_supported() {
+                            let meta = &mut manager.lockfile.packages.items_meta_mut()
+                                [package_id as usize];
+                            let old_integrity = meta.integrity;
+                            if old_integrity.tag.is_supported()
+                                && bun_core::bytes_of(&old_integrity)
+                                    != bun_core::bytes_of(&new_integrity)
+                            {
+                                bun_core::warn!(
+                                    "{} changed since it was last installed; updating its integrity in the lockfile (was {}, now {})",
+                                    bstr::BStr::new(alias),
+                                    old_integrity,
+                                    new_integrity,
+                                );
+                            }
+                            meta.integrity = new_integrity;
+                            manager
+                                .options
+                                .enable
+                                .set(Enable::FORCE_SAVE_LOCKFILE, true);
+                        }
+                    }
+
                     if cb.is_package_installer {
                         cb.package_installer(extract_ctx)
                             .fix_cached_lockfile_package_slices();
@@ -2064,6 +2095,13 @@ pub fn generate_network_task_for_tarball<'a>(
     // so the task's drop never closes them.
     let cache_dir = directories::get_cache_directory(this);
     let temp_dir = directories::get_temporary_directory(this).handle.fd();
+    // A refreshed tarball may have new bytes; drop the pinned integrity so
+    // `ExtractTarball::run` recomputes it instead of rejecting them.
+    let integrity = if this.should_refresh_tarball(dependency_id, package.resolution.tag) {
+        Integrity::default()
+    } else {
+        package.meta.integrity
+    };
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
     // back-pointer.
@@ -2105,7 +2143,7 @@ pub fn generate_network_task_for_tarball<'a>(
         dependency_id,
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
-        integrity: package.meta.integrity,
+        integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,
             &mut crate::network_task::filename_store_appender(),

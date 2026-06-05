@@ -2217,7 +2217,17 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
+                    // A global-store entry is keyed by the integrity the lockfile
+                    // held before this run, so a refreshed tarball would be
+                    // published under the old key that other projects link to;
+                    // those entries keep the cached extraction.
+                    let refresh_tarball = !uses_global_store
+                        && installer
+                            .manager()
+                            .should_refresh_tarball(dep_id, pkg_res_tag);
+
                     let needs_install = installer.manager().options.enable.force_install()
+                        || refresh_tarball
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2368,21 +2378,38 @@ pub(crate) fn install_isolated_packages(
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
-                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
-                    {
-                        install::PreinstallState::Done => false,
-                        _ => {
-                            let exists = package_manager::directories::is_package_in_cache_at(
-                                cache_dir,
-                                cache_subpath_z,
-                                pkg_res_tag,
-                            );
-                            if exists {
-                                installer
-                                    .manager_mut()
-                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                    let preinstall_state = installer.manager().get_preinstall_state(pkg_id);
+                    // A fetch that already completed this run (`Done`, or a drained
+                    // task) leaves a fresh cache to install from instead of
+                    // re-enqueueing. Mirrors `PackageInstall::package_missing_from_cache`.
+                    let force_refresh_tarball =
+                        refresh_tarball && preinstall_state != install::PreinstallState::Done && {
+                            let url = if pkg_res_tag == ResolutionTag::RemoteTarball {
+                                pkg_res.remote_tarball().slice(string_buf)
+                            } else {
+                                pkg_res.local_tarball().slice(string_buf)
+                            };
+                            !installer.manager().tarball_fetch_drained_this_run(url)
+                        };
+                    let missing_from_cache = if force_refresh_tarball {
+                        true
+                    } else {
+                        match preinstall_state {
+                            install::PreinstallState::Done => false,
+                            _ => {
+                                let exists = package_manager::directories::is_package_in_cache_at(
+                                    cache_dir,
+                                    cache_subpath_z,
+                                    pkg_res_tag,
+                                );
+                                if exists {
+                                    installer.manager_mut().set_preinstall_state(
+                                        pkg_id,
+                                        install::PreinstallState::Done,
+                                    );
+                                }
+                                !exists
                             }
-                            !exists
                         }
                     };
 

@@ -1547,8 +1547,11 @@ pub struct Log {
     /// that came from transient buffers (e.g. native-plugin C strings): a
     /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
     /// lifetime-erased borrow into the just-pushed box. The borrow is valid
-    /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
-    /// growth. See PORTING.md §Allocators (arena pattern).
+    /// until the next [`Log::reset`]/[`Log::clear_and_free`] (which clear
+    /// this vector) or until the `Log` drops; `Box<[u8]>` is heap-stable
+    /// across `Vec` growth, and every `dupe` result lives in `self.msgs`,
+    /// which those methods clear first. See PORTING.md §Allocators (arena
+    /// pattern).
     pub owned_strings: Vec<Box<[u8]>>,
 
     /// Incremental line/column scanner for the messages this log creates, so
@@ -1581,18 +1584,24 @@ impl Default for Log {
 impl Log {
     /// Copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The
-    /// returned slice is valid for as long as `self` lives (the box is never
-    /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
-    /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
-    /// when the `Log` drops.
+    /// returned slice is valid until the next [`Log::reset`] or
+    /// [`Log::clear_and_free`] (which clear `owned_strings`), or until the
+    /// `Log` drops; `'static` is a lifetime erasure matching the `Str` alias
+    /// used by `Location`/`Msg`. Sound because every `dupe` result is only
+    /// ever stored in `self.msgs`, which those methods clear in the same
+    /// call before releasing the backing boxes. NOT a leak — the bytes free
+    /// on clear or drop.
     pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
         if s.is_empty() {
             return b"";
         }
         let boxed: Box<[u8]> = Box::from(s);
-        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
-        // and never removed; its heap allocation is stable across the `Vec`'s
-        // growth, so the returned slice is valid for the life of `self`.
+        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`,
+        // whose boxes stay alive until `reset()`/`clear_and_free()` clear it or
+        // the `Log` drops; its heap allocation is stable across the `Vec`'s
+        // growth. The returned slice is only stored in `self.msgs`, which those
+        // methods clear before releasing the boxes, so it never outlives its
+        // backing storage.
         let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
         self.owned_strings.push(boxed);
         view

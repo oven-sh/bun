@@ -350,7 +350,7 @@ test("parse error with a note survives recycled source buffers", async () => {
   await using proc = Bun.spawn([bunExe(), "./bad.js"], {
     env: bunEnv,
     cwd: fixturePath,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     stdin: "ignore",
   });

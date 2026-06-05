@@ -34,13 +34,13 @@ extern "C" {
 
 // macOS only: load the CEF framework before any other call.
 // Returns 1 on success. No-op (returns 1) on other platforms.
-BE_EXPORT int be_load_library(const char* framework_path);
+BE_EXPORT int be_load_library(const char *framework_path);
 
 // Initialize CEF. kv keys: subprocess_path, resources_dir, locales_dir,
 // cache_dir, framework_dir (mac), external_pump (0/1), log_file,
 // log_severity, remote_debugging_port, switch (repeatable, e.g. disable-gpu).
 // Returns 0 on success, non-zero CEF exit code style error otherwise.
-BE_EXPORT int be_init(const char* kv);
+BE_EXPORT int be_init(const char *kv);
 
 // Returns the read end of the event-notification pipe, or -1 when
 // unavailable (Windows): fall back to timer polling.
@@ -48,15 +48,16 @@ BE_EXPORT int be_get_event_fd(void);
 
 // Drain all pending events. Returns a malloc'd JSON array string (possibly
 // "[]"), or NULL when nothing is pending. Free with be_free().
-BE_EXPORT char* be_poll_events(void);
-BE_EXPORT void be_free(char* p);
+BE_EXPORT char *be_poll_events(void);
+BE_EXPORT void be_free(char *p);
 
 // Create a window. Returns the new window id (>0) immediately; the actual
 // CEF window is created asynchronously on the UI thread and a
 // "window-created" event fires when ready. kv keys: url, title, width,
 // height, x, y, show, resizable, frameless, fullscreen, always_on_top,
-// min_width, min_height, max_width, max_height, background_color (AARRGGBB hex).
-BE_EXPORT int32_t be_window_create(const char* kv);
+// min_width, min_height, max_width, max_height, background_color (AARRGGBB
+// hex).
+BE_EXPORT int32_t be_window_create(const char *kv);
 
 // Generic window command. cmd is one of: show, hide, close, destroy, focus,
 // minimize, maximize, restore, center, set_title, set_bounds (kv arg:
@@ -64,25 +65,27 @@ BE_EXPORT int32_t be_window_create(const char* kv);
 // set_always_on_top (arg "1"/"0"), load_url (arg url), open_devtools,
 // close_devtools, reload, stop, go_back, go_forward, set_zoom (arg level).
 // arg may be NULL.
-BE_EXPORT void be_window_command(int32_t id, const char* cmd, const char* arg);
+BE_EXPORT void be_window_command(int32_t id, const char *cmd, const char *arg);
 
 // Synchronous window state from the shim-side cache (updated on UI-thread
 // events). Returns malloc'd JSON object {x,y,width,height,visible,focused,
 // minimized,maximized,fullscreen,title,url} or NULL if no such window.
-BE_EXPORT char* be_window_get_state(int32_t id);
+BE_EXPORT char *be_window_get_state(int32_t id);
 
 // Execute JavaScript in the window's main frame. If eval_id > 0 the result
 // round-trips through the renderer and an {"type":"eval-result","evalId":N,
 // "result":...,"isError":bool} event fires; with eval_id == 0 it's
 // fire-and-forget.
-BE_EXPORT void be_window_eval_js(int32_t id, const char* code, int32_t eval_id);
+BE_EXPORT void be_window_eval_js(int32_t id, const char *code, int32_t eval_id);
 
 // Send an IPC message to the window's renderer (ipcRenderer.on receives it).
 // args_json must be a JSON array string.
-BE_EXPORT void be_ipc_send(int32_t id, const char* channel, const char* args_json);
+BE_EXPORT void be_ipc_send(int32_t id, const char *channel,
+                           const char *args_json);
 
 // Reply to an ipcRenderer.invoke() call.
-BE_EXPORT void be_ipc_reply(int32_t id, int32_t invoke_id, const char* result_json, int32_t is_error);
+BE_EXPORT void be_ipc_reply(int32_t id, int32_t invoke_id,
+                            const char *result_json, int32_t is_error);
 
 // macOS external pump: perform one unit of message-loop work.
 BE_EXPORT void be_do_message_loop_work(void);
@@ -95,10 +98,10 @@ BE_EXPORT void be_quit(void);
 BE_EXPORT void be_shutdown(void);
 
 // Version string of the shim + underlying CEF, malloc'd; free with be_free.
-BE_EXPORT char* be_version(void);
+BE_EXPORT char *be_version(void);
 
 #ifdef __cplusplus
-}  // extern "C"
+} // extern "C"
 #endif
 
-#endif  // BUN_ELECTRON_SHIM_H
+#endif // BUN_ELECTRON_SHIM_H

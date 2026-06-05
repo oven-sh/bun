@@ -42,7 +42,7 @@ console.log("invoke-sum:", sum);
 let reply = null;
 for (let i = 0; i < 100 && !reply; i++) {
   reply = await win.webContents.executeJavaScript("window.__gotReply ?? null");
-  if (!reply) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!reply) await new Promise(resolve => setTimeout(resolve, 50));
 }
 console.log("reply:", reply);
 

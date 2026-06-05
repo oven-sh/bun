@@ -4,20 +4,20 @@
 //   bun scripts/build.ts [--debug] [--cef-root=/path/to/cef]
 
 import { existsSync } from "node:fs";
-import { cp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
+import { chmod, cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fetchCef, cefRoot } from "./fetch-cef";
+import { cefRoot, fetchCef } from "./fetch-cef";
 
 const PKG_ROOT = path.join(import.meta.dir, "..");
 const NATIVE_DIR = path.join(PKG_ROOT, "native");
 
 const debug = process.argv.includes("--debug");
-const cefRootArg = process.argv.find((a) => a.startsWith("--cef-root="))?.slice("--cef-root=".length);
+const cefRootArg = process.argv.find(a => a.startsWith("--cef-root="))?.slice("--cef-root=".length);
 
 function run(cmd: string[], cwd?: string): Promise<void> {
   console.log(`$ ${cmd.join(" ")}`);
   const proc = Bun.spawn({ cmd, cwd, stdout: "inherit", stderr: "inherit" });
-  return proc.exited.then((code) => {
+  return proc.exited.then(code => {
     if (code !== 0) throw new Error(`${cmd[0]} exited with code ${code}`);
   });
 }
@@ -27,8 +27,7 @@ async function hasCommand(name: string): Promise<boolean> {
 }
 
 function distDir(): string {
-  const platform =
-    process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
+  const platform = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   return path.join(PKG_ROOT, "dist", `${platform}-${arch}`);
 }
@@ -111,13 +110,8 @@ async function main() {
       const name = `bun-electron Helper${variant}`;
       const appDir = path.join(dist, `${name}.app`, "Contents");
       await mkdir(path.join(appDir, "MacOS"), { recursive: true });
-      const idSuffix = variant
-        ? `.helper.${variant.replace(/[ ()]/g, "").toLowerCase()}`
-        : ".helper";
-      await writeFile(
-        path.join(appDir, "Info.plist"),
-        macHelperPlist(name, `com.bun.bun-electron${idSuffix}`),
-      );
+      const idSuffix = variant ? `.helper.${variant.replace(/[ ()]/g, "").toLowerCase()}` : ".helper";
+      await writeFile(path.join(appDir, "Info.plist"), macHelperPlist(name, `com.bun.bun-electron${idSuffix}`));
       await cp(helperSrc, path.join(appDir, "MacOS", name));
       await chmod(path.join(appDir, "MacOS", name), 0o755);
     }

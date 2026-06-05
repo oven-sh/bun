@@ -141,9 +141,7 @@ export class BrowserWindow extends EventEmitter {
       fullscreen: options.fullscreen,
       always_on_top: options.alwaysOnTop,
       frameless: options.frame === false ? true : undefined,
-      background_color: options.backgroundColor
-        ? parseBackgroundColor(options.backgroundColor)
-        : undefined,
+      background_color: options.backgroundColor ? parseBackgroundColor(options.backgroundColor) : undefined,
     });
     if (this.id < 0) {
       throw new Error("Failed to create BrowserWindow (CEF not initialized)");
@@ -333,13 +331,18 @@ export class BrowserWindow extends EventEmitter {
         this.webContents.emit("dom-ready");
         break;
       case "did-fail-load": {
-        const err = new Error(
-          `${ev.errorText} (${ev.errorCode}) loading '${ev.url}'`,
-        ) as Error & { errno: unknown; code: string };
+        const err = new Error(`${ev.errorText} (${ev.errorCode}) loading '${ev.url}'`) as Error & {
+          errno: unknown;
+          code: string;
+        };
         err.errno = ev.errorCode;
         err.code = String(ev.errorText);
         for (const { reject } of this._loadResolvers.splice(0)) reject(err);
-        this.webContents.emit("did-fail-load", { errorCode: ev.errorCode, errorDescription: ev.errorText, validatedURL: ev.url });
+        this.webContents.emit("did-fail-load", {
+          errorCode: ev.errorCode,
+          errorDescription: ev.errorText,
+          validatedURL: ev.url,
+        });
         break;
       }
       case "loading-state":

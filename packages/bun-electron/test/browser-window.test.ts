@@ -1,9 +1,9 @@
 // Ported from Electron's spec/api-browser-window-spec.ts (subset).
 // Test names follow the originals where the behavior carries over.
 
-import { describe, test, expect, beforeAll } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
-import { app, BrowserWindow, createWindow, closeWindow, dataURL, ensureReady } from "./harness.ts";
+import { BrowserWindow, createWindow, dataURL, ensureReady } from "./harness.ts";
 
 beforeAll(async () => {
   await ensureReady();
@@ -64,9 +64,7 @@ describe("BrowserWindow module", () => {
       const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
       const port = server.port;
       server.stop(true);
-      await expect(w.loadURL(`http://127.0.0.1:${port}/`)).rejects.toThrow(
-        /ERR_CONNECTION_REFUSED/,
-      );
+      await expect(w.loadURL(`http://127.0.0.1:${port}/`)).rejects.toThrow(/ERR_CONNECTION_REFUSED/);
     });
   });
 
@@ -176,6 +174,6 @@ async function waitFor(cond: () => boolean, timeoutMs = 10_000): Promise<void> {
   const start = Date.now();
   while (!cond()) {
     if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
 }

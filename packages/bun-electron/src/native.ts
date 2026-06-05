@@ -1,7 +1,7 @@
 // FFI bridge to the bun-electron native shim (native/shim.h) plus the
 // native->JS event pump.
 
-import { dlopen, FFIType, CString, suffix } from "bun:ffi";
+import { CString, dlopen, FFIType, suffix } from "bun:ffi";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
@@ -15,22 +15,14 @@ const PKG_ROOT = path.join(import.meta.dir, "..");
 
 export function distDir(): string {
   if (process.env.BUN_ELECTRON_DIST) return process.env.BUN_ELECTRON_DIST;
-  const platform =
-    process.platform === "darwin"
-      ? "macos"
-      : process.platform === "win32"
-        ? "windows"
-        : "linux";
+  const platform = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   return path.join(PKG_ROOT, "dist", `${platform}-${arch}`);
 }
 
 function shimPath(): string {
   const dir = distDir();
-  const name =
-    process.platform === "win32"
-      ? "bun_electron_shim.dll"
-      : `libbun_electron_shim.${suffix}`;
+  const name = process.platform === "win32" ? "bun_electron_shim.dll" : `libbun_electron_shim.${suffix}`;
   const p = path.join(dir, name);
   if (!existsSync(p)) {
     throw new Error(
@@ -147,7 +139,7 @@ export function pollAndDispatch(): void {
       }, delay);
     }
   }
-  const visible = events.filter((e) => e.type !== "pump-schedule");
+  const visible = events.filter(e => e.type !== "pump-schedule");
   if (visible.length && eventHandler) eventHandler(visible);
 }
 

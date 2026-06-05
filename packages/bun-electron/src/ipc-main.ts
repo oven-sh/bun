@@ -1,8 +1,8 @@
 // ipcMain — Electron-compatible main-process IPC endpoint.
 
 import { EventEmitter } from "node:events";
-import * as native from "./native";
 import { windowById, type BrowserWindow, type WebContents } from "./browser-window";
+import * as native from "./native";
 
 export interface IpcMainEvent {
   sender: WebContents;
@@ -72,19 +72,14 @@ export function routeIpcEvent(ev: native.NativeEvent): void {
     const channel = String(ev.channel);
     const entry = ipcMain._getHandler(channel);
     if (!entry) {
-      native.ipcReply(
-        win.id,
-        invokeId,
-        JSON.stringify({ message: `No handler registered for '${channel}'` }),
-        true,
-      );
+      native.ipcReply(win.id, invokeId, JSON.stringify({ message: `No handler registered for '${channel}'` }), true);
       return;
     }
     if (entry.once) ipcMain.removeHandler(channel);
     Promise.resolve()
       .then(() => entry.fn(makeEvent(win), ...args))
       .then(
-        (result) => {
+        result => {
           const json = JSON.stringify(result);
           native.ipcReply(win.id, invokeId, json === undefined ? "null" : json, false);
         },

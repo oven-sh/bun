@@ -1,7 +1,7 @@
 // Ported from Electron's spec/api-web-contents-spec.ts
 // (executeJavaScript + navigation subset).
 
-import { describe, test, expect, beforeAll } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import { createWindow, dataURL, ensureReady } from "./harness.ts";
 
@@ -32,34 +32,26 @@ describe("webContents module", () => {
     test("rejects the returned promise if an async error is thrown", async () => {
       const w = createWindow();
       await w.loadURL(dataURL("<body></body>"));
-      await expect(
-        w.webContents.executeJavaScript(`Promise.reject(new Error('boom'))`),
-      ).rejects.toThrow("boom");
+      await expect(w.webContents.executeJavaScript(`Promise.reject(new Error('boom'))`)).rejects.toThrow("boom");
     });
 
     test("rejects the returned promise if the code throws synchronously", async () => {
       const w = createWindow();
       await w.loadURL(dataURL("<body></body>"));
-      await expect(
-        w.webContents.executeJavaScript(`throw new Error('sync boom')`),
-      ).rejects.toThrow("sync boom");
+      await expect(w.webContents.executeJavaScript(`throw new Error('sync boom')`)).rejects.toThrow("sync boom");
     });
 
     test("can return objects and arrays", async () => {
       const w = createWindow();
       await w.loadURL(dataURL("<body></body>"));
-      const result = await w.webContents.executeJavaScript(
-        `({ list: [1, 2, 3], ok: true, s: "str" })`,
-      );
+      const result = await w.webContents.executeJavaScript(`({ list: [1, 2, 3], ok: true, s: "str" })`);
       expect(result).toEqual({ list: [1, 2, 3], ok: true, s: "str" });
     });
 
     test("can use the DOM", async () => {
       const w = createWindow();
       await w.loadURL(dataURL(`<body><div id="x">from-dom</div></body>`));
-      const result = await w.webContents.executeJavaScript(
-        `document.getElementById("x").textContent`,
-      );
+      const result = await w.webContents.executeJavaScript(`document.getElementById("x").textContent`);
       expect(result).toBe("from-dom");
     });
   });

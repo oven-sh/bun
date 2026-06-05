@@ -45,11 +45,7 @@ export function dataURL(html: string): string {
 }
 
 /** Polls an executeJavaScript expression until it returns a truthy value. */
-export async function waitForJS(
-  win: BrowserWindow,
-  expression: string,
-  timeoutMs = 10_000,
-): Promise<unknown> {
+export async function waitForJS(win: BrowserWindow, expression: string, timeoutMs = 10_000): Promise<unknown> {
   const start = Date.now();
   for (;;) {
     const value = await win.webContents.executeJavaScript(expression);
@@ -57,7 +53,7 @@ export async function waitForJS(
     if (Date.now() - start > timeoutMs) {
       throw new Error(`timed out waiting for: ${expression}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
 

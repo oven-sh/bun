@@ -16,11 +16,11 @@ await win.loadURL("https://bun.com");
 
 ## Status
 
-| Platform        | Build | Runtime | Tests |
-| --------------- | ----- | ------- | ----- |
-| Linux x64/arm64 | ✅    | ✅      | ✅ 42 ported Electron tests passing |
-| macOS x64/arm64 | ✅ (untested) | needs verification | — |
-| Windows x64     | ✅ (untested) | needs verification | — |
+| Platform        | Build         | Runtime            | Tests                               |
+| --------------- | ------------- | ------------------ | ----------------------------------- |
+| Linux x64/arm64 | ✅            | ✅                 | ✅ 42 ported Electron tests passing |
+| macOS x64/arm64 | ✅ (untested) | needs verification | —                                   |
+| Windows x64     | ✅ (untested) | needs verification | —                                   |
 
 The Linux build runs the full ported test suite (subsets of Electron's
 `api-browser-window-spec`, `api-web-contents-spec`, `api-ipc-main-spec`, and
@@ -123,8 +123,8 @@ Implemented (Electron-compatible subset):
   `window-all-closed` (with Electron's default-quit semantics),
   `before-quit`, `will-quit`, `quit`.
 - `BrowserWindow`: constructor options (`width/height/x/y/show/title/
-  resizable/minimizable/maximizable/fullscreen/alwaysOnTop/frame/
-  backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
+resizable/minimizable/maximizable/fullscreen/alwaysOnTop/frame/
+backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
   failed loads), `close`/`destroy`/`show`/`hide`/`focus`/`minimize`/
   `maximize`/`restore`/`center`, `setTitle`/`getTitle`,
   bounds/size/position get+set, `isVisible`/`isMinimized`/`isMaximized`/

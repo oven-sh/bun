@@ -3,10 +3,7 @@
 export const CEF_VERSION = "148.0.9+g0d9d52a+chromium-148.0.7778.180";
 export const CEF_CDN = "https://cef-builds.spotifycdn.com";
 
-export function cefPlatform(
-  platform: NodeJS.Platform = process.platform,
-  arch: string = process.arch,
-): string {
+export function cefPlatform(platform: NodeJS.Platform = process.platform, arch: string = process.arch): string {
   const is64 = arch === "x64";
   const isArm = arch === "arm64";
   switch (platform) {

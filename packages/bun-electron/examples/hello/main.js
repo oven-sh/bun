@@ -1,5 +1,5 @@
-import { app, BrowserWindow } from "../../src/index.ts";
 import path from "node:path";
+import { app, BrowserWindow } from "../../src/index.ts";
 
 await app.whenReady();
 

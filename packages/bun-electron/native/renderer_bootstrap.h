@@ -147,4 +147,4 @@ static const char kRendererBootstrapJs[] = R"BEJS(
 })();
 )BEJS";
 
-#endif  // BUN_ELECTRON_RENDERER_BOOTSTRAP_H
+#endif // BUN_ELECTRON_RENDERER_BOOTSTRAP_H

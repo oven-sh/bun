@@ -1,9 +1,9 @@
 // The `app` module — Electron-compatible application lifecycle.
 
 import { EventEmitter } from "node:events";
-import * as native from "./native";
 import { BrowserWindow, routeWindowEvent } from "./browser-window";
 import { routeIpcEvent } from "./ipc-main";
+import * as native from "./native";
 
 class CommandLine {
   readonly switches: string[] = [];
@@ -13,11 +13,11 @@ class CommandLine {
   }
 
   hasSwitch(key: string): boolean {
-    return this.switches.some((s) => s === key || s.startsWith(`${key}=`));
+    return this.switches.some(s => s === key || s.startsWith(`${key}=`));
   }
 
   getSwitchValue(key: string): string {
-    const hit = this.switches.find((s) => s.startsWith(`${key}=`));
+    const hit = this.switches.find(s => s.startsWith(`${key}=`));
     return hit ? hit.slice(key.length + 1) : "";
   }
 }
@@ -34,7 +34,7 @@ class App extends EventEmitter {
 
   constructor() {
     super();
-    this._readyPromise = new Promise((resolve) => {
+    this._readyPromise = new Promise(resolve => {
       this._readyResolve = resolve;
     });
   }
@@ -122,7 +122,7 @@ class App extends EventEmitter {
     if (this._started) return;
     this._started = true;
 
-    native.setEventHandler((events) => {
+    native.setEventHandler(events => {
       for (const ev of events) this._dispatch(ev);
     });
 

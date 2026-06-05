@@ -2,7 +2,7 @@
 // Lifecycle tests spawn a fresh bun process per scenario, since quitting
 // tears down the process's only CEF instance.
 
-import { describe, test, expect, beforeAll } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { app, ensureReady } from "./harness.ts";
 

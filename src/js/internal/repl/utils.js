@@ -3,7 +3,7 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-'use strict';
+("use strict");
 
 const {
   ArrayPrototypeFilter,
@@ -25,42 +25,25 @@ const {
   Symbol,
 } = primordials;
 
-const { tokTypes: tt, Parser: AcornParser } =
-  require("internal/repl/acorn");
+const { tokTypes: tt, Parser: AcornParser } = require("internal/repl/acorn");
 
 const { sendInspectorCommand } = require("internal/repl/node-shims");
 
-const {
-  ERR_INSPECTOR_NOT_AVAILABLE,
-} = require("internal/repl/node-errors").codes;
+const { ERR_INSPECTOR_NOT_AVAILABLE } = require("internal/repl/node-errors").codes;
 
-const {
-  clearLine,
-  clearScreenDown,
-  cursorTo,
-  moveCursor,
-} = require("internal/readline/callbacks");
+const { clearLine, clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
-const {
-  kIsMultiline,
-  kSetLine,
-} = require("internal/readline/interface");
+const { kIsMultiline, kSetLine } = require("internal/readline/interface");
 
-const {
-  commonPrefix,
-  kSubstringSearch,
-} = require("internal/readline/utils");
+const { commonPrefix, kSubstringSearch } = require("internal/readline/utils");
 
-const {
-  getStringWidth,
-  inspect,
-} = require("internal/repl/node-inspect");
+const { getStringWidth, inspect } = require("internal/repl/node-inspect");
 
 const CJSModule = require("internal/repl/node-shims").Module;
 
 const vm = require("node:vm");
 
-let debug = require("internal/repl/node-shims").debuglog('repl', (fn) => {
+let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
   debug = fn;
 });
 
@@ -70,7 +53,7 @@ const previewOptions = {
   showHidden: false,
 };
 
-const REPL_MODE_STRICT = Symbol('repl-strict');
+const REPL_MODE_STRICT = Symbol("repl-strict");
 
 // If the error is that we've unexpectedly ended the input,
 // then let the user try to recover by adding more input.
@@ -81,9 +64,7 @@ function isRecoverableError(e, code) {
   // curly brace with parenthesis.  Note: only the open parenthesis is added
   // here as the point is to test for potentially valid but incomplete
   // expressions.
-  if (RegExpPrototypeExec(/^\s*\{/, code) !== null &&
-      isRecoverableError(e, `(${code}`))
-    return true;
+  if (RegExpPrototypeExec(/^\s*\{/, code) !== null && isRecoverableError(e, `(${code}`)) return true;
 
   let recoverable = false;
 
@@ -103,42 +84,36 @@ function isRecoverableError(e, code) {
   //       change these messages in the future, this will lead to a test
   //       failure, indicating that this code needs to be updated.
   //
-  const RecoverableParser = AcornParser
-    .extend(
-      (Parser) => {
-        return class extends Parser {
-          nextToken() {
-            super.nextToken();
-            if (this.type === tt.eof)
-              recoverable = true;
-          }
-          raise(pos, message) {
-            switch (message) {
-              case 'Unterminated template':
-              case 'Unterminated comment':
-                recoverable = true;
-                break;
+  const RecoverableParser = AcornParser.extend(Parser => {
+    return class extends Parser {
+      nextToken() {
+        super.nextToken();
+        if (this.type === tt.eof) recoverable = true;
+      }
+      raise(pos, message) {
+        switch (message) {
+          case "Unterminated template":
+          case "Unterminated comment":
+            recoverable = true;
+            break;
 
-              case 'Unterminated string constant': {
-                const token = StringPrototypeSlice(this.input,
-                                                   this.lastTokStart, this.pos);
-                // See https://www.ecma-international.org/ecma-262/#sec-line-terminators
-                if (RegExpPrototypeExec(/\\(?:\r\n?|\n|\u2028|\u2029)$/,
-                                        token) !== null) {
-                  recoverable = true;
-                }
-              }
+          case "Unterminated string constant": {
+            const token = StringPrototypeSlice(this.input, this.lastTokStart, this.pos);
+            // See https://www.ecma-international.org/ecma-262/#sec-line-terminators
+            if (RegExpPrototypeExec(/\\(?:\r\n?|\n|\u2028|\u2029)$/, token) !== null) {
+              recoverable = true;
             }
-            super.raise(pos, message);
           }
-        };
-      },
-    );
+        }
+        super.raise(pos, message);
+      }
+    };
+  });
 
   // Try to parse the code with acorn.  If the parse fails, ignore the acorn
   // error and return the recoverable status.
   try {
-    RecoverableParser.parse(code, { ecmaVersion: 'latest' });
+    RecoverableParser.parse(code, { ecmaVersion: "latest" });
 
     // Odd case: the underlying JS engine (V8, Chakra) rejected this input
     // but Acorn detected no issue.  Presume that additional text won't
@@ -151,7 +126,7 @@ function isRecoverableError(e, code) {
 
 function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   // Simple terminals can't handle previews.
-  if (process.env.TERM === 'dumb' || !active) {
+  if (process.env.TERM === "dumb" || !active) {
     return { showPreview() {}, clearPreview() {} };
   }
 
@@ -168,19 +143,16 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
   function getPreviewPos() {
     const displayPos = repl._getDisplayPos(`${repl.getPrompt()}${repl.line}`);
-    const cursorPos = repl.line.length !== repl.cursor ?
-      repl.getCursorPos() :
-      displayPos;
+    const cursorPos = repl.line.length !== repl.cursor ? repl.getCursorPos() : displayPos;
     return { displayPos, cursorPos };
   }
 
   function isCursorAtInputEnd() {
     const { cursorPos, displayPos } = getPreviewPos();
-    return cursorPos.rows === displayPos.rows &&
-           cursorPos.cols === displayPos.cols;
+    return cursorPos.rows === displayPos.rows && cursorPos.cols === displayPos.cols;
   }
 
-  const clearPreview = (key) => {
+  const clearPreview = key => {
     if (inputPreview !== null) {
       const { displayPos, cursorPos } = getPreviewPos();
       const rows = displayPos.rows - cursorPos.rows + 1;
@@ -213,14 +185,16 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
         moveCursor(repl.output, 0, -rows);
       }
       if (!key.ctrl && !key.shift) {
-        if (key.name === 'escape') {
+        if (key.name === "escape") {
           if (escaped === null && key.meta) {
             escaped = repl.line;
           }
-        } else if ((key.name === 'return' || key.name === 'enter') &&
-                   !key.meta &&
-                   escaped !== repl.line &&
-                   isCursorAtInputEnd()) {
+        } else if (
+          (key.name === "return" || key.name === "enter") &&
+          !key.meta &&
+          escaped !== repl.line &&
+          isCursorAtInputEnd()
+        ) {
           repl._insertString(completionPreview);
         }
       }
@@ -243,7 +217,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
       }
 
       if (error) {
-        debug('Error while generating completion preview', error);
+        debug("Error while generating completion preview", error);
         return;
       }
 
@@ -274,9 +248,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
       completionPreview = suffix;
 
-      const result = repl.useColors ?
-        `\u001b[90m${suffix}\u001b[39m` :
-        ` // ${suffix}`;
+      const result = repl.useColors ? `\u001b[90m${suffix}\u001b[39m` : ` // ${suffix}`;
 
       const { cursorPos, displayPos } = getPreviewPos();
       if (repl.line.length !== repl.cursor) {
@@ -293,97 +265,107 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   }
 
   function isInStrictMode(repl) {
-    return repl.replMode === REPL_MODE_STRICT || ArrayPrototypeIncludes(
-      ArrayPrototypeMap(process.execArgv,
-                        (e) => StringPrototypeReplaceAll(
-                          StringPrototypeToLowerCase(e),
-                          '_',
-                          '-',
-                        )),
-      '--use-strict');
+    return (
+      repl.replMode === REPL_MODE_STRICT ||
+      ArrayPrototypeIncludes(
+        ArrayPrototypeMap(process.execArgv, e => StringPrototypeReplaceAll(StringPrototypeToLowerCase(e), "_", "-")),
+        "--use-strict",
+      )
+    );
   }
 
   // This returns a code preview for arbitrary input code.
   function getInputPreview(input, callback) {
     // For similar reasons as `defaultEval`, wrap expressions starting with a
     // curly brace with parenthesis.
-    if (!wrapped && input[0] === '{' && input[input.length - 1] !== ';' && isValidSyntax(input)) {
+    if (!wrapped && input[0] === "{" && input[input.length - 1] !== ";" && isValidSyntax(input)) {
       input = `(${input})`;
       wrapped = true;
     }
-    sendInspectorCommand((session) => {
-      session.post('Runtime.evaluate', {
-        expression: input,
-        throwOnSideEffect: true,
-        timeout: 333,
-        contextId: repl[contextSymbol],
-      }, (error, preview) => {
-        if (error) {
-          callback(error);
-          return;
-        }
-        const { result } = preview;
-        if (result.value !== undefined) {
-          callback(null, inspect(result.value, previewOptions));
-        // Ignore EvalErrors, SyntaxErrors and ReferenceErrors. It is not clear
-        // where they came from and if they are recoverable or not. Other errors
-        // may be inspected.
-        } else if (preview.exceptionDetails &&
-                   (result.className === 'EvalError' ||
-                    result.className === 'SyntaxError' ||
-                    // Report ReferenceError in case the strict mode is active
-                    // for input that has no completions.
-                    (result.className === 'ReferenceError' &&
-                     (hasCompletions || !isInStrictMode(repl))))) {
-          callback(null, null);
-        } else if (result.objectId) {
-          // The writer options might change and have influence on the inspect
-          // output. The user might change e.g., `showProxy`, `getters` or
-          // `showHidden`. Use `inspect` instead of `JSON.stringify` to keep
-          // `Infinity` and similar intact.
-          const inspectOptions = inspect({
-            ...repl.writer.options,
-            colors: false,
-            depth: 1,
-            compact: true,
-            breakLength: Infinity,
-          }, previewOptions);
-          session.post('Runtime.callFunctionOn', {
-            functionDeclaration:
-              `(v) =>
+    sendInspectorCommand(
+      session => {
+        session.post(
+          "Runtime.evaluate",
+          {
+            expression: input,
+            throwOnSideEffect: true,
+            timeout: 333,
+            contextId: repl[contextSymbol],
+          },
+          (error, preview) => {
+            if (error) {
+              callback(error);
+              return;
+            }
+            const { result } = preview;
+            if (result.value !== undefined) {
+              callback(null, inspect(result.value, previewOptions));
+              // Ignore EvalErrors, SyntaxErrors and ReferenceErrors. It is not clear
+              // where they came from and if they are recoverable or not. Other errors
+              // may be inspected.
+            } else if (
+              preview.exceptionDetails &&
+              (result.className === "EvalError" ||
+                result.className === "SyntaxError" ||
+                // Report ReferenceError in case the strict mode is active
+                // for input that has no completions.
+                (result.className === "ReferenceError" && (hasCompletions || !isInStrictMode(repl))))
+            ) {
+              callback(null, null);
+            } else if (result.objectId) {
+              // The writer options might change and have influence on the inspect
+              // output. The user might change e.g., `showProxy`, `getters` or
+              // `showHidden`. Use `inspect` instead of `JSON.stringify` to keep
+              // `Infinity` and similar intact.
+              const inspectOptions = inspect(
+                {
+                  ...repl.writer.options,
+                  colors: false,
+                  depth: 1,
+                  compact: true,
+                  breakLength: Infinity,
+                },
+                previewOptions,
+              );
+              session.post(
+                "Runtime.callFunctionOn",
+                {
+                  functionDeclaration: `(v) =>
                     Reflect
                     .getOwnPropertyDescriptor(globalThis, 'util')
                     .get().inspect(v, ${inspectOptions})`,
-            objectId: result.objectId,
-            arguments: [result],
-          }, (error, preview) => {
-            if (error) {
-              callback(error);
+                  objectId: result.objectId,
+                  arguments: [result],
+                },
+                (error, preview) => {
+                  if (error) {
+                    callback(error);
+                  } else {
+                    callback(null, preview.result.value);
+                  }
+                },
+              );
             } else {
-              callback(null, preview.result.value);
+              // Either not serializable or undefined.
+              callback(null, result.unserializableValue || result.type);
             }
-          });
-        } else {
-          // Either not serializable or undefined.
-          callback(null, result.unserializableValue || result.type);
-        }
-      });
-    }, () => callback(new ERR_INSPECTOR_NOT_AVAILABLE()));
+          },
+        );
+      },
+      () => callback(new ERR_INSPECTOR_NOT_AVAILABLE()),
+    );
   }
 
   const showPreview = (showCompletion = true) => {
     // Prevent duplicated previews after a refresh or in a multiline command.
-    if (inputPreview !== null ||
-        repl[kIsMultiline] ||
-        !repl.isCompletionEnabled ||
-        !process.features.inspector) {
+    if (inputPreview !== null || repl[kIsMultiline] || !repl.isCompletionEnabled || !process.features.inspector) {
       return;
     }
 
     const line = StringPrototypeTrim(repl.line);
 
     // Do not preview in case the line only contains whitespace.
-    if (line === '') {
+    if (line === "") {
       return;
     }
 
@@ -413,13 +395,12 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
       }
 
       if (error) {
-        debug('Error while generating preview', error);
+        debug("Error while generating preview", error);
         return;
       }
       // Do not preview `undefined` if colors are deactivated or explicitly
       // requested.
-      if (inspected === 'undefined' &&
-          (!repl.useColors || repl.ignoreUndefined)) {
+      if (inspected === "undefined" && (!repl.useColors || repl.ignoreUndefined)) {
         return;
       }
 
@@ -432,14 +413,12 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
       // Support unicode characters of width other than one by checking the
       // actual width.
-      if (inspected.length * 2 >= maxColumns &&
-          getStringWidth(inspected) > maxColumns) {
+      if (inspected.length * 2 >= maxColumns && getStringWidth(inspected) > maxColumns) {
         maxColumns -= 4 + (repl.useColors ? 0 : 3);
-        let res = '';
+        let res = "";
         for (const char of new SafeStringIterator(inspected)) {
           maxColumns -= getStringWidth(char);
-          if (maxColumns < 0)
-            break;
+          if (maxColumns < 0) break;
           res += char;
         }
         inspected = `${res}...`;
@@ -452,9 +431,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
         inspected = `${StringPrototypeSlice(inspected, 0, lineBreakMatch.index)}`;
       }
 
-      const result = repl.useColors ?
-        `\u001b[90m${inspected}\u001b[39m` :
-        `// ${inspected}`;
+      const result = repl.useColors ? `\u001b[90m${inspected}\u001b[39m` : `// ${inspected}`;
 
       const { cursorPos, displayPos } = getPreviewPos();
       const rows = displayPos.rows - cursorPos.rows;
@@ -471,9 +448,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
     let previewLine = line;
 
-    if (completionPreview !== null &&
-        isCursorAtInputEnd() &&
-        escaped !== repl.line) {
+    if (completionPreview !== null && isCursorAtInputEnd() && escaped !== repl.line) {
       previewLine += completionPreview;
     }
 
@@ -503,12 +478,10 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   // Insert the longest common suffix of the current input in case the user
   // moves to the right while already being at the current input end.
   const originalMoveCursor = FunctionPrototypeBind(repl._moveCursor, repl);
-  repl._moveCursor = (dx) => {
+  repl._moveCursor = dx => {
     const currentCursor = repl.cursor;
     originalMoveCursor(dx);
-    if (currentCursor + dx > repl.line.length &&
-        typeof repl.completer === 'function' &&
-        insertCompletionPreview) {
+    if (currentCursor + dx > repl.line.length && typeof repl.completer === "function" && insertCompletionPreview) {
       const insertPreview = true;
       showCompletionPreview(repl.line, insertPreview);
     }
@@ -528,20 +501,24 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
 function setupReverseSearch(repl) {
   // Simple terminals can't use reverse search.
-  if (process.env.TERM === 'dumb') {
-    return { reverseSearch() { return false; } };
+  if (process.env.TERM === "dumb") {
+    return {
+      reverseSearch() {
+        return false;
+      },
+    };
   }
 
   const alreadyMatched = new SafeSet();
   const labels = {
-    r: 'bck-i-search: ',
-    s: 'fwd-i-search: ',
+    r: "bck-i-search: ",
+    s: "fwd-i-search: ",
   };
   let isInReverseSearch = false;
   let historyIndex = -1;
-  let input = '';
+  let input = "";
   let cursor = -1;
-  let dir = 'r';
+  let dir = "r";
   let lastMatch = -1;
   let lastCursor = -1;
   let promptPos;
@@ -563,18 +540,18 @@ function setupReverseSearch(repl) {
     // Ignore this entry for further searches and continue to the next
     // history entry.
     alreadyMatched.add(repl.history[historyIndex]);
-    historyIndex += dir === 'r' ? 1 : -1;
+    historyIndex += dir === "r" ? 1 : -1;
     cursor = -1;
   }
 
   function search() {
     // Just print an empty line in case the user removed the search parameter.
-    if (input === '') {
+    if (input === "") {
       print(repl.line, `${labels[dir]}_`);
       return;
     }
     // Fix the bounds in case the direction has changed in the meanwhile.
-    if (dir === 'r') {
+    if (dir === "r") {
       if (historyIndex < 0) {
         historyIndex = 0;
       }
@@ -586,12 +563,12 @@ function setupReverseSearch(repl) {
       let entry = repl.history[historyIndex];
       // Visualize all potential matches only once.
       if (alreadyMatched.has(entry)) {
-        historyIndex += dir === 'r' ? 1 : -1;
+        historyIndex += dir === "r" ? 1 : -1;
         continue;
       }
       // Match the next entry either from the start or from the end, depending
       // on the current direction.
-      if (dir === 'r') {
+      if (dir === "r") {
         // Update the cursor in case it's necessary.
         if (cursor === -1) {
           cursor = entry.length;
@@ -603,7 +580,7 @@ function setupReverseSearch(repl) {
       // Match not found.
       if (cursor === -1) {
         goToNextHistoryIndex();
-      // Match found.
+        // Match found.
       } else {
         if (repl.useColors) {
           const start = StringPrototypeSlice(entry, 0, cursor);
@@ -615,8 +592,7 @@ function setupReverseSearch(repl) {
         lastCursor = cursor;
         // Explicitly go to the next history item in case no further matches are
         // possible with the current entry.
-        if ((dir === 'r' && cursor === 0) ||
-            (dir === 's' && entry.length === cursor + input.length)) {
+        if ((dir === "r" && cursor === 0) || (dir === "s" && entry.length === cursor + input.length)) {
           goToNextHistoryIndex();
         }
         return;
@@ -653,12 +629,11 @@ function setupReverseSearch(repl) {
       const line = StringPrototypeSlice(repl.history[lastMatch], 0, lastCursor);
       rows = repl._getDisplayPos(`${repl.getPrompt()}${line}`).rows;
       cursorTo(repl.output, promptPos.cols);
-    } else if (isInReverseSearch && repl.line !== '') {
+    } else if (isInReverseSearch && repl.line !== "") {
       rows = repl.getCursorPos().rows;
       cursorTo(repl.output, promptPos.cols);
     }
-    if (rows !== 0)
-      moveCursor(repl.output, 0, -rows);
+    if (rows !== 0) moveCursor(repl.output, 0, -rows);
 
     if (isInReverseSearch) {
       clearScreenDown(repl.output);
@@ -702,7 +677,7 @@ function setupReverseSearch(repl) {
       cursorTo(repl.output, promptPos.cols);
       moveCursor(repl.output, 0, promptPos.rows);
       clearScreenDown(repl.output);
-      if (repl.line !== '') {
+      if (repl.line !== "") {
         repl.output.write(repl.line);
         if (repl.line.length !== repl.cursor) {
           const { cols, rows } = repl.getCursorPos();
@@ -712,7 +687,7 @@ function setupReverseSearch(repl) {
       }
     }
 
-    input = string || '';
+    input = string || "";
     cursor = -1;
     historyIndex = repl.historyIndex;
     alreadyMatched.clear();
@@ -728,26 +703,27 @@ function setupReverseSearch(repl) {
       }
     } else if (key.ctrl && checkAndSetDirectionKey(key.name)) {
       search();
-    } else if (key.name === 'backspace' ||
-        (key.ctrl && (key.name === 'h' || key.name === 'w'))) {
+    } else if (key.name === "backspace" || (key.ctrl && (key.name === "h" || key.name === "w"))) {
       reset(StringPrototypeSlice(input, 0, input.length - 1));
       search();
       // Special handle <ctrl> + c and escape. Those should only cancel the
       // reverse search. The original line is visible afterwards again.
-    } else if ((key.ctrl && key.name === 'c') || key.name === 'escape') {
+    } else if ((key.ctrl && key.name === "c") || key.name === "escape") {
       lastMatch = -1;
       reset();
       return true;
       // End search in case either enter is pressed or if any non-reverse-search
       // key (combination) is pressed.
-    } else if (key.ctrl ||
-               key.meta ||
-               key.name === 'return' ||
-               key.name === 'enter' ||
-               typeof string !== 'string' ||
-               string === '') {
+    } else if (
+      key.ctrl ||
+      key.meta ||
+      key.name === "return" ||
+      key.name === "enter" ||
+      typeof string !== "string" ||
+      string === ""
+    ) {
       reset();
-      repl[kSubstringSearch] = '';
+      repl[kSubstringSearch] = "";
     } else {
       reset(`${input}${string}`);
       search();
@@ -763,14 +739,14 @@ const endsWithSemicolonRegExp = /;\s*$/;
 function isValidSyntax(input) {
   try {
     AcornParser.parse(input, {
-      ecmaVersion: 'latest',
+      ecmaVersion: "latest",
       allowAwaitOutsideFunction: true,
     });
     return true;
   } catch {
     try {
       AcornParser.parse(`_=${input}`, {
-        ecmaVersion: 'latest',
+        ecmaVersion: "latest",
         allowAwaitOutsideFunction: true,
       });
       return true;
@@ -789,24 +765,26 @@ function isValidSyntax(input) {
  * @returns {boolean} true if the code represents an object literal, false otherwise
  */
 function isObjectLiteral(code) {
-  return RegExpPrototypeExec(startsWithBraceRegExp, code) !== null &&
-    RegExpPrototypeExec(endsWithSemicolonRegExp, code) === null;
+  return (
+    RegExpPrototypeExec(startsWithBraceRegExp, code) !== null &&
+    RegExpPrototypeExec(endsWithSemicolonRegExp, code) === null
+  );
 }
 
-const kContextId = Symbol('contextId');
+const kContextId = Symbol("contextId");
 
 const path = require("node:path");
 
 function fixReplRequire(replModule) {
   try {
     // Hack for require.resolve("./relative") to work properly.
-    replModule.filename = path.resolve('repl');
+    replModule.filename = path.resolve("repl");
   } catch {
     // path.resolve('repl') fails when the current working directory has been
     // deleted.  Fall back to the directory name of the (absolute) executable
     // path.  It's not really correct but what are the alternatives?
     const dirname = path.dirname(process.execPath);
-    replModule.filename = path.resolve(dirname, 'repl');
+    replModule.filename = path.resolve(dirname, "repl");
   }
 
   // Hack for repl require to work properly with node_modules folders
@@ -820,12 +798,11 @@ function getREPLResourceName() {
   return `REPL${nextREPLResourceNumber++}`;
 }
 
-const globalBuiltins =
-  new SafeSet(vm.runInNewContext('Object.getOwnPropertyNames(globalThis)'));
+const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
 let _builtinLibs = ArrayPrototypeFilter(
   CJSModule.builtinModules,
-  (e) => e[0] !== '_' && !StringPrototypeStartsWith(e, 'node:'),
+  e => e[0] !== "_" && !StringPrototypeStartsWith(e, "node:"),
 );
 
 // Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and
@@ -843,10 +820,10 @@ function setReplBuiltinLibs(value) {
 }
 
 __node_module__.exports = {
-  REPL_MODE_SLOPPY: Symbol('repl-sloppy'),
+  REPL_MODE_SLOPPY: Symbol("repl-sloppy"),
   REPL_MODE_STRICT,
   isRecoverableError,
-  kStandaloneREPL: Symbol('kStandaloneREPL'),
+  kStandaloneREPL: Symbol("kStandaloneREPL"),
   setupPreview,
   setupReverseSearch,
   isObjectLiteral,

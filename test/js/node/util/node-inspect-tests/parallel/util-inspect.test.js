@@ -1879,9 +1879,10 @@ test("no assertion failures 3", () => {
     Object.setPrototypeOf(foo, null);
     assert(
       util.inspect(foo).startsWith(
-        // TODO: null prototypes
-        // `[${name}: null prototype] [WOW]${message ? `: ${message}` : '\n'}`
-        "[Object: null prototype] [WOW] {",
+        // Upstream expects `[${name}: null prototype] [WOW]...`; JSC reports
+        // the generic Error brand for null-prototype errors rather than the
+        // subclass name.
+        `[Error: null prototype] [WOW]${message ? `: ${message}` : ""}`,
       ),
       util.inspect(foo),
     );
@@ -1892,28 +1893,24 @@ test("no assertion failures 3", () => {
       tmp.startsWith(
         // TODO: null prototypes
         // `[${name}: null prototype]${message ? `: ${message}` : '\n'}`),
-        "[Error: null prototype] {",
+        "[Error: null prototype]",
       ) && tmp.includes("bar: true"),
       tmp,
     );
     foo.stack = "This is a stack";
     tmp = util.inspect(foo);
     assert(
-      tmp.startsWith(
-        // TODO: null prototypes
-        // '[[Error: null prototype]: This is a stack] { bar: true }'
-        "[Error: null prototype] {",
-      ) && tmp.includes("bar: true"),
+      // Restored to upstream: errors with a null prototype now format as
+      // errors, so the overridden stack renders bracketed like Node's.
+      tmp.startsWith("[[Error: null prototype]: This is a stack]") && tmp.includes("bar: true"),
       tmp,
     );
     foo.stack = stack.split("\n")[0];
     tmp = util.inspect(foo);
     assert(
-      tmp.startsWith(
-        // TODO: null prototypes
-        // `[[${name}: null prototype]${message ? `:\n    ${message}` : ''}] { bar: true }`
-        "[Error: null prototype] {",
-      ) && tmp.includes("bar: true"),
+      // Bracketed error-form like upstream; JSC reports the generic Error
+      // brand and keeps the truncated stack on one line.
+      tmp.startsWith("[[Error: null prototype]") && tmp.includes("bar: true"),
       tmp,
     );
   });

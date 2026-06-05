@@ -121,13 +121,9 @@ describe("bun --if-present", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/31877
-// `bun run --if-present <name>` must only run a package.json script, matching
-// npm. A missing script that happens to share a name with a binary on $PATH or
-// in node_modules/.bin must not be executed; `--if-present` exits 0 instead.
 describe("bun run --if-present does not fall back to a same-named binary", () => {
+  // `test` is /usr/bin/test on POSIX; with no args it exits 1.
   test.skipIf(!isPosix)("does not run a system $PATH binary", () => {
-    // `test` is /usr/bin/test on POSIX; with no args it exits 1. Before the
-    // fix, `bun run --if-present test` executed it and exited 1.
     const dir = tempDirWithFiles("if-present-path", {
       "package.json": JSON.stringify({ name: "no-scripts" }),
     });
@@ -161,8 +157,7 @@ describe("bun run --if-present does not fall back to a same-named binary", () =>
     expect(exitCode).toBe(0);
   });
 
-  // The fix is scoped to --if-present: without it, the node_modules/.bin entry
-  // must still run, so a test that deletes the `if_present` guard fails here.
+  // Control: the fix is scoped to --if-present, so without it the binary runs.
   test.skipIf(!isPosix)("without --if-present, the node_modules/.bin binary still runs", () => {
     const dir = tempDirWithFiles("if-present-bin-control", {
       "package.json": JSON.stringify({ name: "no-scripts" }),
@@ -180,7 +175,6 @@ describe("bun run --if-present does not fall back to a same-named binary", () =>
     expect(exitCode).toBe(3);
   });
 
-  // A present script must still run even though --if-present is set.
   test("still runs a present script", () => {
     const dir = tempDirWithFiles("if-present-present", {
       "package.json": JSON.stringify({ name: "has-script", scripts: { test: "echo SCRIPT_RAN" } }),

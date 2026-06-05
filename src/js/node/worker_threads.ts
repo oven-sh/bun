@@ -246,13 +246,22 @@ let resourceLimits = {};
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 
+// Captured stdio rides a dedicated MessageChannel per stream with node's flow
+// control (lib/internal/worker/io.js): the writer posts an array of chunks
+// (STDIO_PAYLOAD) and withholds the writev callback until the reader posts an
+// ack (STDIO_WANTS_MORE_DATA) from _read(). One batch is in flight at a time;
+// further writes buffer in the Writable, so write() returns false and 'drain'
+// fires only when the consumer catches up — end-to-end backpressure. Since
+// each stream has its own port (node multiplexes one env port), the payload is
+// the bare chunk array, EOF is null, and any other message is the ack.
+
 // Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
-// process.stdin in the worker). The peer posts Buffers; null signals EOF.
+// process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
 function makePortReadable(port) {
   let attached = false;
   let ended = false;
-  function onMessage(chunk) {
-    if (chunk === null) {
+  function onMessage(payload) {
+    if (payload === null) {
       if (ended === false) {
         ended = true;
         stream.push(null);
@@ -261,7 +270,9 @@ function makePortReadable(port) {
       // open once the stream has ended.
       port.off("message", onMessage);
     } else if (ended === false) {
-      stream.push(Buffer.from(chunk));
+      for (let i = 0; i < payload.length; i++) {
+        stream.push(Buffer.from(payload[i]));
+      }
     }
   }
   // Attach the 'message' listener lazily on first read(): a listener refs the event
@@ -272,6 +283,9 @@ function makePortReadable(port) {
         attached = true;
         port.on("message", onMessage);
       }
+      // Tell the writer we want more data; it completes its in-flight writev
+      // on receipt (node's STDIO_WANTS_MORE_DATA).
+      if (ended === false) port.postMessage(true);
     },
   });
   // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
@@ -290,10 +304,39 @@ function makePortReadable(port) {
 // Writable that forwards chunks over a control MessagePort (worker.stdin on the
 // parent, process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port) {
-  return new Writable({
-    write(chunk, encoding, cb) {
-      port.postMessage(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk);
+  // Reader-side acks complete the in-flight writev. The listener refs the
+  // event loop; release that immediately — the port is re-ref'd only while a
+  // batch is awaiting its ack, so unflushed data keeps the writer alive
+  // (node's kWaitingStreams) but an idle stream never pins the loop.
+  let pendingWriteCallback: (() => void) | null = null;
+  function onAck() {
+    const cb = pendingWriteCallback;
+    if (cb !== null) {
+      pendingWriteCallback = null;
+      port.unref();
       cb();
+    }
+  }
+  port.on("message", onAck);
+  port.unref();
+  return new Writable({
+    decodeStrings: false,
+    writev(chunks, cb) {
+      const payload = new Array(chunks.length);
+      for (let i = 0; i < chunks.length; i++) {
+        const { chunk, encoding } = chunks[i];
+        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      }
+      port.postMessage(payload);
+      if (process._exiting) {
+        // No event loop turns remain to deliver an ack; complete synchronously
+        // so exit-time writes are not lost (node does the same).
+        cb();
+      } else {
+        // Only one writev is in flight at a time, so the slot can't be occupied.
+        pendingWriteCallback = cb;
+        port.ref();
+      }
     },
     final(cb) {
       port.postMessage(null);

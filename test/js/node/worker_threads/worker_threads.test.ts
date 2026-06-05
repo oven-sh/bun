@@ -303,6 +303,76 @@ test("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
 });
 
+describe("captured stdio backpressure", () => {
+  // node flow control (lib/internal/worker/io.js): a writev batch's callback is
+  // withheld until the reader acks (STDIO_WANTS_MORE_DATA), so 'drain' must not
+  // fire while the parent is not consuming worker.stdout.
+  test("stdout write completion is withheld until the parent reads", async () => {
+    const worker = new Worker(
+      `
+      const { parentPort } = require("worker_threads");
+      let drained = false;
+      process.stdout.write(Buffer.alloc(1 << 20, 0x61));
+      process.stdout.once("drain", () => {
+        drained = true;
+        // EOF so the parent can observe the byte count deterministically.
+        process.stdout.end();
+        parentPort.postMessage("drained");
+      });
+      parentPort.on("message", () => parentPort.postMessage({ drained }));
+      `,
+      { eval: true, stdout: true },
+    );
+    let onMessage: ((m: any) => void) | undefined;
+    worker.on("message", m => onMessage?.(m));
+    const nextMessage = () => new Promise(resolve => (onMessage = resolve));
+
+    // Round-trip through the message port: by the time the worker answers it
+    // has run its pending ticks, so a synchronous write completion (the old
+    // no-flow-control behavior) would already have emitted 'drain'.
+    let reply = nextMessage();
+    worker.postMessage("check");
+    expect(await reply).toEqual({ drained: false });
+
+    // Start consuming: the reader ack releases the in-flight writev -> 'drain'.
+    reply = nextMessage();
+    let received = 0;
+    const ended = new Promise(resolve => worker.stdout.on("end", resolve));
+    worker.stdout.on("data", chunk => (received += chunk.length));
+    expect(await reply).toBe("drained");
+    await ended;
+    expect(received).toBe(1 << 20);
+    await worker.terminate();
+  });
+
+  test("large stdout survives writev batching and repeated acks", async () => {
+    // Mixed string/Buffer writes; while one batch awaits its ack the rest queue
+    // in the Writable and flush as multi-chunk writev batches.
+    const worker = new Worker(
+      `
+      const chunk = "x".repeat(8 * 1024);
+      let i = 0;
+      (function writeMore() {
+        while (i < 128) {
+          i++;
+          const ok = i % 2 ? process.stdout.write(chunk) : process.stdout.write(Buffer.from(chunk));
+          if (!ok) {
+            process.stdout.once("drain", writeMore);
+            return;
+          }
+        }
+        process.stdout.end();
+      })();
+      `,
+      { eval: true, stdout: true },
+    );
+    let received = 0;
+    for await (const data of worker.stdout) received += data.length;
+    expect(received).toBe(128 * 8 * 1024);
+    await worker.terminate();
+  });
+});
+
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();

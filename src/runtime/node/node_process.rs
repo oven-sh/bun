@@ -89,7 +89,7 @@ pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
         let timer = &(*state).timer;
         let mut n_timeouts = 0usize;
         let mut n_immediates = 0usize;
-        for &address in timer.live_timer_internals.iter() {
+        for &address in timer.live_timer_internals.keys() {
             let internals = &*(address as *const crate::timer::TimerObjectInternals);
             if internals.get_destroyed() {
                 continue;

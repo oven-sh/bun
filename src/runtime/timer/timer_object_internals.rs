@@ -308,7 +308,7 @@ impl TimerObjectInternals {
             (*state)
                 .timer
                 .live_timer_internals
-                .insert(self as *const Self as usize);
+                .insert(std::ptr::from_ref(self) as usize, ());
         }
 
         if kind == Kind::SetImmediate {
@@ -1026,7 +1026,7 @@ impl TimerObjectInternals {
                 (*state)
                     .timer
                     .live_timer_internals
-                    .remove(&(self as *const Self as usize));
+                    .remove(&(std::ptr::from_ref(self) as usize));
             }
         }
         self.this_value.with_mut(|r| r.finalize());

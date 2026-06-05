@@ -4,6 +4,8 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as native from "./native";
+import { NativeImage } from "./native-image";
+import { encodeArgs } from "./serialize";
 
 export interface BrowserWindowOptions {
   width?: number;
@@ -29,22 +31,7 @@ export interface BrowserWindowOptions {
   };
 }
 
-/** Minimal stand-in for Electron's NativeImage. */
-export class NativeImage {
-  constructor(private readonly png: Buffer) {}
-
-  toPNG(): Buffer {
-    return this.png;
-  }
-
-  isEmpty(): boolean {
-    return this.png.length === 0;
-  }
-
-  static createEmpty(): NativeImage {
-    return new NativeImage(Buffer.alloc(0));
-  }
-}
+export { NativeImage };
 
 interface Rectangle {
   x: number;
@@ -59,6 +46,8 @@ const pendingEvals = new Map<number, { resolve: (v: unknown) => void; reject: (e
 let nextCaptureId = 1;
 const pendingCaptures = new Map<number, { resolve: (v: NativeImage) => void; reject: (e: Error) => void }>();
 let nextCssKey = 1;
+let nextFileDialogId = 1;
+const pendingFileDialogs = new Map<number, (result: { canceled: boolean; filePaths: string[] }) => void>();
 
 // "#rrggbb" / "#aarrggbb" -> CEF cef_color_t hex (AARRGGBB).
 function parseBackgroundColor(color: string): string | undefined {
@@ -78,7 +67,7 @@ export class WebContents extends EventEmitter {
   }
 
   send(channel: string, ...args: unknown[]): void {
-    native.ipcSend(this.win.id, channel, JSON.stringify(args));
+    native.ipcSend(this.win.id, channel, encodeArgs(args));
   }
 
   /** Inserts CSS into the page; resolves with a key for removeInsertedCSS. */
@@ -383,6 +372,35 @@ export class BrowserWindow extends EventEmitter {
     return this.webContents.capturePage();
   }
 
+  /** Sets the window (and taskbar/dock) icon from a NativeImage or PNG path. */
+  setIcon(icon: NativeImage | string): void {
+    const image = typeof icon === "string" ? NativeImage.createFromPath(icon) : icon;
+    if (image.isEmpty()) throw new TypeError("Failed to load image from path or buffer");
+    this._command("set_icon", image.toPNG().toString("base64"));
+  }
+
+  /** @internal Backs dialog.showOpenDialog/showSaveDialog. */
+  _runFileDialog(
+    mode: "open" | "open-multiple" | "open-folder" | "save",
+    options: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }>; properties?: string[] },
+  ): Promise<{ canceled: boolean; filePaths: string[] }> {
+    let resolvedMode: string = mode;
+    if (options.properties?.includes("multiSelections")) resolvedMode = "open-multiple";
+    if (options.properties?.includes("openDirectory")) resolvedMode = "open-folder";
+    const dialogId = nextFileDialogId++;
+    return new Promise((resolve) => {
+      pendingFileDialogs.set(dialogId, resolve);
+      this._whenBrowserReady(() => {
+        native.runFileDialog(this.id, dialogId, {
+          mode: resolvedMode,
+          title: options.title,
+          default_path: options.defaultPath,
+          filter: options.filters?.map((f) => f.extensions.map((e) => `.${e}`).join(";")),
+        });
+      });
+    });
+  }
+
   setBounds(bounds: Partial<Rectangle>): void {
     this._command("set_bounds", native.encodeKV(bounds));
   }
@@ -500,6 +518,17 @@ export class BrowserWindow extends EventEmitter {
         if (ev.isLoading) this.webContents.emit("did-start-loading");
         else this.webContents.emit("did-stop-loading");
         break;
+      case "file-dialog-result": {
+        const resolve = pendingFileDialogs.get(ev.dialogId as number);
+        if (resolve) {
+          pendingFileDialogs.delete(ev.dialogId as number);
+          resolve({
+            canceled: Boolean(ev.canceled),
+            filePaths: Array.isArray(ev.paths) ? (ev.paths as string[]) : [],
+          });
+        }
+        break;
+      }
       case "capture-result": {
         const pending = pendingCaptures.get(ev.captureId as number);
         if (pending) {

@@ -3,6 +3,7 @@
 import { EventEmitter } from "node:events";
 import { windowById, type BrowserWindow, type WebContents } from "./browser-window";
 import * as native from "./native";
+import { decodeArgs, encodeValue } from "./serialize";
 
 export interface IpcMainEvent {
   sender: WebContents;
@@ -58,12 +59,39 @@ function makeEvent(win: BrowserWindow): IpcMainEvent {
 
 export function routeIpcEvent(ev: native.NativeEvent): void {
   const win = windowById(ev.windowId as number);
-  if (!win) return;
+  if (!win && ev.type !== "ipc-sync") return;
 
-  const args = Array.isArray(ev.args) ? (ev.args as unknown[]) : [];
+  const args = decodeArgs(ev.args);
 
   if (ev.type === "ipc-message") {
     ipcMain.emit(String(ev.channel), makeEvent(win), ...args);
+    return;
+  }
+
+  if (ev.type === "ipc-sync") {
+    const resourceId = ev.resourceId as number;
+    let payload: { channel?: string; args?: unknown[] } = {};
+    try {
+      payload = JSON.parse(Buffer.from(String(ev.body ?? ""), "base64").toString("utf8"));
+    } catch {}
+    const channel = String(payload.channel ?? "");
+    const syncArgs = decodeArgs(payload.args);
+    let replied = false;
+    const reply = (value: unknown) => {
+      if (replied) return;
+      replied = true;
+      const body = Buffer.from(JSON.stringify({ value: encodeValue(value) })).toString("base64");
+      native.resourceReply(resourceId, 200, "application/json", body);
+    };
+    const event = {
+      ...(win ? makeEvent(win) : { sender: undefined, senderId: 0, reply: () => {} }),
+      set returnValue(value: unknown) {
+        reply(value);
+      },
+    };
+    ipcMain.emit(channel, event, ...syncArgs);
+    // Electron returns undefined when no listener sets returnValue.
+    reply(undefined);
     return;
   }
 
@@ -80,7 +108,7 @@ export function routeIpcEvent(ev: native.NativeEvent): void {
       .then(() => entry.fn(makeEvent(win), ...args))
       .then(
         result => {
-          const json = JSON.stringify(result);
+          const json = JSON.stringify(encodeValue(result));
           native.ipcReply(win.id, invokeId, json === undefined ? "null" : json, false);
         },
         (err: unknown) => {

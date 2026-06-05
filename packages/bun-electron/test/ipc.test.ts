@@ -142,6 +142,92 @@ describe("ipc main", () => {
     });
   });
 
+  describe("ipcRenderer.sendSync", () => {
+    test("returns the value set on event.returnValue", async () => {
+      const w = await loadedWindow();
+      ipcMain.on("sync-get", (event, key) => {
+        (event as { returnValue?: unknown }).returnValue = { got: key, n: 42 };
+      });
+      const result = await w.webContents.executeJavaScript(
+        `ipcRenderer.sendSync("sync-get", "config")`,
+      );
+      ipcMain.removeAllListeners("sync-get");
+      expect(result).toEqual({ got: "config", n: 42 });
+    });
+
+    test("returns undefined when no listener sets returnValue", async () => {
+      const w = await loadedWindow();
+      const result = await w.webContents.executeJavaScript(
+        `typeof ipcRenderer.sendSync("sync-nobody")`,
+      );
+      expect(result).toBe("undefined");
+    });
+  });
+
+  describe("structured-clone argument types", () => {
+    test("Dates, Maps, Sets, and typed arrays survive renderer -> main", async () => {
+      const w = await loadedWindow();
+      const received = new Promise<unknown[]>((resolve) => {
+        ipcMain.once("typed", (event, ...args) => resolve(args));
+      });
+      await w.webContents.executeJavaScript(`ipcRenderer.send("typed",
+        new Date(1700000000000),
+        new Map([["k", 1]]),
+        new Set([1, 2]),
+        new Uint8Array([1, 2, 3]),
+        /ab+c/gi,
+        undefined,
+        NaN,
+      )`);
+      const [date, map, set, bytes, regexp, undef, nan] = await received;
+      expect(date).toBeInstanceOf(Date);
+      expect((date as Date).getTime()).toBe(1700000000000);
+      expect(map).toBeInstanceOf(Map);
+      expect((map as Map<string, number>).get("k")).toBe(1);
+      expect(set).toBeInstanceOf(Set);
+      expect((set as Set<number>).has(2)).toBe(true);
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect([...(bytes as Uint8Array)]).toEqual([1, 2, 3]);
+      expect(regexp).toBeInstanceOf(RegExp);
+      expect((regexp as RegExp).source).toBe("ab+c");
+      expect(undef).toBeUndefined();
+      expect(Number.isNaN(nan)).toBe(true);
+    });
+
+    test("invoke results round-trip rich types main -> renderer", async () => {
+      const w = await loadedWindow();
+      ipcMain.handle("rich", () => ({
+        when: new Date(1700000000000),
+        tags: new Set(["a"]),
+        bytes: new Uint8Array([9, 8]),
+      }));
+      const checks = await w.webContents.executeJavaScript(`(async () => {
+        const r = await ipcRenderer.invoke("rich");
+        return [
+          r.when instanceof Date && r.when.getTime() === 1700000000000,
+          r.tags instanceof Set && r.tags.has("a"),
+          r.bytes instanceof Uint8Array && r.bytes[0] === 9,
+        ];
+      })()`);
+      ipcMain.removeHandler("rich");
+      expect(checks).toEqual([true, true, true]);
+    });
+
+    test("main -> renderer webContents.send carries rich types", async () => {
+      const w = await loadedWindow();
+      await w.webContents.executeJavaScript(`new Promise((resolve) => {
+        ipcRenderer.on("rich-push", (event, date, map) => {
+          window.__richOk = date instanceof Date && map instanceof Map && map.get("x") === 7;
+          resolve();
+        });
+        window.__listening = true;
+      }).catch(() => {}), void 0`);
+      w.webContents.send("rich-push", new Date(0), new Map([["x", 7]]));
+      const ok = await waitForJS(w, "window.__richOk === true || window.__richOk === false ? String(window.__richOk) : null");
+      expect(ok).toBe("true");
+    });
+  });
+
   describe("webContents.send", () => {
     test("delivers messages to ipcRenderer.on listeners", async () => {
       const w = await loadedWindow();

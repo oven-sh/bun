@@ -18,6 +18,11 @@ app.on("window-all-closed", () => {});
 // window.open() without a user gesture would otherwise be popup-blocked.
 app.commandLine.appendSwitch("disable-popup-blocking");
 
+// Custom schemes must be registered before CEF starts; the protocol tests
+// use "bunapp". Registering here guarantees it happens before ensureReady.
+import { protocol } from "../src/index.ts";
+protocol.registerSchemesAsPrivileged([{ scheme: "bunapp" }]);
+
 export async function ensureReady(): Promise<void> {
   await app.whenReady();
 }

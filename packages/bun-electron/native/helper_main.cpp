@@ -10,6 +10,8 @@
 #include <string>
 
 #include "include/cef_app.h"
+#include "include/cef_command_line.h"
+#include "include/cef_scheme.h"
 #include "include/cef_render_process_handler.h"
 #include "include/cef_v8.h"
 #include "include/wrapper/cef_helpers.h"
@@ -76,6 +78,26 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
     return this;
   }
 
+  void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
+    // Mirror the browser process's scheme registration; the list arrives on
+    // the command line (see App::OnBeforeChildProcessLaunch in shim.cpp).
+    CefRefPtr<CefCommandLine> cl = CefCommandLine::GetGlobalCommandLine();
+    std::string schemes = cl ? cl->GetSwitchValue("be-custom-schemes").ToString() : "";
+    if (schemes.empty()) schemes = "beipc";
+    const int options = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                        CEF_SCHEME_OPTION_CORS_ENABLED |
+                        CEF_SCHEME_OPTION_FETCH_ENABLED;
+    size_t start = 0;
+    while (start <= schemes.size()) {
+      size_t comma = schemes.find(',', start);
+      std::string scheme = schemes.substr(
+          start, comma == std::string::npos ? std::string::npos : comma - start);
+      if (!scheme.empty()) registrar->AddCustomScheme(scheme, options);
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+  }
+
   void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDictionaryValue> extra_info) override {
     if (extra_info && extra_info->HasKey("preload")) {
@@ -115,20 +137,17 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
                          preload_exc) &&
           preload_exc) {
         // Surface the failure as a console message (reaches the browser
-        // process via OnConsoleMessage).
-        std::string msg = preload_exc->GetMessage().ToString();
-        std::string escaped;
-        for (char c : msg) {
-          if (c == '\\' || c == '\'') escaped.push_back('\\');
-          if (c == '\n') {
-            escaped += "\\n";
-            continue;
-          }
-          escaped.push_back(c);
+        // process via OnConsoleMessage). Call console.error through the V8
+        // API — never by concatenating the message into JS source.
+        CefRefPtr<CefV8Value> console = global->GetValue("console");
+        CefRefPtr<CefV8Value> error_fn =
+            console && console->IsObject() ? console->GetValue("error") : nullptr;
+        if (error_fn && error_fn->IsFunction()) {
+          CefV8ValueList args;
+          args.push_back(CefV8Value::CreateString(
+              "preload error: " + preload_exc->GetMessage().ToString()));
+          error_fn->ExecuteFunctionWithContext(context, console, args);
         }
-        frame->ExecuteJavaScript(
-            "console.error('preload error: " + escaped + "')",
-            frame->GetURL(), 0);
       }
     }
   }

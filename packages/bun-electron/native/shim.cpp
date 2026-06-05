@@ -4,6 +4,8 @@
 #include "shim.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -17,7 +19,14 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
+#include "include/cef_cookie.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_image.h"
+#include "include/cef_request.h"
+#include "include/cef_resource_handler.h"
+#include "include/cef_response.h"
+#include "include/cef_scheme.h"
+#include "include/views/cef_display.h"
 #include "include/cef_parser.h"
 #include "include/cef_registration.h"
 #include "include/cef_values.h"
@@ -234,6 +243,7 @@ struct WindowEntry {
 
 std::mutex g_windows_mutex;
 std::map<int32_t, std::shared_ptr<WindowEntry>> g_windows;
+std::map<int, int32_t> g_browser_to_window;  // browser id -> window id
 std::atomic<int32_t> g_next_window_id{1};
 std::atomic<bool> g_external_pump{false};
 std::atomic<bool> g_initialized{false};
@@ -322,6 +332,10 @@ class Client : public CefClient,
     if (auto entry = FindWindow(window_id)) {
       entry->browser = browser;
     }
+    {
+      std::lock_guard<std::mutex> lock(g_windows_mutex);
+      g_browser_to_window[browser->GetIdentifier()] = window_id;
+    }
     EmitWindowEvent("browser-created", window_id);
   }
 
@@ -337,6 +351,8 @@ class Client : public CefClient,
     if (auto entry = FindWindow(WindowId(browser))) {
       entry->browser = nullptr;
     }
+    std::lock_guard<std::mutex> lock(g_windows_mutex);
+    g_browser_to_window.erase(browser->GetIdentifier());
   }
 
   // CefLoadHandler
@@ -852,6 +868,328 @@ void CapturePageOnUI(int32_t window_id, int32_t capture_id) {
 }
 
 // ---------------------------------------------------------------------------
+// Custom-scheme resource handling: backs ipcRenderer.sendSync (scheme
+// "beipc", sync XHR from the renderer answered asynchronously here) and the
+// protocol module (user schemes handled by JS).
+// ---------------------------------------------------------------------------
+
+std::vector<std::string> g_custom_schemes;  // user schemes from init kv
+
+std::mutex g_resources_mutex;
+std::atomic<int32_t> g_next_resource_id{1};
+
+class PendingResourceHandler;
+std::map<int32_t, CefRefPtr<PendingResourceHandler>> g_pending_resources;
+
+class PendingResourceHandler : public CefResourceHandler {
+ public:
+  PendingResourceHandler(int32_t window_id, std::string scheme, bool is_sync_ipc)
+      : window_id_(window_id), scheme_(std::move(scheme)), is_sync_ipc_(is_sync_ipc) {}
+
+  bool Open(CefRefPtr<CefRequest> request,
+            bool& handle_request,
+            CefRefPtr<CefCallback> callback) override {
+    handle_request = false;
+    callback_ = callback;
+    id_ = g_next_resource_id.fetch_add(1);
+    {
+      std::lock_guard<std::mutex> lock(g_resources_mutex);
+      g_pending_resources[id_] = this;
+    }
+
+    std::string body;
+    CefRefPtr<CefPostData> post = request->GetPostData();
+    if (post) {
+      CefPostData::ElementVector elements;
+      post->GetElements(elements);
+      for (auto& el : elements) {
+        if (el->GetType() != PDE_TYPE_BYTES) continue;
+        size_t size = el->GetBytesCount();
+        std::string chunk(size, '\0');
+        el->GetBytes(size, chunk.data());
+        body += chunk;
+      }
+    }
+
+    CefRefPtr<CefBinaryValue> body_bin;
+    std::string body_b64;
+    if (!body.empty()) {
+      body_b64 = CefBase64Encode(body.data(), body.size()).ToString();
+    }
+
+    EmitEvent(JsonObj()
+                  .AddString("type", is_sync_ipc_ ? "ipc-sync" : "protocol-request")
+                  .AddInt("windowId", window_id_)
+                  .AddInt("resourceId", id_)
+                  .AddString("scheme", scheme_)
+                  .AddString("url", request->GetURL().ToString())
+                  .AddString("method", request->GetMethod().ToString())
+                  .AddString("body", body_b64)
+                  .Build());
+    return true;
+  }
+
+  void Resolve(int status, const std::string& mime, std::string body) {
+    status_ = status;
+    mime_ = mime;
+    body_ = std::move(body);
+    if (callback_) callback_->Continue();
+  }
+
+  void GetResponseHeaders(CefRefPtr<CefResponse> response,
+                          int64_t& response_length,
+                          CefString& redirectUrl) override {
+    response->SetStatus(status_);
+    response->SetMimeType(mime_.empty() ? "application/json" : mime_);
+    CefResponse::HeaderMap headers;
+    response->GetHeaderMap(headers);
+    headers.insert({"Access-Control-Allow-Origin", "*"});
+    response->SetHeaderMap(headers);
+    response_length = static_cast<int64_t>(body_.size());
+  }
+
+  bool Read(void* data_out,
+            int bytes_to_read,
+            int& bytes_read,
+            CefRefPtr<CefResourceReadCallback> callback) override {
+    if (offset_ >= body_.size()) {
+      bytes_read = 0;
+      return false;
+    }
+    size_t n = std::min(static_cast<size_t>(bytes_to_read), body_.size() - offset_);
+    memcpy(data_out, body_.data() + offset_, n);
+    offset_ += n;
+    bytes_read = static_cast<int>(n);
+    return true;
+  }
+
+  void Cancel() override {
+    std::lock_guard<std::mutex> lock(g_resources_mutex);
+    g_pending_resources.erase(id_);
+  }
+
+ private:
+  const int32_t window_id_;
+  const std::string scheme_;
+  const bool is_sync_ipc_;
+  int32_t id_ = 0;
+  CefRefPtr<CefCallback> callback_;
+  int status_ = 200;
+  std::string mime_;
+  std::string body_;
+  size_t offset_ = 0;
+  IMPLEMENT_REFCOUNTING(PendingResourceHandler);
+};
+
+class SchemeFactory : public CefSchemeHandlerFactory {
+ public:
+  CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser> browser,
+                                       CefRefPtr<CefFrame> frame,
+                                       const CefString& scheme_name,
+                                       CefRefPtr<CefRequest> request) override {
+    int32_t window_id = 0;
+    if (browser) {
+      std::lock_guard<std::mutex> lock(g_windows_mutex);
+      auto it = g_browser_to_window.find(browser->GetIdentifier());
+      if (it != g_browser_to_window.end()) window_id = it->second;
+    }
+    std::string scheme = scheme_name.ToString();
+    return new PendingResourceHandler(window_id, scheme, scheme == "beipc");
+  }
+
+  IMPLEMENT_REFCOUNTING(SchemeFactory);
+};
+
+// ---------------------------------------------------------------------------
+// File dialogs, cookies, screen info.
+// ---------------------------------------------------------------------------
+
+class FileDialogCallback : public CefRunFileDialogCallback {
+ public:
+  FileDialogCallback(int32_t window_id, int32_t dialog_id)
+      : window_id_(window_id), dialog_id_(dialog_id) {}
+
+  void OnFileDialogDismissed(const std::vector<CefString>& file_paths) override {
+    std::string paths = "[";
+    for (size_t i = 0; i < file_paths.size(); i++) {
+      if (i) paths += ',';
+      paths += '"';
+      JsonEscapeTo(paths, file_paths[i].ToString());
+      paths += '"';
+    }
+    paths += ']';
+    EmitEvent(JsonObj()
+                  .AddString("type", "file-dialog-result")
+                  .AddInt("windowId", window_id_)
+                  .AddInt("dialogId", dialog_id_)
+                  .AddBool("canceled", file_paths.empty())
+                  .AddRaw("paths", paths)
+                  .Build());
+  }
+
+ private:
+  const int32_t window_id_;
+  const int32_t dialog_id_;
+  IMPLEMENT_REFCOUNTING(FileDialogCallback);
+};
+
+void RunFileDialogOnUI(int32_t window_id, int32_t dialog_id, std::string kv_str) {
+  CEF_REQUIRE_UI_THREAD();
+  auto entry = FindWindow(window_id);
+  if (!entry || !entry->browser) {
+    EmitEvent(JsonObj()
+                  .AddString("type", "file-dialog-result")
+                  .AddInt("windowId", window_id)
+                  .AddInt("dialogId", dialog_id)
+                  .AddBool("canceled", true)
+                  .AddRaw("paths", "[]")
+                  .Build());
+    return;
+  }
+  KVList kv = ParseKV(kv_str.c_str());
+  std::string mode_str = KVGet(kv, "mode", "open");
+  cef_file_dialog_mode_t mode = FILE_DIALOG_OPEN;
+  if (mode_str == "save") mode = FILE_DIALOG_SAVE;
+  else if (mode_str == "open-multiple") mode = FILE_DIALOG_OPEN_MULTIPLE;
+  else if (mode_str == "open-folder") mode = FILE_DIALOG_OPEN_FOLDER;
+
+  std::vector<CefString> filters;
+  for (auto& [k, v] : kv) {
+    if (k == "filter") filters.push_back(v);
+  }
+  entry->browser->GetHost()->RunFileDialog(
+      mode, KVGet(kv, "title"), KVGet(kv, "default_path"), filters,
+      new FileDialogCallback(window_id, dialog_id));
+}
+
+class CookieCollector : public CefCookieVisitor {
+ public:
+  explicit CookieCollector(int32_t op_id) : op_id_(op_id) {}
+
+  bool Visit(const CefCookie& cookie, int count, int total, bool& deleteCookie) override {
+    if (!cookies_.empty()) cookies_ += ',';
+    cookies_ += JsonObj()
+                    .AddString("name", CefString(&cookie.name).ToString())
+                    .AddString("value", CefString(&cookie.value).ToString())
+                    .AddString("domain", CefString(&cookie.domain).ToString())
+                    .AddString("path", CefString(&cookie.path).ToString())
+                    .AddBool("secure", cookie.secure != 0)
+                    .AddBool("httpOnly", cookie.httponly != 0)
+                    .Build();
+    return true;
+  }
+
+  ~CookieCollector() override {
+    EmitEvent(JsonObj()
+                  .AddString("type", "cookies-result")
+                  .AddInt("opId", op_id_)
+                  .AddBool("success", true)
+                  .AddRaw("cookies", "[" + cookies_ + "]")
+                  .Build());
+  }
+
+ private:
+  const int32_t op_id_;
+  std::string cookies_;
+  IMPLEMENT_REFCOUNTING(CookieCollector);
+};
+
+class CookieDone : public CefSetCookieCallback, public CefDeleteCookiesCallback {
+ public:
+  explicit CookieDone(int32_t op_id) : op_id_(op_id) {}
+
+  void OnComplete(bool success) override {
+    EmitEvent(JsonObj()
+                  .AddString("type", "cookies-result")
+                  .AddInt("opId", op_id_)
+                  .AddBool("success", success)
+                  .AddRaw("cookies", "[]")
+                  .Build());
+  }
+
+  void OnComplete(int num_deleted) override {
+    EmitEvent(JsonObj()
+                  .AddString("type", "cookies-result")
+                  .AddInt("opId", op_id_)
+                  .AddBool("success", true)
+                  .AddRaw("cookies", "[]")
+                  .Build());
+  }
+
+ private:
+  const int32_t op_id_;
+  IMPLEMENT_REFCOUNTING(CookieDone);
+};
+
+void CookiesOpOnUI(int32_t op_id, std::string op, std::string kv_str) {
+  CEF_REQUIRE_UI_THREAD();
+  KVList kv = ParseKV(kv_str.c_str());
+  CefRefPtr<CefCookieManager> manager = CefCookieManager::GetGlobalManager(nullptr);
+  if (!manager) {
+    EmitEvent(JsonObj()
+                  .AddString("type", "cookies-result")
+                  .AddInt("opId", op_id)
+                  .AddBool("success", false)
+                  .AddRaw("cookies", "[]")
+                  .Build());
+    return;
+  }
+  if (op == "set") {
+    CefCookie cookie;
+    CefString(&cookie.name) = KVGet(kv, "name");
+    CefString(&cookie.value) = KVGet(kv, "value");
+    CefString(&cookie.domain) = KVGet(kv, "domain");
+    CefString(&cookie.path) = KVGet(kv, "path", "/");
+    cookie.secure = KVGetBool(kv, "secure", false);
+    cookie.httponly = KVGetBool(kv, "httpOnly", false);
+    manager->SetCookie(KVGet(kv, "url"), cookie, new CookieDone(op_id));
+  } else if (op == "get") {
+    std::string url = KVGet(kv, "url");
+    CefRefPtr<CefCookieVisitor> visitor = new CookieCollector(op_id);
+    if (url.empty()) {
+      manager->VisitAllCookies(visitor);
+    } else {
+      manager->VisitUrlCookies(url, true, visitor);
+    }
+  } else if (op == "remove") {
+    manager->DeleteCookies(KVGet(kv, "url"), KVGet(kv, "name"), new CookieDone(op_id));
+  }
+}
+
+std::string ScreenInfoJson() {
+  CEF_REQUIRE_UI_THREAD();
+  std::vector<CefRefPtr<CefDisplay>> displays;
+  CefDisplay::GetAllDisplays(displays);
+  CefRefPtr<CefDisplay> primary = CefDisplay::GetPrimaryDisplay();
+  std::string out = "[";
+  for (size_t i = 0; i < displays.size(); i++) {
+    CefRect bounds = displays[i]->GetBounds();
+    CefRect work = displays[i]->GetWorkArea();
+    if (i) out += ',';
+    JsonObj rect;
+    out += JsonObj()
+               .AddInt("id", displays[i]->GetID())
+               .AddBool("primary", primary && displays[i]->GetID() == primary->GetID())
+               .AddRaw("bounds", JsonObj()
+                                     .AddInt("x", bounds.x)
+                                     .AddInt("y", bounds.y)
+                                     .AddInt("width", bounds.width)
+                                     .AddInt("height", bounds.height)
+                                     .Build())
+               .AddRaw("workArea", JsonObj()
+                                       .AddInt("x", work.x)
+                                       .AddInt("y", work.y)
+                                       .AddInt("width", work.width)
+                                       .AddInt("height", work.height)
+                                       .Build())
+               .AddRaw("scaleFactor", std::to_string(displays[i]->GetDeviceScaleFactor()))
+               .Build();
+  }
+  out += ']';
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // App: browser-process CefApp.
 // ---------------------------------------------------------------------------
 
@@ -861,6 +1199,24 @@ class App : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
+  }
+
+  void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
+    const int options = CEF_SCHEME_OPTION_STANDARD | CEF_SCHEME_OPTION_SECURE |
+                        CEF_SCHEME_OPTION_CORS_ENABLED |
+                        CEF_SCHEME_OPTION_FETCH_ENABLED;
+    registrar->AddCustomScheme("beipc", options);
+    for (const auto& scheme : g_custom_schemes) {
+      registrar->AddCustomScheme(scheme, options);
+    }
+  }
+
+  void OnBeforeChildProcessLaunch(CefRefPtr<CefCommandLine> command_line) override {
+    // The helper registers the same schemes; ship the list on its command
+    // line (scheme registration must match across processes).
+    std::string joined = "beipc";
+    for (const auto& scheme : g_custom_schemes) joined += "," + scheme;
+    command_line->AppendSwitchWithValue("be-custom-schemes", joined);
   }
 
   void OnBeforeCommandLineProcessing(
@@ -879,6 +1235,10 @@ class App : public CefApp, public CefBrowserProcessHandler {
 
   void OnContextInitialized() override {
     CEF_REQUIRE_UI_THREAD();
+    CefRegisterSchemeHandlerFactory("beipc", "", new SchemeFactory());
+    for (const auto& scheme : g_custom_schemes) {
+      CefRegisterSchemeHandlerFactory(scheme, "", new SchemeFactory());
+    }
     EmitEvent(JsonObj().AddString("type", "ready").Build());
   }
 
@@ -1015,6 +1375,17 @@ void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
   } else if (cmd == "set_resizable" || cmd == "set_minimizable" ||
              cmd == "set_maximizable") {
     SetWindowOpt(window_id, cmd.substr(4), arg == "1" ? "1" : "0");
+  } else if (cmd == "set_icon" && window) {
+    CefRefPtr<CefBinaryValue> png = CefBase64Decode(arg);
+    if (png) {
+      std::vector<unsigned char> bytes(png->GetSize());
+      png->GetData(bytes.data(), bytes.size(), 0);
+      CefRefPtr<CefImage> image = CefImage::CreateImage();
+      if (image && image->AddPNG(1.0f, bytes.data(), bytes.size())) {
+        window->SetWindowIcon(image);
+        window->SetWindowAppIcon(image);
+      }
+    }
   } else if (cmd == "set_min_size" || cmd == "set_max_size") {
     // arg: "width\nheight" kv pairs via ParseKV-compatible "w=..\nh=.."
     KVList kv = ParseKV(arg.c_str());
@@ -1136,6 +1507,7 @@ BE_EXPORT int be_init(const char* kv_str) {
 
   for (auto& [k, v] : kv) {
     if (k == "switch") g_extra_switches.push_back(v);
+    if (k == "custom_scheme") g_custom_schemes.push_back(v);
   }
 
   CefSettings settings;
@@ -1325,6 +1697,70 @@ BE_EXPORT void be_shutdown(void) {
   if (!g_initialized.load()) return;
   g_initialized = false;
   CefShutdown();
+}
+
+BE_EXPORT void be_resource_reply(int32_t resource_id,
+                                 int32_t status,
+                                 const char* mime,
+                                 const char* body_base64) {
+  CefRefPtr<PendingResourceHandler> handler;
+  {
+    std::lock_guard<std::mutex> lock(g_resources_mutex);
+    auto it = g_pending_resources.find(resource_id);
+    if (it == g_pending_resources.end()) return;
+    handler = it->second;
+    g_pending_resources.erase(it);
+  }
+  std::string body;
+  if (body_base64 && *body_base64) {
+    CefRefPtr<CefBinaryValue> bin = CefBase64Decode(body_base64);
+    if (bin) {
+      body.resize(bin->GetSize());
+      bin->GetData(body.data(), body.size(), 0);
+    }
+  }
+  handler->Resolve(status, mime ? mime : "", std::move(body));
+}
+
+BE_EXPORT void be_run_file_dialog(int32_t window_id, int32_t dialog_id, const char* kv) {
+  PostToUI(base::BindOnce(&RunFileDialogOnUI, window_id, dialog_id,
+                          std::string(kv ? kv : "")));
+}
+
+BE_EXPORT void be_cookies_op(int32_t op_id, const char* op, const char* kv) {
+  if (!op) return;
+  PostToUI(base::BindOnce(&CookiesOpOnUI, op_id, std::string(op),
+                          std::string(kv ? kv : "")));
+}
+
+BE_EXPORT char* be_screen_info(void) {
+  if (!g_initialized.load()) return nullptr;
+  std::string json;
+  if (CefCurrentlyOn(TID_UI)) {
+    json = ScreenInfoJson();
+  } else {
+    // Block briefly on the UI thread; safe because the JS thread is never
+    // the UI thread when the multi-threaded message loop is in use.
+    std::mutex m;
+    std::condition_variable cv;
+    bool done = false;
+    CefPostTask(TID_UI, base::BindOnce(
+                            [](std::string* out, std::mutex* mu,
+                               std::condition_variable* cond, bool* flag) {
+                              *out = ScreenInfoJson();
+                              std::lock_guard<std::mutex> lock(*mu);
+                              *flag = true;
+                              cond->notify_one();
+                            },
+                            &json, &m, &cv, &done));
+    std::unique_lock<std::mutex> lock(m);
+    if (!cv.wait_for(lock, std::chrono::seconds(5), [&] { return done; })) {
+      return nullptr;
+    }
+  }
+  char* result = static_cast<char*>(malloc(json.size() + 1));
+  memcpy(result, json.c_str(), json.size() + 1);
+  return result;
 }
 
 BE_EXPORT char* be_version(void) {

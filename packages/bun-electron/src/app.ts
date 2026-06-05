@@ -4,6 +4,8 @@ import { EventEmitter } from "node:events";
 import { BrowserWindow, routeWindowEvent } from "./browser-window";
 import { routeIpcEvent } from "./ipc-main";
 import * as native from "./native";
+import { customSchemes, routeProtocolEvent } from "./protocol";
+import { routeCookiesEvent } from "./session";
 
 class CommandLine {
   readonly switches: string[] = [];
@@ -143,6 +145,7 @@ class App extends EventEmitter {
 
     native.init({
       switches,
+      customSchemes: customSchemes(),
       cacheDir: process.env.BUN_ELECTRON_CACHE_DIR,
       logFile: process.env.BUN_ELECTRON_LOG_FILE,
       remoteDebuggingPort: process.env.BUN_ELECTRON_DEBUG_PORT
@@ -166,7 +169,14 @@ class App extends EventEmitter {
         return;
       case "ipc-message":
       case "ipc-invoke":
+      case "ipc-sync":
         routeIpcEvent(ev);
+        return;
+      case "protocol-request":
+        void routeProtocolEvent(ev);
+        return;
+      case "cookies-result":
+        routeCookiesEvent(ev);
         return;
       default:
         if (typeof ev.windowId === "number") {

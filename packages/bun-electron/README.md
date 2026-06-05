@@ -159,11 +159,34 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
 - `webContents.insertCSS`/`removeInsertedCSS`/`isLoading`.
 - `app.getAppPath`, `app.getLocale`, `browser-window-created` event.
 - `shell.openExternal/openPath` (scheme-validated).
+- **`ipcRenderer.sendSync`** (synchronous IPC via a custom `beipc://` scheme
+  answered by the main process) and `event.returnValue`.
+- **Structured-clone IPC arguments**: `Date`, `RegExp`, `Map`, `Set`,
+  `ArrayBuffer`, typed arrays, `BigInt`, `undefined`, `NaN`/`Infinity`/`-0`
+  survive both directions (a serializer shared between `src/serialize.ts` and
+  the renderer bootstrap).
+- **`Menu`/`MenuItem`**: template building, submenus, roles, checkbox/radio
+  groups, `getMenuItemById`, application-menu registry (data model only; OS
+  menu-bar rendering is not wired up).
+- **`nativeImage`**: `createFromPath`/`createFromBuffer`/`createFromDataURL`/
+  `createEmpty`, `toPNG`/`toDataURL`/`getSize`/`getAspectRatio` (PNG & JPEG
+  header parsing; no raster ops).
+- **`dialog`**: `showMessageBox` (rendered as a real window, fully working),
+  `showOpenDialog`/`showSaveDialog` (native CEF file chooser), `showErrorBox`,
+  with Electron's option validation.
+- **`screen`**: `getPrimaryDisplay`/`getAllDisplays` via CEF `CefDisplay`.
+- **`session.defaultSession.cookies`**: `get`/`set`/`remove` via CEF's
+  `CefCookieManager`.
+- **`protocol`**: `registerSchemesAsPrivileged`, `handle`/`unhandle`/
+  `isProtocolHandled` — custom schemes served by JS handlers (returns
+  `Response` objects or `{data, mimeType, statusCode}`), backed by a CEF
+  scheme handler factory.
+- **Window icons**: `BrowserWindow.setIcon` (PNG → `CefImage`).
 
-Not implemented yet: `Menu`, `dialog`, `Tray`, full `nativeImage`, `session`,
-`protocol`, context isolation (preload and page share one context),
-`nodeIntegration` (renderers are plain Chromium; use IPC),
-`ipcRenderer.sendSync`, multi-arg structured-clone IPC types, window icons.
+Not implemented yet: `Tray`, context isolation (preload and page share one
+context), `nodeIntegration` (renderers are plain Chromium; use IPC), OS
+menu-bar / native context-menu rendering, partitioned sessions, `webRequest`
+interception, image resize/crop in `nativeImage`.
 
 ## Testing
 
@@ -174,8 +197,9 @@ xvfb-run -a bun test test/     # linux headless; on macOS just: bun test test/
 ```
 
 Tests are ported from Electron's spec suite (names preserved where behavior
-carries over): `test/browser-window.test.ts`, `test/web-contents.test.ts`,
-`test/ipc.test.ts`, `test/app.test.ts`. App-lifecycle scenarios spawn fresh
+carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
+`menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`, and
+`window-icon` test files (112 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

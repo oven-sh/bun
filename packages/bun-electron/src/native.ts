@@ -63,6 +63,10 @@ interface Shim {
     be_window_get_state: (id: number) => bigint | number | null;
     be_window_eval_js: (id: number, code: Buffer, evalId: number) => void;
     be_capture_page: (id: number, captureId: number) => void;
+    be_resource_reply: (id: number, status: number, mime: Buffer, body: Buffer) => void;
+    be_run_file_dialog: (id: number, dialogId: number, kv: Buffer) => void;
+    be_cookies_op: (opId: number, op: Buffer, kv: Buffer) => void;
+    be_screen_info: () => bigint | number | null;
     be_ipc_send: (id: number, channel: Buffer, args: Buffer) => void;
     be_ipc_reply: (id: number, invokeId: number, result: Buffer, isError: number) => void;
     be_do_message_loop_work: () => void;
@@ -103,6 +107,10 @@ function loadShim(): Shim {
     be_window_get_state: { args: [FFIType.i32], returns: FFIType.ptr },
     be_window_eval_js: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.void },
     be_capture_page: { args: [FFIType.i32, FFIType.i32], returns: FFIType.void },
+    be_resource_reply: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+    be_run_file_dialog: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.void },
+    be_cookies_op: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+    be_screen_info: { args: [], returns: FFIType.ptr },
     be_ipc_send: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_ipc_reply: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.void },
     be_do_message_loop_work: { args: [], returns: FFIType.void },
@@ -155,6 +163,7 @@ export interface InitOptions {
   logSeverity?: number;
   remoteDebuggingPort?: number;
   switches?: string[];
+  customSchemes?: string[];
 }
 
 export function init(options: InitOptions = {}): void {
@@ -193,6 +202,7 @@ export function init(options: InitOptions = {}): void {
     log_severity: options.logSeverity,
     remote_debugging_port: options.remoteDebuggingPort,
     switch: options.switches ?? [],
+    custom_scheme: options.customSchemes ?? [],
   });
 
   const rc = s.symbols.be_init(cstr(kv));
@@ -240,6 +250,28 @@ export function windowEvalJs(id: number, code: string, evalId: number): void {
 
 export function capturePage(id: number, captureId: number): void {
   loadShim().symbols.be_capture_page(id, captureId);
+}
+
+export function resourceReply(id: number, status: number, mime: string, bodyBase64: string): void {
+  loadShim().symbols.be_resource_reply(id, status, cstr(mime), cstr(bodyBase64));
+}
+
+export function runFileDialog(id: number, dialogId: number, kv: Record<string, string | number | boolean | string[] | undefined>): void {
+  loadShim().symbols.be_run_file_dialog(id, dialogId, cstr(encodeKV(kv)));
+}
+
+export function cookiesOp(opId: number, op: string, kv: Record<string, string | number | boolean | undefined>): void {
+  loadShim().symbols.be_cookies_op(opId, cstr(op), cstr(encodeKV(kv)));
+}
+
+export function screenInfo(): unknown[] {
+  const raw = takeCString(loadShim().symbols.be_screen_info());
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
 }
 
 export function ipcSend(id: number, channel: string, argsJson: string): void {

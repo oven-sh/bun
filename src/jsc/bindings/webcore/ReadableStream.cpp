@@ -126,19 +126,19 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     return result;
 }
 
-// readableStreamCancel returns a rejected promise for an already-errored stream
-// (Promise.reject(storedError) in ReadableStreamInternals.ts). Native teardown
-// call sites discard this promise, so mark it handled to avoid surfacing the
-// stored error as an unhandled rejection. Mirrors the $markPromiseAsHandled
-// guard the JS callers of stream.cancel() use (e.g. ReadableStream.ts).
+// readableStreamCancel can return a rejected promise (Promise.reject(storedError)
+// for an already-errored stream) or a pending promise that rejects later (when a
+// still-readable stream's underlyingSource.cancel() rejects asynchronously).
+// Native teardown call sites discard the result, so mark it handled to avoid
+// surfacing the error as an unhandled rejection. isHandledFlag is sticky and read
+// at rejection time, so marking a pending promise is correct. Matches
+// $markPromiseAsHandled, which the JS callers of stream.cancel() use unconditionally.
 static inline void markCancelResultHandled(std::optional<JSC::JSValue> result)
 {
     if (!result)
         return;
-    if (auto* promise = dynamicDowncast<JSC::JSPromise>(*result)) {
-        if (promise->status() == JSC::JSPromise::Status::Rejected)
-            promise->markAsHandled();
-    }
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(*result))
+        promise->markAsHandled();
 }
 
 void ReadableStream::pipeTo(ReadableStreamSink& sink)

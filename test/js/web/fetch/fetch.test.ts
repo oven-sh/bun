@@ -1948,7 +1948,7 @@ describe("maxRedirects", () => {
   });
 
   it("rejects once the chain exceeds maxRedirects", async () => {
-    expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
+    await expect(fetch(`${server.url}hop/0`, { maxRedirects: 2 })).rejects.toThrow("redirected too many times");
   });
 
   it("follows the chain when maxRedirects is large enough", async () => {

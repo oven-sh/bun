@@ -49,11 +49,12 @@ pub struct Expect {
     /// it at defer time and restores it before the re-run.
     pub counted_expect_call: Cell<bool>,
     /// The caller's source location for the currently-executing deferred
-    /// re-run, borrowed from `PendingMatcher.srcloc_at_defer`. Written by
-    /// `PendingMatcher::rerun()` for the duration of the re-invoked matcher
-    /// call and restored afterwards. `inline_snapshot()` reads it (gated on
-    /// `is_async_rerun`) because the user's frame is no longer on the stack.
-    /// Owned by the `PendingMatcher`, not by `Expect`.
+    /// re-run, reconstructed from the context array's `SLOT_SRCLOC_*` slots.
+    /// Written by `PendingMatcher::rerun()` for the duration of the
+    /// re-invoked matcher call and restored afterwards. `inline_snapshot()`
+    /// reads it (gated on `is_async_rerun`) because the user's frame is no
+    /// longer on the stack. The string is owned by `on_settle()`'s scope,
+    /// not by `Expect`.
     pub async_rerun_srcloc: Cell<Option<bun_jsc::CallerSrcLoc>>,
 }
 

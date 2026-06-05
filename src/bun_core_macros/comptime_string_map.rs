@@ -149,6 +149,35 @@ fn key_lit(keys: &[(Vec<u8>, Span)], idx: usize) -> LitByteStr {
     LitByteStr::new(&keys[idx].0, keys[idx].1)
 }
 
+/// Declaration-order concatenation of all keys plus a per-key length table,
+/// with the length type sized to the longest key. Lets `keys()`/`iter()`
+/// reconstruct `&'static [u8]` slices without storing a pointer per key.
+fn key_blob(keys: &[(Vec<u8>, Span)]) -> (LitByteStr, usize, Vec<TokenStream>, TokenStream) {
+    let blob: Vec<u8> = keys.iter().flat_map(|(k, _)| k.iter().copied()).collect();
+    let total = blob.len();
+    let max_len = keys.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    let len_ty = if max_len <= u8::MAX as usize {
+        quote!(::core::primitive::u8)
+    } else if max_len <= u16::MAX as usize {
+        quote!(::core::primitive::u16)
+    } else {
+        quote!(::core::primitive::u32)
+    };
+    let lens = keys
+        .iter()
+        .map(|(k, _)| {
+            let len = k.len();
+            quote!(#len as _)
+        })
+        .collect();
+    (
+        LitByteStr::new(&blob, Span::call_site()),
+        total,
+        lens,
+        len_ty,
+    )
+}
+
 /// Longest constant slice-`==` LLVM still expands into inline loads instead
 /// of a `memcmp` call (4 × 16-byte loads on both aarch64 and x86-64-with-SSE).
 const MAX_INLINE_EQ_LEN: usize = 64;
@@ -218,11 +247,14 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let value_ty = value_ty.expect("map form always has a value type");
 
     let ty_name = format_ident!("__ComptimeStringMap_{}", name);
-    let entries_name = format_ident!("__COMPTIME_STRING_MAP_ENTRIES_{}", name);
+    let values_name = format_ident!("__COMPTIME_STRING_MAP_VALUES_{}", name);
+    let blob_name = format_ident!("__COMPTIME_STRING_MAP_KEY_BLOB_{}", name);
+    let lens_name = format_ident!("__COMPTIME_STRING_MAP_KEY_LENS_{}", name);
     let n = keys.len();
     let buckets = length_buckets(&keys);
     let min_len = buckets.first().map(|(l, _)| *l).unwrap_or(0);
     let max_len = buckets.last().map(|(l, _)| *l).unwrap_or(0);
+    let (blob_lit, blob_total, lens, len_ty) = key_blob(&keys);
 
     // `match key.len()` arms: constant-length `==` compares so LLVM merges
     // them into word loads + a compare tree.
@@ -231,7 +263,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
             let check = eq_check(&keys, i);
             quote! {
                 if #check {
-                    return ::core::option::Option::Some(&#entries_name[#i].1);
+                    return ::core::option::Option::Some(&#values_name[#i]);
                 }
             }
         });
@@ -247,7 +279,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
             let lit = key_lit(&keys, i);
             quote! {
                 if eql(input, #lit) {
-                    return ::core::option::Option::Some(&#entries_name[#i].1);
+                    return ::core::option::Option::Some(&#values_name[#i]);
                 }
             }
         });
@@ -258,6 +290,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
     let decl_values = values.iter();
+    let decl_values_again = values.iter();
 
     Ok(quote! {
         #(#attrs)*
@@ -268,16 +301,27 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         #vis struct #ty_name(());
 
         #[doc(hidden)]
-        static #entries_name: [(&'static [u8], #value_ty); #n] = [
-            #( (#decl_keys, #decl_values) ),*
-        ];
+        static #values_name: [#value_ty; #n] = [ #(#decl_values),* ];
+
+        // Keys are baked into the lookup's compare instructions; these two
+        // pointer-free tables exist only so `entries()`/`keys()` can hand out
+        // `&'static [u8]` slices without a per-key pointer (and its load-time
+        // relocation) in the data segment.
+        #[doc(hidden)]
+        static #blob_name: [u8; #blob_total] = *#blob_lit;
+        #[doc(hidden)]
+        static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
 
         #[allow(dead_code)]
         impl #ty_name {
             #vis const MIN_LEN: usize = #min_len;
             #vis const MAX_LEN: usize = #max_len;
-            /// Entries in declaration order.
-            #vis const ENTRIES: &'static [(&'static [u8], #value_ty)] = &#entries_name;
+            /// Entries in declaration order, for `const` contexts. Referencing
+            /// this materializes a pointer-per-key table at the use site —
+            /// runtime callers should use `entries()`/`keys()` instead, which
+            /// read the pointer-free blob.
+            #vis const ENTRIES: &'static [(&'static [u8], #value_ty)] =
+                &[ #( (#decl_keys, #decl_values_again) ),* ];
 
             #[inline]
             #vis fn get(&self, key: &[u8]) -> ::core::option::Option<&'static #value_ty> {
@@ -299,15 +343,21 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
             #vis fn entries(
                 &self,
             ) -> impl Iterator<Item = (&'static [u8], &'static #value_ty)> {
-                Self::ENTRIES.iter().map(|e| (e.0, &e.1))
+                self.keys().zip(#values_name.iter())
             }
 
             #vis fn keys(&self) -> impl Iterator<Item = &'static [u8]> {
-                Self::ENTRIES.iter().map(|e| e.0)
+                let mut off = 0usize;
+                #lens_name.iter().map(move |len| {
+                    let len = *len as usize;
+                    let key = &#blob_name[off..off + len];
+                    off += len;
+                    key
+                })
             }
 
             #vis fn values(&self) -> impl Iterator<Item = &'static #value_ty> {
-                Self::ENTRIES.iter().map(|e| &e.1)
+                #values_name.iter()
             }
 
             /// Length-dispatched lookup with a caller-supplied comparator.
@@ -374,9 +424,6 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 self.get_ascii_case_insensitive(key)
             }
 
-            fn entries_list(&self) -> &'static [(&'static [u8], #value_ty)] {
-                Self::ENTRIES
-            }
         }
     })
 }
@@ -394,11 +441,13 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
     } = input;
 
     let ty_name = format_ident!("__ComptimeStringSet_{}", name);
-    let keys_name = format_ident!("__COMPTIME_STRING_SET_KEYS_{}", name);
+    let blob_name = format_ident!("__COMPTIME_STRING_SET_KEY_BLOB_{}", name);
+    let lens_name = format_ident!("__COMPTIME_STRING_SET_KEY_LENS_{}", name);
     let n = keys.len();
     let buckets = length_buckets(&keys);
     let min_len = buckets.first().map(|(l, _)| *l).unwrap_or(0);
     let max_len = buckets.last().map(|(l, _)| *l).unwrap_or(0);
+    let (blob_lit, blob_total, lens, len_ty) = key_blob(&keys);
 
     let eq_arms = buckets.iter().map(|(len, idxs)| {
         let checks = idxs.iter().map(|&i| {
@@ -425,14 +474,19 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
         #vis struct #ty_name(());
 
         #[doc(hidden)]
-        static #keys_name: [&'static [u8]; #n] = [ #(#decl_keys),* ];
+        static #blob_name: [u8; #blob_total] = *#blob_lit;
+        #[doc(hidden)]
+        static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
 
         #[allow(dead_code)]
         impl #ty_name {
             #vis const MIN_LEN: usize = #min_len;
             #vis const MAX_LEN: usize = #max_len;
-            /// Keys in declaration order.
-            #vis const KEYS: &'static [&'static [u8]] = &#keys_name;
+            /// Keys in declaration order, for `const` contexts. Referencing
+            /// this materializes a pointer-per-key table at the use site —
+            /// runtime callers should use `iter()`, which reads the
+            /// pointer-free blob.
+            #vis const KEYS: &'static [&'static [u8]] = &[ #(#decl_keys),* ];
 
             #[inline]
             #vis fn contains(&self, key: &[u8]) -> bool {
@@ -447,7 +501,13 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
             }
 
             #vis fn iter(&self) -> impl Iterator<Item = &'static [u8]> {
-                Self::KEYS.iter().copied()
+                let mut off = 0usize;
+                #lens_name.iter().map(move |len| {
+                    let len = *len as usize;
+                    let key = &#blob_name[off..off + len];
+                    off += len;
+                    key
+                })
             }
         }
     })

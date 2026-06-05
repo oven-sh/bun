@@ -36,9 +36,6 @@ pub trait ComptimeStringMap: Sync + 'static {
     /// ASCII-lowercases `key` before the lookup; keys must be declared
     /// lowercase.
     fn lookup_ascii_case_insensitive(&self, key: &[u8]) -> Option<&'static Self::Value>;
-
-    /// Entries in declaration order.
-    fn entries_list(&self) -> &'static [(&'static [u8], Self::Value)];
 }
 
 /// Logical length of a lookup input, in the units the comparator passed to
@@ -182,7 +179,6 @@ mod tests {
         }
         assert_eq!(generic_lookup(&MAP, b"have"), Some(&TestEnum::A));
         assert_eq!(generic_lookup(&MAP, b"nope"), None);
-        assert_eq!(MAP.entries_list().len(), 5);
     }
 
     #[test]

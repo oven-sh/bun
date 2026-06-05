@@ -1964,7 +1964,6 @@ describe("rm", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     expect(fs.existsSync(dir)).toBe(false);
   });
-
 });
 
 describe("rmdir", () => {

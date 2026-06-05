@@ -8272,10 +8272,33 @@ declare module "bun" {
       saturation?: number;
     }
 
+    /**
+     * Colour space of the source image, using sharp/libvips vocabulary:
+     * - `"srgb"` — RGB(A), including palette images
+     * - `"b-w"` — greyscale (with or without alpha)
+     * - `"cmyk"` — CMYK or YCCK JPEG
+     * - `"rgb16"` / `"grey16"` — 16-bit-per-channel PNG
+     */
+    type ColorSpace = "srgb" | "b-w" | "cmyk" | "rgb16" | "grey16";
+
     interface Metadata {
       width: number;
       height: number;
       format: Format;
+      space: ColorSpace;
+      /**
+       * Channel count of the source: 1 (grey), 2 (grey+alpha), 3 (RGB),
+       * 4 (RGB+alpha or CMYK). Transparency stored out-of-band (PNG `tRNS`,
+       * GIF transparent index) counts as a channel, matching sharp.
+       */
+      channels: 1 | 2 | 3 | 4;
+      /**
+       * Whether the source carries transparency — an alpha channel, a PNG
+       * `tRNS` chunk, a BMP alpha mask, or GIF palette transparency. JPEG is
+       * always `false`. Useful for content negotiation: serve PNG/WebP when
+       * `true`, JPEG otherwise.
+       */
+      hasAlpha: boolean;
     }
   }
 
@@ -8429,7 +8452,10 @@ declare module "bun" {
     blob(): Promise<Blob>;
     /** Run the pipeline and return base64-encoded output. */
     toBase64(): Promise<string>;
-    /** Decode just enough to read width/height/format. */
+    /**
+     * Read the header only — no pixel decode — and report dimensions,
+     * format, colour space, channel count, and alpha presence.
+     */
     metadata(): Promise<Image.Metadata>;
 
     /** Populated after the first awaited terminal; `-1` before. */

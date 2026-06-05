@@ -43,12 +43,20 @@ new Bun.Image(input, {
 
 ## Metadata
 
-Read `width`, `height`, and `format` without decoding pixel data:
+Read dimensions, format, and colour layout without decoding pixel data:
 
 ```ts
-const { width, height, format } = await new Bun.Image(input).metadata();
-// => { width: 1920, height: 1080, format: "jpeg" }
+const { width, height, format, space, channels, hasAlpha } = await new Bun.Image(input).metadata();
+// => { width: 1920, height: 1080, format: "jpeg", space: "srgb", channels: 3, hasAlpha: false }
 ```
+
+| Field      | Meaning                                                                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `space`    | Colour space in Sharp's vocabulary: `"srgb"`, `"b-w"` (greyscale), `"cmyk"`, `"rgb16"`/`"grey16"` (16-bit PNG)                                      |
+| `channels` | Channel count of the source: 1 grey, 2 grey+alpha, 3 RGB, 4 RGB+alpha or CMYK                                                                       |
+| `hasAlpha` | Whether the source carries transparency — an alpha channel, a PNG `tRNS` chunk, a BMP alpha mask, or GIF palette transparency. JPEG: always `false` |
+
+`hasAlpha` makes format negotiation cheap: keep PNG/WebP when the source actually has transparency, serve JPEG otherwise.
 
 ## Resize
 

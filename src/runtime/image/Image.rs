@@ -48,6 +48,37 @@ fn format_name(f: codecs::Format) -> &'static str {
     }
 }
 
+/// Build the `.metadata()` result object — shared by the JS-thread fast
+/// path in `do_metadata` and the WorkPool delivery in `then()`.
+fn metadata_to_js(
+    global: &JSGlobalObject,
+    w: u32,
+    h: u32,
+    format: codecs::Format,
+    color: codecs::ColorInfo,
+) -> JsResult<JSValue> {
+    let obj = JSValue::create_empty_object(global, 6);
+    obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+    obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+    obj.put(
+        global,
+        b"format",
+        jsc::bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())?,
+    );
+    obj.put(
+        global,
+        b"space",
+        jsc::bun_string_jsc::create_utf8_for_js(global, color.space.name().as_bytes())?,
+    );
+    obj.put(
+        global,
+        b"channels",
+        JSValue::js_number(f64::from(color.channels)),
+    );
+    obj.put(global, b"hasAlpha", JSValue::js_boolean(color.has_alpha));
+    Ok(obj)
+}
+
 // `pub const js = jsc.Codegen.JSImage;` — `fromJS`/`fromJSDirect`/`toJS` are
 // provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
@@ -920,17 +951,7 @@ impl Image {
                     }
                     self.last_width.set(i32::try_from(w).expect("int cast"));
                     self.last_height.set(i32::try_from(h).expect("int cast"));
-                    let obj = JSValue::create_empty_object(global, 3);
-                    obj.put(global, b"width", JSValue::js_number(f64::from(w)));
-                    obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                    obj.put(
-                        global,
-                        b"format",
-                        jsc::bun_string_jsc::create_utf8_for_js(
-                            global,
-                            format_name(p.format).as_bytes(),
-                        )?,
-                    );
+                    let obj = metadata_to_js(global, w, h, p.format, p.color)?;
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
                 // HEIC/AVIF need the system backend → fall through to async.
@@ -1481,6 +1502,7 @@ pub enum TaskResult {
         w: u32,
         h: u32,
         format: codecs::Format,
+        color: codecs::ColorInfo,
     },
     Err(codecs::Error),
     IoErr(sys::Error),
@@ -1574,6 +1596,7 @@ impl<'a> PipelineTask<'a> {
                         w,
                         h,
                         format: p.format,
+                        color: p.color,
                     };
                     return;
                 }
@@ -1637,11 +1660,20 @@ impl<'a> PipelineTask<'a> {
         }
 
         if matches!(self.kind, Kind::Metadata) {
-            // Reached only for HEIC/AVIF (probe fell through).
+            // Reached only for HEIC/AVIF/TIFF (probe fell through) — the
+            // system backend has already decoded to RGBA8 and the source
+            // channel layout is gone, so derive the colour facts from the
+            // pixels. An all-opaque alpha plane reports as 3-channel.
+            let has_alpha = decoded.rgba.chunks_exact(4).any(|px| px[3] != 0xFF);
             self.result = TaskResult::Meta {
                 w: decoded.width,
                 h: decoded.height,
                 format: src_format,
+                color: codecs::ColorInfo {
+                    space: codecs::Space::Srgb,
+                    channels: if has_alpha { 4 } else { 3 },
+                    has_alpha,
+                },
             };
             return;
         }
@@ -1870,14 +1902,16 @@ impl<'a> PipelineTask<'a> {
                     }
                 }
             }
-            TaskResult::Meta { w, h, format } => {
-                let obj = JSValue::create_empty_object(global, 3);
-                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
-                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                let fmt_js =
-                    jsc::bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
-                        .unwrap_or(JSValue::UNDEFINED);
-                obj.put(global, b"format", fmt_js);
+            TaskResult::Meta {
+                w,
+                h,
+                format,
+                color,
+            } => {
+                let obj = match metadata_to_js(global, w, h, format, color) {
+                    Ok(o) => o,
+                    Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                };
                 promise.resolve(global, obj)?;
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,

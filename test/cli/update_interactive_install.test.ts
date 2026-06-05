@@ -481,8 +481,11 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       const pkg = JSON.parse(readFileSync(join(String(dir), "package.json"), "utf8"));
       expect(pkg.dependencies["is-even"]).toBe("0.1.0");
 
-      // Conventional 128 + SIGINT(2). Last so output diagnostics show
-      // first on failure.
+      // The handler re-raises with SIG_DFL after cleanup (mirroring
+      // onExitSignal), so the process dies BY SIGNAL: the parent sees
+      // signalCode "SIGINT" and proc.exited resolves to the conventional
+      // 128 + SIGINT(2). Last so output diagnostics show first on failure.
+      expect(proc.signalCode).toBe("SIGINT");
       expect(exitCode).toBe(130);
     } finally {
       proc.kill();

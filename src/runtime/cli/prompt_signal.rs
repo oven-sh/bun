@@ -10,10 +10,11 @@
 //! cursor hidden. See #30890.
 //!
 //! On Unix we install a SIGINT/SIGTERM handler that writes the ANSI restore
-//! sequence directly to stdout via `write(2)` (async-signal-safe), restores
-//! termios via the existing `uv_tty_reset_mode` atexit hook (same one
-//! `c-bindings.cpp::onExitSignal` uses), and `_exit`s with the conventional
-//! `128 + signum`.
+//! sequence directly to stdout via `write(2)` (async-signal-safe), then
+//! mirrors `c-bindings.cpp::onExitSignal`: restore the stdio termios
+//! snapshots via `bun_restore_stdio()`, reset the disposition to `SIG_DFL`,
+//! and re-raise so the parent observes death-by-signal (`WIFSIGNALED` /
+//! `signalCode`), not a plain exit code.
 //!
 //! On Windows we install a `SetConsoleCtrlHandler` that writes the same
 //! sequence and `ExitProcess`es with `STATUS_CONTROL_C_EXIT`.
@@ -37,25 +38,16 @@ use core::sync::atomic::{AtomicI32, Ordering};
 #[cfg(unix)]
 const RESTORE_SEQUENCE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
 
-// libuv entry point already linked by `Bun__ttySetMode`'s atexit hook (see
-// src/jsc/bindings/wtf-bindings.cpp). tcsetattr is not strictly
-// async-signal-safe per POSIX, but libuv + the existing `onExitSignal` in
-// c-bindings.cpp use it from a signal handler on every TTY-owning Bun
-// process already, so calling it here is consistent with the rest of the
-// codebase.
-//
-// Signature matches the authoritative `libuv_sys::libuv::uv_tty_reset_mode`
-// and the C definition in `wtf-bindings.cpp`. The napi_body.rs
-// `uv_functions_to_export` stub declares this as `fn()` (no return) as a
-// symbol-export placeholder that's never actually called — see the NOTE on
-// `uv_os_getpid` / `uv_os_getppid` in napi_body.rs — so
-// `clashing_extern_declarations` fires across the two; suppress it the
-// same way napi_body does (#[allow] on the block) since the real ABI is
-// the one here.
 #[cfg(unix)]
-#[allow(clashing_extern_declarations)]
 unsafe extern "C" {
-    fn uv_tty_reset_mode() -> libc::c_int;
+    // `bun_restore_stdio` (c-bindings.cpp) — restores the startup termios
+    // snapshot on every stdio fd Bun modified, with SIGTTOU blocked around
+    // the tcsetattr. It is the exact call `onExitSignal` makes from signal
+    // context, so using it here keeps this handler consistent with the
+    // process-wide one it shadows while the prompt is live. tcsetattr is
+    // not strictly async-signal-safe per POSIX, but this matches existing
+    // practice in the codebase.
+    safe fn bun_restore_stdio();
 }
 
 #[cfg(unix)]
@@ -69,20 +61,17 @@ extern "C" fn handler(sig: i32) {
             RESTORE_SEQUENCE.len(),
         );
     }
-    // Restore cooked termios on every TTY Bun modified. Matches
-    // onExitSignal's behaviour.
-    // SAFETY: no preconditions; internal atomic spinlock + tcsetattr on a
-    // saved termios snapshot. Call from signal handler mirrors libuv's own
-    // `onExitSignal` in src/jsc/bindings/c-bindings.cpp.
+    bun_restore_stdio();
+    // Re-raise with the default disposition so the process dies *by
+    // signal* and the parent observes WIFSIGNALED / WTERMSIG (Bun:
+    // `Subprocess.signalCode === "SIGINT"`), matching `onExitSignal` and
+    // `Global::raise_ignoring_panic_handler`. Both `signal` and `raise`
+    // are async-signal-safe per POSIX.1-2024 §XSH 2.4.3.
+    // SAFETY: SIG_DFL is a valid disposition; `sig` is the signal we are
+    // currently handling, so it is a valid signal number.
     unsafe {
-        let _ = uv_tty_reset_mode();
-    }
-    // Conventional `128 + signum` exit status for death-by-signal. _exit is
-    // async-signal-safe and does not run atexit (which would try to restore
-    // things we've already restored).
-    // SAFETY: `_exit` has no preconditions; never returns.
-    unsafe {
-        libc::_exit(128 + sig);
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
     }
 }
 

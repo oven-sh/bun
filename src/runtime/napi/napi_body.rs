@@ -3272,11 +3272,7 @@ mod uv_functions_to_export {
     // Every function here is declared as unit-return/no-args — these are
     // symbol-export placeholders never called from Rust, so their signatures
     // are irrelevant to ABI correctness. See the analogous NOTE on
-    // `uv_os_getpid` / `uv_os_getppid` above. Real bindings that the program
-    // actually calls live elsewhere (`libuv_sys::libuv::*` on Windows;
-    // ad-hoc `extern "C"` blocks under `src/runtime/cli/` on Unix).
-    // Suppress `clashing_extern_declarations` against those real signatures.
-    #[allow(clashing_extern_declarations)]
+    // `uv_os_getpid` / `uv_os_getppid` above.
     unsafe extern "C" {
         pub(super) fn uv_accept();
         pub(super) fn uv_async_init();

@@ -86,37 +86,20 @@ for (const fn of [
   });
 }
 
-// Stack-trace override support (Node's internal/errors.overrideStackTrace).
-// When an error is registered here, the next stack capture for it is routed
-// through the registered formatter. Implemented via Error.prepareStackTrace,
-// installed lazily on first use and chaining to any pre-existing hook.
+// API-shape stub of Node's internal/errors.overrideStackTrace. In Node this
+// WeakMap registers a one-shot prepareStackTrace formatter that fires when
+// the error's stack is lazily materialized. Under JSC the stack is already a
+// string by the time the REPL's _handleError registers the override, so the
+// formatter never fires; REPL frame trimming is done in decorateErrorStack
+// instead. The earlier implementation installed a global
+// Error.prepareStackTrace hook that chained to Bun's native default formatter,
+// which throws for non-Error targets — breaking Error.captureStackTrace(obj)
+// process-wide after the first REPL error. Keep the registry inert: track
+// entries for get/delete parity but never touch Error.prepareStackTrace.
 const overrideStackTraceMap = new WeakMap();
-let prepareInstalled = false;
-
-function installPrepare() {
-  if (prepareInstalled) return;
-  prepareInstalled = true;
-  const prev = Error.prepareStackTrace;
-  Error.prepareStackTrace = function (error, stackFrames) {
-    const frames = stackFrames ?? [];
-    const override = overrideStackTraceMap.get(error);
-    if (override !== undefined) {
-      overrideStackTraceMap.delete(error);
-      return override(error, frames);
-    }
-    if (typeof prev === "function") return prev(error, frames);
-    // Default V8-style formatting.
-    let out = `${error.name ?? "Error"}${error.message ? ": " + error.message : ""}`;
-    for (const frame of frames) {
-      out += `\n    at ${frame.toString()}`;
-    }
-    return out;
-  };
-}
 
 const overrideStackTrace = {
   set(error, fn) {
-    installPrepare();
     return overrideStackTraceMap.set(error, fn);
   },
   get(error) {

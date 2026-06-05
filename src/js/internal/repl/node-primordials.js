@@ -1,50 +1,110 @@
 // Uncurried "primordials" shims for Node.js sources ported into Bun
-// (node:repl and the internal/readline stack). These do NOT provide the
-// tamper-proofing of Node's real primordials; they only preserve the calling
-// convention so the ported files can stay close to upstream verbatim.
+// (node:repl and the internal/readline stack). Each helper captures its
+// intrinsic once at module load and invokes it through the tamper-proof
+// `$call`/`$apply` intrinsics, so replacing a prototype method (e.g.
+// `Array.prototype.push = ...`) after this module loads does not affect the
+// ported code. This is weaker than Node's real primordials in two ways: the
+// capture happens at (lazy) module load rather than realm bootstrap, and the
+// Safe* containers are plain aliases whose instance methods still dispatch
+// through their (mutable) prototypes.
+
+const ArrayFromFn = Array.from;
+const ArrayPrototypeAtFn = Array.prototype.at;
+const ArrayPrototypeConcatFn = Array.prototype.concat;
+const ArrayPrototypeFilterFn = Array.prototype.filter;
+const ArrayPrototypeFindFn = Array.prototype.find;
+const ArrayPrototypeFindLastIndexFn = Array.prototype.findLastIndex;
+const ArrayPrototypeFlatFn = Array.prototype.flat;
+const ArrayPrototypeForEachFn = Array.prototype.forEach;
+const ArrayPrototypeIncludesFn = Array.prototype.includes;
+const ArrayPrototypeIndexOfFn = Array.prototype.indexOf;
+const ArrayPrototypeJoinFn = Array.prototype.join;
+const ArrayPrototypeMapFn = Array.prototype.map;
+const ArrayPrototypePopFn = Array.prototype.pop;
+const ArrayPrototypePushFn = Array.prototype.push;
+const ArrayPrototypeReverseFn = Array.prototype.reverse;
+const ArrayPrototypeShiftFn = Array.prototype.shift;
+const ArrayPrototypeSliceFn = Array.prototype.slice;
+const ArrayPrototypeSomeFn = Array.prototype.some;
+const ArrayPrototypeSortFn = Array.prototype.sort;
+const ArrayPrototypeSpliceFn = Array.prototype.splice;
+const ArrayPrototypeToSortedFn = Array.prototype.toSorted;
+const ArrayPrototypeUnshiftFn = Array.prototype.unshift;
+const DateNowFn = Date.now;
+const FunctionPrototypeBindFn = Function.prototype.bind;
+const JSONStringifyFn = JSON.stringify;
+const MathMaxFn = Math.max;
+const PromisePrototypeThenFn = Promise.prototype.then;
+const PromiseRejectFn = Promise.reject;
+const PromiseResolveFn = Promise.resolve;
+const PromiseRaceFn = Promise.race;
+const RegExpPrototypeExecFn = RegExp.prototype.exec;
+const RegExpPrototypeSymbolReplaceFn = RegExp.prototype[Symbol.replace];
+const RegExpPrototypeSymbolSplitFn = RegExp.prototype[Symbol.split];
+const StringPrototypeCharAtFn = String.prototype.charAt;
+const StringPrototypeCharCodeAtFn = String.prototype.charCodeAt;
+const StringPrototypeCodePointAtFn = String.prototype.codePointAt;
+const StringPrototypeEndsWithFn = String.prototype.endsWith;
+const StringPrototypeIncludesFn = String.prototype.includes;
+const StringPrototypeIndexOfFn = String.prototype.indexOf;
+const StringPrototypeLastIndexOfFn = String.prototype.lastIndexOf;
+const StringPrototypeRepeatFn = String.prototype.repeat;
+const StringPrototypeReplaceFn = String.prototype.replace;
+const StringPrototypeReplaceAllFn = String.prototype.replaceAll;
+const StringPrototypeSliceFn = String.prototype.slice;
+const StringPrototypeSplitFn = String.prototype.split;
+const StringPrototypeStartsWithFn = String.prototype.startsWith;
+const StringPrototypeToLocaleLowerCaseFn = String.prototype.toLocaleLowerCase;
+const StringPrototypeToLowerCaseFn = String.prototype.toLowerCase;
+const StringPrototypeTrimFn = String.prototype.trim;
+const StringPrototypeTrimStartFn = String.prototype.trimStart;
+const StringPrototypeSymbolIteratorFn = String.prototype[Symbol.iterator];
 
 class SafeStringIterator {
   constructor(string) {
-    return string[Symbol.iterator]();
+    return StringPrototypeSymbolIteratorFn.$call(string);
   }
 }
 
 export default {
-  ArrayFrom: (...args) => Array.from(...args),
+  ArrayFrom: (...args) => ArrayFromFn.$apply(Array, args),
   ArrayIsArray: Array.isArray,
-  ArrayPrototypeAt: (a, i) => a.at(i),
-  ArrayPrototypeConcat: (a, ...args) => a.concat(...args),
-  ArrayPrototypeFilter: (a, fn) => a.filter(fn),
-  ArrayPrototypeFind: (a, fn) => a.find(fn),
-  ArrayPrototypeFindLastIndex: (a, fn) => a.findLastIndex(fn),
-  ArrayPrototypeFlat: (a, d) => a.flat(d),
-  ArrayPrototypeForEach: (a, fn) => a.forEach(fn),
-  ArrayPrototypeIncludes: (a, v, i) => a.includes(v, i),
-  ArrayPrototypeIndexOf: (a, v, i) => a.indexOf(v, i),
-  ArrayPrototypeJoin: (a, s) => a.join(s),
-  ArrayPrototypeMap: (a, fn) => a.map(fn),
-  ArrayPrototypePop: a => a.pop(),
-  ArrayPrototypePush: (a, ...items) => a.push(...items),
-  ArrayPrototypePushApply: (a, items) => a.push(...items),
-  ArrayPrototypeReverse: a => a.reverse(),
-  ArrayPrototypeShift: a => a.shift(),
-  ArrayPrototypeSlice: (a, b, e) => a.slice(b, e),
-  ArrayPrototypeSome: (a, fn) => a.some(fn),
-  ArrayPrototypeSort: (a, fn) => a.sort(fn),
-  ArrayPrototypeSplice: (a, ...args) => a.splice(...args),
-  ArrayPrototypeToSorted: (a, fn) => a.toSorted(fn),
-  ArrayPrototypeUnshift: (a, ...items) => a.unshift(...items),
+  ArrayPrototypeAt: (a, i) => ArrayPrototypeAtFn.$call(a, i),
+  ArrayPrototypeConcat: (a, ...args) => ArrayPrototypeConcatFn.$apply(a, args),
+  ArrayPrototypeFilter: (a, fn) => ArrayPrototypeFilterFn.$call(a, fn),
+  ArrayPrototypeFind: (a, fn) => ArrayPrototypeFindFn.$call(a, fn),
+  ArrayPrototypeFindLastIndex: (a, fn) => ArrayPrototypeFindLastIndexFn.$call(a, fn),
+  ArrayPrototypeFlat: (a, d) => ArrayPrototypeFlatFn.$call(a, d),
+  ArrayPrototypeForEach: (a, fn) => ArrayPrototypeForEachFn.$call(a, fn),
+  ArrayPrototypeIncludes: (a, v, i) => ArrayPrototypeIncludesFn.$call(a, v, i),
+  ArrayPrototypeIndexOf: (a, v, i) => ArrayPrototypeIndexOfFn.$call(a, v, i),
+  ArrayPrototypeJoin: (a, s) => ArrayPrototypeJoinFn.$call(a, s),
+  ArrayPrototypeMap: (a, fn) => ArrayPrototypeMapFn.$call(a, fn),
+  ArrayPrototypePop: a => ArrayPrototypePopFn.$call(a),
+  ArrayPrototypePush: (a, ...items) => ArrayPrototypePushFn.$apply(a, items),
+  ArrayPrototypePushApply: (a, items) => ArrayPrototypePushFn.$apply(a, items),
+  ArrayPrototypeReverse: a => ArrayPrototypeReverseFn.$call(a),
+  ArrayPrototypeShift: a => ArrayPrototypeShiftFn.$call(a),
+  ArrayPrototypeSlice: (a, b, e) => ArrayPrototypeSliceFn.$call(a, b, e),
+  ArrayPrototypeSome: (a, fn) => ArrayPrototypeSomeFn.$call(a, fn),
+  ArrayPrototypeSort: (a, fn) => ArrayPrototypeSortFn.$call(a, fn),
+  ArrayPrototypeSplice: (a, ...args) => ArrayPrototypeSpliceFn.$apply(a, args),
+  ArrayPrototypeToSorted: (a, fn) => ArrayPrototypeToSortedFn.$call(a, fn),
+  ArrayPrototypeUnshift: (a, ...items) => ArrayPrototypeUnshiftFn.$apply(a, items),
   Boolean,
-  DateNow: () => Date.now(),
+  DateNow: () => DateNowFn.$call(Date),
   Error,
   FunctionPrototype: function () {},
-  FunctionPrototypeBind: (fn, thisArg, ...args) => fn.bind(thisArg, ...args),
-  FunctionPrototypeCall: (fn, thisArg, ...args) => fn.$call(thisArg, ...args),
-  JSONStringify: (...args) => JSON.stringify(...args),
+  FunctionPrototypeBind: (fn, thisArg, ...args) => {
+    ArrayPrototypeUnshiftFn.$call(args, thisArg);
+    return FunctionPrototypeBindFn.$apply(fn, args);
+  },
+  FunctionPrototypeCall: (fn, thisArg, ...args) => fn.$apply(thisArg, args),
+  JSONStringify: (...args) => JSONStringifyFn.$apply(JSON, args),
   MathCeil: Math.ceil,
   MathFloor: Math.floor,
   MathMax: Math.max,
-  MathMaxApply: args => Math.max.$apply(null, args),
+  MathMaxApply: args => MathMaxFn.$apply(Math, args),
   MathMin: Math.min,
   Number,
   NumberIsFinite: Number.isFinite,
@@ -63,37 +123,37 @@ export default {
   ObjectKeys: Object.keys,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
-  PromisePrototypeThen: (p, onFulfilled, onRejected) => p.then(onFulfilled, onRejected),
-  PromiseReject: v => Promise.reject(v),
-  PromiseResolve: v => Promise.resolve(v),
+  PromisePrototypeThen: (p, onFulfilled, onRejected) => PromisePrototypeThenFn.$call(p, onFulfilled, onRejected),
+  PromiseReject: v => PromiseRejectFn.$call(Promise, v),
+  PromiseResolve: v => PromiseResolveFn.$call(Promise, v),
   ReflectApply: (fn, thisArg, args) => fn.$apply(thisArg, args),
   RegExp,
-  RegExpPrototypeExec: (re, s) => re.exec(s),
-  RegExpPrototypeSymbolReplace: (re, s, replacement) => re[Symbol.replace](s, replacement),
-  RegExpPrototypeSymbolSplit: (re, s, limit) => re[Symbol.split](s, limit),
-  SafePromiseRace: promises => Promise.race(promises),
+  RegExpPrototypeExec: (re, s) => RegExpPrototypeExecFn.$call(re, s),
+  RegExpPrototypeSymbolReplace: (re, s, replacement) => RegExpPrototypeSymbolReplaceFn.$call(re, s, replacement),
+  RegExpPrototypeSymbolSplit: (re, s, limit) => RegExpPrototypeSymbolSplitFn.$call(re, s, limit),
+  SafePromiseRace: promises => PromiseRaceFn.$call(Promise, promises),
   SafeSet: Set,
   SafeMap: Map,
   SafeWeakSet: WeakSet,
   SafeStringIterator,
   StringFromCharCode: String.fromCharCode,
-  StringPrototypeCharAt: (s, i) => s.charAt(i),
-  StringPrototypeCharCodeAt: (s, i) => s.charCodeAt(i),
-  StringPrototypeCodePointAt: (s, i) => s.codePointAt(i),
-  StringPrototypeEndsWith: (s, v, e) => s.endsWith(v, e),
-  StringPrototypeIncludes: (s, v, i) => s.includes(v, i),
-  StringPrototypeIndexOf: (s, v, i) => s.indexOf(v, i),
-  StringPrototypeLastIndexOf: (s, v, i) => s.lastIndexOf(v, i),
-  StringPrototypeRepeat: (s, n) => s.repeat(n),
-  StringPrototypeReplace: (s, a, b) => s.replace(a, b),
-  StringPrototypeReplaceAll: (s, a, b) => s.replaceAll(a, b),
-  StringPrototypeSlice: (s, b, e) => s.slice(b, e),
-  StringPrototypeSplit: (s, sep, limit) => s.split(sep, limit),
-  StringPrototypeStartsWith: (s, v, i) => s.startsWith(v, i),
-  StringPrototypeToLocaleLowerCase: s => s.toLocaleLowerCase(),
-  StringPrototypeToLowerCase: s => s.toLowerCase(),
-  StringPrototypeTrim: s => s.trim(),
-  StringPrototypeTrimStart: s => s.trimStart(),
+  StringPrototypeCharAt: (s, i) => StringPrototypeCharAtFn.$call(s, i),
+  StringPrototypeCharCodeAt: (s, i) => StringPrototypeCharCodeAtFn.$call(s, i),
+  StringPrototypeCodePointAt: (s, i) => StringPrototypeCodePointAtFn.$call(s, i),
+  StringPrototypeEndsWith: (s, v, e) => StringPrototypeEndsWithFn.$call(s, v, e),
+  StringPrototypeIncludes: (s, v, i) => StringPrototypeIncludesFn.$call(s, v, i),
+  StringPrototypeIndexOf: (s, v, i) => StringPrototypeIndexOfFn.$call(s, v, i),
+  StringPrototypeLastIndexOf: (s, v, i) => StringPrototypeLastIndexOfFn.$call(s, v, i),
+  StringPrototypeRepeat: (s, n) => StringPrototypeRepeatFn.$call(s, n),
+  StringPrototypeReplace: (s, a, b) => StringPrototypeReplaceFn.$call(s, a, b),
+  StringPrototypeReplaceAll: (s, a, b) => StringPrototypeReplaceAllFn.$call(s, a, b),
+  StringPrototypeSlice: (s, b, e) => StringPrototypeSliceFn.$call(s, b, e),
+  StringPrototypeSplit: (s, sep, limit) => StringPrototypeSplitFn.$call(s, sep, limit),
+  StringPrototypeStartsWith: (s, v, i) => StringPrototypeStartsWithFn.$call(s, v, i),
+  StringPrototypeToLocaleLowerCase: s => StringPrototypeToLocaleLowerCaseFn.$call(s),
+  StringPrototypeToLowerCase: s => StringPrototypeToLowerCaseFn.$call(s),
+  StringPrototypeTrim: s => StringPrototypeTrimFn.$call(s),
+  StringPrototypeTrimStart: s => StringPrototypeTrimStartFn.$call(s),
   Symbol,
   SymbolAsyncIterator: Symbol.asyncIterator,
   SymbolDispose: Symbol.dispose,

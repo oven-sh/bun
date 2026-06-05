@@ -6783,7 +6783,6 @@ impl NodeFS {
                 &dirent_path_prev,
                 effective_kind,
                 args.encoding,
-                true,
                 args.path_is_buffer,
             );
         }
@@ -6969,7 +6968,6 @@ impl NodeFS {
                     &dirent_path_prev,
                     effective_kind,
                     args.encoding,
-                    true,
                     args.path_is_buffer,
                 );
             }
@@ -9507,10 +9505,7 @@ pub trait ReaddirEntry: Sized {
     );
     /// Recursive readdir: `utf8_name` is the bare entry name, `name_to_copy`
     /// is the path *relative to the recursion root* (what Node returns).
-    /// `apply_encoding` distinguishes the sync path (which honours
-    /// `args.encoding` via `webcore::encoding::to_bun_string`) from
-    /// the async path (which uses raw
-    /// `BunString::clone_utf8` and ignores the requested encoding).
+    /// Both the sync and async recursive paths honour `args.encoding`.
     fn append_entry_recursive(
         entries: &mut Vec<Self>,
         utf8_name: &[u8],
@@ -9518,7 +9513,6 @@ pub trait ReaddirEntry: Sized {
         dirent_path: &BunString,
         kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
         path_is_buffer: bool,
     );
 }
@@ -9569,15 +9563,10 @@ impl ReaddirEntry for BunString {
         _dirent_path: &BunString,
         _kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
         _path_is_buffer: bool,
     ) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);
-        entries.push(if apply_encoding {
-            webcore::encoding::to_bun_string(bytes, encoding)
-        } else {
-            BunString::clone_utf8(bytes)
-        });
+        entries.push(webcore::encoding::to_bun_string(bytes, encoding));
     }
 }
 impl ReaddirEntry for Dirent {
@@ -9654,16 +9643,13 @@ impl ReaddirEntry for Dirent {
         dirent_path: &BunString,
         kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
         path_is_buffer: bool,
     ) {
         let name_as_buffer = encoding == Encoding::Buffer;
         let name = if name_as_buffer {
             BunString::clone_latin1(utf8_name)
-        } else if apply_encoding {
-            webcore::encoding::to_bun_string(utf8_name, encoding)
         } else {
-            BunString::clone_utf8(utf8_name)
+            webcore::encoding::to_bun_string(utf8_name, encoding)
         };
         entries.push(Dirent {
             name,
@@ -9714,7 +9700,6 @@ impl ReaddirEntry for Buffer {
         _dirent_path: &BunString,
         _kind: sys::FileKind,
         _encoding: Encoding,
-        _apply_encoding: bool,
         _path_is_buffer: bool,
     ) {
         entries.push(Buffer::from_string(without_nt_prefix::<u8>(name_to_copy)).expect("oom"));

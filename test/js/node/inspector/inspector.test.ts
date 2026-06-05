@@ -45,6 +45,21 @@ test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", 
   }
 });
 
+test("the method-specific event fires before inspectorNotification, like Node", () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    const order: string[] = [];
+    session.on("Runtime.consoleAPICalled", () => order.push("method"));
+    session.on("inspectorNotification", () => order.push("generic"));
+    session.post("Runtime.enable");
+    console.log("ordered");
+    expect(order).toEqual(["method", "generic"]);
+  } finally {
+    session.disconnect();
+  }
+});
+
 test("a consoleAPICalled listener that logs does not recurse", () => {
   const session = new inspector.Session();
   session.connect();

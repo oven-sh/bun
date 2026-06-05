@@ -422,7 +422,48 @@ function getTestModifiers(testPath) {
 /**
  * @returns {Promise<TestResult[]>}
  */
+/**
+ * Smoke-checks that this agent actually matches the platform the CI step was
+ * generated for. The step exports EXPECTED_PLATFORM_* (see getTestBunStep in
+ * .buildkite/ci.mjs); we compare against the same utils the agent uses to
+ * emit its tags. Catches misrouted jobs (e.g. a macOS 26 step landing on a
+ * macOS 15 box) before any test runs, instead of producing silently-wrong
+ * results for a whole shard.
+ */
+function assertExpectedPlatform() {
+  const expectedOs = process.env["EXPECTED_PLATFORM_OS"];
+  if (!expectedOs) {
+    return; // step does not declare expectations (e.g. local runs)
+  }
+
+  const checks = [
+    ["os", expectedOs, getOs()],
+    ["arch", process.env["EXPECTED_PLATFORM_ARCH"], getArch()],
+    ["abi", process.env["EXPECTED_PLATFORM_ABI"], getAbi()],
+    ["distro", process.env["EXPECTED_PLATFORM_DISTRO"], getDistro()],
+  ];
+
+  const expectedRelease = process.env["EXPECTED_PLATFORM_RELEASE"];
+  if (expectedRelease) {
+    // Major-version prefix match: "26" accepts "26.4", "25.04" accepts "25.04.1".
+    const actualRelease = getDistroVersion();
+    const ok = actualRelease === expectedRelease || `${actualRelease}.`.startsWith(`${expectedRelease}.`);
+    checks.push(["release", expectedRelease, ok ? expectedRelease : actualRelease]);
+  }
+
+  const mismatches = checks.filter(([, expected, actual]) => expected && actual && expected !== actual);
+  if (mismatches.length) {
+    const details = mismatches.map(([k, e, a]) => `${k}: step expects "${e}", agent is "${a}"`).join("\n  ");
+    console.error(`Platform smoke check FAILED — this job landed on the wrong agent:\n  ${details}`);
+    process.exit(1);
+  }
+
+  !isQuiet && console.log("Platform check:", checks.filter(([, e]) => e).map(([k, e]) => `${k}=${e}`).join(" "), "(ok)");
+}
+
 async function runTests() {
+  assertExpectedPlatform();
+
   let execPath;
   if (options["step"]) {
     execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);

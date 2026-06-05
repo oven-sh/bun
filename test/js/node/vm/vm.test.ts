@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1056,6 +1056,83 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
     status after valid link: linked"
   `);
   expect(exitCode).toBe(0);
+});
+
+// Running a script with breakOnSigint installs a SIGINT handler that, once the
+// run finishes, routes a later SIGINT through process' signal dispatch. That
+// path dereferenced a map that is only allocated when a JS signal listener has
+// been added via process.on(<signal>). With no such listener the map was null
+// and the SIGINT handler crashed (UBSan under ASan, a real segfault in release).
+// See https://github.com/oven-sh/bun/issues/31885.
+test.skipIf(isWindows)("SIGINT after a breakOnSigint run without a signal listener does not crash", async () => {
+  const fixture = `
+    const vm = require("node:vm");
+    const script = new vm.Script("1 + 1");
+    script.runInNewContext({}, { breakOnSigint: true });
+
+    // Keep the event loop alive so the SIGINT task gets a chance to drain
+    // through the handler that used to crash. A request/reply over stdin lets
+    // the parent prove the process is still alive after the signal.
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", data => {
+      for (const line of data.split("\\n")) {
+        if (line === "ping") process.stdout.write("pong\\n");
+        else if (line === "exit") process.exit(0);
+      }
+    });
+
+    // Signal readiness only after the breakOnSigint run has completed.
+    process.stdout.write("ready\\n");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const exited = proc.exited;
+  const ready = Promise.withResolvers<void>();
+  const pong = Promise.withResolvers<void>();
+  // If the process dies early (e.g. it crashed on the signal), reject the
+  // awaited handshakes so the test fails fast instead of hanging.
+  exited.then(() => {
+    ready.reject(new Error("process exited before ready"));
+    pong.reject(new Error("process exited before replying to ping"));
+  });
+
+  let out = "";
+  (async () => {
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+      if (out.includes("ready")) ready.resolve();
+      if (out.includes("pong")) pong.resolve();
+    }
+  })();
+
+  await ready.promise;
+
+  proc.kill("SIGINT");
+  // The SIGINT task is enqueued by the signal before this write lands, so it
+  // drains on the same event-loop turn as (or before) the ping. A reply proves
+  // the handler ran without crashing.
+  proc.stdin.write("ping\n");
+  await pong.promise;
+
+  proc.stdin.write("exit\n");
+  proc.stdin.end();
+
+  const exitCode = await exited;
+  // Clean exit via process.exit(0); no crash (would be a nonzero code or a
+  // signal on the unfixed build).
+  expect(exitCode).toBe(0);
+  expect(proc.signalCode).toBe(null);
 });
 
 describe("node:vm SourceTextModule cyclic graph linking", () => {

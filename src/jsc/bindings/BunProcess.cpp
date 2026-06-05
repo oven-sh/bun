@@ -1160,6 +1160,13 @@ bool isSignalName(WTF::String input)
 
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
+    // The map is only populated once a JS signal listener is added via
+    // process.on(<signal>). Other paths can route a signal here without a
+    // listener (e.g. the SIGINT handler left installed by vm's breakOnSigint),
+    // in which case there is nothing to dispatch to.
+    if (!signalNumberToNameMap) [[unlikely]]
+        return;
+
     Process* process = globalObject->processObject();
 
     String signalName = signalNumberToNameMap->get(signalNumber);
@@ -1183,7 +1190,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 #endif
 {
 #if OS(WINDOWS)
-    if (signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
+    if (!signalNumberToNameMap || signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
         return;
 
     auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();

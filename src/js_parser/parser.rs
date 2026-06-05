@@ -1108,13 +1108,9 @@ macro_rules! generated_symbol_name {
             }
             out
         };
-        // `__BYTES` is `__NAME` (a `&str` literal) + '_' + 8 suffix bytes from
-        // the lowercase-alnum CHARS table. The const initializer is evaluated
-        // at compile time, so the panic arm fails the build, never runtime.
-        const __OUT: &str = match ::core::str::from_utf8(&__BYTES) {
-            Ok(s) => s,
-            Err(_) => panic!("generated symbol name is not valid UTF-8"),
-        };
+        // SAFETY: `__NAME` is valid UTF-8 (a `&str` literal), '_' and the suffix
+        // bytes (drawn from the lowercase-alnum CHARS table) are all ASCII.
+        const __OUT: &str = unsafe { ::core::str::from_utf8_unchecked(&__BYTES) };
         __OUT
     }};
 }

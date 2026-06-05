@@ -2,7 +2,6 @@
 
 const common = require('../common');
 const assert = require('assert');
-const fs = require('fs');
 
 // The goal of this test is to make sure that:
 //

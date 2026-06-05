@@ -1,5 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -916,8 +917,6 @@ test("EventEmitter.name", () => {
 // Loading node:domain swaps in domain-aware EventEmitter internals
 // process-wide, so these run in a subprocess.
 describe("node:domain integration", () => {
-  const { bunExe, bunEnv } = require("harness");
-
   test("'error' on a captureRejections emitter routes to its domain", async () => {
     // Bun installs the capture-rejections emit variant as an own instance
     // property; the domain wrapper must apply to it too.
@@ -942,9 +941,12 @@ describe("node:domain integration", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("caught boom true false");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught boom true false",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("domains entered inside async callbacks do not leak onto the global stack", async () => {
@@ -978,8 +980,11 @@ describe("node:domain integration", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("stack: 0 active: undefined");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "stack: 0 active: undefined",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

@@ -921,7 +921,7 @@ fn is_linked_entry(kind: sys::EntryKind, dir_fd: Fd, name: &bun_core::ZStr) -> b
     let is_symlink = match kind {
         sys::EntryKind::SymLink => true,
         sys::EntryKind::Unknown => match sys::lstatat(dir_fd, name) {
-            Ok(st) => sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap_or(0)),
+            Ok(st) => sys::posix::s_islnk(st.st_mode as u32),
             Err(_) => false,
         },
         _ => return false,
@@ -1250,7 +1250,7 @@ pub fn linked_package_path_mut<'a>(
         #[cfg(not(windows))]
         {
             match sys::lstat(joined) {
-                Ok(st) => sys::posix::s_islnk(u32::try_from(st.st_mode).unwrap_or(0)),
+                Ok(st) => sys::posix::s_islnk(st.st_mode as u32),
                 Err(_) => return None,
             }
         }

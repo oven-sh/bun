@@ -1198,10 +1198,8 @@ impl Task {
                                         }
                                         #[cfg(not(windows))]
                                         {
-                                            if let Some(st) = sys::lstat(local.slice_z()).ok() {
-                                                sys::posix::s_islnk(
-                                                    u32::try_from(st.st_mode).expect("int cast"),
-                                                )
+                                            if let Ok(st) = sys::lstat(local.slice_z()) {
+                                                sys::posix::s_islnk(st.st_mode as u32)
                                             } else {
                                                 false
                                             }

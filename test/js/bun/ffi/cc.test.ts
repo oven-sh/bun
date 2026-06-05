@@ -1,7 +1,7 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
@@ -393,7 +393,7 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
 describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and callbacks", () => {
   it("keeps symbol functions and callback closures alive across forced GC", async () => {
-    const dir = tempDirWithFiles("bun-ffi-cc-gc-liveness", {
+    using dir = tempDir("bun-ffi-cc-gc-liveness", {
       "lib.c": /* c */ `
         int twice(int x) { return x + x; }
         int invoke(int (*cb)(int), int value) { return cb(value); }
@@ -442,14 +442,17 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
     await using proc = Bun.spawn({
       cmd: [bunExe(), "fixture.js"],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stderr: "pipe",
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK 100"`);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    expect({ stdout: normalizeBunSnapshot(stdout), stderr, exitCode }).toMatchObject({
+      stdout: "OK 100",
+      exitCode: 0,
+    });
   });
 });

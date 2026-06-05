@@ -1052,6 +1052,13 @@ impl Listener {
                     }
                     None => false,
                 },
+                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => {
+                    // A system-tagged fd is a raw SOCKET (the JS fd convention
+                    // for sockets, e.g. one received over cluster/IPC handle
+                    // transfer) - never a libuv pipe fd, and `.uv()` panics
+                    // on it.
+                    false
+                }
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);

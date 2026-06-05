@@ -2288,11 +2288,8 @@ pub struct ToCssResult {
     pub code: Vec<u8>,
     /// A map of CSS module exports, if the `css_modules` option was enabled
     /// during parsing.
-    // TODO: arena lifetime — CssModuleExports/References borrow the printer
-    // arena and `self`. `'static` placeholder: `Printer<'a>` has a single
-    // lifetime that unifies the writer with the arena, and `to_css` prints
-    // into a function-local buffer, so the maps cannot be returned at their
-    // real lifetime until `Printer` splits the writer lifetime from `'a`.
+    // TODO: arena lifetime — `'static` placeholder until `Printer` splits the
+    // writer lifetime from the arena lifetime `'a`.
     pub exports: Option<CssModuleExports<'static>>,
     /// A map of CSS module references, if the `css_modules` config had
     /// `dashed_idents` enabled.
@@ -2302,9 +2299,7 @@ pub struct ToCssResult {
     pub dependencies: Option<Vec<Dependency>>,
 }
 
-/// Borrow-checked result of `to_css_with_writer`: the css-module maps borrow
-/// the printer arena / stylesheet (`'a`) instead of being detached to
-/// `'static` like the public `ToCssResult`.
+/// Like `ToCssResult`, but with the css-module maps at their real borrowed lifetime.
 pub struct ToCssResultInternal<'a> {
     pub exports: Option<CssModuleExports<'a>>,
     pub references: Option<CssModuleReferences<'a>>,
@@ -2693,9 +2688,8 @@ mod stylesheet_impl {
                     references_mut,
                 ));
 
-                // No `?` while `css_module` is set: it holds the
-                // pointer-detached `&mut references`, which must not survive an
-                // early return out of the frame that owns `references`.
+                // `css_module` holds a pointer-detached `&mut references`; clear
+                // it before any return out of the frame that owns `references`.
                 if let Err(e) = self.rules.to_css(printer) {
                     printer.css_module = None;
                     return Err(e);
@@ -2741,9 +2735,7 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            // Destructure straight from the call: a named `result` binding
-            // would keep the `&mut dest` writer borrow live until its drop,
-            // blocking the move of `dest` into the returned `ToCssResult`.
+            // Destructure in place so the writer borrow ends before `dest` moves.
             let ToCssResultInternal {
                 exports,
                 references,
@@ -2756,15 +2748,12 @@ mod stylesheet_impl {
                 local_names,
                 symbols,
             )?;
-            // SAFETY: `'bump`-erasure at the public `ToCssResult` boundary.
-            // `Printer`'s single lifetime ties the css-module maps to the
-            // function-local `dest` writer borrow, but the maps only borrow
-            // `self` and `arena`, both of which outlive the returned
-            // `ToCssResult` (caller-owned; see the field TODO on the struct).
+            // SAFETY: the maps only borrow `self` and `arena`, both of which
+            // outlive the returned `ToCssResult`.
             let exports = exports.map(|exports| unsafe {
                 core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
             });
-            // SAFETY: same erasure as `exports` above.
+            // SAFETY: same as `exports` above.
             let references = references.map(|references| unsafe {
                 core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
                     references,

@@ -264,17 +264,11 @@ pub(super) mod lib_info {
                         c.put(slot);
                     });
                 }
-                // Release the caching ref taken in `GetAddrInfoRequest::init`
-                // (the callback that would normally release it never runs).
-                // This cannot be the last ref: `this: &Resolver` is borrowed
-                // from the callframe-rooted JS wrapper, whose ref the caller
-                // still holds, so deref-to-zero is impossible here.
+                // Release the caching ref from init(); the completion callback
+                // that would normally release it never runs.
                 if let Some(resolver) = (*request).resolver_for_caching.take() {
                     resolver.deref();
                 }
-                // The head is inline (`allocated == false`), so `destroy` is a
-                // no-op for it; the KeepAlive + head resolver ref are released
-                // by `DNSLookup`'s Drop when the request box drops below.
                 DNSLookup::destroy(&raw mut (*request).head);
                 drop(bun_core::heap::take(request));
             }
@@ -487,9 +481,7 @@ pub(super) mod lib_uv_backend {
                 // and the promise is rejected with a DNSException.
                 if let Some(resolver) = (*request).resolver_for_caching.take() {
                     let resolver_ptr = resolver.as_ptr();
-                    // Adopt the request's own ref into an RAII guard: it keeps
-                    // the Resolver alive across the drain (which frees
-                    // `*request`) and derefs on every exit path.
+                    // Guard keeps the Resolver alive past the drain, which frees `*request`.
                     let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                     if (*request).cache.pending_cache() {
                         (*resolver_ptr).drain_pending_host_native(
@@ -607,9 +599,7 @@ pub trait CAresRecordType: Sized {
 }
 
 pub struct ResolveInfoRequest<T: CAresRecordType> {
-    /// SHARED — this request's own ref on the Resolver whose pending-cache
-    /// slot it occupies; taken in `init()`, released on the completion path
-    /// (RefPtr does not deref on Drop).
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
     pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -661,9 +651,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded
-            // ref_count. This ref is independent of `head.resolver`'s and is released on
-            // the completion path so the pending-cache deref never relies on the head ref.
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
@@ -707,10 +695,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_cares` (which frees
-                // `*this`) and derefs on every exit path, after the completion
-                // bookkeeping ran.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_cares::<T>(
@@ -758,9 +743,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetHostByAddrInfoRequest {
-    /// SHARED — this request's own ref on the Resolver whose pending-cache
-    /// slot it occupies; taken in `init()`, released on the completion path
-    /// (RefPtr does not deref on Drop).
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
     pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -813,9 +796,7 @@ impl GetHostByAddrInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded
-            // ref_count. This ref is independent of `head.resolver`'s and is released on
-            // the completion path so the pending-cache deref never relies on the head ref.
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
@@ -858,9 +839,7 @@ impl GetHostByAddrInfoRequest {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_addr_cares` (which
-                // frees `*this`) and derefs on every exit path.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_addr_cares(
@@ -1018,11 +997,8 @@ impl Drop for CAresNameInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetNameInfoRequest {
-    /// SHARED — this request's own ref on the Resolver whose pending-cache
-    /// slot it occupies; taken in `init()`, released on the completion path.
-    /// `CAresNameInfo` (the head) holds no resolver ref of its own, so this is
-    /// the only thing keeping the Resolver alive for the completion-path deref
-    /// (RefPtr does not deref on Drop).
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on
+    /// Drop). The head (`CAresNameInfo`) holds no resolver ref, so this is the only one.
     pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1075,9 +1051,7 @@ impl GetNameInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let name_len = name.len();
         let request = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded
-            // ref_count. The head (`CAresNameInfo`) holds no resolver ref, so this ref is
-            // what keeps the Resolver alive until the completion path releases it.
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash,
             cache: CacheConfig::default(),
@@ -1120,10 +1094,7 @@ impl GetNameInfoRequest {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_name_info_cares` (which
-                // frees `*this`) and derefs on every exit path, after the
-                // completion bookkeeping ran.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_name_info_cares(
@@ -1173,9 +1144,7 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 
 pub struct GetAddrInfoRequest {
     pub backend: get_addr_info_request::Backend,
-    /// SHARED — this request's own ref on the Resolver whose pending-cache
-    /// slot it occupies; taken in `init()`, released on the completion path
-    /// (RefPtr does not deref on Drop).
+    /// SHARED — request's own ref, taken in `init()`, released on the completion path (not on Drop).
     pub resolver_for_caching: Option<bun_ptr::IntrusiveRc<Resolver>>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1426,9 +1395,7 @@ impl GetAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
-            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded
-            // ref_count. This ref is independent of `head.resolver`'s and is released on
-            // the completion path so the pending-cache deref never relies on the head ref.
+            // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
             resolver_for_caching: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
             hash: query.hash(),
             cache: CacheConfig::default(),
@@ -1501,9 +1468,7 @@ impl GetAddrInfoRequest {
 
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_host_native` (which
-                // frees `*this`) and derefs on every exit path.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_host_native(
@@ -1562,9 +1527,7 @@ impl GetAddrInfoRequest {
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching.take() {
                         let resolver_ptr = resolver.as_ptr();
-                        // Adopt the request's own ref into an RAII guard: it
-                        // keeps the Resolver alive across the drain (which
-                        // frees `*this`) and derefs on every exit path.
+                        // Guard keeps the Resolver alive past the drain, which frees `*this`.
                         let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                         if (*this).cache.pending_cache() {
                             (*resolver_ptr).drain_pending_host_native(
@@ -1616,9 +1579,7 @@ impl GetAddrInfoRequest {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_host_cares` (which
-                // frees `*this`) and derefs on every exit path.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_host_cares(
@@ -1674,9 +1635,7 @@ impl GetAddrInfoRequest {
 
             if let Some(resolver) = (*this).resolver_for_caching.take() {
                 let resolver_ptr = resolver.as_ptr();
-                // Adopt the request's own ref into an RAII guard: it keeps the
-                // Resolver alive across `drain_pending_host_native` (which
-                // frees `*this`) and derefs on every exit path.
+                // Guard keeps the Resolver alive past the drain, which frees `*this`.
                 let _resolver_ref = bun_ptr::ScopedRef::adopt(resolver.leak());
                 if (*this).cache.pending_cache() {
                     (*resolver_ptr).drain_pending_host_native(

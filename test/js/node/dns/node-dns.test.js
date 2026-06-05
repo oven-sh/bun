@@ -574,40 +574,30 @@ describe("hostnames containing NUL bytes", () => {
 });
 
 describe("resolver liveness across pending-cache completion", () => {
-  // Smoke coverage for the per-request resolver refs taken for the
-  // pending-cache completion path: each request takes its own ref in init()
-  // and releases it exactly once on completion. A double-release or a
-  // premature release (resolver torn down while requests drain) crashes the
-  // subprocess; an unbalanced ref shows up as a Resolver leak under LSan.
-  // Note: this is NOT a pre-fix-failing repro — c-ares dispatch sites hold
-  // their own scoped refs, so the old raw-pointer deref did not crash from
-  // JS. It exists to exercise every take()/release path post-change.
+  // Each request takes its own resolver ref in init() and releases it once on
+  // completion; a double or premature release crashes the subprocess.
   test("coalesced + cached DNS requests balance their resolver refs", async () => {
     const script = `
       const dns = require("node:dns");
 
       async function burst(make) {
-        // Identical concurrent queries coalesce onto one pending-cache
-        // slot; the extras append to the in-flight request's lookup list.
+        // Identical concurrent queries coalesce onto one pending-cache slot.
         await Promise.allSettled([make(), make(), make()]);
         Bun.gc(true);
       }
 
       async function gcResolverMidFlight() {
-        // Non-routable TEST-NET server: every query exercises the full
-        // c-ares completion/drain path via a fast deterministic timeout.
+        // Non-routable TEST-NET server: queries hit the c-ares drain path via timeout.
         let resolver = new dns.promises.Resolver({ timeout: 100, tries: 1 });
         resolver.setServers(["192.0.2.1"]);
         const pending = [];
         for (let i = 0; i < 3; i++) {
-          // Same names on purpose: 1 slot owner + coalesced waiters per type.
           pending.push(resolver.resolveTxt("txt.bun-test.invalid").catch(() => {}));
           pending.push(resolver.resolve4("a.bun-test.invalid").catch(() => {}));
           pending.push(resolver.reverse("192.0.2.55").catch(() => {}));
         }
-        // Drop the only JS reference while the queries are still in flight
-        // and force GC, so completion runs with no JS wrapper rooting the
-        // resolver beyond the native refs the requests themselves hold.
+        // Drop the only JS reference mid-flight so completion runs with only
+        // the requests' native refs keeping the resolver alive.
         resolver = null;
         Bun.gc(true);
         await Promise.all(pending);
@@ -615,11 +605,9 @@ describe("resolver liveness across pending-cache completion", () => {
       }
 
       await gcResolverMidFlight();
-      // lookupService -> GetNameInfoRequest release path. Routes through the
-      // module-global default resolver (never refcount-destroyed), so this is
-      // pure take()/release smoke coverage, not a liveness repro.
+      // lookupService -> GetNameInfoRequest release path.
       await burst(() => dns.promises.lookupService("127.0.0.1", 80).catch(() => {}));
-      // lookup -> GetAddrInfoRequest native-backend pending-cache release path.
+      // lookup -> GetAddrInfoRequest native-backend release path.
       await burst(() => dns.promises.lookup("localhost").catch(() => {}));
       Bun.gc(true);
       console.log("done");

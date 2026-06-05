@@ -2144,16 +2144,11 @@ impl AbortListener for SignalRef {
     }
 }
 
-/// Owned copy of one decoded HPACK header.
-///
-/// `lshpack::DecodeResult` borrows a thread-local scratch buffer that the next
-/// `decode`/`encode` call reuses — and the header-block loop's error paths
-/// (`send_go_away` → `encode`) drive an encode on the same `JsCell`-held HPACK
-/// state while a decoded header is still in use. The `JsCell` also cannot let
-/// the decode borrow escape `with_mut`. So the bytes are copied out at the
-/// decode boundary; name and value share one buffer, split at `name_len`.
-/// Headers that fit in [`HEADER_VALUE_INLINE_CAP`] bytes are stored inline so
-/// the per-header decode path does not allocate; larger ones spill to the heap.
+/// Owned copy of one decoded HPACK header. `lshpack::DecodeResult` borrows a
+/// thread-local scratch buffer that the next decode/encode reuses (e.g.
+/// `send_go_away` → `encode` while a decoded header is still in use), so the
+/// bytes are copied out at the decode boundary. Name and value share one
+/// buffer, split at `name_len`; small headers are stored inline.
 pub(crate) struct HeaderValue {
     data: HeaderValueData,
     name_len: usize,
@@ -2163,9 +2158,7 @@ pub(crate) struct HeaderValue {
     next: usize,
 }
 
-/// Inline capacity for one decoded header (name + value combined). Sized so
-/// typical headers (short name, value up to ~128 bytes) avoid a heap
-/// allocation on the per-header decode path.
+/// Inline capacity (name + value combined); typical headers avoid a heap allocation.
 const HEADER_VALUE_INLINE_CAP: usize = 160;
 
 enum HeaderValueData {
@@ -2263,9 +2256,7 @@ impl H2FrameParser {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 let decoded = hpack.decode(src_buffer).map_err(bun_core::Error::from)?;
-                // Copy out of the decoder's scratch buffer before the borrow
-                // ends: the slices are only valid until the next
-                // decode/encode call (see `HeaderValue`).
+                // Copy out of the decoder's scratch buffer (see `HeaderValue`).
                 return Ok(HeaderValue::new(
                     decoded.name,
                     decoded.value,

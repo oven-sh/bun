@@ -2713,11 +2713,8 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
 });
 
 it("http2 server sends GOAWAY PROTOCOL_ERROR when a request header block contains :status", async () => {
-  // A response pseudo-header in a request hits the decoder's
-  // GOAWAY-while-decoding error path: the parser writes a GOAWAY and
-  // dispatches the error into JS while the freshly decoded header is still in
-  // scope, so the decoded name/value bytes must be owned copies rather than
-  // views into the HPACK scratch buffer that the next decode/encode reuses.
+  // A response pseudo-header in a request triggers a GOAWAY (an encode)
+  // while the freshly decoded header is still in use.
   const delivered = [];
   const server = http2.createServer();
   server.on("stream", (stream, headers) => {
@@ -2777,12 +2774,8 @@ it("http2 server sends GOAWAY PROTOCOL_ERROR when a request header block contain
 });
 
 it("http2 decoded header bytes stay intact across interleaved decode/encode and GC", async () => {
-  // Server and client share one event-loop thread, so every request/response
-  // pair interleaves HPACK decodes and encodes on the same thread-local
-  // scratch buffer. Repeated values exercise dynamic-table indexed decodes,
-  // never-index headers exercise the sensitive-header path, and forced GC
-  // between rounds provokes collection while decoded headers are in flight.
-  // Every header must come back byte-exact on every round.
+  // Server and client share one thread, so each request/response interleaves
+  // HPACK decodes and encodes on the same thread-local scratch buffer.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -29,12 +29,9 @@ pub struct HPACK {
     self_: *mut c_void,
 }
 
-/// One decoded header. `name`/`value` borrow the thread-local scratch buffer
-/// the C wrapper decodes into, so the borrow is tied to the `HPACK` instance:
-/// the compiler rejects a subsequent `decode`/`encode` through the same
-/// instance while the slices are live. The scratch buffer is shared by every
-/// `HPACK` instance on the thread, so callers must still copy the bytes out
-/// before handing control to code that may drive a *different* instance.
+/// One decoded header. `name`/`value` point into a thread-local scratch
+/// buffer shared by every `HPACK` instance on the thread; copy the bytes out
+/// before the next decode/encode through any instance.
 pub struct DecodeResult<'a> {
     pub name: &'a [u8],
     pub value: &'a [u8],
@@ -58,10 +55,8 @@ bun_core::named_error_set!(HpackError);
 impl HPACK {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
 
-    /// The returned `DecodeResult` borrows this instance for as long as its
-    /// `name`/`value` slices are used; copy/clone the bytes out before the
-    /// next decode/encode call (the slices point into a thread_local buffer
-    /// that every `HPACK` instance on the thread reuses).
+    /// `DecodeResult` name/value point into a thread_local shared buffer;
+    /// copy them out before the next decode/encode call.
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult<'_>, HpackError> {
         let mut header = lshpack_header::default();
         // SAFETY: genuine FFI — only the `(src.as_ptr(), src.len())` pair carries

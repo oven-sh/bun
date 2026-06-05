@@ -855,14 +855,9 @@ impl<'a> Resolver<'a> {
     /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
-    /// subsequent map access are re-derived from the raw singleton:
-    /// `DirInfo::put_slot` does this internally, and `DirInfo::slot_ptr_at`
-    /// covers index-based lookups (see `dir_info_cached_miss`,
-    /// `dir_info_for_resolution`). This is NOT yet universal: read paths that
-    /// go through `at_index(..).map(DirInfoRef::from_slot)` (e.g. the
-    /// cache-hit arm of `dir_info_cached_maybe_log`) and
-    /// `DirInfo::ref_at_index` still hand out refs whose tags descend from a
-    /// transient borrow; those are only durable until the next map access.
+    /// subsequent map access are re-derived from the raw singleton via
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
+    /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
     pub fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
@@ -3428,11 +3423,9 @@ impl<'a> Resolver<'a> {
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            // SAFETY: `Exists` means `index` was assigned by `put`; resolver
-            // mutex held. `from_raw`: `slot_ptr_at` yields a live BSSMap slot
-            // rooted at the raw singleton, so the returned ref survives the
-            // caller's later map reborrows (`load_node_modules` holds it
-            // across further `&mut self` calls).
+            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
+            // The slot pointer is rooted at the singleton, so the returned ref
+            // survives the caller's later map reborrows.
             return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) }));
         }
@@ -3561,9 +3554,6 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // NOTE: `DirInfo::put_slot` returns a `*mut` re-derived from the raw
-        // singleton (`DirInfo::slot_ptr_at`), so `self.dir_cache` (and `*self`)
-        // are reborrowable for the call below without popping this pointer.
         // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
         let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
             DirInfo::put_slot(
@@ -4639,12 +4629,9 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // SAFETY: ARENA — `dir_cache()` singleton (see NOTE). Stacked Borrows:
-            // `DirInfo::put_slot` re-derives the returned slot pointer from the raw
-            // singleton (`DirInfo::slot_ptr_at`), and `parent_dir_ptr` is derived
-            // the same way below — both pointers are rooted at the static, so the
-            // later map reborrows inside `dir_info_uncached` cannot pop their tags.
             // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            // Both slot pointers are rooted at the singleton, so the map
+            // reborrows inside `dir_info_uncached` cannot pop them.
             let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
                 DirInfo::put_slot(
                     self.dir_cache(),
@@ -4652,9 +4639,8 @@ impl<'a> Resolver<'a> {
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is either a sentinel (`slot_ptr_at`
-            // returns `None`) or a slot previously assigned by `put`; resolver
-            // mutex held. `from_raw`: `slot_ptr_at` yields a live BSSMap slot.
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
             let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
                 .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
@@ -6011,25 +5997,18 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<(), bun_core::Error> {
         let result = _result;
 
-        // SAFETY: RealFS is the process-global ARENA singleton. Derive `rfs_ptr` from
-        // the raw `*mut FileSystem` field (not a `&mut`), and pass it straight through
-        // to `Entry::kind`/`Entry::symlink` — those take the resolver by raw pointer
-        // and reborrow internally only for the duration of the lazy stat, so no
-        // `&mut RealFS` is ever materialized in this frame and the interleaved
-        // `self.fs_ref()` / `parse_package_json()` / `parse_tsconfig()` calls below
-        // cannot invalidate it under Stacked Borrows.
+        // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
+        // `Entry::symlink` take it by raw pointer and reborrow only internally,
+        // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
+        // under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // ARENA-backed `DirEntry`: the caller passes `_entries` as a live slot in the
-        // global BSSMap-backed entries cache, and the payload `DirEntry` is a separate
-        // process-lifetime allocation, so a shared `BackRef` survives unrelated
-        // entries-map traffic. Every use in this function is a `&self` read
-        // (`get_comptime_query` / `has_comptime_query` / `.fd`); `Entry` cache fields
-        // mutate through `Cell` under `entries_mutex`, which the caller holds.
-        // SAFETY: `_entries` is a live `EntriesOption` slot (caller contract).
+        // SAFETY: `_entries` is a live slot (caller contract); the payload
+        // `DirEntry` is a separate process-lifetime allocation, so the shared
+        // `BackRef` survives entries-map traffic. All uses below are `&self`
+        // reads under `entries_mutex`.
         let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
-                // Fresh safe shared borrow of the ARENA-backed `DirEntry` (see note above).
                 dir_entries.get()
             };
         }
@@ -6202,9 +6181,6 @@ impl<'a> Resolver<'a> {
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
-                        // Read-only `.fd` access through the shared `entries!()`
-                        // borrow of the ARENA-backed `DirEntry` (see the note at
-                        // the top of this function).
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
@@ -6589,13 +6565,9 @@ pub struct BrowserMapPath<'b> {
 }
 
 impl<'b> BrowserMapPath<'b> {
-    /// On a match, only `self.remapped` is updated — that is the sole field
-    /// callers read after a successful call. `cleaned` / `input_path` are
-    /// read-only inputs set at construction (`check_browser_map` reads
-    /// `input_path` only between *unsuccessful* calls, where it is untouched),
-    /// so the matched candidate itself — which would otherwise borrow the
-    /// threadlocal `extension_path` / `tsconfig_base_url` scratch buffers — is
-    /// never stored back into the checker.
+    /// On a match only `self.remapped` is updated; the matched candidate may
+    /// borrow threadlocal scratch buffers and must never be stored back into
+    /// the checker.
     pub fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 

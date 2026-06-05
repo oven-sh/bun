@@ -793,6 +793,29 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         supports: Vec<CssRule<R>>,
         logical: Vec<CssRule<R>>,
     }
+    if incompatible.len() > 0 {
+        // Each split-off selector clones this rule's declarations and entire
+        // nested-rule subtree (loop below). The subtree already contains the
+        // clones split off while minifying deeper levels, so under nesting the
+        // cloned payload compounds exponentially with depth.
+        // `charge_selector_expansion` bounds how many rules this produces but
+        // not their size; bound the cumulative cloned payload too, so huge
+        // token lists or declaration blocks can't multiply into gigabytes
+        // while staying under the selector-count cap.
+        let per_clone = clone_weight::RULE
+            .saturating_add(clone_weight::decl_block(&sty.declarations))
+            .saturating_add(clone_weight::rule_list(&sty.rules));
+        context.split_clone_weight_total = context
+            .split_clone_weight_total
+            .saturating_add(per_clone.saturating_mul(incompatible.len() as u64));
+        if context.split_clone_weight_total > MAX_SELECTOR_SPLIT_CLONE_WEIGHT {
+            context.err = Some(crate::error::MinifyError {
+                kind: crate::error::MinifyErrorKind::selector_split_clone_limit_exceeded,
+                loc: sty.loc,
+            });
+            return Err(MinifyErr::minify_err);
+        }
+    }
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
@@ -889,6 +912,167 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     }
 
     Ok(())
+}
+
+/// Weight estimate for the rule clones made by `minify_style_arm`'s
+/// incompatible-selector split, in roughly byte-sized units, charged against
+/// [`MAX_SELECTOR_SPLIT_CLONE_WEIGHT`].
+///
+/// The walk counts the structures whose count or size scales with user input:
+/// rules, declarations, selector components (recursing into selector-list
+/// arguments), and raw token lists (token count plus borrowed text length —
+/// the text is borrowed by the clone but re-emitted per clone when printed).
+/// Parsed leaf values are charged a flat constant per declaration: their
+/// per-rule size is bounded by the input, and the number of clones is bounded
+/// by [`MAX_SELECTOR_EXPANSION`]. The walk runs once per split rule, so its
+/// own cost stays proportional to the weight it charges.
+mod clone_weight {
+    use super::{CssRule, CssRuleList};
+    use crate as css;
+    use css::properties::Property;
+    use css::properties::custom::{TokenList, TokenOrValue};
+    use css::selectors::{Component, PseudoClass, PseudoElement, Selector, SelectorList};
+
+    /// Flat weight of one rule (struct + bookkeeping).
+    pub(super) const RULE: u64 = 64;
+    /// Flat weight of one declaration.
+    const DECL: u64 = 64;
+    const COMPONENT: u64 = 16;
+    const TOKEN: u64 = 16;
+
+    pub(super) fn rule_list<R>(rules: &CssRuleList<R>) -> u64 {
+        rules.v.iter().map(rule).fold(0u64, u64::saturating_add)
+    }
+
+    fn rule<R>(rule: &CssRule<R>) -> u64 {
+        let nested = match rule {
+            CssRule::Style(sty) => selector_list(&sty.selectors)
+                .saturating_add(decl_block(&sty.declarations))
+                .saturating_add(rule_list(&sty.rules)),
+            CssRule::Media(r) => rule_list(&r.rules),
+            CssRule::Supports(r) => rule_list(&r.rules),
+            CssRule::Container(r) => rule_list(&r.rules),
+            CssRule::LayerBlock(r) => rule_list(&r.rules),
+            CssRule::MozDocument(r) => rule_list(&r.rules),
+            CssRule::Scope(r) => rule_list(&r.rules),
+            CssRule::StartingStyle(r) => rule_list(&r.rules),
+            CssRule::Nesting(r) => selector_list(&r.style.selectors)
+                .saturating_add(decl_block(&r.style.declarations))
+                .saturating_add(rule_list(&r.style.rules)),
+            CssRule::Keyframes(r) => r
+                .keyframes
+                .iter()
+                .map(|k| decl_block(&k.declarations))
+                .fold(0u64, u64::saturating_add),
+            CssRule::Unknown(r) => {
+                token_list(&r.prelude).saturating_add(r.block.as_ref().map_or(0, token_list))
+            }
+            // Remaining rules can't contain nested style rules; their payload
+            // is bounded per rule by the input.
+            _ => 0,
+        };
+        RULE.saturating_add(nested)
+    }
+
+    pub(super) fn decl_block(decls: &css::DeclarationBlock) -> u64 {
+        decls
+            .declarations
+            .iter()
+            .chain(decls.important_declarations.iter())
+            .map(property)
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn property(property: &Property) -> u64 {
+        DECL.saturating_add(match property {
+            Property::Custom(c) => token_list(&c.value),
+            Property::Unparsed(u) => token_list(&u.value),
+            _ => 0,
+        })
+    }
+
+    pub(super) fn selector_list(list: &SelectorList) -> u64 {
+        selector_slice(list.v.slice())
+    }
+
+    fn selector_slice(selectors: &[Selector]) -> u64 {
+        selectors
+            .iter()
+            .map(|sel| {
+                sel.components
+                    .iter()
+                    .map(component)
+                    .fold(0u64, u64::saturating_add)
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn component(component: &Component) -> u64 {
+        COMPONENT.saturating_add(match component {
+            Component::Negation(list)
+            | Component::Where(list)
+            | Component::Is(list)
+            | Component::Has(list)
+            | Component::Any {
+                selectors: list, ..
+            } => selector_slice(list),
+            Component::NthOf(data) => selector_slice(&data.selectors),
+            Component::Slotted(sel) => selector_slice(core::slice::from_ref(sel)),
+            Component::Host(Some(sel)) => selector_slice(core::slice::from_ref(sel)),
+            Component::NonTsPseudoClass(PseudoClass::CustomFunction { arguments, .. })
+            | Component::PseudoElement(PseudoElement::CustomFunction { arguments, .. }) => {
+                token_list(arguments)
+            }
+            _ => 0,
+        })
+    }
+
+    fn token_list(tokens: &TokenList) -> u64 {
+        tokens
+            .v
+            .iter()
+            .map(|t| {
+                TOKEN.saturating_add(match t {
+                    TokenOrValue::Token(token) => token_text_len(token),
+                    TokenOrValue::Var(var) => var.fallback.as_ref().map_or(0, token_list),
+                    TokenOrValue::Env(env) => env.fallback.as_ref().map_or(0, token_list),
+                    TokenOrValue::Function(f) => token_list(&f.arguments),
+                    TokenOrValue::UnresolvedColor(color) => unresolved_color(color),
+                    _ => 0,
+                })
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn unresolved_color(color: &css::properties::custom::UnresolvedColor) -> u64 {
+        use css::properties::custom::UnresolvedColor;
+        match color {
+            UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. } => {
+                token_list(alpha)
+            }
+            UnresolvedColor::LightDark { light, dark } => {
+                token_list(light).saturating_add(token_list(dark))
+            }
+        }
+    }
+
+    fn token_text_len(token: &css::Token) -> u64 {
+        use css::Token;
+        match token {
+            Token::Ident(v)
+            | Token::Function(v)
+            | Token::AtKeyword(v)
+            | Token::UnrestrictedHash(v)
+            | Token::IdHash(v)
+            | Token::QuotedString(v)
+            | Token::BadString(v)
+            | Token::UnquotedUrl(v)
+            | Token::BadUrl(v)
+            | Token::Whitespace(v)
+            | Token::Comment(v) => v.len() as u64,
+            _ => 0,
+        }
+    }
 }
 
 // ─── StyleRuleKey ──────────────────────────────────────────────────────────
@@ -1069,6 +1253,21 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the cumulative weight (roughly bytes of AST payload) of
+/// style-rule clones produced by splitting selector lists that are
+/// incompatible with the configured targets.
+///
+/// `minify_style_arm` clones a rule's declarations and its entire nested-rule
+/// subtree once per split-off selector. Under CSS nesting the subtree at each
+/// level already contains the clones split off at deeper levels, so the cloned
+/// payload compounds exponentially with nesting depth. [`MAX_SELECTOR_EXPANSION`]
+/// bounds how many rules the split can produce but not their size: each clone
+/// can carry arbitrarily large token lists or declaration blocks, so a few
+/// hundred kilobytes of adversarial input could otherwise clone (and later
+/// print) gigabytes while staying under the selector-count cap. Real-world
+/// stylesheets duplicate at most a few kilobytes here.
+pub const MAX_SELECTOR_SPLIT_CLONE_WEIGHT: u64 = 64 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1104,4 +1303,8 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of the weight of rule clones made when splitting
+    /// target-incompatible selector lists, checked against
+    /// [`MAX_SELECTOR_SPLIT_CLONE_WEIGHT`].
+    pub split_clone_weight_total: u64,
 }

@@ -238,6 +238,88 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   expect(out).toContain("@scope");
 });
 
+// ── selector-split clone weight ──────────────────────────────────────────────
+//
+// The selector-count cap above bounds how many rules the incompatible-selector
+// split can produce, but not their size: each split-off selector deep-clones
+// the rule's declarations and entire nested-rule subtree, and under nesting
+// the subtree already contains the clones made at deeper levels. A large
+// custom-property payload repeated across a dozen two-selector nesting levels
+// therefore cloned (and later printed) gigabytes while staying well under
+// 65,536 selectors — e.g. 449 KB of input produced a 1.08 GB minified output.
+// The minifier now also bounds the cumulative weight of those clones.
+
+const CLONE_LIMIT_ERROR = "duplicates too much CSS";
+
+/** `depth` nested two-selector rules, each carrying a `payload`-sized custom property. */
+function nestedPayloadRules(depth: number, payload: number): string {
+  const pad = Buffer.alloc(payload, "a").toString();
+  return `.a, .b { --p: ${pad};\n`.repeat(depth) + "color: red;\n" + "}".repeat(depth);
+}
+
+test("splitting nested rules with large payloads errors instead of cloning gigabytes", () => {
+  // 14 levels of two-selector rules with a 2 KB payload each: ~16K selector
+  // combinations (well under the selector-count cap) but each split clones the
+  // payload-bearing subtree, compounding to ~70 MB of cloned weight (33 MB of
+  // output before the fix, gigabytes at slightly larger payloads).
+  expect(() => minifyTest(nestedPayloadRules(14, 2048), "", OLD_TARGETS)).toThrow(CLONE_LIMIT_ERROR);
+});
+
+test("the mixed vendor-prefix fuzzer shape with large payloads is bounded too", () => {
+  // Same shape as the fuzzer's hang input but with a fat custom property per
+  // level: mixed-compat selector lists split at every nesting level, cloning
+  // the payload into every branch. 97 KB of input produced a 69 MB output
+  // before the fix.
+  const pad = Buffer.alloc(8192, "a").toString();
+  const src =
+    `.a:placeholder-shown .x, .b:-webkit-autofill .y { --p: ${pad};\n`.repeat(12) + "color: red" + "}".repeat(12);
+  expect(() => minifyTest(src, "", { safari: (13 << 16) | (2 << 8) })).toThrow(CLONE_LIMIT_ERROR);
+});
+
+test("nested rules with payloads below the clone limit still compile byte-for-byte", () => {
+  // Two levels below the throwing depth: the split path runs and its output is
+  // unchanged by the budget.
+  const out = minifyTest(nestedPayloadRules(12, 2048), "", OLD_TARGETS);
+  expect(out.length).toBe(8595441);
+  expect(out).toContain("color:red");
+});
+
+test("shallow incompatible splits still produce the full split output", () => {
+  const out = minifyTest(".a, .b { --p: x;\n".repeat(3) + "color: red;\n" + "}".repeat(3), "", OLD_TARGETS);
+  expect(out).toBe(
+    ".a,.b{--p:x}" +
+      ":is(.a,.b) .a{--p:x}" +
+      ":is(.a,.b) .a .a{--p:x;color:red}" +
+      ":is(.a,.b) .a .b{--p:x;color:red}" +
+      ":is(.a,.b) .b{--p:x}" +
+      ":is(.a,.b) .b .a{--p:x;color:red}" +
+      ":is(.a,.b) .b .b{--p:x;color:red}",
+  );
+});
+
+test("bun build reports the clone limit instead of writing a multi-megabyte file", async () => {
+  using dir = tempDir("css-split-clone-weight", {
+    "input.css": nestedPayloadRules(14, 2048),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "input.css", "--outdir", "out", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix this build wrote ~33 MB (gigabytes at larger
+    // payloads). Let the child terminate itself so a regression fails the
+    // assertions below instead of hanging the runner.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toContain(CLONE_LIMIT_ERROR);
+  expect(exitCode).toBe(1);
+  expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
+});
+
 test("bun build does not hang on deeply nested multi-selector css spanning @starting-style", async () => {
   using dir = tempDir("css-starting-style-expansion", {
     // The fuzzer's depth (14 outer + 11 inner): without the fix this hangs for
@@ -262,4 +344,80 @@ test("bun build does not hang on deeply nested multi-selector css spanning @star
   expect(stderr).toContain(LIMIT_ERROR);
   expect(exitCode).toBe(1);
   expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
+});
+
+// ── printer indent counter ───────────────────────────────────────────────────
+
+test("pretty-printing 128+ levels of nested rules does not crash", async () => {
+  // The printer's indent counter was a u8 incremented by 2 per nesting level,
+  // so pretty-printing a valid stylesheet with 128+ nested rules overflowed it
+  // (a panic in debug builds). Run in a subprocess so a regression is an exit
+  // code, not a dead test runner.
+  const script = `
+    const { cssInternals } = require("bun:internal-for-testing");
+    const css = ".a {\\n".repeat(200) + "color: red;\\n" + "}".repeat(200);
+    const out = cssInternals.prefixTest(css, "", { chrome: 130 << 16 });
+    console.log(out.length);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    indentedLength: parseInt(stdout, 10) > 1000,
+    exitCode,
+    stderr: stderr.includes("panic") ? stderr : "",
+  }).toEqual({
+    indentedLength: true,
+    exitCode: 0,
+    stderr: "",
+  });
+});
+
+// ── minimized fuzzer input ───────────────────────────────────────────────────
+
+test("the minimized fuzzer input terminates across minify, nesting-compile, and prefix passes", () => {
+  // 11.6 KB fuzzer-generated input combining `>`-combinator token floods inside
+  // invalid rules with ~20 levels of unclosed mixed-compat two-selector nesting.
+  // Before the expansion bounds, minifying it for old targets cloned and
+  // re-serialized the nested subtree once per incompatible selector per level,
+  // hanging or OOMing (6+ GB). Every pass must now finish quickly, either
+  // returning output or reporting one of the bounded-expansion errors.
+  const input = Buffer.from(
+    Bun.gunzipSync(
+      Buffer.from(
+        "H4sIAAAAAAACA+1azW4bNxDu2U9BIBAgFaKwsiXLpoDcc3GB3AL4UO7u7C4hityQ1F8FAXqDvkKP7a1vkCKPkpx76z2dXf04VhzbcSTZVrgCJJMz/GY45HDWnGkkWpMpsRGXwMgrlQgl3KRC+L9/z5Xocye0orEwEDkR8qiX8AjoUFgRComMWlXIBb+ozI5ekls/qRExTXl+OxvTA0d1Qg1XKaw6GwsVHXZuDcgm2vTZYtpVupq2qnVXlgjInqZ0TZOTzxRotFGFgpHlH+Z/SrR7pmUMhtpMjxRphNzUSyBGRxDmYGxeLNIQpstRdw3pCUf5wOlESMmiDKIexAXPb2R6RPDZqoCdA/uRhzVypztw9dy/O9SmkCKUFAqoddw4OhKxyxg5zsfdNZ8egsFzAWikpTaWkSYZclOlFFWq1ckJkTystoPG+flZhTSP2412cEoodnSCzlnN43icr+L8cn+c2fKXZQVenbBERwO7iNsS1tv6e8iJhDEdGZ4zUnx3tyJx7Wehdk5jWGzmY2K1FDEJ0dd73U2+pQv2+bh6HL0dJVqhW4JIM4deWXuwUqEB3qMhYGyG++lfHDnTUnzCOIzIa93njbrlRFlqUUvNLhEzRosJB4x60rMhzZ6UilJYh+FnIoG6SQ43ci59A08QyXMLT8eiv9532FeALg94z3nX2y1pf9Kivrf+95EOZT5HP8Ya+q28T9J/v7979ywmcHSwK7P4j2xcJ0HN78dvJ3mzHDrpn/mXxA/zv3apy0187//YAsjWVHQwdniBGINyfq9siYSZmz22skmegbI3suxZlasWX6Xptgj9GMa93vo4nz+qArNHnr9v7be1vDMzxdXx4n5t21J+3qD95M3/sBZmw5/ATsFDN8VEoB6YCO4alWuBp7OhMMTYb++StS67ULzvl/3LFsPkawpuV4LKShBM6ZbJHOsMuChjmGmrzK4leQgvMtEbqZ5PdFS+o3z2ihJsQpXjYFHk0QyCbyq1CZZKXFXsPHOEgiM1eqBiRiKtRERTw2OBblLljpz75wFPhbSDSlmchBmgQV8VNUp18iIJTuskxWKJ2rKuiCzJZoDJpDKR6tfjUdfDm9+b/8DNz6VIFSY7ZXLrQmwGFnwbxwCKZTE/apz0CHtC+HQXxPSqaLf8S3IHb6rNs1brtNNqBZ2TTnDebjdPm20sQFpLLWtsyQSk1KMumf0PJ9zOf3YtAAA=",
+        "base64",
+      ),
+    ),
+  ).toString("latin1");
+
+  const boundedError = /expand|expansion|duplicates too much CSS/;
+  expect(() => minifyTest(input, "")).toThrow(boundedError);
+  expect(() => minifyTest(input, "", { safari: (13 << 16) | (2 << 8) })).toThrow(boundedError);
+  expect(() => prefixTest(input, "", { safari: (13 << 16) | (2 << 8) })).toThrow(boundedError);
+});
+
+// ── combinator token floods stay linear ──────────────────────────────────────
+
+test("a '>' combinator flood in an invalid selector minifies in linear time", () => {
+  // The fuzzer input floods tens of thousands of `>` delimiter tokens inside
+  // invalid rules. Parsing collapses consecutive combinators, so this must
+  // complete quickly with a tiny output rather than being cloned or
+  // re-serialized per token.
+  const flood = Buffer.alloc(80_000, "> ").toString();
+  expect(minifyTest(`${flood}.foo { color: red }`, "")).toBe(">>.foo>{color:red}");
+});
+
+test("a '>' combinator flood in an unknown declaration value stays linear", () => {
+  // Unknown declarations keep their value as a raw token list; a 40K-token
+  // flood must round-trip in linear time and size.
+  const flood = Buffer.alloc(80_000, "> ").toString();
+  const out = minifyTest(`.a { notaprop: ${flood} }`, "");
+  expect(out.length).toBeGreaterThan(40_000);
+  expect(out.length).toBeLessThan(81_000);
+  expect(out).toStartWith(".a{notaprop:>");
 });

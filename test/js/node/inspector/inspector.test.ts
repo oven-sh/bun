@@ -91,6 +91,29 @@ test("a throwing consoleAPICalled listener does not break console.log or other s
   }
 });
 
+test("a listener that throws a non-stringifiable value does not break console.log", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  const warnings: Error[] = [];
+  const onWarning = (w: Error) => warnings.push(w);
+  process.on("warning", onWarning);
+  try {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    session.on("Runtime.consoleAPICalled", () => {
+      throw proxy; // String(proxy) throws TypeError
+    });
+    session.post("Runtime.enable");
+    expect(() => console.log("still works")).not.toThrow();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain("could not be stringified");
+  } finally {
+    process.off("warning", onWarning);
+    session.disconnect();
+  }
+});
+
 test("a console argument whose toString throws does not break console.log", async () => {
   const session = new inspector.Session();
   session.connect();

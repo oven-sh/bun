@@ -115,7 +115,16 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
         session.emit("inspectorNotification", message);
         session.emit("Runtime.consoleAPICalled", message);
       } catch (e) {
-        process.emitWarning(e instanceof Error ? e : new Error(String(e)));
+        let warning: Error;
+        // Both `instanceof` (prototype walk) and String(e) can themselves
+        // throw on hostile values like a thrown revoked Proxy, which would
+        // defeat this guard.
+        try {
+          warning = e instanceof Error ? e : new Error(String(e));
+        } catch {
+          warning = new Error("Runtime.consoleAPICalled handler threw a value that could not be stringified");
+        }
+        process.emitWarning(warning);
       }
     }
   } finally {

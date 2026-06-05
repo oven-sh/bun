@@ -3526,9 +3526,19 @@ class ClientHttp2Session extends Http2Session {
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      if (self.destroyed) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
-      if (self.closed) return;
-      self.destroy(undefined, errorCode);
+      if (errorCode === NGHTTP2_NO_ERROR) {
+        // A no-error GOAWAY begins a graceful shutdown: no new streams
+        // permitted (request() throws ERR_HTTP2_GOAWAY_SESSION while the
+        // session is closed-but-not-destroyed), but existing streams may
+        // finish naturally.
+        self.close();
+      } else {
+        // Mirror Node: destroy immediately with an error, but send our own
+        // goaway with NGHTTP2_NO_ERROR since this side had no error.
+        self.destroy($ERR_HTTP2_SESSION_ERROR(errorCode), NGHTTP2_NO_ERROR);
+      }
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

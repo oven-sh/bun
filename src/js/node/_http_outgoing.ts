@@ -221,6 +221,10 @@ const OutgoingMessagePrototype = {
   _headerNames: undefined,
   appendHeader(name, value) {
     validateString(name, "name");
+    if (this[kEmptySetCookie] && name.length === 10 && name.toLowerCase() === "set-cookie") {
+      // An appended cookie supersedes the present-but-empty marker.
+      this[kEmptySetCookie] = false;
+    }
     var headers = (this[headersSymbol] ??= new Headers());
     headers.append(name, value);
     return this;
@@ -269,7 +273,9 @@ const OutgoingMessagePrototype = {
     const emptySetCookie = this[kEmptySetCookie];
     if (!headers) return emptySetCookie ? [emptySetCookie] : [];
     const names = getRawKeys.$call(headers);
-    if (emptySetCookie) names.push(emptySetCookie);
+    if (emptySetCookie && !names.some(name => typeof name === "string" && name.toLowerCase() === "set-cookie")) {
+      names.push(emptySetCookie);
+    }
     return names;
   },
 
@@ -357,10 +363,17 @@ const OutgoingMessagePrototype = {
 
   get headers() {
     const headers = this[headersSymbol];
-    if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    if (!headers) return this[kEmptySetCookie] ? { "set-cookie": [] } : kEmptyObject;
+    const json = headers.toJSON();
+    if (this[kEmptySetCookie] && json["set-cookie"] === undefined) {
+      json["set-cookie"] = [];
+    }
+    return json;
   },
   set headers(value) {
+    // Replacing the whole header bag drops the present-but-empty set-cookie
+    // marker; the new Headers determines set-cookie state from here on.
+    this[kEmptySetCookie] = false;
     this[headersSymbol] = new Headers(value);
   },
 

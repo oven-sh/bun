@@ -639,6 +639,38 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   LOG_EXPR(n->Value());
 }
 
+// Regression test: the escape slot must be reserved when the escapable scope
+// opens, not when Escape() is called. With Node 26 headers the inline
+// ~HandleScope calls DeleteExtensions, which frees every handle created
+// inside the scope — including, before the fix, an escape handle allocated at
+// Escape() time after in-scope Local copies.
+Local<String> escape_after_inline_handles(Isolate *isolate) {
+  EscapableHandleScope ehs(isolate);
+  Local<String> value =
+      String::NewFromUtf8(isolate, "escaped-after-inline").ToLocalChecked();
+  // These go through the headers' inline CreateHandle (HandleScope::Extend
+  // grants) and are swept by DeleteExtensions when the scope closes.
+  Local<Value> copy1 = Local<Value>::New(isolate, Local<Value>::Cast(value));
+  Local<Value> copy2 = Local<Value>::New(isolate, copy1);
+  (void)copy2;
+  return ehs.Escape(value);
+}
+
+void test_v8_escapable_handle_scope_inline_grants(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> s = escape_after_inline_handles(isolate);
+  // Create more handles so a freed escape slot would be overwritten before we
+  // read it back.
+  for (int i = 0; i < 16; i++) {
+    (void)Number::New(isolate, i * 1.5);
+  }
+  LOG_VALUE_KIND(s);
+  char buf[32];
+  s->WriteUtf8V2(isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
+  LOG_EXPR(buf);
+}
+
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
 #ifndef _WIN32
   assert(getpid() == uv_os_getpid());
@@ -1230,6 +1262,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_handle_scope_gc", test_handle_scope_gc);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope",
                   test_v8_escapable_handle_scope);
+  NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope_inline_grants",
+                  test_v8_escapable_handle_scope_inline_grants);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",

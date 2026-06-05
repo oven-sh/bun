@@ -3,26 +3,14 @@ import { expect, test } from "bun:test";
 import { copyFileSync, cpSync, promises as fs, readFileSync, rmSync } from "fs";
 import { cp } from "fs/promises";
 import { join } from "path";
-import { bunEnv, bunExe, isDebug, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, getPuppeteerInstallEnv, isDebug, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
 const root = join(import.meta.dir, "../");
 
-// The dev-server-puppeteer launcher prefers a system Chromium when one is
-// installed (CI bootstraps one on every Linux flavor), and several platforms
-// have no Chrome for Testing build at all (linux-arm64, windows-arm64). Skip
-// puppeteer's browser download in those cases: it wastes ~150MB per run and a
-// half-extracted download left in the shared agent cache by an earlier failed
-// run otherwise fails every later install ("browser folder exists but the
-// executable is missing").
-const hasSystemChromium = !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
-const skipBrowserDownload =
-  hasSystemChromium ||
-  (process.platform === "linux" && process.arch === "arm64") ||
-  (process.platform === "win32" && (!!process.env.CI || !!process.env.BUILDKITE));
-const puppeteerInstallEnv = skipBrowserDownload ? { PUPPETEER_SKIP_DOWNLOAD: "1" } : {};
+const puppeteerInstallEnv = getPuppeteerInstallEnv();
 
 async function tempDirToBuildIn() {
   const dir = tmpdirSync(

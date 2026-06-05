@@ -33,18 +33,30 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
     // real V8. An Escape()d value must survive this scope, which that same buffer provides --
     // capture it now so Escape still targets it even if (with old-ABI addons) a deeper scope is
     // current by then.
+    //
+    // Reserve the escape slot NOW, like real V8: its storage index must be below every handle
+    // created inside this scope, or HandleScope::DeleteExtensions (run by V8 14's inline
+    // ~HandleScope) would sweep the just-escaped handle together with the scope's grants. The
+    // reservation is kept in a side registry keyed by `this` because the V8 ABI leaves exactly
+    // one Bun-usable word in this object (m_escapeBuffer).
     auto* current = isolate->globalInternals()->currentHandleScope();
     RELEASE_ASSERT(current, "EscapableHandleScope created without an active handle scope");
     m_escapeBuffer = current->m_buffer;
+    shim::Handle* reserved = current->m_buffer->reserveEscapeHandle();
+    isolate->globalInternals()->escapeReservations().set(this, shim::GlobalInternals::EscapeReservation { reserved, current->m_buffer });
 }
 
-// Create a handle for escape_value in the scope this object escapes to, and return its slot
+// Fill the escape slot reserved at construction with escape_value and return its location.
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
     RELEASE_ASSERT(m_escapeBuffer != nullptr, "EscapableHandleScope::Escape called multiple times");
+    auto reservation = m_isolate->globalInternals()->escapeReservations().take(this);
+    RELEASE_ASSERT(reservation.handle && reservation.buffer == m_escapeBuffer,
+        "EscapableHandleScope escape reservation missing");
     TaggedPointer* newHandle = m_escapeBuffer->createHandleFromExistingObject(
         TaggedPointer::fromRaw(*escape_value),
-        m_isolate);
+        m_isolate,
+        reservation.handle);
     m_escapeBuffer = nullptr;
     return newHandle->asRawPtrLocation();
 }

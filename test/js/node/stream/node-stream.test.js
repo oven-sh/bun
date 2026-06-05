@@ -830,7 +830,6 @@ describe("node v26 stream semantics", () => {
   // pipeline never finishes. We keep the Node 24 behavior: a destroyed-flagged
   // stream still flushes its buffered data to a piped destination.
   it("drain still resumes a source that flagged itself destroyed before EOF (fd-slicer pattern)", async () => {
-    const { Transform } = require("node:stream");
     const chunks = [Buffer.alloc(65536, 1), Buffer.alloc(65536, 2), Buffer.alloc(40000, 3)];
     const src = new Readable({
       read() {

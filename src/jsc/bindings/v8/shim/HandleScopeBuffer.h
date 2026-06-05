@@ -56,6 +56,12 @@ public:
     // closes.
     void deleteGrantsBack(const uintptr_t* limit);
 
+    // Reserve an empty handle for an EscapableHandleScope's escape slot.
+    // Called from the scope's constructor so the slot's storage index is below
+    // every handle created inside the scope (deleteGrantsBack then can't sweep
+    // it); EscapeSlot() fills it via createHandleFromExistingObject(reuseHandle).
+    Handle* reserveEscapeHandle();
+
     // Given a tagged pointer from V8, create a handle around the same object or the same
     // numeric value
     //

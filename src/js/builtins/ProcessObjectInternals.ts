@@ -480,23 +480,24 @@ export function windowsEnv(
       // Same validation as JSEnvironmentVariableMap::defineOwnProperty on
       // POSIX: only plain, fully-permissive data descriptors are accepted.
       if ("get" in attributes || "set" in attributes) {
-        const err = new TypeError("'process.env' does not accept an accessor(getter/setter) descriptor");
-        (err as any).code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
-        throw err;
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY("'process.env' does not accept an accessor(getter/setter) descriptor");
       }
       if (attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
-        const err = new TypeError(
+        throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
           "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
         );
-        (err as any).code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
-        throw err;
       }
       if (typeof attributes.value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
       const k = p.toUpperCase();
       const value = String(attributes.value);
-      if (!(k in internalEnv) && !envMapList.includes(p)) {
+      // Same tracking rule as the set trap: don't gate on `k in internalEnv`,
+      // because the proxy-related env-var accessors (HTTP_PROXY etc.) always
+      // exist there as DontEnum CustomAccessors even when the variable was
+      // never in the OS env block; a first definition must still become
+      // enumerable.
+      if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }
       const result = $Object.$defineProperty(internalEnv, k, { ...attributes, value });

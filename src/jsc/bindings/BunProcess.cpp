@@ -138,7 +138,6 @@ extern "C" bool Bun__Node__getRedirectWarnings(BunString* out);
 extern "C" bool Bun__Node__isWarningDisabled(const uint8_t* ptr, size_t len);
 extern "C" void Bun__Timer__getActiveTimerCounts(size_t* timeouts, size_t* immediates);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" int32_t bun_stdio_tty[3];
 
@@ -1238,8 +1237,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         JSValue fatalException = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "_fatalException"_s));
         if (checkScope.exception()) [[unlikely]]
             (void)checkScope.tryClearException();
-        else if (fatalException && !fatalException.isCallable())
+        else if (fatalException && !fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
+            // Bun__Process__exit does not return in a worker (it only
+            // requests termination); don't fall through into the
+            // uncaughtException emit logic, and report the exception as
+            // handled so the caller doesn't override the exit code.
+            return true;
+        }
     }
 
     MarkedArgumentBuffer args;
@@ -1626,9 +1631,17 @@ static FILE* processWarningDestination(Zig::GlobalObject* globalObject)
                 path = Zig::toStringCopy(value);
         }
         if (!path.isEmpty()) {
+#if OS(WINDOWS)
+            // fopen() takes a narrow ANSI-code-page string on Windows; go
+            // through the wide-character API so non-ASCII paths work.
+            // wideCharacters() returns a null-terminated buffer.
+            if (FILE* file = _wfopen(path.wideCharacters().span().data(), L"a"))
+                destination = file;
+#else
             auto utf8 = path.utf8();
             if (FILE* file = fopen(utf8.data(), "a"))
                 destination = file;
+#endif
         }
     });
     return destination;
@@ -1883,8 +1896,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
         argvStorage.append(str.utf8());
     }
 
+    // Node declares env = process.env as the default, so an omitted env
+    // inherits the current environment rather than exec'ing with an empty
+    // one.
+    if (envValue.isUndefined()) {
+        envValue = globalObject->processEnvObject();
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     Vector<CString> envStorage;
-    if (!envValue.isUndefined()) {
+    {
         Bun::V::validateObject(scope, globalObject, envValue, "env"_s);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -3336,10 +3357,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     JSValue user = callFrame->argument(0);
     JSValue extraGroup = callFrame->argument(1);
 
+    // Node's validateId: numeric ids must be valid uint32 values, so NaN,
+    // negatives, and non-integers fail deterministically instead of being
+    // coerced into an unrelated uid/gid by toUInt32().
     if (!user.isNumber() && !user.isString())
         return throwInitgroupsArgTypeError(scope, globalObject, "user"_s, user);
+    if (user.isNumber()) {
+        Bun::V::validateUint32(scope, globalObject, user, "user"_s, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (!extraGroup.isNumber() && !extraGroup.isString())
         return throwInitgroupsArgTypeError(scope, globalObject, "extraGroup"_s, extraGroup);
+    if (extraGroup.isNumber()) {
+        Bun::V::validateUint32(scope, globalObject, extraGroup, "extraGroup"_s, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     // Node resolves the extra group before the user, so an unknown group name
     // is reported even when the user is also unknown.
@@ -4150,12 +4182,6 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
         return JSC::jsUndefined();
     }
     return result;
-}
-
-static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
-{
-    auto* globalObject = processObject->globalObject();
-    return JSSet::create(vm, globalObject->setStructure());
 }
 
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)

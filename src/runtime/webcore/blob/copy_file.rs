@@ -1717,12 +1717,20 @@ impl CopyFileWindows {
         };
 
         self.event_loop.ref_concurrently();
-        node_fs::async_::AsyncMkdirp::new(node_fs::async_::AsyncMkdirp {
-            completion: on_mkdirp_complete_concurrent,
-            completion_ctx: core::ptr::from_mut(self).cast::<()>(),
-            path,
-            ..Default::default()
-        })
+        // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. A temporary `Box`
+        // would drop at end-of-statement, freeing the allocation immediately
+        // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work
+        // pool, so the worker thread would dereference freed memory. `Box::leak`
+        // hands ownership to the work-pool/completion path (same pattern as
+        // `WriteFileWindows::mkdirp` in write_file.rs).
+        Box::leak(node_fs::async_::AsyncMkdirp::new(
+            node_fs::async_::AsyncMkdirp {
+                completion: on_mkdirp_complete_concurrent,
+                completion_ctx: core::ptr::from_mut(self).cast::<()>(),
+                path,
+                ..Default::default()
+            },
+        ))
         .schedule();
     }
 

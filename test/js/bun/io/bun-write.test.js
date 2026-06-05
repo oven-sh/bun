@@ -614,9 +614,10 @@ describe("Bun.write file-to-file copy task liveness", () => {
   // contract guard, not a test that fails on any released build.
   it("file->file copies survive forced GC between scheduling and completion", async () => {
     using dir = tempDir("bun-write-copyfile-gc", {
-      "src.txt": "A".repeat(64 * 1024),
+      "src.txt": Buffer.alloc(64 * 1024, "A").toString(),
       "copy-gc.js": `
-        const expected = "A".repeat(64 * 1024);
+        const fs = require("fs");
+        const expected = Buffer.alloc(64 * 1024, "A").toString();
         const pending = [];
         for (let i = 0; i < 50; i++) {
           // Nested destination exercises the mkdirp -> retry path too.
@@ -627,8 +628,16 @@ describe("Bun.write file-to-file copy task liveness", () => {
         Bun.gc(true);
         const written = await Promise.all(pending);
         Bun.gc(true);
-        if (!written.every(n => n === expected.length)) {
+        // Windows' default uv_fs_copyfile path resolves with a byte count read
+        // from a statbuf that libuv's fs__copyfile never populates, so the
+        // promise value is 0 there; assert the resolved counts on POSIX only
+        // and verify the on-disk sizes everywhere below.
+        if (process.platform !== "win32" && !written.every(n => n === expected.length)) {
           throw new Error("unexpected byte counts: " + JSON.stringify(written));
+        }
+        for (let i = 0; i < 50; i++) {
+          const size = fs.statSync(\`out/\${i}/dest.txt\`).size;
+          if (size !== expected.length) throw new Error("size mismatch at " + i + ": " + size);
         }
         for (const i of [0, 25, 49]) {
           const text = await Bun.file(\`out/\${i}/dest.txt\`).text();

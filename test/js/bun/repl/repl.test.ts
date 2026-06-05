@@ -1149,6 +1149,19 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       expect(allOutput()).toContain('"b한"');
     });
   });
+
+  test("drops a malformed UTF-8 sequence instead of corrupting the buffer", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // ED A0 80 encodes the lone surrogate U+D800: it has a valid lead byte
+      // and continuation-byte shape but is not valid UTF-8. It must be dropped,
+      // leaving a clean "ab" (length 2), not fed into the buffer.
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xed, 0xa0, 0x80]));
+      send('b".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

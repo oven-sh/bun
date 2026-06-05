@@ -1195,6 +1195,13 @@ impl<'a> Repl<'a> {
                 }
                 *slot = cont;
             }
+            // Reject overlong encodings, surrogates, and values above U+10FFFF,
+            // which pass the continuation-byte shape check but are not valid
+            // UTF-8. Keeping the buffer valid avoids feeding bad bytes to the
+            // highlighter and parser.
+            if !strings::is_valid_utf8(&bytes[..seq_len]) {
+                return Some(Key::Unknown);
+            }
             return Some(Key::Text(bytes, seq_len));
         }
 

@@ -2973,7 +2973,13 @@ impl RunCommand {
         let entry = positionals.first().filter(|e| e.as_ref() != b"-");
         let (path, contents): (Box<[u8]>, Vec<u8>) = if let Some(entry) = entry {
             let entry: Box<[u8]> = entry.clone();
-            match sys::File::read_from(Fd::cwd(), &entry) {
+            // Cursor-read instead of `read_from` (pread-based) so pipes
+            // reached via a path — process substitution (`/dev/fd/N`), FIFOs —
+            // work like they do in `node --check`.
+            match sys::File::openat(Fd::cwd(), &entry, sys::O::RDONLY, 0).and_then(|f| {
+                let mut bytes = Vec::new();
+                f.read_to_end_into(&mut bytes).map(|_| bytes)
+            }) {
                 Ok(bytes) => (entry, bytes),
                 Err(err) => {
                     if ctx.runtime_options.if_present && err.get_errno() == sys::E::ENOENT {

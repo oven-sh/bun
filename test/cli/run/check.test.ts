@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe.concurrent("bun --check", () => {
   test("exits 0 and produces no output for a syntactically valid file", async () => {
@@ -147,6 +147,20 @@ describe.concurrent("bun --check", () => {
       cmd: [bunExe(), "--check", "-"],
       env: bunEnv,
       stdin: new Blob(["let x = 1;\n"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Process substitution hands bun a pipe via a /dev/fd path; POSIX shells only.
+  test.skipIf(isWindows)("reads a pipe passed as a path (process substitution)", async () => {
+    await using proc = Bun.spawn({
+      cmd: ["bash", "-c", `${JSON.stringify(bunExe())} --check <(echo "let x = 1;")`],
+      env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });

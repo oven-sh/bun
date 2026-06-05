@@ -2326,10 +2326,10 @@ impl VirtualMachine {
         } else {
             &self.main
         };
-        bun_core::Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
             bstr::BStr::new(at),
-        ));
+        );
         bun_core::Output::flush();
         drop(stalled_utf8);
         stalled.deref();

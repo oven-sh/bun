@@ -3242,10 +3242,11 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
-                        // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
-                        // runWithAPILock(*VM, vm, globalExit).
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        let vm_ptr: *mut VirtualMachine = vm;
+                        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                        // `run_with_api_lock` takes `&self` only and `global_exit()`
+                        // diverges, so the closure is the sole mutator.
+                        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                     }
 
                     return Ok(());

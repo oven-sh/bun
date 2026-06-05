@@ -799,15 +799,19 @@ unsafe fn load_preloads(
             PromiseStatus::Fulfilled => {}
             PromiseStatus::Rejected => return Ok(promise),
             PromiseStatus::Pending => {
-                // SAFETY: `vm.log` is the unique per-VM `Box<Log>`; `preload`
-                // points at a live boxed slice for this iteration.
+                // SAFETY: per fn contract.
                 if let Some(log) = unsafe { &*vm }.log {
+                    // SAFETY: `preload` points at a live boxed slice for this
+                    // iteration (heap-stable `Box<[u8]>`; nothing above
+                    // mutates `vm.preload`).
+                    let preload_name = unsafe { &*preload };
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
                     let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Top-level await in preload {} never resolved",
-                            bun_core::fmt::format_json_string_latin1(unsafe { &*preload }),
+                            bun_core::fmt::format_json_string_latin1(preload_name),
                         ),
                     );
                 }

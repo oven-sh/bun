@@ -511,10 +511,11 @@ pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// phf_map! rejects duplicate keys at compile time. The original table
+// Duplicate keys are rejected at compile time. The original table
 // contained duplicate entries for "tsx", "yaml", "yml" — only the first
 // occurrence is kept; later duplicates dropped below.
-pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub(crate) static EXTENSIONS: Table = {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
     b"3dml" => t!("text/vnd.in3d.3dml"),
@@ -1484,7 +1485,7 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    // (dup "tsx" dropped — phf rejects; first occurrence above wins)
+    // (dup "tsx" dropped — duplicate keys rejected; first occurrence above wins)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1684,10 +1685,10 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    // (dup "yaml" dropped — phf rejects; first occurrence above wins)
+    // (dup "yaml" dropped — duplicate keys rejected; first occurrence above wins)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    // (dup "yml" dropped — phf rejects; first occurrence above wins)
+    // (dup "yml" dropped — duplicate keys rejected; first occurrence above wins)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1702,7 +1703,8 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"zir" => t!("application/vnd.zul"),
     b"zirz" => t!("application/vnd.zul"),
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
-};
+    };
+}
 
 const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x42, 0x4d], t!("image/bmp")),

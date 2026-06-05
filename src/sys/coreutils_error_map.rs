@@ -9,7 +9,8 @@ use crate::SystemErrno;
 //
 // Built once at first access via `LazyLock`. The per-OS (name → message)
 // string tables themselves live canonically in
-// `bun_core::coreutils_error_map` (a `phf::Map` keyed by errno *name*); here
+// `bun_core::coreutils_error_map` (a `comptime_string_map!` keyed by errno
+// *name*); here
 // we just project that table onto the platform's typed `SystemErrno` enum so
 // callers get an O(1) `EnumMap` index. Variants whose names have no entry in
 // the bun_core table fall back to `UNKNOWN`.

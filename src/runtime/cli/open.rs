@@ -40,22 +40,24 @@ pub enum Editor {
 // Note: `bin_name` is an `enum_map::EnumMap<E, Option<V>>` (sparse map);
 // `bin_path` is a match-fn because of `#[cfg]` gating.
 
-static NAME_MAP: phf::Map<&'static [u8], Editor> = phf::phf_map! {
-    b"sublime" => Editor::Sublime,
-    b"subl" => Editor::Sublime,
-    b"vscode" => Editor::Vscode,
-    b"code" => Editor::Vscode,
-    b"textmate" => Editor::Textmate,
-    b"mate" => Editor::Textmate,
-    b"atom" => Editor::Atom,
-    b"idea" => Editor::Intellij,
-    b"webstorm" => Editor::Webstorm,
-    b"nvim" => Editor::Neovim,
-    b"neovim" => Editor::Neovim,
-    b"vim" => Editor::Vim,
-    b"vi" => Editor::Vim,
-    b"emacs" => Editor::Emacs,
-};
+bun_core::comptime_string_map! {
+    static NAME_MAP: Editor = {
+        b"sublime" => Editor::Sublime,
+        b"subl" => Editor::Sublime,
+        b"vscode" => Editor::Vscode,
+        b"code" => Editor::Vscode,
+        b"textmate" => Editor::Textmate,
+        b"mate" => Editor::Textmate,
+        b"atom" => Editor::Atom,
+        b"idea" => Editor::Intellij,
+        b"webstorm" => Editor::Webstorm,
+        b"nvim" => Editor::Neovim,
+        b"neovim" => Editor::Neovim,
+        b"vim" => Editor::Vim,
+        b"vi" => Editor::Vim,
+        b"emacs" => Editor::Emacs,
+    };
+}
 
 impl Editor {
     pub fn by_name(name: &[u8]) -> Option<Editor> {

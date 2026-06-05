@@ -109,7 +109,8 @@ pub(crate) const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s2
 /// compare and lets LLVM lower the per-bucket arms to fixed-width loads. The two
 /// densest buckets (len 6 / len 10) get an extra first-byte gate so common
 /// inputs (`"sha256"`, `"sha512"`) hit ≤5 short compares instead of phf's
-/// SipHash + index probe. Semantics are identical to `MAP.get(k).copied()`.
+/// SipHash + index probe. Semantics are identical to a map's
+/// `get(k).copied()`.
 pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
     match bytes.len() {
         3 => match bytes {

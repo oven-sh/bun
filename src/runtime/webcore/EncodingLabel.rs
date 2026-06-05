@@ -70,7 +70,8 @@ impl EncodingLabel {
     }
 }
 
-static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    static STRING_MAP: EncodingLabel = {
     // Windows-1252 (Latin1) aliases
     b"l1" => EncodingLabel::LATIN1,
     b"ascii" => EncodingLabel::LATIN1,
@@ -235,4 +236,5 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     // Other
     b"x-user-defined" => EncodingLabel::XUserDefined,
     b"replacement" => EncodingLabel::Replacement,
-};
+    };
+}

@@ -216,7 +216,8 @@ mod classify_tests {
     use super::{Class, Qpack};
 
     // Exhaustive check that the length-gated match preserves the exact
-    // (key → Class) mapping the phf::Map encoded, including case-folding.
+    // (key → Class) mapping the original phf::Map encoded, including
+    // case-folding.
     const ENTRIES: &[(&[u8], Class)] = &[
         (b"connection", Class::Forbidden),
         (b"host", Class::Host),

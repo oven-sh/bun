@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
@@ -1249,20 +1248,22 @@ enum PackageJsonSortFields {
     Fake = 12,
 }
 
-static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = phf_map! {
-    b"name" => PackageJsonSortFields::Name,
-    b"version" => PackageJsonSortFields::Version,
-    b"author" => PackageJsonSortFields::Author,
-    b"repository" => PackageJsonSortFields::Repository,
-    b"config" => PackageJsonSortFields::Config,
-    b"main" => PackageJsonSortFields::Main,
-    b"module" => PackageJsonSortFields::Module,
-    b"dependencies" => PackageJsonSortFields::Dependencies,
-    b"devDependencies" => PackageJsonSortFields::DevDependencies,
-    b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-    b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-    b"exports" => PackageJsonSortFields::Exports,
-};
+bun_core::comptime_string_map! {
+    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
+        b"name" => PackageJsonSortFields::Name,
+        b"version" => PackageJsonSortFields::Version,
+        b"author" => PackageJsonSortFields::Author,
+        b"repository" => PackageJsonSortFields::Repository,
+        b"config" => PackageJsonSortFields::Config,
+        b"main" => PackageJsonSortFields::Main,
+        b"module" => PackageJsonSortFields::Module,
+        b"dependencies" => PackageJsonSortFields::Dependencies,
+        b"devDependencies" => PackageJsonSortFields::DevDependencies,
+        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
+        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
+        b"exports" => PackageJsonSortFields::Exports,
+    };
+}
 
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;

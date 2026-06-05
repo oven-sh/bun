@@ -535,12 +535,14 @@ pub enum AuditLevel {
     Critical,
 }
 
-static AUDIT_LEVEL_MAP: phf::Map<&'static [u8], AuditLevel> = phf::phf_map! {
-    b"low" => AuditLevel::Low,
-    b"moderate" => AuditLevel::Moderate,
-    b"high" => AuditLevel::High,
-    b"critical" => AuditLevel::Critical,
-};
+bun_core::comptime_string_map! {
+    static AUDIT_LEVEL_MAP: AuditLevel = {
+        b"low" => AuditLevel::Low,
+        b"moderate" => AuditLevel::Moderate,
+        b"high" => AuditLevel::High,
+        b"critical" => AuditLevel::Critical,
+    };
+}
 
 impl AuditLevel {
     pub fn from_string(str: &[u8]) -> Option<AuditLevel> {

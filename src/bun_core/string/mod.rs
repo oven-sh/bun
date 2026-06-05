@@ -629,10 +629,16 @@ impl String {
     }
 
     /// `bun.String.inMapCaseInsensitive` — case-insensitive ASCII
-    /// lookup against a phf map whose keys are lowercase ASCII. UTF-16 inputs
-    /// are narrowed (non-ASCII code unit ⇒ miss); 8-bit inputs delegate
-    /// straight to [`strings::in_map_case_insensitive`].
-    pub fn in_map_case_insensitive<V: Copy>(&self, map: &phf::Map<&'static [u8], V>) -> Option<V> {
+    /// lookup against a comptime string map whose keys are lowercase ASCII.
+    /// UTF-16 inputs are narrowed (non-ASCII code unit ⇒ miss); 8-bit inputs
+    /// delegate straight to [`strings::in_map_case_insensitive`].
+    pub fn in_map_case_insensitive<M: crate::comptime_string_map::ComptimeStringMap>(
+        &self,
+        map: &M,
+    ) -> Option<M::Value>
+    where
+        M::Value: Copy,
+    {
         if self.is_utf16() {
             let mut buf = [0u8; 256];
             strings::in_map_case_insensitive(self.ascii_into(&mut buf)?, map)

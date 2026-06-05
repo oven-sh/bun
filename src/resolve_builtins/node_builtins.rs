@@ -3,10 +3,10 @@
 //! This module is the one declarative source: each name appears
 //! exactly once, tagged with whether it belongs in the Bun-compat subset.
 //!
-//! `NODE_BUILTINS_MAP` (the phf lookup set) is intentionally NOT emitted
+//! `NODE_BUILTINS_MAP` (the name-lookup set) is intentionally NOT emitted
 //! here: its only would-be consumer, `options::is_node_builtin`, already
 //! routes through `crate::Alias::has(.., Target::Node, ..)` which is the
-//! authoritative builtin check. The phf set in `bundler/options.rs` was
+//! authoritative builtin check. The lookup set in `bundler/options.rs` was
 //! dead. Revive via `Alias::has` rather than re-adding a parallel table.
 
 /// One macro call below is the *only* place a module name is spelled.

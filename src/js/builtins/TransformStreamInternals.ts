@@ -497,7 +497,7 @@ export function createCompressionTransform(mode) {
   // rejected and null gets its dedicated streams error.
   function drive(chunk, isFinish, controller) {
     if (typeof chunk === "string") chunk = Buffer.from(chunk);
-    else if (ArrayBuffer.isView(chunk)) {
+    else if (ArrayBuffer.$isView(chunk)) {
       // A view over a detached buffer reports byteLength 0 but must reject
       // like node (whose Buffer.from copy throws on detached buffers).
       if (chunk.buffer.detached) throw $makeTypeError("Cannot perform Construct on a detached ArrayBuffer");

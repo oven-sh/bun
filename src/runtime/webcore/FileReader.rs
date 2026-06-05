@@ -892,8 +892,8 @@ impl FileReader {
                     if self.reader().is_done() {
                         return streams::Result::Done;
                     }
-                    // fallthrough — but `buffer` was moved into read_inside_on_pull.
-                    // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
+                    // fallthrough — `buffer` is a `RawSliceMut`, which is `Copy`;
+                    // `remaining_buf` is the same slice here (amount_read == 0).
                     let global = self.parent_global();
                     self.pending_value.with_mut(|p| p.set(&global, array));
                     self.pending_view.set(remaining_buf);
@@ -929,8 +929,8 @@ impl FileReader {
                     // are `None` (impossible — we just stored `Js(buffer)` above and
                     // `on_read_chunk` never sets `None`) and `AmountRead` (never
                     // produced by `on_read_chunk`). Unreachable in the current state
-                    // machine; if that invariant ever changes, the buffer slice must
-                    // be recovered from a captured raw ptr+len before the move.
+                    // machine; if that invariant ever changes, `buffer` is still
+                    // available here since `RawSliceMut` is `Copy`.
                     unreachable!(
                         "on_read_chunk never yields None/AmountRead while read_inside_on_pull == Js"
                     );

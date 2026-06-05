@@ -403,7 +403,15 @@ export function windowsEnv(
   };
 
   (internalEnv as any).toJSON = () => {
-    return { ...internalEnv };
+    // Mirror enumeration (and the inspect.custom helper above): original-case
+    // key names with case-insensitive lookups. Spreading internalEnv directly
+    // would leak the canonical UPPERCASE storage keys into
+    // JSON.stringify(process.env) and IPC env echoes.
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
   };
 
   return new Proxy(internalEnv, {
@@ -469,12 +477,31 @@ export function windowsEnv(
       if (typeof p === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
+      // Same validation as JSEnvironmentVariableMap::defineOwnProperty on
+      // POSIX: only plain, fully-permissive data descriptors are accepted.
+      if ("get" in attributes || "set" in attributes) {
+        const err = new TypeError("'process.env' does not accept an accessor(getter/setter) descriptor");
+        (err as any).code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+        throw err;
+      }
+      if (attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
+        const err = new TypeError(
+          "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
+        );
+        (err as any).code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+        throw err;
+      }
+      if (typeof attributes.value === "symbol") {
+        throw new TypeError("Cannot convert a Symbol value to a string");
+      }
       const k = p.toUpperCase();
+      const value = String(attributes.value);
       if (!(k in internalEnv) && !envMapList.includes(p)) {
         envMapList.push(p);
       }
-      editWindowsEnvVar(k, internalEnv[k]);
-      return $Object.$defineProperty(internalEnv, k, attributes);
+      const result = $Object.$defineProperty(internalEnv, k, { ...attributes, value });
+      editWindowsEnvVar(k, value);
+      return result;
     },
     getOwnPropertyDescriptor(target, p) {
       return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;

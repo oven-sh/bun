@@ -35,7 +35,11 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.platform !== "win32" && process.title !== "bun") throw new Error("process.title is not 'bun'");
+  // process.title defaults to argv[0] as invoked, matching Node
+  // (uv_get_process_title semantics), so it is the executable path here.
+  if (!isNode && process.platform !== "win32" && typeof process.title !== "string")
+    throw new Error("process.title is not a string");
+  if (!isNode && process.platform !== "win32" && process.title.length === 0) throw new Error("process.title is empty");
 
   if (process.platform !== "win32" && typeof process.env.USER !== "string")
     throw new Error("process.env is not an object");
@@ -687,13 +691,24 @@ describe.concurrent(() => {
   const undefinedStubs = [
     "_debugEnd",
     "_debugProcess",
-    "_fatalException",
     "_linkedBinding",
     "_rawDebug",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",
     "_tickCallback",
   ];
+
+  it("process._fatalException", async () => {
+    // Returns whether an uncaughtException handler claimed the error
+    // (Node semantics), so it is a boolean rather than undefined.
+    await runInlineFixture(
+      `console.log(process._fatalException(new Error("nobody listening")));
+       process.on("uncaughtException", () => {});
+       console.log(process._fatalException(new Error("handled")));`,
+      "false\ntrue\n",
+      0,
+    );
+  });
 
   for (const stub of undefinedStubs) {
     it(`process.${stub}`, () => {
@@ -710,7 +725,6 @@ describe.concurrent(() => {
   }
 
   const emptyObjectStubs = [];
-  const emptySetStubs = ["allowedNodeEnvironmentFlags"];
   const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 
   for (const stub of emptyObjectStubs) {
@@ -719,12 +733,20 @@ describe.concurrent(() => {
     });
   }
 
-  for (const stub of emptySetStubs) {
-    it(`process.${stub}`, () => {
-      expect(process[stub]).toBeInstanceOf(Set);
-      expect(process[stub].size).toBe(0);
-    });
-  }
+  it("process.allowedNodeEnvironmentFlags", () => {
+    // A real, frozen Set with Node's normalizing has() — no longer an empty
+    // stub.
+    const flags = process.allowedNodeEnvironmentFlags;
+    expect(flags).toBeInstanceOf(Set);
+    expect(flags.size).toBeGreaterThan(0);
+    expect(flags.has("--require")).toBe(true);
+    expect(flags.has("require")).toBe(true);
+    expect(flags.has("--no_warnings")).toBe(true);
+    expect(flags.has("--require=./foo.js")).toBe(true);
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+    flags.add("--not-a-real-flag");
+    expect(flags.has("--not-a-real-flag")).toBe(false);
+  });
 
   for (const stub of emptyArrayStubs) {
     it(`process.${stub}`, () => {

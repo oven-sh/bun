@@ -43,7 +43,9 @@ for (const [name, copy] of impls) {
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
       expect(e.code).toBe("ERR_FS_EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -137,7 +139,8 @@ for (const [name, copy] of impls) {
         errorOnExist: true,
       });
       expect(e.code).toBe("ERR_FS_CP_EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      // As above, the path field carries the caller's string verbatim.
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });

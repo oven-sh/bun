@@ -81,7 +81,7 @@ unsafe extern "C" {
     // startup (stdin/stdout/stderr). Without this, the
     // ENABLE_LINE_INPUT/ECHO_INPUT/PROCESSED_INPUT bits we cleared on
     // prompt entry would leak to the next process reading the same
-    // console. This is the Windows analogue of `uv_tty_reset_mode` on
+    // console. This is the Windows analogue of `bun_restore_stdio` on
     // Unix and is what the process-wide `Ctrlhandler` in c-bindings.cpp
     // would normally do for CTRL_C_EVENT — but our handler runs first in
     // the SetConsoleCtrlHandler LIFO chain and ExitProcess's directly, so
@@ -117,7 +117,7 @@ unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::win
                     );
                 }
             }
-            // Windows analogue of the Unix `uv_tty_reset_mode` call — restores
+            // Windows analogue of the Unix `bun_restore_stdio` call — restores
             // the ENABLE_LINE_INPUT / ECHO_INPUT / PROCESSED_INPUT flags the
             // prompt cleared. Keeps both arms symmetric: ANSI restore →
             // console/termios restore → exit.

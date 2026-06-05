@@ -527,12 +527,26 @@ impl LineEditor {
     }
 
     pub(crate) fn swap(&mut self) {
-        if self.cursor > 0 && self.cursor < self.buffer.len() {
-            self.buffer.swap(self.cursor - 1, self.cursor);
-            self.cursor += 1;
-        } else if self.cursor > 1 && self.cursor == self.buffer.len() {
-            self.buffer.swap(self.cursor - 2, self.cursor - 1);
-        }
+        // Transpose two whole codepoints (not bytes), so multi-byte UTF-8 is
+        // not split. Mid-line swaps the codepoint before the cursor with the
+        // one at it and advances past both; at end-of-line it transposes the
+        // last two codepoints.
+        let (left_start, mid, right_end) = if self.cursor > 0 && self.cursor < self.buffer.len() {
+            let mid = self.cursor;
+            (self.prev_boundary(mid), mid, self.next_boundary(mid))
+        } else if self.cursor == self.buffer.len() {
+            let mid = self.prev_boundary(self.cursor);
+            if mid == 0 {
+                return; // fewer than two codepoints
+            }
+            (self.prev_boundary(mid), mid, self.cursor)
+        } else {
+            return;
+        };
+        // Rotate the two adjacent codepoint ranges [left_start, mid) and
+        // [mid, right_end): moving the left range to the end swaps them.
+        self.buffer[left_start..right_end].rotate_left(mid - left_start);
+        self.cursor = right_end;
     }
 
     pub(crate) fn get_line(&self) -> &[u8] {

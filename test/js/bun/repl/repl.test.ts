@@ -1132,6 +1132,23 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       expect(allOutput()).toContain('"b한"');
     });
   });
+
+  test("Ctrl+T transposes whole multi-byte characters", async () => {
+    await withTerminalRepl(async ({ send, waitFor, allOutput }) => {
+      // Type `"한b"`, move the cursor between 한 and b, then Ctrl+T. Byte-wise
+      // transposition would split 한; it must swap the two whole codepoints so
+      // the buffer becomes `"b한"` (length 2), not corrupted UTF-8.
+      send('"한b"');
+      await waitFor("한b");
+      send("\x1b[D"); // left: between b and the closing quote
+      send("\x1b[D"); // left: between 한 and b
+      send("\x14"); // Ctrl+T: transpose 한 and b -> "b한"
+      send("\x05"); // Ctrl+E: move to end of line
+      send(".length\n");
+      await waitFor(/\n\s*2\b/);
+      expect(allOutput()).toContain('"b한"');
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

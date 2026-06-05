@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Hello from bun-electron</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background: #fbf0df;
+        color: #1a1a1a;
+      }
+      .card {
+        text-align: center;
+      }
+      h1 {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+      }
+      code {
+        background: #f3d5a3;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>bun-electron 🥟</h1>
+      <p>This window is Chromium (CEF), the main process is <code>bun</code>.</p>
+      <p id="versions"></p>
+    </div>
+    <script>
+      document.getElementById("versions").textContent = navigator.userAgent;
+    </script>
+  </body>
+</html>

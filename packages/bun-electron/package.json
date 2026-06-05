@@ -1,0 +1,22 @@
+{
+  "name": "bun-electron",
+  "version": "0.1.0",
+  "description": "Electron-compatible desktop app framework powered by Bun and the Chromium Embedded Framework (CEF)",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "fetch-cef": "bun scripts/fetch-cef.ts",
+    "build": "bun scripts/build.ts",
+    "build:debug": "bun scripts/build.ts --debug",
+    "test": "bun test test/",
+    "example:hello": "bun examples/hello/main.js",
+    "example:ipc": "bun examples/ipc/main.js"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}

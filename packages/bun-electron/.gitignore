@@ -1,0 +1,4 @@
+dist/
+native/build/
+native/.cef/
+node_modules/

@@ -1,0 +1,171 @@
+// bun-electron helper — the CEF subprocess executable (renderer, GPU,
+// utility, ...). The browser process is Bun itself (via the shim dylib), so
+// every CEF subprocess runs this binary instead, configured through
+// CefSettings.browser_subprocess_path.
+//
+// In renderer processes this installs the V8 bindings that back the
+// `ipcRenderer` API (see renderer_bootstrap.h).
+
+#include <string>
+
+#include "include/cef_app.h"
+#include "include/cef_render_process_handler.h"
+#include "include/cef_v8.h"
+#include "include/wrapper/cef_helpers.h"
+
+#include "renderer_bootstrap.h"
+
+#if defined(__APPLE__)
+#include "include/wrapper/cef_library_loader.h"
+#endif
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
+namespace {
+
+class IpcV8Handler : public CefV8Handler {
+ public:
+  bool Execute(const CefString& name,
+               CefRefPtr<CefV8Value> object,
+               const CefV8ValueList& arguments,
+               CefRefPtr<CefV8Value>& retval,
+               CefString& exception) override {
+    CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+    CefRefPtr<CefFrame> frame = context ? context->GetFrame() : nullptr;
+    if (!frame) return false;
+
+    if (name == "__be_send" && arguments.size() == 2) {
+      CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("be-ipc");
+      CefRefPtr<CefListValue> args = msg->GetArgumentList();
+      args->SetString(0, arguments[0]->GetStringValue());
+      args->SetString(1, arguments[1]->GetStringValue());
+      frame->SendProcessMessage(PID_BROWSER, msg);
+      return true;
+    }
+    if (name == "__be_invoke" && arguments.size() == 3) {
+      CefRefPtr<CefProcessMessage> msg = CefProcessMessage::Create("be-invoke");
+      CefRefPtr<CefListValue> args = msg->GetArgumentList();
+      args->SetInt(0, arguments[0]->GetIntValue());
+      args->SetString(1, arguments[1]->GetStringValue());
+      args->SetString(2, arguments[2]->GetStringValue());
+      frame->SendProcessMessage(PID_BROWSER, msg);
+      return true;
+    }
+    if (name == "__be_eval_done" && arguments.size() == 3) {
+      CefRefPtr<CefProcessMessage> msg =
+          CefProcessMessage::Create("be-eval-result");
+      CefRefPtr<CefListValue> args = msg->GetArgumentList();
+      args->SetInt(0, arguments[0]->GetIntValue());
+      args->SetString(1, arguments[1]->GetStringValue());
+      args->SetBool(2, arguments[2]->GetBoolValue());
+      frame->SendProcessMessage(PID_BROWSER, msg);
+      return true;
+    }
+    return false;
+  }
+
+  IMPLEMENT_REFCOUNTING(IpcV8Handler);
+};
+
+class HelperApp : public CefApp, public CefRenderProcessHandler {
+ public:
+  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
+    return this;
+  }
+
+  void OnContextCreated(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefFrame> frame,
+                        CefRefPtr<CefV8Context> context) override {
+    if (!frame->IsMain()) return;
+
+    CefRefPtr<CefV8Value> global = context->GetGlobal();
+    CefRefPtr<CefV8Handler> handler = new IpcV8Handler();
+    static const char* kFns[] = {"__be_send", "__be_invoke", "__be_eval_done"};
+    for (const char* fn : kFns) {
+      global->SetValue(fn, CefV8Value::CreateFunction(fn, handler),
+                       V8_PROPERTY_ATTRIBUTE_READONLY);
+    }
+
+    CefRefPtr<CefV8Value> retval;
+    CefRefPtr<CefV8Exception> exc;
+    context->Eval(kRendererBootstrapJs, frame->GetURL(), 0, retval, exc);
+  }
+
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefProcessId source_process,
+                                CefRefPtr<CefProcessMessage> message) override {
+    const std::string name = message->GetName().ToString();
+    const char* fn_name = nullptr;
+    if (name == "be-ipc") {
+      fn_name = "__be_dispatch";
+    } else if (name == "be-reply") {
+      fn_name = "__be_reply";
+    } else if (name == "be-eval") {
+      fn_name = "__be_eval";
+    } else {
+      return false;
+    }
+
+    CefRefPtr<CefListValue> margs = message->GetArgumentList();
+    CefRefPtr<CefV8Context> context = frame->GetV8Context();
+    if (!context || !context->Enter()) return true;
+
+    CefV8ValueList args;
+    for (size_t i = 0; i < margs->GetSize(); i++) {
+      switch (margs->GetType(i)) {
+        case VTYPE_INT:
+          args.push_back(CefV8Value::CreateInt(margs->GetInt(i)));
+          break;
+        case VTYPE_BOOL:
+          args.push_back(CefV8Value::CreateBool(margs->GetBool(i)));
+          break;
+        default:
+          args.push_back(CefV8Value::CreateString(margs->GetString(i)));
+      }
+    }
+
+    CefRefPtr<CefV8Value> global = context->GetGlobal();
+    CefRefPtr<CefV8Value> fn = global->GetValue(fn_name);
+    if (fn && fn->IsFunction()) {
+      fn->ExecuteFunction(global, args);
+    }
+    context->Exit();
+    return true;
+  }
+
+  IMPLEMENT_REFCOUNTING(HelperApp);
+};
+
+}  // namespace
+
+#if defined(_WIN32)
+
+int APIENTRY wWinMain(HINSTANCE hInstance,
+                      HINSTANCE hPrevInstance,
+                      LPWSTR lpCmdLine,
+                      int nCmdShow) {
+  CefMainArgs main_args(hInstance);
+  CefRefPtr<HelperApp> app = new HelperApp();
+  return CefExecuteProcess(main_args, app, nullptr);
+}
+
+#else
+
+int main(int argc, char* argv[]) {
+#if defined(__APPLE__)
+  // Load the CEF framework in the helper using the path passed on the
+  // command line by the browser process.
+  CefScopedLibraryLoader library_loader;
+  if (!library_loader.LoadInHelper()) {
+    return 1;
+  }
+#endif
+  CefMainArgs main_args(argc, argv);
+  CefRefPtr<HelperApp> app = new HelperApp();
+  return CefExecuteProcess(main_args, app, nullptr);
+}
+
+#endif

@@ -1448,7 +1448,7 @@ describe("bundle-owned parse-task contents", () => {
   // corrupt output) and execute the result.
   test("data: URL and onLoad plugin contents stay alive for the bundle pass", async () => {
     const SIZE = 256 * 1024;
-    const big = `"${"x".repeat(SIZE)}"`;
+    const big = `"${Buffer.alloc(SIZE, "x").toString()}"`;
     const dir = tempDirWithFiles("build-contents-provenance", {
       "entry.js": `
         import "data:text/javascript,globalThis.fromDataURL=1;";

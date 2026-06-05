@@ -463,6 +463,27 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
     }
 
+    /// `win32_errno_name` translation contract: known `GetLastError()` codes
+    /// map to POSIX names on Windows, unmapped/out-of-range codes are `None`,
+    /// and the helper is a constant `None` off Windows.
+    #[test]
+    fn win32_errno_names() {
+        #[cfg(windows)]
+        {
+            // ERROR_FILE_NOT_FOUND / ERROR_ACCESS_DENIED.
+            assert_eq!(win32_errno_name(2), Some("ENOENT"));
+            assert_eq!(win32_errno_name(5), Some("EPERM"));
+            // Unmapped Win32 code and the `u16::try_from` overflow fallback.
+            assert_eq!(win32_errno_name(0), None);
+            assert_eq!(win32_errno_name(u32::MAX), None);
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(win32_errno_name(2), None);
+            assert_eq!(win32_errno_name(u32::MAX), None);
+        }
+    }
+
     #[test]
     fn coreutils_map() {
         assert_eq!(

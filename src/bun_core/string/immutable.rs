@@ -1502,7 +1502,10 @@ macro_rules! w {
             let mut out = [0u16; __N];
             let mut i = 0;
             while i < __N {
-                debug_assert!(__B[i] < 0x80, "w! is ASCII-only");
+                // Const-evaluated: a non-ASCII byte is a hard compile error in
+                // every profile (`to_utf16_literal!` forwards here, so this
+                // also keeps that alias from silently mis-encoding non-ASCII).
+                assert!(__B[i] < 0x80, "w! is ASCII-only");
                 out[i] = __B[i] as u16;
                 i += 1;
             }

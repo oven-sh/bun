@@ -772,9 +772,18 @@ impl<B: LinearFifoBuffer<u8>> std::io::Read for LinearFifo<u8, B> {
 }
 
 impl<B: LinearFifoBuffer<u8>> std::io::Write for LinearFifo<u8, B> {
-    /// Appends the whole buffer, growing if `.Dynamic`.
+    /// Appends the buffer, growing if `.Dynamic`. Fixed-capacity buffers
+    /// follow the `std::io::Write` contract: write what fits and return the
+    /// count (`Ok(0)` when full — `write_all` turns that into `WriteZero`).
+    /// `ErrorKind::OutOfMemory` is reserved for dynamic-growth allocation
+    /// failure.
     #[inline]
     fn write(&mut self, src: &[u8]) -> std::io::Result<usize> {
+        let src = if B::DYNAMIC {
+            src
+        } else {
+            &src[..src.len().min(self.writable_length())]
+        };
         LinearFifo::write(self, src)
             .map_err(|AllocError| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
         Ok(src.len())

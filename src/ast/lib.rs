@@ -1415,32 +1415,47 @@ pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
         }
     }
 
+    // Skip over bracketed unicode escapes such as "\u{10000}". The cursor is
+    // positioned on a `\`; advance `cursor.i` one past the closing `}` and
+    // zero `cursor.width` so the next decode starts exactly there (the manual
+    // advance already consumed the backslash's width — leaving `width` set
+    // would skip the byte after `}`).
+    let skip_bracketed_escape = |cursor: &mut bun_core::strings::Cursor| {
+        if cursor.i + 2 < end
+            && text[cursor.i as usize + 1] == b'u'
+            && text[cursor.i as usize + 2] == b'{'
+        {
+            cursor.i += 2;
+            while cursor.i < end {
+                if text[cursor.i as usize] == b'}' {
+                    cursor.i += 1;
+                    break;
+                }
+                cursor.i += 1;
+            }
+            cursor.width = 0;
+        }
+    };
+
     if bun_core::identifier::is_identifier_start(cursor.c) || cursor.c == '\\' as i32 {
+        // An identifier may *start* with an escape (e.g. `\u{61}bc`); skip it
+        // here too, or the loop below reads the `u`/`{` as ordinary codepoints
+        // and truncates the range at the `{`.
+        if cursor.c == '\\' as i32 {
+            skip_bracketed_escape(&mut cursor);
+        }
         while iter.next(&mut cursor) {
             if cursor.c == '\\' as i32 {
-                // Skip over bracketed unicode escapes such as "\u{10000}"
-                if cursor.i + 2 < end
-                    && text[cursor.i as usize + 1] == b'u'
-                    && text[cursor.i as usize + 2] == b'{'
-                {
-                    cursor.i += 2;
-                    while cursor.i < end {
-                        if text[cursor.i as usize] == b'}' {
-                            cursor.i += 1;
-                            break;
-                        }
-                        cursor.i += 1;
-                    }
-                }
+                skip_bracketed_escape(&mut cursor);
             } else if !lexer_tables::is_identifier_continue(cursor.c) {
                 r.len = i32::try_from(cursor.i).expect("int cast");
                 return r;
             }
         }
 
-        // EOF inside the identifier: report `cursor.i` (the byte offset of
-        // the last codepoint read).
-        r.len = i32::try_from(cursor.i).expect("int cast");
+        // EOF inside the identifier: the cursor holds the *start* offset and
+        // width of the last codepoint read — include that codepoint.
+        r.len = i32::try_from(cursor.i + cursor.width as u32).expect("int cast");
     }
 
     r
@@ -3570,6 +3585,55 @@ impl Drop for DisableStoreReset {
     fn drop(&mut self) {
         expr::data::Store::set_disable_reset(false);
         stmt::data::Store::set_disable_reset(false);
+    }
+}
+
+#[cfg(test)]
+mod range_of_identifier_tests {
+    use super::*;
+
+    fn len_of(src: &[u8]) -> i32 {
+        range_of_identifier(src, Loc { start: 0 }).len
+    }
+
+    #[test]
+    fn terminated_identifier() {
+        assert_eq!(len_of(b"foo = 1"), 3);
+        assert_eq!(len_of(b"x;"), 1);
+    }
+
+    #[test]
+    fn identifier_at_eof_includes_last_codepoint() {
+        assert_eq!(len_of(b"foo"), 3);
+        assert_eq!(len_of(b"x"), 1);
+        // Multibyte final codepoint: 'é' is 2 bytes.
+        assert_eq!(len_of("aé".as_bytes()), 3);
+    }
+
+    #[test]
+    fn private_names() {
+        assert_eq!(len_of(b"#"), 1);
+        assert_eq!(len_of(b"#foo = 1"), 4);
+        assert_eq!(len_of(b"#foo"), 4);
+    }
+
+    #[test]
+    fn bracketed_escape_does_not_swallow_terminator() {
+        // `a\u{41}` is 7 bytes; the `.` must terminate the range.
+        assert_eq!(len_of(b"a\\u{41}.x"), 7);
+        assert_eq!(len_of(b"a\\u{41} = 1"), 7);
+    }
+
+    #[test]
+    fn leading_bracketed_escape() {
+        assert_eq!(len_of(b"\\u{61}bc = 1"), 8);
+        assert_eq!(len_of(b"\\u{61}"), 6);
+    }
+
+    #[test]
+    fn non_identifier_start() {
+        assert_eq!(len_of(b"1abc"), 0);
+        assert_eq!(len_of(b" foo"), 0);
     }
 }
 

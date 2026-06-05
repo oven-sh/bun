@@ -4853,6 +4853,11 @@ fn spawn_sync_inherit_impl(
     argv: &[impl AsRef<[u8]>],
     stdin: StdinBehavior,
 ) -> Result<SpawnStatus, crate::Error> {
+    // Empty argv: fail like the Windows path below instead of panicking on
+    // the `argv[0]` reads in the per-OS unix arms.
+    if argv.is_empty() {
+        return Err(crate::err!("FileNotFound"));
+    }
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
     // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-

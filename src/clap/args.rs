@@ -332,8 +332,8 @@ mod tests {
         }
     }
 
-    fn test_shell_iterator_ok(str: &[u8], allocations: usize, expect: &[&[u8]]) {
-        // There is no allocator injection to count allocations with,
+    fn test_shell_iterator_ok(str: &[u8], expected_owned_results: usize, expect: &[&[u8]]) {
+        // There is no allocator injection to count raw allocations with,
         // but every allocating result surfaces as a
         // `Cow::Owned`, so counting owned results checks the same property: the
         // borrowed (zero-copy) fast path is taken whenever possible.
@@ -357,7 +357,7 @@ mod tests {
         match it.next() {
             Ok(actual) => {
                 assert!(actual.is_none());
-                assert_eq!(allocations, owned_results);
+                assert_eq!(expected_owned_results, owned_results);
             }
             Err(err) => panic!("expected end of iterator, got error {:?}", err),
         }

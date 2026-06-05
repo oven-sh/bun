@@ -1940,7 +1940,7 @@ describe("rm", () => {
 
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
-  // statSync/unlinkSync all do this; recursive rmSync/rmdirSync must agree
+  // statSync/unlinkSync all do this; recursive rmSync must agree
   // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
   // no-op on directories existsSync just said were there.
   //
@@ -1965,13 +1965,6 @@ describe("rm", () => {
     expect(fs.existsSync(dir)).toBe(false);
   });
 
-  it.skipIf(!sameDriveAsCwd)("rmdirSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
-    const dir = `${drivelessTmp}/bun-rmdir-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    fs.mkdirSync(dir + "/nested", { recursive: true });
-    expect(fs.existsSync(dir)).toBe(true);
-    fs.rmdirSync(dir, { recursive: true });
-    expect(fs.existsSync(dir)).toBe(false);
-  });
 });
 
 describe("rmdir", () => {

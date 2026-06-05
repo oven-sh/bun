@@ -14,8 +14,8 @@ export function initializeDecompressionStream(this, format) {
 
   const transform = $createCompressionTransform(modes[format]);
 
-  $putByIdDirectPrivate(this, "readable", transform.readable);
-  $putByIdDirectPrivate(this, "writable", transform.writable);
+  $putByIdDirectPrivate(this, "readable", $getByIdDirectPrivate(transform, "readable"));
+  $putByIdDirectPrivate(this, "writable", $getByIdDirectPrivate(transform, "writable"));
 
   return this;
 }

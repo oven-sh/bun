@@ -517,7 +517,7 @@ export function createCompressionTransform(mode) {
       wrapped.cause = error;
       throw wrapped;
     }
-    for (let i = 0; i < outputs.length; i++) controller.enqueue(outputs[i]);
+    for (let i = 0; i < outputs.length; i++) $transformStreamDefaultControllerEnqueue(controller, outputs[i]);
   }
 
   const emptyChunk = new Uint8Array(0);

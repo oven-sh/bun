@@ -1607,7 +1607,17 @@ impl Run {
                 break;
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
+            // When the entry module itself never settled (unsettled top-level
+            // await), `entry_point_result.value` holds the module pipeline's
+            // internal promise rather than the evaluated expression's value,
+            // so `--print` would emit a bogus `Promise { <pending> }` to
+            // stdout. Skip printing; the warning + exit code 13 below report
+            // it.
+            let entry_module_pending = vm
+                .pending_internal_promise
+                .is_some_and(|p| bun_jsc::JSPromise::status_ptr(p) == PromiseStatus::Pending);
+
+            if ctx.runtime_options.eval.eval_and_print && !entry_module_pending {
                 let to_print: JSValue = 'brk: {
                     let result = vm
                         .entry_point_result

@@ -3242,11 +3242,22 @@ impl TestCommand {
 
                         vm.exit_handler.exit_code = 1;
                         vm.is_shutting_down = true;
-                        let vm_ptr: *mut VirtualMachine = vm;
-                        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                        // `run_with_api_lock` takes `&self` only and `global_exit()`
-                        // diverges, so the closure is the sole mutator.
-                        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                        // `global_exit()` diverges, so the `exit_file()` defer
+                        // above never fires. Release the active file's
+                        // `Strong`s and the preload-hook scope here so
+                        // `destructOnExit()`'s `collectNow()` can reclaim them,
+                        // then clear `RUNNER` so finalizers can't observe a
+                        // partially-torn-down `TestRunner`.
+                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                        // defer's escape.
+                        unsafe {
+                            (*bun_test_root_ptr).deinit_for_exit();
+                            jest::Jest::RUNNER.write(None);
+                        }
+                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                        // raw-ptr reborrow of the exclusive `vm` borrow.
+                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
                     return Ok(());

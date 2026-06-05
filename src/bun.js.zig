@@ -522,7 +522,18 @@ pub const Run = struct {
                     break;
                 }
 
-                if (this.ctx.runtime_options.eval.eval_and_print) {
+                // When the entry module itself never settled (unsettled
+                // top-level await), `entry_point_result.value` holds the
+                // module pipeline's internal promise rather than the evaluated
+                // expression's value, so `--print` would emit a bogus
+                // `Promise { <pending> }` to stdout. Skip printing; the
+                // warning + exit code 13 below report it.
+                const entry_module_pending = if (vm.pending_internal_promise) |p|
+                    p.status() == .pending
+                else
+                    false;
+
+                if (this.ctx.runtime_options.eval.eval_and_print and !entry_module_pending) {
                     const to_print = brk: {
                         const result: jsc.JSValue = vm.entry_point_result.value.get() orelse .js_undefined;
                         if (result.asAnyPromise()) |promise| {

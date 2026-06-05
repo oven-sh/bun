@@ -116,6 +116,17 @@ await new Promise(() => http2.connect("foo").request());
     expect(r.stderr).toContain("never resolved");
     expect(r.exitCode).toBe(1);
   });
+
+  test("--bail bails out after an unsettled TLA failure", async () => {
+    using dir = tempDir("issue-19049-bail", {
+      "hang.test.ts": `await new Promise(() => {});`,
+    });
+    const r = await run({ cmd: [bunExe(), "test", "--bail", "hang.test.ts"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("Top-level await");
+    expect(r.stderr).toContain("Bailed out after 1 failure");
+    expect(r.exitCode).toBe(1);
+  });
 });
 
 describe("bun run: unsettled top-level await", () => {
@@ -188,5 +199,29 @@ console.log("after await");
     expect(r.stdout).toContain("beforeExit");
     expect(r.stdout).toContain("after await");
     expect(r.exitCode).toBe(0);
+  });
+
+  test("--print with unsettled TLA warns without printing the internal promise", async () => {
+    using dir = tempDir("issue-19049-print", {});
+    const r = await run({ cmd: [bunExe(), "-p", "await new Promise(() => {})"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    expect(r.stderr).toContain("unsettled top-level await");
+    // `entry_point_result` holds the module pipeline's internal promise when
+    // the module never settles; it must not leak to stdout as
+    // "Promise { <pending> }".
+    expect(r.stdout).toBe("");
+    expect(r.exitCode).toBe(13);
+  });
+
+  test("--print still prints settled TLA values and user pending promises", async () => {
+    using dir = tempDir("issue-19049-print-ok", {});
+    const settled = await run({ cmd: [bunExe(), "-p", "await Promise.resolve(42)"], cwd: String(dir) });
+    expect(settled.stdout).toBe("42\n");
+    expect(settled.exitCode).toBe(0);
+    // A pending promise the *user* evaluated to (the module itself settles)
+    // still prints, matching `node -p`.
+    const userPending = await run({ cmd: [bunExe(), "-p", "new Promise(() => {})"], cwd: String(dir) });
+    expect(userPending.stdout).toBe("Promise { <pending> }\n");
+    expect(userPending.exitCode).toBe(0);
   });
 });

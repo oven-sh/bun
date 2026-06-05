@@ -96,6 +96,14 @@ const fuzzerInputs: [name: string, blob: string][] = [
     "min()-led atan2 chain ending in color(from …)",
     "H4sIAAAAAAAAA8soztEozsyDY10jQxNzEwtjMxNLLm0uXUMLExMzcxMTA3NjcwNLU1NDM0PTARRPLEnMM9IwNzanrXK4GBho5WbmaVhyaRlY6pibwijNYWnOqEFEhdGQCb1Rq0fT/UAmSq2BKvKS83PyizTSivJzFSAmcHFhMVuTdAgAPqXrnDAHAAA=",
   ],
+  [
+    // 2,273-byte variant: the chain bottoms out in `atan2(73709551615` with
+    // no comma before its closing paren, and the last `min()`'s final
+    // argument ends in a dangling `+`. Hung in Calc<Percentage>::parse_product
+    // before the fix (~7x per nesting level).
+    "min()-led atan2 chain ending in a dangling +",
+    "H4sIAAAAAAACA8soztEozsyDY13LUUAG4NLm0jW0MDExMzcxMTA3NjewNDU1NDM0HUDxxJLEPCMNoBhtlcPFwEArF5iGLLm0DCx1zE1hlOYgNWdEGUeZOfQyiBgLqOHIUTNGzSDXDFrkm8FlDMJbg6g81yQPAgAgY/8x4QgAAA==",
+  ],
 ];
 
 test.concurrent.each(fuzzerInputs)(

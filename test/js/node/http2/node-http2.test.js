@@ -2302,6 +2302,645 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(exitCode).toBe(0);
 });
 
+it("http2 completed streams are evicted from the native session map", async () => {
+  // Without eviction, every completed request leaves a native Stream entry in
+  // the session map until connection teardown (one client-side and one
+  // server-side per round trip), so the live count would be 100 instead of 0.
+  // Runs in a subprocess because the live-stream gauge is process-global.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http2-evict-closed-streams.fixture.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({ stdout: "0", exitCode: 0 });
+});
+
+// Incrementally consumes a raw HTTP/2 byte stream (after the connection
+// preface) and invokes `onFrame(type, flags, streamId, payload)` for each
+// complete frame. Used by the raw-socket tests below to detect when a peer's
+// RST_STREAM/PING actually reached the wire.
+function makeFrameScanner(onFrame) {
+  let buffered = Buffer.alloc(0);
+  return chunk => {
+    buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
+    while (buffered.length >= 9) {
+      const length = (buffered[0] << 16) | (buffered[1] << 8) | buffered[2];
+      if (buffered.length < 9 + length) break;
+      const type = buffered[3];
+      const flags = buffered[4];
+      const streamId = buffered.readUInt32BE(5) & 0x7fffffff;
+      const payload = buffered.subarray(9, 9 + length);
+      buffered = buffered.subarray(9 + length);
+      onFrame(type, flags, streamId, payload);
+    }
+  };
+}
+
+it("http2 client survives a late response for a stream it already reset and still decodes the next response's HPACK references", async () => {
+  // The standard cancel race: the client sends RST_STREAM for stream 1 while
+  // the server's response HEADERS for stream 1 are already in flight. Those
+  // late HEADERS must (a) not escalate to a session-fatal GOAWAY and (b) still
+  // be fed through the HPACK decoder so that stream 3's response — which uses
+  // indexed references into the dynamic-table entries inserted by stream 1's
+  // response block — still decodes correctly (RFC 9113 section 5.1 / 4.3).
+  //
+  // The raw server withholds stream 1's response until it has *received* the
+  // client's RST_STREAM, so the client is guaranteed to have already finished
+  // closing stream 1 when the late HEADERS arrive.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // RFC 7541 C.5.1 — :status: 302, cache-control: private, date: ...,
+  // location: ... — all encoded with incremental indexing (4 dynamic-table
+  // inserts). Provided by helpers.js as kFakeResponseHeaders.
+  const firstResponseBlock = http2utils.kFakeResponseHeaders;
+  // RFC 7541 C.5.2 — :status: 307 (incremental indexing) + three indexed
+  // references into the entries inserted by C.5.1.
+  const secondResponseBlock = Buffer.from("48033330" + "37c1c0bf", "hex");
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x3 = RST_STREAM
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          Buffer.concat([
+            new http2utils.HeadersFrame(1, firstResponseBlock, 0, true, false).data,
+            new http2utils.HeadersFrame(3, secondResponseBlock, 0, true, false).data,
+            new http2utils.DataFrame(3, Buffer.from("ok"), 0, true).data,
+          ]),
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => reject(err));
+  client.on("goaway", () => reject(new Error("session received GOAWAY")));
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+
+    const req2 = client.request({ ":path": "/kept" });
+    req2.on("error", err => reject(err));
+    let responseHeaders = null;
+    let body = "";
+    req2.setEncoding("utf8");
+    req2.on("response", headers => {
+      responseHeaders = headers;
+    });
+    req2.on("data", d => (body += d));
+    req2.on("end", () => {
+      try {
+        expect(responseHeaders).not.toBeNull();
+        expect(responseHeaders[":status"]).toBe(307);
+        // These three only decode if stream 1's discarded header block was
+        // still run through the HPACK decoder.
+        expect(responseHeaders["cache-control"]).toBe("private");
+        expect(responseHeaders["date"]).toBe("Mon, 21 Oct 2013 20:13:21 GMT");
+        expect(responseHeaders["location"]).toBe("https://www.example.com");
+        expect(body).toBe("ok");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    // Cancel stream 1. The RST_STREAM frame goes out on the next immediate;
+    // the server responds to stream 1 only after it has received it.
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 client still decodes the next response's HPACK references when a late header block for a reset stream is split across HEADERS and CONTINUATION", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const firstResponseBlock = http2utils.kFakeResponseHeaders;
+  const secondResponseBlock = Buffer.from("48033330" + "37c1c0bf", "hex");
+  const splitAt = 8;
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          Buffer.concat([
+            new http2utils.HeadersFrame(1, firstResponseBlock.subarray(0, splitAt), 0, false, false).data,
+            new http2utils.ContinuationFrame(1, firstResponseBlock.subarray(splitAt), 0, false).data,
+            new http2utils.HeadersFrame(3, secondResponseBlock, 0, true, false).data,
+            new http2utils.DataFrame(3, Buffer.from("ok"), 0, true).data,
+          ]),
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => reject(err));
+  client.on("goaway", () => reject(new Error("session received GOAWAY")));
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+
+    const req2 = client.request({ ":path": "/kept" });
+    req2.on("error", err => reject(err));
+    let responseHeaders = null;
+    let body = "";
+    req2.setEncoding("utf8");
+    req2.on("response", headers => {
+      responseHeaders = headers;
+    });
+    req2.on("data", d => (body += d));
+    req2.on("end", () => {
+      try {
+        expect(responseHeaders).not.toBeNull();
+        expect(responseHeaders[":status"]).toBe(307);
+        expect(responseHeaders["cache-control"]).toBe("private");
+        expect(responseHeaders["date"]).toBe("Mon, 21 Oct 2013 20:13:21 GMT");
+        expect(responseHeaders["location"]).toBe("https://www.example.com");
+        expect(body).toBe("ok");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 client treats an HPACK decode error in a late header block for a reset stream as COMPRESSION_ERROR", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          new http2utils.HeadersFrame(1, http2utils.kFakeResponseHeaders.subarray(0, 7), 0, true, false).data,
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => resolve(err));
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    const err = await promise;
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code NGHTTP2_COMPRESSION_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 server does not spawn a second request for late HEADERS on a stream it already reset", async () => {
+  // Server-side dual of the cancel race: the server refuses stream 1 with
+  // RST_STREAM, then the client's trailer HEADERS for stream 1 (already in
+  // flight) arrive. They must not allocate fresh stream state or dispatch a
+  // second 'stream' event.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = http2.createServer();
+  let streamEvents = 0;
+  server.on("session", session => {
+    session.on("error", err => reject(err));
+  });
+  server.on("stream", stream => {
+    streamEvents++;
+    stream.on("error", () => {});
+    stream.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+
+  const socket = net.connect(port, "127.0.0.1");
+  socket.on("error", err => reject(err));
+
+  // :method: GET, :path: /, :scheme: http (static-table indexed) +
+  // :authority: x (literal without indexing, indexed name 1).
+  const requestBlock = Buffer.from([0x82, 0x84, 0x86, 0x01, 0x01, 0x78]);
+  // x-foo: bar — literal without indexing, new name.
+  const trailerBlock = Buffer.from([0x00, 0x05, 0x78, 0x2d, 0x66, 0x6f, 0x6f, 0x03, 0x62, 0x61, 0x72]);
+
+  let sentTrailers = false;
+  const scan = makeFrameScanner((type, flags, streamId) => {
+    // 0x3 = RST_STREAM from the server for stream 1: it has closed and
+    // released the stream. Now deliver the late trailer HEADERS for it,
+    // followed by a PING so we can tell when the server has processed them.
+    if (type === 0x3 && streamId === 1 && !sentTrailers) {
+      sentTrailers = true;
+      socket.write(
+        Buffer.concat([
+          // END_HEADERS | END_STREAM
+          new http2utils.HeadersFrame(1, trailerBlock, 0, true, true).data,
+          new http2utils.PingFrame(false).data,
+        ]),
+      );
+      return;
+    }
+    // 0x6 = PING with ACK: the server has processed everything before it.
+    if (type === 0x6 && (flags & 0x1) !== 0) {
+      try {
+        expect(streamEvents).toBe(1);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    }
+  });
+  socket.on("data", scan);
+  socket.on("connect", () => {
+    socket.write(
+      Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame(false).data,
+        // HEADERS(1) without END_STREAM so the server-side stream stays open
+        // until the server itself resets it.
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, false).data,
+      ]),
+    );
+  });
+
+  try {
+    await promise;
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+it("http2 server still receives the request body after responding mid-way through a split request header block", async () => {
+  // HEADERS(no END_STREAM, no END_HEADERS) + CONTINUATION(END_HEADERS) +
+  // DATA(END_STREAM). The 'stream' handler responds with endStream: true as
+  // soon as the header block completes; that local half-close must not be
+  // mistaken for the peer ending its side, or the request body that follows
+  // is silently dropped.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = http2.createServer();
+  server.on("session", session => {
+    session.on("error", err => reject(err));
+  });
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    let body = "";
+    stream.setEncoding("utf8");
+    stream.on("data", d => (body += d));
+    stream.on("close", () => {
+      try {
+        expect(body).toBe("request body");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    stream.respond({ ":status": 200 }, { endStream: true });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+
+  const socket = net.connect(port, "127.0.0.1");
+  socket.on("error", err => reject(err));
+
+  // :method: POST, :path: /, :scheme: http (static-table indexed) +
+  // :authority: x (literal without indexing, indexed name 1), split across
+  // a HEADERS frame and a CONTINUATION frame.
+  const requestFragment1 = Buffer.from([0x83, 0x84, 0x86]);
+  const requestFragment2 = Buffer.from([0x01, 0x01, 0x78]);
+
+  socket.on("data", () => {});
+  socket.on("connect", () => {
+    socket.write(
+      Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame(false).data,
+        new http2utils.HeadersFrame(1, requestFragment1, 0, false, false).data,
+        new http2utils.ContinuationFrame(1, requestFragment2, 0, false).data,
+        new http2utils.DataFrame(1, Buffer.from("request body"), 0, true).data,
+      ]),
+    );
+  });
+
+  try {
+    await promise;
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+it("http2 client receives every fragment of a trailer block split across CONTINUATION frames", async () => {
+  // A trailing HEADERS frame may carry END_STREAM without END_HEADERS, with
+  // the rest of the trailer block following in CONTINUATION frames (RFC 9113
+  // section 4.3). The stream must not be torn down — and trailer fragments
+  // must not stop being delivered — until END_HEADERS completes the block.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  // :status: 200 — static table index 8.
+  const responseBlock = Buffer.from([0x88]);
+  // x-trailer-a: 1 / x-trailer-b: 2 — literal without indexing, new name.
+  // Each fragment is a complete HPACK block on its own so it decodes
+  // independently of where the sender split the frames.
+  const trailerFragment1 = Buffer.from([0x00, 0x0b, ...Buffer.from("x-trailer-a"), 0x01, 0x31]);
+  const trailerFragment2 = Buffer.from([0x00, 0x0b, ...Buffer.from("x-trailer-b"), 0x01, 0x32]);
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x1 = HEADERS: the client's request for stream 1 has arrived.
+      if (type === 0x1 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          Buffer.concat([
+            new http2utils.HeadersFrame(1, responseBlock, 0, true, false).data,
+            new http2utils.DataFrame(1, Buffer.from("ok"), 0, false).data,
+            // Trailers: END_STREAM without END_HEADERS, completed by a
+            // CONTINUATION frame carrying the rest of the block.
+            new http2utils.HeadersFrame(1, trailerFragment1, 0, false, true).data,
+            new http2utils.ContinuationFrame(1, trailerFragment2, 0, false).data,
+          ]),
+        );
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", err => reject(err));
+  client.on("goaway", () => reject(new Error("session received GOAWAY")));
+
+  client.on("connect", () => {
+    const req = client.request({ ":path": "/" });
+    req.on("error", err => reject(err));
+    let body = "";
+    const trailers = {};
+    req.setEncoding("utf8");
+    req.on("data", d => (body += d));
+    req.on("trailers", headers => {
+      Object.assign(trailers, headers);
+    });
+    req.on("close", () => {
+      try {
+        expect(body).toBe("ok");
+        expect(trailers["x-trailer-a"]).toBe("1");
+        expect(trailers["x-trailer-b"]).toBe("2");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.end();
+  });
+
+  try {
+    await promise;
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 client rejects a frame interleaved inside a late header block for a stream it already reset", async () => {
+  // RFC 9113 section 4.3 / 6.10: once a HEADERS frame without END_HEADERS has
+  // been received, the only frame permitted on the connection is a
+  // CONTINUATION for that same stream — even when the header block belongs to
+  // a stream the client has already reset and released.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const firstResponseBlock = http2utils.kFakeResponseHeaders;
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x3 = RST_STREAM
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        socket.write(
+          Buffer.concat([
+            // Late HEADERS for the reset stream without END_HEADERS, followed
+            // by a PING instead of the required CONTINUATION.
+            new http2utils.HeadersFrame(1, firstResponseBlock, 0, false, false).data,
+            new http2utils.PingFrame(false).data,
+          ]),
+        );
+        return;
+      }
+      // 0x6 = PING with ACK: the client accepted the interleaved frame.
+      if (type === 0x6 && (flags & 0x1) !== 0) {
+        reject(new Error("client must not acknowledge a frame interleaved inside a header block"));
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", resolve);
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    const result = await promise;
+    expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+it("http2 client rejects an oversized-padding DATA frame for a stream it already reset", async () => {
+  // RFC 9113 section 6.1: a Pad Length of the frame payload length or greater
+  // is a connection error of type PROTOCOL_ERROR, even when the frame
+  // addresses a stream the client has already reset and released.
+  const { promise, resolve, reject } = Promise.withResolvers();
+
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    let prefaceSeen = false;
+    let responded = false;
+    const scan = makeFrameScanner((type, flags, streamId) => {
+      // 0x3 = RST_STREAM
+      if (type === 0x3 && streamId === 1 && !responded) {
+        responded = true;
+        // DATA (type=0), flags = PADDED (0x8), stream=1, length=2,
+        // payload = [0xFF, 0x00] -> Pad Length = 255 >= frame length 2.
+        socket.write(Buffer.concat([new http2utils.Frame(2, 0, 0x8, 1).data, Buffer.from([0xff, 0x00])]));
+      }
+    });
+    let prefaceBuffer = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      if (!prefaceSeen) {
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
+        prefaceSeen = true;
+        socket.write(new http2utils.SettingsFrame(false).data);
+        socket.write(new http2utils.SettingsFrame(true).data);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
+        if (chunk.length === 0) return;
+      }
+      scan(chunk);
+    });
+  });
+
+  await new Promise(r => server.listen(0, r));
+  const port = server.address().port;
+  const client = http2.connect(`http://localhost:${port}`);
+  client.on("error", resolve);
+
+  client.on("connect", () => {
+    const req1 = client.request({ ":path": "/cancelled" });
+    req1.on("error", () => {});
+    req1.on("response", () => reject(new Error("req1 must not receive a response")));
+    req1.resume();
+    req1.close(http2.constants.NGHTTP2_CANCEL);
+  });
+
+  try {
+    const result = await promise;
+    expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
   // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
   // LF is malformed and must be answered with a stream error, not delivered

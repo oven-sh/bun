@@ -345,3 +345,11 @@ export const fetchH3Internals = {
 export const fileSinkInternals = {
   liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
+
+export const nodeHttp2Internals = {
+  liveStreamCount: $newZigFunction(
+    "runtime/api/bun/h2_frame_parser.zig",
+    "TestingAPIs.liveStreamCount",
+    0,
+  ) as () => number,
+};

@@ -178,6 +178,7 @@ pub mod bun {
         pub use crate::api::h2_frame_parser_body::js_assert_settings;
         pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
         pub use crate::api::h2_frame_parser_body::js_get_unpacked_settings;
+        pub use crate::api::h2_frame_parser_body::testing_ap_is;
     }
     pub use h2_frame_parser::H2FrameParser;
 }

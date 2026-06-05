@@ -8,6 +8,7 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
@@ -1265,6 +1266,12 @@ const MAX_BUFFER_SIZE: u32 = 32768;
 /// array is ~tens of KB and would otherwise sit in every thread's TLS).
 type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 
+/// Number of live `Box<Stream>` allocations across all `H2FrameParser`
+/// instances. Read from JS via `bun:internal-for-testing`
+/// (`nodeHttp2Internals.liveStreamCount`) so tests can assert that completed
+/// streams are actually evicted from the session map.
+pub static LIVE_STREAM_COUNT: AtomicI32 = AtomicI32::new(0);
+
 thread_local! {
     // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
     // combined and would otherwise dominate PT_TLS MemSiz on every thread
@@ -1343,6 +1350,47 @@ pub struct H2FrameParser {
 
     auto_flusher: JsCell<AutoFlusher>,
     padding_strategy: Cell<PaddingStrategy>,
+
+    // Re-entrancy depth across native entry points (host fns + socket
+    // callbacks). CLOSED streams are only evicted from `streams` when this
+    // unwinds to 0, so no `*mut Stream` held by an in-progress native frame is
+    // ever invalidated. See `ActivityGuard` / `evict_closed_streams`.
+    activity_depth: Cell<u32>,
+    // Set by `close_stream` whenever a stream transitions to CLOSED; consumed
+    // by `evict_closed_streams` so the depth-0 sweep is free when nothing
+    // closed during the current entry point.
+    has_closed_streams: Cell<bool>,
+    // Ring buffer of the most recently evicted stream ids (0 = empty slot).
+    // Distinguishes "this id was created and has since been closed and
+    // released" from "this id was never created" when a frame arrives for an
+    // id that is not in the map — the former must be discarded, the latter may
+    // legitimately open a new stream (a peer is allowed to send HEADERS for a
+    // lower id than one it has already used out of order on this
+    // implementation's own client). Mirrors nghttp2's bounded closed-stream
+    // list. Sized to comfortably cover the one-round-trip window in which a
+    // late frame for a just-closed stream can still be in flight.
+    recently_evicted: JsCell<[u32; RECENTLY_EVICTED_LEN]>,
+    recently_evicted_pos: Cell<u8>,
+    discarded_block: JsCell<Vec<u8>>,
+}
+
+/// Capacity of `H2FrameParser::recently_evicted`.
+const RECENTLY_EVICTED_LEN: usize = 32;
+
+/// RAII re-entrancy counter for `H2FrameParser` native entry points. CLOSED
+/// streams are swept out of the session map only when the outermost guard
+/// drops (depth returns to 0), i.e. after every native stack frame that may
+/// hold a `*mut Stream` from the map has returned.
+struct ActivityGuard<'a>(&'a H2FrameParser);
+
+impl Drop for ActivityGuard<'_> {
+    fn drop(&mut self) {
+        let depth = self.0.activity_depth.get() - 1;
+        self.0.activity_depth.set(depth);
+        if depth == 0 {
+            self.0.evict_closed_streams();
+        }
+    }
 }
 
 impl H2FrameParser {
@@ -1457,6 +1505,17 @@ pub struct Stream {
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
     end_after_headers: bool,
+    // END_STREAM seen on the *inbound* HEADERS frame that opened the header
+    // block currently being processed; the half-close it implies is applied
+    // once END_HEADERS completes the block. Kept separate from
+    // `end_after_headers`, which `js_request` also sets for the *outbound*
+    // direction and which backs the `endAfterHeaders` getter.
+    inbound_end_stream: bool,
+    /// Both directions have sent END_STREAM (ours on the response HEADERS),
+    /// but the CLOSED transition is deferred until the JS writable side
+    /// finishes so the stream object observes its normal end-of-stream
+    /// lifecycle instead of a mid-`respond()` teardown.
+    close_on_local_finish: bool,
     is_waiting_more_headers: bool,
     header_block_size: usize,
     header_block_count: usize,
@@ -1520,6 +1579,11 @@ impl SignalRef {
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
+        // `abort_stream` → `free_resources` drops this `SignalRef` (and its
+        // ref on the parser); the guard must not outlive the parser, which is
+        // also kept alive by the JS session wrapper for the duration of the
+        // listener dispatch.
+        let _activity = parser.activity_guard();
         let Some(stream) = parser.streams.get().get(&this.stream_id).copied() else {
             return;
         };
@@ -1850,7 +1914,7 @@ impl Stream {
                         let identifier = self.get_identifier();
                         identifier.ensure_still_alive();
                         if self.state == StreamState::HALF_CLOSED_REMOTE {
-                            self.state = StreamState::CLOSED;
+                            client.close_stream(self);
                         } else {
                             self.state = StreamState::HALF_CLOSED_LOCAL;
                         }
@@ -2025,6 +2089,8 @@ impl Stream {
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
             end_after_headers: false,
+            inbound_end_stream: false,
+            close_on_local_finish: false,
             is_waiting_more_headers: false,
             header_block_size: 0,
             header_block_count: 0,
@@ -2173,6 +2239,252 @@ fn hpack_error_to_core(e: &lshpack::HpackError) -> bun_core::Error {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
+    /// Enter a native entry point. Must be taken as the first statement of
+    /// every JS host fn and native socket callback that can reach the streams
+    /// map; the returned guard sweeps CLOSED streams out of the map when the
+    /// outermost one drops.
+    #[inline]
+    fn activity_guard(&self) -> ActivityGuard<'_> {
+        self.activity_depth.set(self.activity_depth.get() + 1);
+        ActivityGuard(self)
+    }
+
+    /// Transition a stream to CLOSED and mark the session as having streams
+    /// pending eviction. Every `state = CLOSED` assignment must go through
+    /// this so the depth-0 sweep actually runs.
+    #[inline]
+    fn close_stream(&self, stream: &mut Stream) {
+        stream.state = StreamState::CLOSED;
+        self.has_closed_streams.set(true);
+    }
+
+    /// Returns true for a stream id that *may* have been created on this
+    /// connection at some point and has since been closed and evicted. This is
+    /// an over-approximation (any id at or below the high-water mark): callers
+    /// use it after a map miss to pick a lenient "discard / treat as already
+    /// closed" path over a throw or a connection error, where misclassifying a
+    /// never-created id is harmless. The one decision that must NOT
+    /// over-approximate — whether an inbound HEADERS frame may open a new
+    /// stream — uses `was_recently_evicted` instead.
+    #[inline]
+    fn is_evicted_stream_id(&self, id: u32) -> bool {
+        id != 0 && id <= self.last_stream_id.get()
+    }
+
+    /// Record an evicted stream id in the bounded ring consulted by
+    /// `was_recently_evicted`.
+    fn remember_evicted_stream_id(&self, id: u32) {
+        let pos = self.recently_evicted_pos.get() as usize % RECENTLY_EVICTED_LEN;
+        self.recently_evicted.with_mut(|ring| ring[pos] = id);
+        self.recently_evicted_pos
+            .set(((pos + 1) % RECENTLY_EVICTED_LEN) as u8);
+    }
+
+    /// Precise (but bounded) test for "this exact stream id was closed and
+    /// evicted recently". Used to stop an inbound HEADERS frame for a
+    /// just-released stream from allocating a fresh phantom stream, without
+    /// also rejecting a legitimately new lower-numbered stream id.
+    fn was_recently_evicted(&self, id: u32) -> bool {
+        id != 0 && self.recently_evicted.get().contains(&id)
+    }
+
+    /// Remove every CLOSED stream from the session map and free its
+    /// allocation. Only called from `ActivityGuard::drop` at activity depth 0,
+    /// so no native stack frame holds a `*mut Stream` into the map.
+    fn evict_closed_streams(&self) {
+        if !self.has_closed_streams.replace(false) {
+            return;
+        }
+        // Keep `self` alive across `free_resources` (dropping a stream's
+        // SignalRef derefs the parser).
+        // SAFETY: `self` is live; all mutation goes through `Cell`/`JsCell`
+        // (UnsafeCell-backed), so the `*mut` cast is signature-only.
+        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+
+        // Collect first: `std::collections::HashMap` cannot be mutated while
+        // iterating. Evict at most `RECENTLY_EVICTED_LEN` streams per sweep so
+        // every evicted id stays in the `recently_evicted` ring for at least
+        // one full sweep; the rest stay CLOSED in the map until the next one.
+        let mut evicted: Vec<(u32, *mut Stream)> = Vec::new();
+        for (&id, &ptr) in self.streams.get().iter() {
+            // SAFETY: ptr is a *mut Stream from self.streams (heap::alloc);
+            // valid while the map entry exists.
+            let stream = unsafe { &mut *ptr };
+            if stream.state == StreamState::CLOSED {
+                if evicted.len() == RECENTLY_EVICTED_LEN {
+                    self.has_closed_streams.set(true);
+                    break;
+                }
+                if stream.is_waiting_more_headers {
+                    // The connection is mid-header-block for this stream; the
+                    // CONTINUATION frames that complete it must still find the
+                    // map entry. Re-examine once the block ends.
+                    self.has_closed_streams.set(true);
+                } else if stream.data_frame_queue.is_empty() {
+                    evicted.push((id, ptr));
+                } else {
+                    // Unreachable today (every CLOSED transition drains the
+                    // queue first), but keep the flag set so the stream is
+                    // re-examined on the next sweep instead of leaking until
+                    // teardown.
+                    self.has_closed_streams.set(true);
+                }
+            }
+        }
+        for (id, ptr) in evicted {
+            // Remove from the map before freeing so a re-entrant sweep cannot
+            // observe (and double-free) the entry.
+            self.streams.with_mut(|m| m.remove(&id));
+            self.remember_evicted_stream_id(id);
+            // SAFETY: ptr was removed from the map above and is freed exactly
+            // once here. `free_resources::<true>` is idempotent and dispatches
+            // no JS (the queue is empty, FINALIZING skips the GC timer).
+            unsafe {
+                (*ptr).free_resources::<true>(self);
+                drop(bun_core::heap::take(ptr));
+            }
+            LIVE_STREAM_COUNT.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Run a header block fragment for a closed/evicted stream through the
+    /// HPACK decoder without allocating any JS values or dispatching events.
+    /// RFC 9113 §4.3: every header block on the connection MUST be processed
+    /// by the decoder to keep the dynamic table in sync, even when the frame
+    /// itself is discarded.
+    fn discard_header_block(&self, stream_id: u32, payload: &[u8]) {
+        let mut offset: usize = 0;
+        while offset < payload.len() {
+            match self.decode(&payload[offset..]) {
+                Ok(header) => offset += header.next,
+                Err(_) => {
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::COMPRESSION_ERROR,
+                        b"Invalid HPACK header block",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Consume a HEADERS (or CONTINUATION) frame addressed to a closed/evicted
+    /// stream: same framing validation and buffering as the live path, but the
+    /// decoded headers are discarded instead of dispatched and no stream state
+    /// is allocated. Connection-level errors (oversized frame, bad padding)
+    /// still escalate to GOAWAY exactly like the live path.
+    fn discard_headers_frame<const IS_CONTINUATION: bool>(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+    ) -> JsResult<usize> {
+        if frame.length > self.local_settings.get().max_frame_size {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                if IS_CONTINUATION {
+                    b"invalid Continuation frame size".as_slice()
+                } else {
+                    b"invalid Headers frame size".as_slice()
+                },
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(data.len());
+        }
+        let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) else {
+            // needs more data
+            return Ok(data.len());
+        };
+        let payload = content.data();
+        let end_ = content.end;
+        self.read_buffer.with_mut(|rb| rb.reset());
+
+        let mut offset: usize = 0;
+        let mut padding: usize = 0;
+        // CONTINUATION frames carry neither padding nor priority (RFC 9113
+        // §6.10); only HEADERS needs the prefix stripped.
+        if !IS_CONTINUATION {
+            if frame.flags & HeadersFrameFlags::PADDED as u8 != 0 {
+                if payload.is_empty() {
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"invalid Headers frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return Ok(end_);
+                }
+                padding = payload[0] as usize;
+                offset += 1;
+            }
+            if frame.flags & HeadersFrameFlags::PRIORITY as u8 != 0 {
+                offset += 5;
+            }
+            if offset > payload.len() {
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"invalid Headers frame size",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(end_);
+            }
+            if padding > payload.len() - offset {
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"invalid Headers frame padding",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(end_);
+            }
+        }
+        let end = payload.len() - padding;
+        let fragment = &payload[offset..end];
+        if !IS_CONTINUATION {
+            self.discarded_block.with_mut(|b| b.clear());
+        }
+        if frame.flags & HeadersFrameFlags::END_HEADERS as u8 != 0
+            && self.discarded_block.get().is_empty()
+        {
+            self.expecting_continuation.set(0);
+            self.discard_header_block(frame.stream_identifier, fragment);
+            return Ok(end_);
+        }
+        if self.discarded_block.get().len() + fragment.len()
+            > self.local_settings.get().max_header_list_size as usize
+        {
+            self.discarded_block.with_mut(|b| b.clear());
+            self.expecting_continuation.set(0);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(end_);
+        }
+        if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+            self.discarded_block
+                .with_mut(|b| b.extend_from_slice(fragment));
+            self.expecting_continuation.set(frame.stream_identifier);
+            return Ok(end_);
+        }
+        self.expecting_continuation.set(0);
+        let mut block = self.discarded_block.replace(Vec::new());
+        block.extend_from_slice(fragment);
+        self.discard_header_block(frame.stream_identifier, &block);
+        Ok(end_)
+    }
+
     /// Encodes a single header into the ArrayList, growing if needed.
     /// Returns the number of bytes written, or error on failure.
     ///
@@ -2388,7 +2700,7 @@ impl H2FrameParser {
         value = value.swap_bytes();
         let _ = writer_stream.write_all(&value.to_ne_bytes());
         let old_state = stream.state;
-        stream.state = StreamState::CLOSED;
+        self.close_stream(stream);
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -2426,7 +2738,7 @@ impl H2FrameParser {
         value = value.swap_bytes();
         let _ = writer_stream.write_all(&value.to_ne_bytes());
 
-        stream.state = StreamState::CLOSED;
+        self.close_stream(stream);
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -3079,7 +3391,13 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         self.ref_();
-        let _ = self.flush();
+        {
+            // Scope the activity guard inside the ref_()/deref() pair: the
+            // depth-0 sweep it triggers on drop must run while `self` is still
+            // kept alive.
+            let _activity = self.activity_guard();
+            let _ = self.flush();
+        }
         self.deref();
         // we will unregister ourselves when the buffer is empty
         true
@@ -3472,13 +3790,18 @@ impl H2FrameParser {
             return Ok(self.streams.get().get(&stream_id).copied());
         }
 
-        self.dispatch_with_3_extra(
-            JSH2FrameParser::Gc::onStreamHeaders,
-            stream.get_identifier(),
-            headers,
-            sensitive_headers,
-            JSValue::js_number(flags as f64),
-        );
+        // A CLOSED stream can still own an unfinished header block (it is kept
+        // in the map until END_HEADERS so the HPACK dynamic table stays in
+        // sync). The block must be decoded, but never surfaced to JS.
+        if stream.state != StreamState::CLOSED {
+            self.dispatch_with_3_extra(
+                JSH2FrameParser::Gc::onStreamHeaders,
+                stream.get_identifier(),
+                headers,
+                sensitive_headers,
+                JSValue::js_number(flags as f64),
+            );
+        }
         Ok(self.streams.get().get(&stream_id).copied())
     }
 
@@ -3501,6 +3824,54 @@ impl H2FrameParser {
         self.read_buffer.with_mut(|rb| rb.reset());
 
         let Some(stream_ptr) = stream_ else {
+            if self.is_evicted_stream_id(frame.stream_identifier) {
+                // DATA for a stream we already closed and evicted (the peer's
+                // frame was in flight when we closed). RFC 9113 §5.1: discard,
+                // but the payload still counts toward the connection
+                // flow-control window (§6.9).
+                if frame.length > self.local_settings.get().max_frame_size {
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"Invalid dataframe frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return data.len();
+                }
+                if frame.flags & DataFrameFlags::PADDED as u8 != 0 {
+                    if frame.length < 1 {
+                        self.send_go_away(
+                            frame.stream_identifier,
+                            ErrorCode::FRAME_SIZE_ERROR,
+                            b"Invalid data frame size",
+                            self.last_stream_id.get(),
+                            true,
+                        );
+                        return data.len();
+                    }
+                    if self.remaining_length.get() == frame.length as i32
+                        && data.first().is_some_and(|&pad| pad as u32 >= frame.length)
+                    {
+                        self.send_go_away(
+                            frame.stream_identifier,
+                            ErrorCode::PROTOCOL_ERROR,
+                            b"Invalid data frame padding",
+                            self.last_stream_id.get(),
+                            true,
+                        );
+                        return data.len();
+                    }
+                }
+                let end: usize = (self.remaining_length.get() as usize).min(data.len());
+                self.adjust_window_size(None, end as u32);
+                self.remaining_length
+                    .set(self.remaining_length.get() - i32::try_from(end).expect("int cast"));
+                if self.remaining_length.get() <= 0 {
+                    self.current_frame.set(None);
+                }
+                return end;
+            }
             bun_output::scoped_log!(
                 H2FrameParser,
                 "received data frame on stream that does not exist"
@@ -3654,9 +4025,11 @@ impl H2FrameParser {
                 identifier.ensure_still_alive();
 
                 if stream.state == StreamState::HALF_CLOSED_LOCAL {
-                    stream.state = StreamState::CLOSED;
+                    self.close_stream(stream);
                     stream.free_resources::<false>(self);
-                } else {
+                } else if stream.state != StreamState::CLOSED {
+                    // An `abort()` from the 'data' handler dispatched above may
+                    // have already closed the stream; don't resurrect it.
                     stream.state = StreamState::HALF_CLOSED_REMOTE;
                 }
                 self.dispatch_with_extra(
@@ -3892,6 +4265,27 @@ impl H2FrameParser {
     ) -> usize {
         bun_output::scoped_log!(H2FrameParser, "handleRSTStreamFrame {}", BStr::new(data));
         let Some(stream_ptr) = stream_ else {
+            if self.is_evicted_stream_id(frame.stream_identifier) {
+                // RST_STREAM for a stream we already closed and evicted.
+                // RFC 9113 §5.1: ignore it; just consume the 4-byte payload.
+                if frame.length != 4 {
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FRAME_SIZE_ERROR,
+                        b"invalid RST_STREAM frame size",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return data.len();
+                }
+                if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier)
+                {
+                    let end = content.end;
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    return end;
+                }
+                return data.len();
+            }
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3932,7 +4326,7 @@ impl H2FrameParser {
             stream.rst_code = rst_code;
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            stream.state = StreamState::CLOSED;
+            self.close_stream(stream);
             let identifier = stream.get_identifier();
             identifier.ensure_still_alive();
             stream.free_resources::<false>(self);
@@ -4102,6 +4496,25 @@ impl H2FrameParser {
     ) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "handleContinuationFrame");
         let Some(stream_ptr) = stream_ else {
+            if self.is_evicted_stream_id(frame.stream_identifier) {
+                // Only legal as the continuation of a header block whose
+                // HEADERS frame was discarded above and has not yet seen
+                // END_HEADERS. Keep feeding the HPACK decoder so the dynamic
+                // table stays in sync, but dispatch nothing. A stray
+                // CONTINUATION with no such block in progress is a connection
+                // error (RFC 9113 §6.10).
+                if self.expecting_continuation.get() == frame.stream_identifier {
+                    return self.discard_headers_frame::<true>(frame, data);
+                }
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Continuation without headers",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(data.len());
+            }
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -4172,8 +4585,10 @@ impl H2FrameParser {
                 None => return Ok(end),
             };
             // END_STREAM finalization was deferred by handle_headers_frame
-            // until the complete header block had been dispatched.
-            if stream.end_after_headers {
+            // until the complete header block had been dispatched. Read the
+            // inbound-only flag: `end_after_headers` may have been flipped by
+            // a re-entrant `respond({endStream})` during the dispatch above.
+            if stream.inbound_end_stream {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end);
@@ -4198,7 +4613,7 @@ impl H2FrameParser {
 
         // no more continuation headers we can call it closed
         if stream.state == StreamState::HALF_CLOSED_LOCAL {
-            stream.state = StreamState::CLOSED;
+            self.close_stream(stream);
             stream.free_resources::<false>(self);
         } else {
             stream.state = StreamState::HALF_CLOSED_REMOTE;
@@ -4226,6 +4641,14 @@ impl H2FrameParser {
             }
         );
         let Some(stream_ptr) = stream_ else {
+            if self.is_evicted_stream_id(frame.stream_identifier) {
+                // Late HEADERS for a stream we already closed and evicted (the
+                // standard cancel race: our RST_STREAM crossed the peer's
+                // response on the wire). RFC 9113 §5.1: discard the frame, but
+                // the header block MUST still be run through the HPACK decoder
+                // to keep the connection's dynamic table in sync (§4.3).
+                return self.discard_headers_frame::<false>(frame, data);
+            }
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -4308,6 +4731,7 @@ impl H2FrameParser {
             }
             let end = payload.len() - padding;
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
+            stream.inbound_end_stream = stream.end_after_headers;
             stream.header_block_size = 0;
             stream.header_block_count = 0;
             stream.pending_header_block.clear();
@@ -4341,7 +4765,7 @@ impl H2FrameParser {
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
-            if stream.end_after_headers {
+            if stream.inbound_end_stream {
                 self.finish_headers_end_stream(stream);
             }
             return Ok(end_);
@@ -4560,7 +4984,8 @@ impl H2FrameParser {
         data.len()
     }
 
-    /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
+    /// Returned *Stream is heap-allocated and valid while at least one `ActivityGuard` is held;
+    /// `evict_closed_streams` may free CLOSED entries once the activity depth returns to 0.
     fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
         // connection stream
         if stream_identifier == 0 {
@@ -4593,6 +5018,7 @@ impl H2FrameParser {
         )));
         self.streams
             .with_mut(|s| s.insert(stream_identifier, stream));
+        LIVE_STREAM_COUNT.fetch_add(1, Ordering::Relaxed);
 
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
@@ -4624,6 +5050,20 @@ impl H2FrameParser {
         }
         if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
             return Some(stream);
+        }
+        // A stream id that was created on this connection and has since been
+        // closed and evicted must not be re-allocated by a late inbound frame
+        // (the peer's frame crossed our RST_STREAM / END_STREAM on the wire) —
+        // the frame handlers discard frames on such ids instead. Uses the
+        // precise bounded record rather than the `last_stream_id` watermark
+        // because a genuinely new lower-numbered stream id is reachable: a
+        // client that opens more streams from inside a `request()` options
+        // getter writes those HEADERS frames before the outer request's, so
+        // the outer (lower) id arrives after the inner (higher) ones.
+        // `evict_closed_streams` never evicts more ids per sweep than the
+        // ring can hold, so an evicted id cannot be lost within one sweep.
+        if self.was_recently_evicted(stream_identifier) {
+            return None;
         }
         if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
             return None;
@@ -5080,6 +5520,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected settings argument")));
@@ -5098,6 +5539,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(
@@ -5143,6 +5585,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let result = JSValue::create_empty_object(global_object, 9);
         result.put(
             global_object,
@@ -5203,6 +5646,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<3>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected errorCode argument")));
@@ -5260,6 +5704,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected payload argument")));
@@ -5288,6 +5733,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let origin_arg = callframe.argument(0);
         if origin_arg.is_empty_or_undefined_or_null() {
             // empty origin frame
@@ -5386,6 +5832,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let mut origin_slice: Option<bun_core::zig_string::Slice> = None;
         let mut value_slice: Option<bun_core::zig_string::Slice> = None;
 
@@ -5443,6 +5890,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -5459,6 +5907,10 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted.
+                return Ok(JSValue::FALSE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -5472,6 +5924,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -5488,6 +5941,11 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // Completed without an abort, otherwise the rst path would
+                // have reported it before eviction.
+                return Ok(JSValue::FALSE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -5508,6 +5966,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
@@ -5524,6 +5983,31 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted; synthesize the
+                // closed-state object a stale CLOSED entry would have produced
+                // (the Stream::init defaults for weight and the local window).
+                let state = JSValue::create_empty_object(global_object, 6);
+                state.put(
+                    global_object,
+                    b"localWindowSize",
+                    JSValue::js_number(this.local_settings.get().initial_window_size as f64),
+                );
+                state.put(
+                    global_object,
+                    b"state",
+                    JSValue::js_number(StreamState::CLOSED as u8 as f64),
+                );
+                state.put(global_object, b"localClose", JSValue::js_number(1.0));
+                state.put(global_object, b"remoteClose", JSValue::js_number(1.0));
+                state.put(
+                    global_object,
+                    b"sumDependencyWeight",
+                    JSValue::js_number(0.0),
+                );
+                state.put(global_object, b"weight", JSValue::js_number(36.0));
+                return Ok(state);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -5571,6 +6055,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and options arguments")));
@@ -5588,6 +6073,11 @@ impl H2FrameParser {
         }
 
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted; behave like the
+                // `!can_send_data() && !can_receive_data()` path below.
+                return Ok(JSValue::FALSE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
@@ -5683,6 +6173,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         bun_output::scoped_log!(H2FrameParser, "rstStream");
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
@@ -5701,6 +6192,14 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                if !error_arg.is_number() {
+                    return Err(global_object.throw(format_args!("Invalid ErrorCode")));
+                }
+                // The stream already completed and was evicted; `end_stream`
+                // on a CLOSED stream is a no-op that returns TRUE.
+                return Ok(JSValue::TRUE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         if !error_arg.is_number() {
@@ -5723,10 +6222,13 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        let stream_count = self.streams.get().len();
+        // Every entry counts: CLOSED streams are evicted from the map at the
+        // end of the current native entry point, so anything still here is
+        // either live or about to be freed. Counting all entries keeps the
+        // session cap honest if eviction ever regresses.
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize
-            + stream_count * core::mem::size_of::<Stream>())
+            + self.streams.get().len() * core::mem::size_of::<Stream>())
             / 1024
             / 1024
     }
@@ -5738,6 +6240,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         Ok(JSValue::js_number(
             (this.write_buffer.get().len_u32() as u64 + this.queued_data_size.get()) as f64,
         ))
@@ -5895,7 +6398,7 @@ impl H2FrameParser {
                     let identifier = stream.get_identifier();
                     identifier.ensure_still_alive();
                     if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                        stream.state = StreamState::CLOSED;
+                        self.close_stream(stream);
                         stream.free_resources::<false>(self);
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
@@ -5917,6 +6420,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!(
@@ -5936,6 +6440,11 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted; nothing to
+                // terminate.
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -6014,6 +6523,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<3>();
         if args_list.len < 3 {
             return Err(global_object.throw(format_args!(
@@ -6035,6 +6545,12 @@ impl H2FrameParser {
         }
 
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted; writing
+                // trailers onto a closed stream would be a protocol violation
+                // anyway, so this is a no-op.
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
@@ -6141,7 +6657,7 @@ impl H2FrameParser {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
-                        stream.state = StreamState::CLOSED;
+                        this.close_stream(stream);
                         let identifier = stream.get_identifier();
                         identifier.ensure_still_alive();
                         stream.free_resources::<false>(this);
@@ -6337,7 +6853,7 @@ impl H2FrameParser {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         if stream.state == StreamState::HALF_CLOSED_REMOTE {
-            stream.state = StreamState::CLOSED;
+            this.close_stream(stream);
             stream.free_resources::<false>(this);
         } else {
             stream.state = StreamState::HALF_CLOSED_LOCAL;
@@ -6356,6 +6872,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args = callframe.arguments_undef::<5>();
         let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg] = args.ptr;
 
@@ -6370,12 +6887,33 @@ impl H2FrameParser {
         let close = close_arg.to_boolean();
 
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // The stream already completed and was evicted; behave like
+                // the `!can_send_data()` path below.
+                this.dispatch_write_callback(callback_arg);
+                return Ok(JSValue::FALSE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream.can_send_data() {
             this.dispatch_write_callback(callback_arg);
+            if close && stream.close_on_local_finish && stream.state != StreamState::CLOSED {
+                // Both directions sent END_STREAM back when the response
+                // HEADERS went out; the JS writable side is finishing now, so
+                // complete the lifecycle the same way send_data's close path
+                // does for DATA-terminated streams.
+                let identifier = stream.get_identifier();
+                identifier.ensure_still_alive();
+                this.close_stream(stream);
+                stream.free_resources::<false>(this);
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamEnd,
+                    identifier,
+                    JSValue::js_number(StreamState::CLOSED as u8 as f64),
+                );
+            }
             return Ok(JSValue::FALSE);
         }
 
@@ -6445,6 +6983,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments();
         debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
@@ -6475,6 +7014,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         Ok(JSValue::from(matches!(
             this.native_socket.get(),
             BunSocket::Tcp(_) | BunSocket::Tls(_)
@@ -6487,6 +7027,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let id = this.get_next_stream_id();
         if id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
@@ -6503,6 +7044,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream_id argument")));
@@ -6514,6 +7056,9 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+            if this.is_evicted_stream_id(stream_id_arg.to_u32()) {
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -6527,6 +7072,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(
@@ -6539,6 +7085,9 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
         let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+            if this.is_evicted_stream_id(stream_id_arg.to_u32()) {
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         let context_arg = args_list.ptr[1];
@@ -6557,6 +7106,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args = callframe.arguments();
         if args.len() < 1 || !args[0].is_callable() {
             return Ok(JSValue::UNDEFINED);
@@ -6591,6 +7141,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -6608,7 +7159,7 @@ impl H2FrameParser {
             }
             if stream.state != StreamState::CLOSED {
                 let old_state = stream.state;
-                stream.state = StreamState::CLOSED;
+                this.close_stream(stream);
                 stream.rst_code = ErrorCode::CANCEL.0;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
@@ -6630,6 +7181,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected error argument")));
@@ -6643,7 +7195,7 @@ impl H2FrameParser {
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
-                stream.state = StreamState::CLOSED;
+                this.close_stream(stream);
                 stream.rst_code = args_list.ptr[0].to_u32();
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
@@ -6664,6 +7216,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         Ok(JSValue::js_number(this.flush() as f64))
     }
 
@@ -6673,6 +7226,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         bun_output::scoped_log!(H2FrameParser, "request");
 
         let args_list = callframe.arguments_old::<5>();
@@ -6710,6 +7264,17 @@ impl H2FrameParser {
                 this.get_next_stream_id()
             };
         if stream_id > MAX_STREAM_ID {
+            return Ok(JSValue::js_number(-1.0));
+        }
+        // A previously-created stream id that is no longer in the map was
+        // already closed and evicted. Re-creating it here would dispatch a
+        // second `onStreamStart` and pin a phantom OPEN entry in the map
+        // forever; refuse instead (same return value as the
+        // can't-allocate-stream path).
+        if stream_id != 0
+            && this.is_evicted_stream_id(stream_id)
+            && this.streams.get().get(&stream_id).is_none()
+        {
             return Ok(JSValue::js_number(-1.0));
         }
 
@@ -6883,7 +7448,7 @@ impl H2FrameParser {
                             {
                                 stream.set_context(stream_ctx_arg, global_object);
                             }
-                            stream.state = StreamState::CLOSED;
+                            this.close_stream(stream);
                             stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
                             this.dispatch_with_extra(
                                 JSH2FrameParser::Gc::onStreamError,
@@ -6965,7 +7530,7 @@ impl H2FrameParser {
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
+                        this.close_stream(stream);
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
@@ -7003,7 +7568,7 @@ impl H2FrameParser {
         if args_list.len > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
             let options = args_list.ptr[4];
             if !options.is_object() {
-                stream.state = StreamState::CLOSED;
+                this.close_stream(stream);
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                 this.dispatch_with_extra(
                     JSH2FrameParser::Gc::onStreamError,
@@ -7081,7 +7646,7 @@ impl H2FrameParser {
                     has_priority = true;
                     parent = parent_js.to_int32();
                     if parent <= 0 || parent as u32 > MAX_STREAM_ID {
-                        stream.state = StreamState::CLOSED;
+                        this.close_stream(stream);
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
@@ -7105,7 +7670,7 @@ impl H2FrameParser {
                     has_priority = true;
                     weight = weight_js.to_int32();
                     if weight < 1 || weight > u8::MAX as i32 {
-                        stream.state = StreamState::CLOSED;
+                        this.close_stream(stream);
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
@@ -7124,7 +7689,7 @@ impl H2FrameParser {
                 }
 
                 if weight < 1 || weight > u8::MAX as i32 {
-                    stream.state = StreamState::CLOSED;
+                    this.close_stream(stream);
                     stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                     this.dispatch_with_extra(
                         JSH2FrameParser::Gc::onStreamError,
@@ -7160,7 +7725,7 @@ impl H2FrameParser {
 
         // too much memory being use
         if this.get_session_memory_usage() > this.max_session_memory.get() as usize {
-            stream.state = StreamState::CLOSED;
+            this.close_stream(stream);
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams.set(this.rejected_streams.get() + 1);
             this.dispatch_with_extra(
@@ -7196,7 +7761,7 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
+            this.close_stream(stream);
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
 
             this.dispatch_with_2_extra(
@@ -7363,6 +7928,19 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
+            if stream.state == StreamState::HALF_CLOSED_REMOTE
+                && (flags & HeadersFrameFlags::END_STREAM as u8) != 0
+            {
+                // The peer already half-closed its side and the HEADERS frame
+                // we just wrote carries END_STREAM, so both directions are now
+                // closed (RFC 9113 §5.1). Closing here would tear the stream
+                // down in the middle of `respond()` (its writable side has not
+                // ended yet, so a synchronous destroy emits a spurious
+                // 'aborted' and the JS object never observes CLOSED); instead
+                // defer the CLOSED transition to the writable-finish
+                // `writeStream(..., close=true)` call that always follows.
+                stream.close_on_local_finish = true;
+            }
             stream.state = StreamState::HALF_CLOSED_LOCAL;
 
             if wait_for_trailers {
@@ -7387,6 +7965,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected 1 argument")));
@@ -7422,21 +8001,35 @@ impl H2FrameParser {
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         self.ref_();
-        let mut bytes = data;
-        let result: JsResult<()> = (|| {
-            while !bytes.is_empty() {
-                let result = self.read_bytes(bytes)?;
-                bytes = &bytes[result..];
-            }
-            Ok(())
-        })();
-        self.increment_window_size_if_needed();
+        // Scope the activity guard inside the ref_()/deref() pair: the depth-0
+        // sweep it triggers on drop must run while `self` is still kept alive.
+        let result = {
+            let _activity = self.activity_guard();
+            let mut bytes = data;
+            let result: JsResult<()> = (|| {
+                while !bytes.is_empty() {
+                    let result = self.read_bytes(bytes)?;
+                    bytes = &bytes[result..];
+                }
+                Ok(())
+            })();
+            self.increment_window_size_if_needed();
+            result
+        };
         self.deref();
         result
     }
 
     pub(crate) fn on_native_writable(&self) {
-        let _ = self.flush();
+        self.ref_();
+        {
+            // Scope the activity guard inside the ref_()/deref() pair: the
+            // depth-0 sweep it triggers on drop must run while `self` is still
+            // kept alive.
+            let _activity = self.activity_guard();
+            let _ = self.flush();
+        }
+        self.deref();
     }
 
     pub(crate) fn on_native_close(&self) {
@@ -7450,6 +8043,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         let args_list = callframe.arguments_old::<1>();
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected socket argument")));
@@ -7594,6 +8188,11 @@ impl H2FrameParser {
             has_nonnative_backpressure: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
+            activity_depth: Cell::new(0),
+            has_closed_streams: Cell::new(false),
+            recently_evicted: JsCell::new([0u32; RECENTLY_EVICTED_LEN]),
+            recently_evicted_pos: Cell::new(0),
+            discarded_block: JsCell::new(Vec::new()),
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
@@ -7739,6 +8338,7 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let _activity = this.activity_guard();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -7790,6 +8390,7 @@ impl H2FrameParser {
                 (*stream).free_resources::<true>(self);
                 drop(bun_core::heap::take(stream));
             }
+            LIVE_STREAM_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
         drop(streams);
 
@@ -7837,11 +8438,29 @@ impl H2FrameParser {
                         (*stream).free_resources::<true>(this);
                         drop(bun_core::heap::take(stream));
                     }
+                    LIVE_STREAM_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
                 drop(streams);
             }
         });
     }
 }
+
+pub mod testing_apis {
+    use super::*;
+
+    /// `bun:internal-for-testing` → `nodeHttp2Internals.liveStreamCount()`.
+    /// Number of live `Box<Stream>` allocations across all `H2FrameParser`
+    /// instances; used to assert that completed streams are evicted from the
+    /// session map instead of accumulating until connection teardown.
+    pub fn live_stream_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(
+            LIVE_STREAM_COUNT.load(Ordering::Relaxed) as f64,
+        ))
+    }
+}
+// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
+pub use testing_apis as testing_ap_is;
 
 // ported from: src/runtime/api/bun/h2_frame_parser.zig

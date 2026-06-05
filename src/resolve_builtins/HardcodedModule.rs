@@ -813,6 +813,14 @@ pub fn set_stream_iter_enabled(enabled: bool) {
     STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Read by C++ (`createStreamIterEnabledFlag`, NodeModuleModule.cpp) so JS
+/// builtins can consult the write-once CLI bit instead of the user-mutable
+/// `process.execArgv`.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__streamIterEnabled() -> bool {
+    stream_iter_enabled()
+}
+
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
     let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {

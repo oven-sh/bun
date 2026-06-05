@@ -1268,7 +1268,9 @@ Readable.prototype.iterator = function (options) {
 
   Readable.prototype[toAsyncStreamable] = function () {
     if (createBatchedAsyncIterator === undefined) {
-      if (!process.execArgv.includes("--experimental-stream-iter")) {
+      // Write-once CLI bit set during argument parsing - unlike
+      // process.execArgv this cannot be mutated by user code.
+      if (!$cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag")) {
         throw $ERR_STREAM_ITER_MISSING_FLAG();
       }
       ({ createBatchedAsyncIterator, normalizeBatch } = require("internal/streams/iter/classic"));

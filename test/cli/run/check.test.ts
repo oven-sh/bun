@@ -156,7 +156,7 @@ describe.concurrent("bun --check", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("exits non-zero when the file does not exist", async () => {
+  test("exits 1 when the file does not exist", async () => {
     using dir = tempDir("check-missing", {});
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--check", "nope.js"],
@@ -169,7 +169,7 @@ describe.concurrent("bun --check", () => {
     expect(stderr).toContain("error");
     expect(stderr).toContain("nope.js");
     expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   test("exits 0 when the file does not exist and --if-present is set", async () => {

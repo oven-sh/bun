@@ -960,7 +960,9 @@ impl FileReader {
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
         // Non-null: derived from the embedded `pending` field of `self`.
-        streams::Result::Pending(core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"))
+        streams::Result::Pending(
+            core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
+        )
     }
 
     pub fn drain(&self) -> Vec<u8> {

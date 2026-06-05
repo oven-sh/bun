@@ -1182,7 +1182,9 @@ mod tests {
             .collect();
         assert_eq!(
             peeked,
-            vec![8, 9, 10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109]
+            vec![
+                8, 9, 10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109
+            ]
         );
 
         // wrapped ordered_remove_item with a niche-optimized element type

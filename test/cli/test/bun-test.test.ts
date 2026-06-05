@@ -1473,7 +1473,7 @@ function runTest({
   }
 }
 
-describe("test file discovery (scanner)", () => {
+describe.concurrent("test file discovery (scanner)", () => {
   test("discovers tests in deeply nested directories and prunes dot-dirs and node_modules", async () => {
     const files: Record<string, string> = {
       "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,

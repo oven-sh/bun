@@ -71,8 +71,7 @@ impl CompressionStreamTransformer {
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive
     // already emits the construct shim that calls `<Self>::constructor`.
     pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
-        let arguments = frame.arguments_undef::<1>();
-        let mode_value = arguments.ptr[0];
+        let [mode_value] = frame.arguments_as_array::<1>();
         if !mode_value.is_number() {
             return Err(global.throw_invalid_argument_type_value("mode", "number", mode_value));
         }
@@ -182,22 +181,21 @@ impl CompressionStreamTransformer {
         /// node:zlib's Z_DEFAULT_CHUNK — the per-output-buffer granularity.
         const CHUNK: usize = 16384;
 
-        let args = frame.arguments_undef::<2>();
-        let arguments = args.slice();
-        if arguments.len() != 2 {
+        if frame.arguments_count() < 2 {
             return Err(global.throw_value(
                 bun_core::String::static_(b"transform(chunk, isFinish)").to_error_instance(global),
             ));
         }
+        let [chunk_value, is_finish_value] = frame.arguments_as_array::<2>();
 
-        let Some(in_buf) = arguments[0].as_array_buffer(global) else {
+        let Some(in_buf) = chunk_value.as_array_buffer(global) else {
             return Err(global.throw_invalid_argument_type_value(
                 "chunk",
                 "TypedArray or DataView",
-                arguments[0],
+                chunk_value,
             ));
         };
-        let is_finish = arguments[1].to_boolean();
+        let is_finish = is_finish_value.to_boolean();
 
         // No JS runs while the engine is borrowed: the whole drive is pure
         // native work; the output `Uint8Array`s and any error object are

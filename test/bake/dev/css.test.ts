@@ -219,22 +219,29 @@ devTest("css url resolve error on hot reload is recoverable", {
     }),
   },
   async test(dev) {
-    expect((await dev.fetch("/")).status).toBe(200);
-    // A CSS file that parses but fails import resolution must fail the
-    // rebuild with an error instead of being treated as a valid CSS chunk.
-    // previously: panic: assertion failed: !chunk.content.is_css()
-    await dev.write(
-      "styles.css",
-      `
-        body {
-          background-image: url(./missing.png);
-        }
-      `,
-      {
-        errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
-      },
-    );
-    expect((await dev.fetch("/")).status).toBe(500);
+    {
+      await using c = await dev.client("/");
+      await c.style("body").color.expect.toBe("red");
+      // A CSS file that parses but fails import resolution must fail the
+      // rebuild with an error instead of being treated as a valid CSS chunk.
+      // previously: panic: assertion failed: !chunk.content.is_css()
+      await dev.write(
+        "styles.css",
+        `
+          body {
+            background-image: url(./missing.png);
+          }
+        `,
+        {
+          errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
+        },
+      );
+      expect((await dev.fetch("/")).status).toBe(500);
+    }
+    // Recovery is checked without a connected client: when a failed CSS root
+    // recovers, the patch currently ships the HTML route as a JS module
+    // without the route-reload flag, which trips a client-side debug assert
+    // (tracked in https://github.com/oven-sh/bun/issues/31908).
     await dev.write(
       "styles.css",
       `

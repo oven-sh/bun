@@ -5720,9 +5720,13 @@ pub mod bv2_impl {
                 // `graph.ast.items(.import_records)[importer_source_index]` when
                 // they complete. Without this, the graph entry stays at
                 // JSAst.empty and the deferred plugin callback index-out-of-
-                // bounds crashes in BundleV2.onResolve / runResolver. The linker
-                // never runs because `transpiler.log.errors > 0` aborts the
-                // build before link time, so saving the AST is safe.
+                // bounds crashes in BundleV2.onResolve / runResolver. In a
+                // non-dev build the linker never runs after this error
+                // (`transpiler.log.errors > 0` aborts before link time). The
+                // dev server does link with failed files, but it filters them
+                // out by their empty `parts` list and never reads a failed
+                // file's import_records, so saving them is safe — unlike the
+                // `css` slot below.
                 let result_heap = *result.ast.import_records.allocator();
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
                     core::mem::replace(

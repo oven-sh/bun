@@ -585,9 +585,11 @@ it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe(
     "RangeError|ERR_INVALID_ARG_VALUE|The property 'options.encoding' is invalid. Received 'not-a-real-encoding'",
   );
+  // Loading node:stream/iter emits an ExperimentalWarning to stderr.
+  expect(stderr).toContain("ExperimentalWarning");
   expect(exitCode).toBe(0);
 });

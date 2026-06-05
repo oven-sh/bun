@@ -1527,7 +1527,7 @@ impl VirtualMachine {
                 // SAFETY: `self` is the live per-thread VM on the JS thread;
                 // `runtime_state` is still installed (it's torn down in
                 // `destroy()`, well after `global_exit`).
-                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self), true) };
             }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
@@ -1800,12 +1800,16 @@ pub struct RuntimeHooks {
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
-    /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
+    /// callers (`global_exit`, `WebWorker::shutdown`,
+    /// `swap_global_for_test_isolation`) are in this crate. `is_teardown` is
+    /// true for the first two (pins the event-loop-delay monitor `Finalized`)
+    /// and false for the isolation swap, where the JSC heap survives and the
+    /// monitor must stay re-enableable.
     ///
     /// # Safety
     /// `vm` is the live per-thread VM; `runtime_state` must still be installed
     /// and the JSC heap must not have been swept yet.
-    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
+    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine, is_teardown: bool),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -4684,7 +4688,7 @@ impl VirtualMachine {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread; `runtime_state`
             // stays installed for the whole test run.
-            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self), false) };
         }
 
         self.overridden_main.deinit();

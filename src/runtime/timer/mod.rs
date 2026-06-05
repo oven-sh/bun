@@ -502,6 +502,27 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).remove(elt) };
     }
 
+    /// Non-sticky reset between isolated test files
+    /// (`swap_global_for_test_isolation`): drop the Strong (the histogram
+    /// belongs to the outgoing global's graph) and stop the timer, leaving
+    /// `enable()` usable for the next file's global — the JSC heap stays
+    /// alive across the swap.
+    pub(crate) fn reset_for_isolation(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        self.enabled = false;
+        self.last_fire_ns = 0;
+        self.js_histogram.with_mut(|r| {
+            if !matches!(r, crate::jsc::JsRef::Finalized) {
+                *r = crate::jsc::JsRef::empty();
+            }
+        });
+        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+        // SAFETY: see `enable` — the `All` re-entry is the last use of `self`.
+        unsafe { (*Self::timer_all()).remove(elt) };
+    }
+
     /// Release the histogram root and stop the timer at VM teardown, while
     /// the JSC heap is still alive (`All` itself is dropped after JSC
     /// teardown, too late to release a Strong).
@@ -921,15 +942,10 @@ impl All {
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
-            let (min_next_sec, min_next_nsec, min_tag) =
-                unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            let (min_next, min_tag) = unsafe { ((*min).next, (*min).tag) };
             let now =
                 *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
 
-            let min_next = Timespec {
-                sec: min_next_sec,
-                nsec: min_next_nsec,
-            };
             match now.order(&min_next) {
                 core::cmp::Ordering::Greater | core::cmp::Ordering::Equal => {
                     // Side-effect: potentially call the StopIfNecessary timer.
@@ -1129,9 +1145,16 @@ impl All {
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias.
+    ///
+    /// `is_teardown` distinguishes true VM teardown (`global_exit`,
+    /// `WebWorker::shutdown`) — where the delay monitor's histogram ref is
+    /// pinned `Finalized` — from the per-file isolation swap
+    /// (`swap_global_for_test_isolation`), where the JSC heap survives and
+    /// the monitor must stay re-enableable.
     pub unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        is_teardown: bool,
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
@@ -1222,10 +1245,19 @@ impl All {
 
         // Release the delay monitor's histogram root while the JSC heap is
         // still alive; this `All` is dropped after JSC teardown
-        // (`deinit_runtime_state`), too late to release a Strong.
+        // (`deinit_runtime_state`), too late to release a Strong. Only true
+        // teardown pins `Finalized` — the isolation swap keeps the heap alive
+        // and the next test file may call `enable()` again.
         // SAFETY: `this` is the live per-thread `All` (fn contract); no
-        // `&mut All` is live across `finalize_for_teardown`'s `All` re-entry.
-        unsafe { (*core::ptr::addr_of_mut!((*this).event_loop_delay)).finalize_for_teardown() };
+        // `&mut All` is live across the monitor's `All` re-entry.
+        unsafe {
+            let monitor = core::ptr::addr_of_mut!((*this).event_loop_delay);
+            if is_teardown {
+                (*monitor).finalize_for_teardown();
+            } else {
+                (*monitor).reset_for_isolation();
+            }
+        }
     }
 }
 

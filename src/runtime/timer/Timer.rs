@@ -465,12 +465,7 @@ impl DateHeaderTimer {
     pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
-        // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
-        let last_update = Timespec {
-            sec: self.event_loop_timer.next.sec,
-            nsec: self.event_loop_timer.next.nsec,
-        };
+        let last_update = self.event_loop_timer.next;
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
@@ -482,14 +477,13 @@ impl DateHeaderTimer {
             unsafe { (*(*vm).uws_loop()).update_date() };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
-            // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
-            // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
+            // SAFETY: single JS thread; the `All` re-entry invalidates
+            // `&mut self` and is the last use of `self`.
             unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
         } else {
             // The date was updated recently, just reschedule for the next second
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see above — disjoint-field access on `All`.
+            // SAFETY: see above — the `All` re-entry is the last use of `self`.
             unsafe { (*Self::timer_all()).insert(elt) };
         }
     }

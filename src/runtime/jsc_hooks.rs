@@ -1578,12 +1578,15 @@ fn terminate_all_workers_and_wait(timeout_ms: u64) {
 /// `ImmediateObject` still linked in the current thread's timer heap so the
 /// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
 /// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
-/// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
+/// `WebWorker::shutdown`, `swap_global_for_test_isolation`) are in `bun_jsc`,
+/// hence the hook. `is_teardown` is true only for the first two — the
+/// isolation swap keeps the JSC heap alive, so the event-loop-delay monitor
+/// gets a non-sticky reset there instead of `Finalized`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
 /// Must run on the JS thread before JSC teardown.
-unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
+unsafe fn cancel_all_timers(vm: *mut VirtualMachine, is_teardown: bool) {
     let state = runtime_state();
     if state.is_null() {
         return;
@@ -1601,7 +1604,11 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
-        crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+        crate::timer::All::cancel_all_timeout_objects(
+            ptr::addr_of_mut!((*state).timer),
+            vm,
+            is_teardown,
+        );
     }
 }
 

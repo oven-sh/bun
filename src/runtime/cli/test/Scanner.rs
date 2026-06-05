@@ -28,10 +28,6 @@ pub struct Scanner<'a> {
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub test_files: Vec<Interned>,
-    /// Process-singleton `FileSystem` (same shape as `Transpiler.fs`). On the
-    /// iterator-callback path (`next` and callees) the resolver holds `&mut`
-    /// to the singleton's `fs` field, so use the field-precise projections
-    /// (`Self::top_level_dir`, `Self::filename_store`) there, not `Self::fs()`.
     pub fs: *mut FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,
@@ -102,35 +98,24 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    /// Shared-read access to the process-singleton [`FileSystem`]. Must NOT
-    /// be called on the iterator-callback path (`next` and its callees) — the
-    /// resolver holds `&mut` to the singleton's `fs` field there; use the
-    /// field-precise projections instead.
     #[inline]
     pub(crate) fn fs(&self) -> &'static FileSystem {
-        // SAFETY: process-singleton, lives for the whole process; callers are
-        // outside the iterator callback, so no `&mut` to the singleton is live.
+        // SAFETY: process-singleton; no `&mut` to it is live outside the iterator callback.
         unsafe { &*self.fs }
     }
 
-    /// `top_level_dir` via a field-precise projection — unlike [`Self::fs()`],
-    /// safe on the iterator-callback path.
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: process-singleton; the projection never spans the
-        // mutably-borrowed `fs` field.
+        // SAFETY: field-precise projection; never spans the mutably-borrowed `fs` field.
         unsafe { (*self.fs).top_level_dir }
     }
 
-    /// `filename_store` via a field-precise projection; see `top_level_dir`.
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
         // SAFETY: same as `top_level_dir`.
         unsafe { (*self.fs).filename_store }
     }
 
-    /// `FileSystem::abs_buf` without the whole-struct receiver, for the
-    /// iterator-callback path.
     #[inline]
     fn abs_buf_projected<'b>(
         top_level_dir: &'static [u8],
@@ -251,8 +236,6 @@ impl<'a> Scanner<'a> {
             }
             #[cfg(windows)]
             {
-                // One fs() call up front: a second would conflict with
-                // path2's borrow of open_dir_buf.
                 let fs = self.fs();
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
                 let path2 = fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
@@ -281,15 +264,10 @@ impl<'a> Scanner<'a> {
         name: &[u8],
         handle: Option<bun_sys::Dir>,
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
-        // Copy the pointer out before `from_mut(self)` so `self` is not read
-        // again once the iterator's raw `*mut Scanner` exists.
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
-        // SAFETY: process-singleton; this `&mut` borrows only the `fs` field.
-        // The callee re-enters `next`, which stat()s through a sibling `*mut`
-        // to the same field — `Entry::kind`'s documented contract, serialised
-        // by `RealFS.entries_mutex`.
+        // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
 
@@ -345,7 +323,6 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        // Runs on the iterator-callback path, where `fs()` must not be used.
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
@@ -391,8 +368,7 @@ impl<'a> Scanner<'a> {
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: on the iterator-callback path the caller holds
-        // `entries_mutex`; the direct `scan` -> `next` path is single-threaded.
+        // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
         match unsafe { entry.kind(real_fs, true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {

@@ -257,18 +257,22 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let (blob_lit, blob_total, lens, len_ty) = key_blob(&keys);
 
     // `match key.len()` arms: constant-length `==` compares so LLVM merges
-    // them into word loads + a compare tree.
+    // them into word loads + a compare tree. Arms yield a `u32` index into
+    // the values table (`u32::MAX` = miss) rather than materializing a value
+    // reference each — smaller leaves, and the caller's slice bounds check
+    // doubles as the miss check.
     let eq_arms = buckets.iter().map(|(len, idxs)| {
         let checks = idxs.iter().map(|&i| {
             let check = eq_check(&keys, i);
+            let idx = u32::try_from(i).expect("map too large");
             quote! {
                 if #check {
-                    return ::core::option::Option::Some(&#values_name[#i]);
+                    return #idx;
                 }
             }
         });
         quote! {
-            #len => { #(#checks)* ::core::option::Option::None }
+            #len => { #(#checks)* ::core::primitive::u32::MAX }
         }
     });
 
@@ -277,14 +281,15 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let eql_arms = buckets.iter().map(|(len, idxs)| {
         let checks = idxs.iter().map(|&i| {
             let lit = key_lit(&keys, i);
+            let idx = u32::try_from(i).expect("map too large");
             quote! {
                 if eql(input, #lit) {
-                    return ::core::option::Option::Some(&#values_name[#i]);
+                    break 'found #idx;
                 }
             }
         });
         quote! {
-            #len => { #(#checks)* ::core::option::Option::None }
+            #len => { #(#checks)* ::core::primitive::u32::MAX }
         }
     });
 
@@ -323,12 +328,19 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
             #vis const ENTRIES: &'static [(&'static [u8], #value_ty)] =
                 &[ #( (#decl_keys, #decl_values_again) ),* ];
 
+            /// Declaration-order index of `key`, or `u32::MAX` for a miss.
+            #[doc(hidden)]
             #[inline]
-            #vis fn get(&self, key: &[u8]) -> ::core::option::Option<&'static #value_ty> {
+            #vis fn __key_index(key: &[u8]) -> ::core::primitive::u32 {
                 match key.len() {
                     #(#eq_arms)*
-                    _ => ::core::option::Option::None,
+                    _ => ::core::primitive::u32::MAX,
                 }
+            }
+
+            #[inline]
+            #vis fn get(&self, key: &[u8]) -> ::core::option::Option<&'static #value_ty> {
+                #values_name.get(Self::__key_index(key) as usize)
             }
 
             #[inline]
@@ -370,10 +382,13 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 len: usize,
                 eql: impl Fn(I, &'static [u8]) -> bool,
             ) -> ::core::option::Option<&'static #value_ty> {
-                match len {
-                    #(#eql_arms)*
-                    _ => ::core::option::Option::None,
-                }
+                let index = 'found: {
+                    match len {
+                        #(#eql_arms)*
+                        _ => ::core::primitive::u32::MAX,
+                    }
+                };
+                #values_name.get(index as usize)
             }
 
             #[inline]

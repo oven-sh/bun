@@ -61,10 +61,7 @@ pub struct CopyFile {
     pub read_len: SizeType,
     pub read_off: SizeType,
 
-    /// BACKREF — captured from the JS thread at create time; the VM (and its
-    /// global object) outlives every task scheduled on it. This struct is
-    /// Box-allocated and crosses threads, so a borrowed reference would lie
-    /// about the lifetime.
+    /// BACKREF — the VM (and its global object) outlives every task scheduled on it.
     pub global_this: BackRef<JSGlobalObject>,
 
     pub mkdirp_if_not_exists: bool,
@@ -129,8 +126,6 @@ impl CopyFile {
     }
 
     pub fn reject(&mut self, promise: &mut JSPromise) -> Result<(), jsc::JsTerminated> {
-        // Copy the BackRef out so the `&JSGlobalObject` below borrows the
-        // local, not `self` (which is mutated in between).
         let global_this = self.global_this;
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
@@ -995,10 +990,7 @@ pub struct CopyFileWindows {
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
-    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every libuv request scheduled on it. This struct is
-    /// heap-allocated and re-entered from libuv callbacks, so a borrowed
-    /// reference would lie about the lifetime.
+    /// BACKREF — the VM (and its `EventLoop`) outlives every libuv request scheduled on it.
     pub event_loop: BackRef<jsc::event_loop::EventLoop>,
 
     pub size: SizeType,
@@ -1717,12 +1709,8 @@ impl CopyFileWindows {
         };
 
         self.event_loop.ref_concurrently();
-        // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. A temporary `Box`
-        // would drop at end-of-statement, freeing the allocation immediately
-        // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work
-        // pool, so the worker thread would dereference freed memory. `Box::leak`
-        // hands ownership to the work-pool/completion path (same pattern as
-        // `WriteFileWindows::mkdirp` in write_file.rs).
+        // Box::leak: the work pool holds a raw pointer to the task; the
+        // completion path owns and frees it (same as `WriteFileWindows::mkdirp`).
         Box::leak(node_fs::async_::AsyncMkdirp::new(
             node_fs::async_::AsyncMkdirp {
                 completion: on_mkdirp_complete_concurrent,
@@ -1840,8 +1828,6 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    // Copy the `BackRef` out before the cross-thread handoff so no borrow of
-    // `this` is formally live once the JS thread may free the task.
     let event_loop = this.event_loop;
     event_loop.enqueue_task_concurrent(jsc::ConcurrentTask::create(
         jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),

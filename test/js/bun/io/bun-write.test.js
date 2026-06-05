@@ -607,11 +607,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
 });
 
 describe("Bun.write file-to-file copy task liveness", () => {
-  // The file->file copy task is heap-allocated, scheduled on the work pool
-  // (POSIX) or libuv (Windows), and re-entered after the scheduling stack
-  // frame is gone. This is smoke coverage for those copy-task paths (success,
-  // mkdirp retry, and rejection) under forced GC pressure — a liveness
-  // contract guard, not a test that fails on any released build.
+  // Smoke coverage for the heap-allocated copy task (success, mkdirp retry,
+  // rejection) under forced GC pressure.
   it("file->file copies survive forced GC between scheduling and completion", async () => {
     using dir = tempDir("bun-write-copyfile-gc", {
       "src.txt": Buffer.alloc(64 * 1024, "A").toString(),
@@ -628,10 +625,8 @@ describe("Bun.write file-to-file copy task liveness", () => {
         Bun.gc(true);
         const written = await Promise.all(pending);
         Bun.gc(true);
-        // Windows' default uv_fs_copyfile path resolves with a byte count read
-        // from a statbuf that libuv's fs__copyfile never populates, so the
-        // promise value is 0 there; assert the resolved counts on POSIX only
-        // and verify the on-disk sizes everywhere below.
+        // Windows resolves with 0 (libuv's fs__copyfile never fills statbuf);
+        // assert resolved counts on POSIX only, on-disk sizes everywhere.
         if (process.platform !== "win32" && !written.every(n => n === expected.length)) {
           throw new Error("unexpected byte counts: " + JSON.stringify(written));
         }

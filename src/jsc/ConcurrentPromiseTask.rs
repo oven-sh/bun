@@ -35,14 +35,10 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     /// `EventLoop`) outlives every task scheduled on it.
     pub event_loop: BackRef<EventLoop>,
     pub promise: JSPromiseStrong,
-    /// BACKREF — captured from the JS thread at create time; the VM (and its
-    /// global object) outlives every task scheduled on it. The task is
-    /// heap-allocated and crosses threads, so a borrowed reference would lie
-    /// about the lifetime.
+    /// BACKREF — the VM (and its global object) outlives every task scheduled on it.
     pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
-    /// Keeps the public `ConcurrentPromiseTask<'a, _>` lifetime parameter (used
-    /// by `Context` type aliases downstream) now that no field borrows for `'a`.
+    /// Preserves the public `'a` parameter now that no field borrows it.
     pub _global_lifetime: core::marker::PhantomData<&'a ()>,
 
     // This is a poll because we want it to enter the uSockets loop

@@ -735,24 +735,39 @@ function Socket(options?) {
     // Adopt pipe/character-device/file fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
     // complete inline, so data survives an immediate process.exit().
+    // Gated on an explicit `writable: true` (how node's own stdio wraps fds,
+    // e.g. new Socket({ fd: 2, readable: false, writable: true })): a bare
+    // { fd } is the connect({ fd }) path (child_process extra stdio), which
+    // attaches a native duplex handle in Socket.prototype.connect - adopting
+    // here would end its readable side and stomp its write path.
     // Network-socket fds are not supported (handle adoption needs native
     // support); those keep the previous validated-but-inert behavior.
-    const stats = require("node:fs").fstatSync(fd);
-    // isSocket() covers stdio handed to a child as a socketpair (how spawn
-    // implements pipes on unix); writable-only adoption with sync write(2)
-    // is correct there too.
-    if (
-      stats.isFIFO() ||
-      stats.isCharacterDevice() ||
-      stats.isFile() ||
-      (stats.isSocket() && options.readable !== true)
-    ) {
-      this[kSyncWriteFd] = fd;
-      this._write = fdSyncWrite;
-      this._writev = fdSyncWritev;
-      if (options.readable !== true) {
-        this.push(null);
-        this.read(0);
+    if (options.writable === true) {
+      let stats;
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
+        // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
+        throw $ERR_INVALID_FD_TYPE("UNKNOWN");
+      }
+      // isSocket() covers stdio handed to a child as a socketpair (how spawn
+      // implements pipes on unix); writable-only adoption with sync write(2)
+      // is correct there too.
+      if (
+        stats !== undefined &&
+        (stats.isFIFO() ||
+          stats.isCharacterDevice() ||
+          stats.isFile() ||
+          (stats.isSocket() && options.readable !== true))
+      ) {
+        this[kSyncWriteFd] = fd;
+        this._write = fdSyncWrite;
+        this._writev = fdSyncWritev;
+        if (options.readable !== true) {
+          this.push(null);
+          this.read(0);
+        }
       }
     }
   }
@@ -1138,6 +1153,21 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+
+  // Close an fd adopted for synchronous writes (node closes the wrapping
+  // libuv handle here). Leave stdio fds 0-2 open: process.stdout/stderr and
+  // other wrappers share them, matching SyncWriteStream's autoClose gate.
+  const syncFd = this[kSyncWriteFd];
+  if (syncFd !== undefined) {
+    this[kSyncWriteFd] = undefined;
+    if (syncFd > 2) {
+      try {
+        require("node:fs").closeSync(syncFd);
+      } catch {
+        // Already closed by the peer/user; nothing to release.
+      }
+    }
+  }
 
   for (let s = this; s !== null; s = s._parent) {
     clearTimeout(s[kTimeout]);

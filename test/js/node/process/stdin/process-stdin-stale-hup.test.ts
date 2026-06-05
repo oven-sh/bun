@@ -65,7 +65,9 @@ test.skipIf(!isPosix)(
     // prints OK and never exits; the race resolves via the timeout path.
     // The fixture's own setTimeout fires at 500ms, so in the passing case
     // the child exits well under a second after we closed the writer.
-    const exited = await Promise.race([proc.exited, Bun.sleep(3000).then(() => "timeout" as const)]);
+    // Under ASAN with the system allocator the child is dramatically slower
+    // to start and exit, so the hang-detection window needs much more headroom.
+    const exited = await Promise.race([proc.exited, Bun.sleep(60_000).then(() => "timeout" as const)]);
 
     if (exited === "timeout") {
       proc.kill(9);
@@ -85,7 +87,7 @@ test.skipIf(!isPosix)(
     expect(stderrBuf).toContain("opened writer fd=");
     expect({ stdout: stdout.trim(), exited }).toEqual({ stdout: "OK", exited: 0 });
   },
-  // Debug-bun child startup + the 3s hang-detection race above can approach
-  // the default 5s test timeout on slow CI; give explicit headroom.
-  15000,
+  // Debug-bun child startup + the 60s hang-detection race above need
+  // generous headroom, especially under ASAN where startup is much slower.
+  120_000,
 );

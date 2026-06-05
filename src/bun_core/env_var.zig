@@ -37,6 +37,11 @@ pub const BUN_CONFIG_DISABLE_ioctl_ficlonerange = New(kind.boolean, "BUN_CONFIG_
 ///
 /// It's unclear why this was done.
 pub const BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS = New(kind.unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", .{ .default = 30 });
+/// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
+/// The timer is armed when the socket opens and re-armed on every read/write;
+/// if it fires the request fails with `error.Timeout`. Covers the TLS
+/// handshake through the response body. 0 disables. See `src/http/http.zig`.
+pub const BUN_CONFIG_HTTP_IDLE_TIMEOUT = New(kind.unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", .{ .default = 300 });
 pub const BUN_CRASH_REPORT_URL = New(kind.string, "BUN_CRASH_REPORT_URL", .{});
 pub const BUN_DEBUG = New(kind.string, "BUN_DEBUG", .{});
 pub const BUN_DEBUG_ALL = New(kind.boolean, "BUN_DEBUG_ALL", .{});
@@ -181,12 +186,6 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_DISABLE_IPV4 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV4", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_IPV6 = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IPV6", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_MEMFD = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_MEMFD", .{});
-    /// Disable static-merging of `.node` addons into the compiled
-    /// Windows executable (build-time in `bun build --compile`) and
-    /// disable initialising already-merged addons (run-time in the
-    /// compiled exe). Either way the behaviour falls back to extracting
-    /// the addon to a temp file and `LoadLibraryExW`ing it.
-    pub const BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK", .{});
     /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     pub const BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", .{});

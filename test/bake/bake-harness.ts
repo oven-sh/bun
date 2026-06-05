@@ -2059,7 +2059,7 @@ function logErr(err: any) {
   }
 }
 
-// Loosely modelled after the widget system in @paperclover/console
+// Loosely modelled after the widget system in @clo/lib/log
 // Only works with a single log
 let hasTrailingLog = false;
 class TrailingLog {

@@ -228,7 +228,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_PICOHTTPPARSER)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_UWS)), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), 0);
-    // Zig version from CMake-generated header
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZIG)), 0);
 
     // Use commit hash for zlib to match test expectations
@@ -479,7 +478,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CString utf8;
 
     // Support embedded .node files
-    // See StandaloneModuleGraph.zig for what this "$bunfs" thing is
+    // See src/standalone_graph/StandaloneModuleGraph.rs for what this "$bunfs" thing is
 #if OS(WINDOWS)
 #define StandaloneModuleGraph__base_path "B:/~BUN/"_s
 #else
@@ -834,7 +833,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
-    // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
+    // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     napi_value (*napi_register_module_v1)(napi_env, napi_value);
     int32_t (*node_api_module_get_api_version_v1)();
 #if OS(WINDOWS)
@@ -1198,6 +1197,7 @@ static const NeverDestroyed<String>* getSignalNames()
         MAKE_STATIC_STRING_IMPL("SIGIO"),
         MAKE_STATIC_STRING_IMPL("SIGINFO"),
         MAKE_STATIC_STRING_IMPL("SIGSYS"),
+        MAKE_STATIC_STRING_IMPL("SIGBREAK"),
     };
 
     return signalNames;
@@ -1212,12 +1212,16 @@ static void loadSignalNumberMap()
         signalNameToNumberMap = new HashMap<String, int>();
         signalNameToNumberMap->reserveInitialCapacity(31);
 #if OS(WINDOWS)
-        // libuv supported signals
+        // libuv-supported console-control signals on Windows:
+        // CTRL_C_EVENT → SIGINT, CTRL_BREAK_EVENT → SIGBREAK,
+        // CTRL_CLOSE_EVENT → SIGHUP, plus SIGWINCH on console resize.
+        signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
         signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        signalNameToNumberMap->add(signalNames[31], SIGBREAK);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -1638,6 +1642,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #ifdef SIGSYS
             signalNumberToNameMap->add(SIGSYS, signalNames[30]);
 #endif
+#ifdef SIGBREAK
+            signalNumberToNameMap->add(SIGBREAK, signalNames[31]);
+#endif
         });
 
         if (!signalToContextIdsMap) {
@@ -1904,8 +1911,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     // extensions: POSIX_SPAWN_SETEXEC makes posix_spawn(2) behave like a more
     // featureful execve(2) (replace the current image rather than fork), and
     // POSIX_SPAWN_CLOEXEC_DEFAULT atomically closes every descriptor that
-    // isn't explicitly inherited via file actions. This mirrors
-    // reloadProcess() in src/bun.zig.
+    // isn't explicitly inherited via file actions.
     posix_spawnattr_t attrs;
     posix_spawn_file_actions_t actions;
     posix_spawnattr_init(&attrs);
@@ -2595,7 +2601,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    // auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto process = uncheckedDowncast<Process>(processObject);
 
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
@@ -2929,7 +2934,6 @@ static JSValue constructExecPath(VM& vm, JSObject* processObject)
     return JSValue::decode(Bun__Process__getExecPath(globalObject));
 }
 
-// get from zig
 extern "C" EncodedJSValue Bun__Process__getArgv(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -3400,7 +3404,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto* zigGlobal = defaultGlobalObject(globalObject);
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // Zig WebWorker.exit() it called requests JSC termination (guarded so it's a
+    // WebWorker exit path it called requests JSC termination (guarded so it's a
     // no-op when re-entered from a process.on('exit') handler).
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());

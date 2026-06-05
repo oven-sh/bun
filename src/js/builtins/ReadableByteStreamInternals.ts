@@ -207,7 +207,7 @@ export function readableByteStreamControllerPull(controller) {
   if ($getByIdDirectPrivate(controller, "autoAllocateChunkSize") !== undefined) {
     let buffer;
     try {
-      buffer = $createUninitializedArrayBuffer($getByIdDirectPrivate(controller, "autoAllocateChunkSize"));
+      buffer = new ArrayBuffer($getByIdDirectPrivate(controller, "autoAllocateChunkSize"));
     } catch (error) {
       return Promise.$reject(error);
     }

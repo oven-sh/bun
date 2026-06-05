@@ -14,6 +14,9 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/NumberPrototype.h"
+#include "wtf-bindings.h"
+#include "wtf/Scope.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -35,23 +38,6 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-// Helper function to convert time to ISO string
-static void toISOString(JSC::VM& vm, double time, char* buffer)
-{
-    time_t seconds = static_cast<time_t>(time / 1000);
-    int milliseconds = static_cast<int>(time) % 1000;
-    struct tm* timeinfo = gmtime(&seconds);
-
-    sprintf(buffer, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-        timeinfo->tm_year + 1900,
-        timeinfo->tm_mon + 1,
-        timeinfo->tm_mday,
-        timeinfo->tm_hour,
-        timeinfo->tm_min,
-        timeinfo->tm_sec,
-        milliseconds);
-}
-
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -71,10 +57,10 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         // Timestamps
         double time = WTF::jsCurrentTime();
-        header->putDirect(vm, Identifier::fromString(vm, "dumpEventTime"_s), jsString(vm, String::number(static_cast<long long>(time * 1000))), 0);
-
         char timeBuf[64] = { 0 };
         Bun::toISOString(vm, time, timeBuf);
+
+        header->putDirect(vm, Identifier::fromString(vm, "dumpEventTime"_s), JSC::numberToString(vm, time, 10), 0);
         header->putDirect(vm, Identifier::fromString(vm, "dumpEventTimeStamp"_s), jsString(vm, String::fromLatin1(timeBuf)), 0);
 
         // Process info
@@ -82,9 +68,14 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         header->putDirect(vm, Identifier::fromString(vm, "threadId"_s), jsNumber(0), 0);
 
         // Working directory
-        char cwd[MAX_PATH];
-        if (GetCurrentDirectoryA(MAX_PATH, cwd)) {
-            header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), jsString(vm, String::fromUTF8(cwd)), 0);
+        {
+            WCHAR cwd[MAX_PATH];
+            DWORD len = GetCurrentDirectoryW(MAX_PATH, cwd);
+            if (len > 0 && len < MAX_PATH) {
+                header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), jsString(vm, String({ reinterpret_cast<const char16_t*>(cwd), static_cast<size_t>(len) })), 0);
+            } else {
+                header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), jsString(vm, String("."_s)), 0);
+            }
         }
 
         // Command line
@@ -151,16 +142,21 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         header->putDirect(vm, Identifier::fromString(vm, "osVersion"_s), jsString(vm, String("Windows"_s)), 0);
 
         // Host name
-        char hostname[256];
-        DWORD size = sizeof(hostname);
-        if (GetComputerNameA(hostname, &size)) {
-            header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsString(vm, String::fromUTF8(hostname)), 0);
+        {
+            WCHAR hostname[MAX_COMPUTERNAME_LENGTH + 1];
+            DWORD size = static_cast<DWORD>(std::size(hostname));
+            if (GetComputerNameW(hostname, &size)) {
+                header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsString(vm, String({ reinterpret_cast<const char16_t*>(hostname), static_cast<size_t>(size) })), 0);
+            } else {
+                header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsEmptyString(vm), 0);
+            }
         }
 
         // CPU info using libuv
         uv_cpu_info_t* cpu_infos;
         int count;
         if (uv_cpu_info(&cpu_infos, &count) == 0) {
+            auto freeCpuInfos = WTF::makeScopeExit([&] { uv_free_cpu_info(cpu_infos, count); });
             JSArray* cpuArray = constructEmptyArray(globalObject, nullptr, count);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -174,9 +170,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
                 cpu->putDirect(vm, Identifier::fromString(vm, "idle"_s), jsNumber(cpu_infos[i].cpu_times.idle), 0);
                 cpu->putDirect(vm, Identifier::fromString(vm, "irq"_s), jsNumber(cpu_infos[i].cpu_times.irq), 0);
                 cpuArray->putDirectIndex(globalObject, i, cpu);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), cpuArray, 0);
-            uv_free_cpu_info(cpu_infos, count);
         } else {
             header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), constructEmptyArray(globalObject, nullptr), 0);
         }
@@ -185,6 +181,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         // Network interfaces using libuv
         uv_interface_address_t* interfaces;
         if (uv_interface_addresses(&interfaces, &count) == 0) {
+            auto freeInterfaces = WTF::makeScopeExit([&] { uv_free_interface_addresses(interfaces, count); });
             JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, count);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -227,9 +224,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
                 iface->putDirect(vm, Identifier::fromString(vm, "mac"_s), jsString(vm, String::fromUTF8(mac)), 0);
 
                 interfacesArray->putDirectIndex(globalObject, i, iface);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), interfacesArray, 0);
-            uv_free_interface_addresses(interfaces, count);
         } else {
             header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), constructEmptyArray(globalObject, nullptr), 0);
         }
@@ -270,6 +267,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         stack.split('\n', [&](const WTF::StringView& line) {
             stackArray->push(globalObject, jsString(vm, line.toString().trim(isASCIIWhitespace)));
+            RETURN_IF_EXCEPTION(scope, );
         });
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -364,11 +362,16 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         HMODULE modules[1024];
         DWORD needed;
         if (EnumProcessModules(GetCurrentProcess(), modules, sizeof(modules), &needed)) {
-            int count = needed / sizeof(HMODULE);
+            // EnumProcessModules sets *lpcbNeeded to the TOTAL bytes required for all modules,
+            // which can exceed sizeof(modules). Clamp so we never read past the buffer.
+            DWORD bytes = std::min(needed, static_cast<DWORD>(sizeof(modules)));
+            int count = static_cast<int>(bytes / sizeof(HMODULE));
             for (int i = 0; i < count; i++) {
-                char modName[MAX_PATH];
-                if (GetModuleFileNameExA(GetCurrentProcess(), modules[i], modName, sizeof(modName))) {
-                    sharedObjects->push(globalObject, jsString(vm, String::fromUTF8(modName)));
+                WCHAR modName[MAX_PATH];
+                DWORD len = GetModuleFileNameExW(GetCurrentProcess(), modules[i], modName, static_cast<DWORD>(std::size(modName)));
+                if (len > 0) {
+                    sharedObjects->push(globalObject, jsString(vm, String({ reinterpret_cast<const char16_t*>(modName), static_cast<size_t>(len) })));
+                    RETURN_IF_EXCEPTION(scope, {});
                 }
             }
         }
@@ -379,15 +382,19 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
     // Native stack (empty for now)
     report->putDirect(vm, Identifier::fromString(vm, "nativeStack"_s), constructEmptyArray(globalObject, nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // libuv (empty for now)
     report->putDirect(vm, Identifier::fromString(vm, "libuv"_s), constructEmptyArray(globalObject, nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Workers (empty for now)
     report->putDirect(vm, Identifier::fromString(vm, "workers"_s), constructEmptyArray(globalObject, nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Environment variables
     report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), globalObject->processEnvObject(), 0);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return report;
 }

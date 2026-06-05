@@ -3914,6 +3914,13 @@ class ClientHttp2Session extends Http2Session {
         headers = { ...headers };
       }
 
+      // Copy options so user-supplied getters run now, before the header block
+      // is encoded — a getter that re-entrantly calls request() would otherwise
+      // reorder header blocks on the wire (Node does the same).
+      if ($isObject(options)) {
+        options = { ...options };
+      }
+
       const sensitives = headers[sensitiveHeaders];
       delete headers[sensitiveHeaders];
       const sensitiveNames = {};

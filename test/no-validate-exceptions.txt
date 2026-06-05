@@ -75,6 +75,7 @@ test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts
 test/js/third_party/resvg/bbox.test.js
 test/js/third_party/rollup-v4/rollup-v4.test.ts
+test/napi/napi-finalizer-delete-ref.test.ts
 test/napi/uv.test.ts
 test/napi/uv_stub.test.ts
 test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts

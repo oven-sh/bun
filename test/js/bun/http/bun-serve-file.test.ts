@@ -1,6 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { rmScope, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -465,7 +466,9 @@ describe("Bun.file in serve routes", () => {
       const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
-      expect(delta).toBeLessThan(100); // Should not leak significant memory
+      // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+      // deltas run far higher under bun-asan; widen the threshold there.
+      expect(delta).toBeLessThan(isASAN ? 400 : 100); // Should not leak significant memory
     }, 30000);
 
     it("deleted file goes to handler", async () => {
@@ -735,3 +738,221 @@ describe("Bun.file in serve routes", () => {
     });
   });
 });
+
+// FileResponseStream takes one in-flight-read reference before each
+// reader.read() and must release it exactly once. For pollable fds (FIFO,
+// character device, socket) the armed poll keeps delivering readable events
+// after a body write already returned backpressure; each extra chunk used to
+// release the same reference again, dropping the count to zero and freeing the
+// stream object while uWS still held it as callback userdata. Streaming a FIFO
+// to a client that refuses to read the response produces many reader callbacks
+// while the socket is backpressured, which is exactly that sequence.
+test.skipIf(isWindows)(
+  "pollable file response survives a client that stops reading and then disconnects",
+  async () => {
+    using dir = tempDir("serve-fifo-backpressure", {
+      "fixture.ts": `
+import { connect } from "node:net";
+import { openSync, write } from "node:fs";
+
+const fifoPath = process.argv[2];
+
+// Open the FIFO read+write so open() never blocks waiting for the other end
+// and the pipe never reports HUP/EOF while the test is still feeding it.
+const writerFd = openSync(fifoPath, "r+");
+
+const server = Bun.serve({
+  port: 0,
+  fetch(req) {
+    if (new URL(req.url).pathname === "/alive") {
+      return new Response("alive");
+    }
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+// Keep the pipe full for the whole test so the reader-side poll always has
+// another readable event to deliver. A blocked write only completes once the
+// server drains the FIFO, so \`pumped\` tracks how far the server has read.
+// The chain is intentionally never awaited to completion: a correctly
+// backpressured server stops draining the pipe once the client stops reading.
+const CHUNK = Buffer.alloc(4 * 1024, 120);
+let pumped = 0;
+let stopPumping = false;
+function pump(err, n) {
+  if (err || stopPumping) return;
+  pumped += n || 0;
+  write(writerFd, CHUNK, 0, CHUNK.length, null, pump);
+}
+pump(null, 0);
+
+// Let the pump fill the pipe to capacity before the request exists. The FIFO
+// buffer size is platform-dependent (16 KiB on macOS, 64 KiB on Linux), so
+// measure it instead of assuming it: with no reader, \`pumped\` stops growing
+// once the pipe is full.
+let prefill = -1;
+let prefillStable = 0;
+for (let i = 0; i < 500 && prefillStable < 3; i++) {
+  await Bun.sleep(10);
+  if (pumped > 0 && pumped === prefill) {
+    prefillStable++;
+  } else {
+    prefillStable = 0;
+    prefill = pumped;
+  }
+}
+
+// Raw client that sends the request and then never reads the response, so
+// every body write on the server side ends up returning backpressure.
+const socket = connect({ port: server.port, host: "127.0.0.1", pauseOnConnect: true });
+socket.on("error", () => {});
+await new Promise(resolve => socket.once("connect", resolve));
+socket.write("GET /stream HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+socket.pause();
+
+// Wait for the server to start draining the pipe: a blocked write can only
+// complete once the response stream consumes the FIFO, so any growth past the
+// prefill level proves the reader is running, regardless of the platform's
+// pipe capacity.
+for (let i = 0; i < 1000 && pumped <= prefill; i++) {
+  await Bun.sleep(5);
+}
+console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill " + prefill + ")");
+
+// Now wait for the drain to stall. The client never reads, so the body writes
+// must eventually report backpressure and the reader must park; the pump then
+// stops making progress. The extra readable events delivered between the first
+// backpressured write and the stall are what used to over-release the
+// in-flight-read reference. Bounded poll so a broken build fails instead of
+// hanging.
+let last = -1;
+let stable = 0;
+for (let i = 0; i < 500 && stable < 5; i++) {
+  await Bun.sleep(10);
+  if (pumped === last) {
+    stable++;
+  } else {
+    stable = 0;
+    last = pumped;
+  }
+}
+stopPumping = true;
+console.log("stalled");
+
+// Disconnect the stalled client; the server must survive the abort of the
+// backpressured file stream.
+socket.destroy();
+
+// The server must still answer ordinary requests afterwards.
+const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+console.log(await res.text());
+
+server.stop(true);
+process.exit(0);
+`,
+    });
+
+    const fifoPath = join(String(dir), "stream.fifo");
+    mkfifo(fifoPath);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts", fifoPath],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("streaming\nstalled\nalive");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// A request that declares a body arms the request-body (onData) callback on
+// the uWS response before the fetch handler runs. uWS keeps a single shared
+// userdata slot per response, so when the handler returns a file response
+// without reading the body, FileResponseStream's own callback registrations
+// repoint that slot at the stream object. The body callback must therefore be
+// disarmed before the file stream starts; otherwise body bytes that arrive
+// while the file is still streaming are delivered to the body callback with
+// the wrong object behind the pointer.
+test("file response with a pending request body keeps serving when body bytes arrive mid-stream", async () => {
+  using dir = tempDir("serve-file-late-body", {
+    "fixture.ts": `
+import { connect } from "node:net";
+import { join } from "node:path";
+
+// Large enough that the response cannot be fully absorbed by kernel socket
+// buffers, so the file is still streaming when the late body bytes arrive.
+const filePath = join(import.meta.dir, "big.bin");
+await Bun.write(filePath, Buffer.alloc(32 * 1024 * 1024, 97));
+
+const server = Bun.serve({
+  port: 0,
+  fetch(req) {
+    if (new URL(req.url).pathname === "/alive") {
+      return new Response("still-serving");
+    }
+    // Never reads req.body: the request-body callback stays armed when the
+    // file response starts.
+    return new Response(Bun.file(filePath));
+  },
+});
+
+const socket = connect({ port: server.port, host: "127.0.0.1" });
+socket.setNoDelay(true);
+socket.on("error", () => {});
+await new Promise(resolve => socket.once("connect", resolve));
+
+const done = Promise.withResolvers();
+let sentBody = false;
+let tail = "";
+socket.on("data", chunk => {
+  tail = (tail + chunk.toString("latin1")).slice(-4096);
+  if (!sentBody) {
+    // First response bytes: the handler has returned and the file response
+    // stream has started. Now deliver the withheld request body, plus a
+    // pipelined request so the connection produces an observable outcome
+    // (either the server closes it, or it eventually answers the GET).
+    sentBody = true;
+    console.log("file-response-started");
+    socket.write(Buffer.alloc(65536, 0x41));
+    socket.write("GET /alive HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+  } else if (tail.includes("still-serving")) {
+    done.resolve("pipelined-response");
+  }
+});
+socket.on("close", () => done.resolve("closed"));
+
+// Headers only: declare a 64 KiB body but withhold it until the file response
+// has started.
+socket.write("POST /upload HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Length: 65536\\r\\n\\r\\n");
+
+await done.promise;
+socket.destroy();
+
+// The server must still answer fresh requests after consuming the late body bytes.
+const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+console.log(await res.text());
+server.stop(true);
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("file-response-started\nstill-serving");
+  expect(exitCode).toBe(0);
+}, 30_000);

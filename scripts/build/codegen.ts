@@ -36,8 +36,9 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -50,8 +51,7 @@ import { quote, quoteArgs } from "./shell.ts";
  * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
  *
  * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
- * out — they're OUTPUTS of codegen, not inputs. bun.ts does this before
- * passing the zig list to emitZig().
+ * out — they're OUTPUTS of codegen, not inputs.
  *
  * Paths are relative to repo root. This list is the single source of truth;
  * `globAllSources()` does NOT hardcode these.
@@ -114,8 +114,8 @@ function codegenTarget(cfg: Config): { platform: string; arch: string } {
 }
 
 export function registerCodegenRules(n: Ninja, cfg: Config): void {
-  // Shell syntax: HOST platform, not target. zig-only cross-compiles on
-  // a linux box for darwin/windows; these rules run on the linux box.
+  // Shell syntax: HOST platform, not target. rust-only cross-compiles on
+  // a linux box for other linux/freebsd targets; these rules run on the host.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const bun = q(cfg.bun);
@@ -204,17 +204,17 @@ function codegenDirStamp(cfg: Config): string {
 
 /**
  * All codegen outputs, grouped by consumer. Downstream phases (cpp compile,
- * zig build, link) add the appropriate group to their implicit inputs.
+ * rust build, link) add the appropriate group to their implicit inputs.
  */
 export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
   /** Outputs that zig `@embedFile`s or imports. */
-  zigInputs: string[];
+  rustInputs: string[];
 
   /** Outputs that zig needs to exist but doesn't embed (debug bake runtime). */
-  zigOrderOnly: string[];
+  rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
   cppSources: string[];
@@ -230,7 +230,7 @@ export interface CodegenOutputs {
   /**
    * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
    * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
-   * doesn't need bake.*.js, cpp.zig, runtime.out.js, or any other zig-only
+   * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
    * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
    * fails on old CI bun versions (bake-codegen shells out to `bun build`
    * whose CSS url() handling changed between versions). cmake only wired
@@ -245,7 +245,7 @@ export interface CodegenOutputs {
   /** The bindgenv2 .cpp outputs (compiled separately from handwritten C++). */
   bindgenV2Cpp: string[];
 
-  /** The bindgenv2 .zig outputs (imported by the zig build). */
+  /** The bindgenv2 .zig outputs (legacy artifacts, retained for reference). */
   bindgenV2Zig: string[];
 
   /**
@@ -274,8 +274,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const o: CodegenOutputs = {
     all: [],
-    zigInputs: [],
-    zigOrderOnly: [],
+    rustInputs: [],
+    rustOrderOnly: [],
     cppSources: [],
     cppHeaders: [],
     cppAll: [],
@@ -286,12 +286,21 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
 
   const ctx: Ctx = { n, cfg, sources, o, dirStamp };
 
+  // Configure-time write (not a ninja edge — it's a constant manifest like
+  // depVersionsHeader). Pushed into rustInputs so the cargo edge implicit-deps
+  // on it; bun_core/build.rs emits the matching `rerun-if-changed`.
+  const buildOptionsRs = generateBuildOptionsRs(cfg);
+  o.all.push(buildOptionsRs);
+  o.rustInputs.push(buildOptionsRs);
+
   emitBunError(ctx);
+  emitStringMaps(ctx);
   emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
   emitGeneratedClasses(ctx);
+  emitHostExports(ctx);
   emitCppBind(ctx);
   emitCiInfo(ctx);
   emitJsModules(ctx);
@@ -408,7 +417,7 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
 }
 
 function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
@@ -437,7 +446,7 @@ function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(out);
-  o.zigInputs.push(out);
+  o.rustInputs.push(out);
 }
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
@@ -468,7 +477,7 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(out);
-  o.zigInputs.push(out);
+  o.rustInputs.push(out);
 }
 
 function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -476,8 +485,11 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const installStamp = emitBunInstall(n, cfg, sourceDir);
 
   const outDir = resolve(cfg.codegenDir, "node-fallbacks");
-  // One output per source, same basename.
-  const outputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
+  // Two outputs per source: the bundled `.js` (read at runtime by debug
+  // builds) and its zstd-compressed `.js.zst` twin (embedded by release
+  // builds — see src/resolver/node_fallbacks.rs).
+  const jsOutputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
+  const outputs = [...jsOutputs, ...jsOutputs.map(o => `${o}.zst`)];
 
   // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
   // but actually ignores the sources — it does readdirSync(".") to discover
@@ -498,7 +510,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
 
   // ─── react-refresh (separate bundle, uses node-fallbacks' node_modules) ───
   const rrSrc = resolve(sourceDir, "node_modules", "react-refresh", "cjs", "react-refresh-runtime.development.js");
@@ -525,7 +537,38 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(rrOut);
-  o.zigInputs.push(rrOut);
+  o.rustInputs.push(rrOut);
+}
+
+/**
+ * `*.string-map.ts` → length-bucketed lookup fns (`generate-string-map.ts`).
+ * Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
+ * plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
+ * per-crate `build.rs`. The `.string-map.ts` is the source of truth; the
+ * `.generated.rs` is a deterministic artifact whose drift is caught by
+ * `bun run codegen:verify` in CI (format job). `restat = 1` on the codegen
+ * rule + `writeIfNotChanged` in the script keep this a no-op when unchanged.
+ */
+function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");
+  for (const src of sources.stringMaps) {
+    // `src/js_parser/defines_table.string-map.ts` → `src/js_parser/defines_table.generated.rs`
+    const stem = basename(src).replace(/\.string-map\.ts$/, "");
+    const out = resolve(dirname(src), `${stem}.generated.rs`);
+    n.build({
+      outputs: [out],
+      rule: "codegen",
+      inputs: [script, src],
+      orderOnlyInputs: [dirStamp],
+      vars: {
+        cwd: cfg.cwd,
+        desc: `string-map ${stem}`,
+        args: shJoin(cfg, ["run", script, src, out]),
+      },
+    });
+    o.all.push(out);
+    o.rustInputs.push(out);
+  }
 }
 
 function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
@@ -560,7 +603,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppHeaders.push(outputs[0]!, outputs[1]!);
 }
 
@@ -576,6 +619,11 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "ZigGeneratedClasses+lazyStructureImpl.h"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses.zig"),
     resolve(cfg.codegenDir, "ZigGeneratedClasses.lut.txt"),
+    // Rust sibling: include!()'d by src/runtime/generated_classes.rs. Must be
+    // a declared output so the cargo edge (which lists this in rustInputs)
+    // re-invokes when generate-classes.ts changes — cargo doesn't track
+    // include!() deps and the includer shim's mtime never moves.
+    resolve(cfg.codegenDir, "generated_classes.rs"),
   ];
 
   n.build({
@@ -591,16 +639,54 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[1]!); // .cpp
   o.cppHeaders.push(outputs[0]!, outputs[2]!, outputs[3]!, outputs[4]!, outputs[5]!); // .h files
   // .lut.txt is consumed by emitObjectLuts below
+}
+
+function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-host-exports.ts");
+  const output = resolve(cfg.codegenDir, "generated_host_exports.rs");
+
+  // Inputs: every .rs under src/runtime + src/jsc (the scrape scope). The
+  // `sources.rust` glob already covers these plus Cargo manifests; filter to
+  // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
+  // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
+  // produces identical output and the cargo step is pruned.
+  const rsInputs = sources.rust.filter(
+    p =>
+      p.endsWith(".rs") &&
+      (p.includes(`${cfg.cwd}/src/runtime/`.replace(/\//g, "/")) ||
+        p.includes(`${cfg.cwd}/src/jsc/`.replace(/\//g, "/"))) &&
+      !p.endsWith("generated_host_exports.rs"),
+  );
+
+  n.build({
+    outputs: [output],
+    rule: "codegen",
+    inputs: [script],
+    implicitInputs: rsInputs,
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "generated_host_exports.rs",
+      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(output);
+  // bun_runtime/build.rs panics if this file is absent, so the rust_build edge
+  // must wait on it — `rustInputs` is the implicit-dep list both zig and the
+  // cargo edge consume.
+  o.rustInputs.push(output);
 }
 
 function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "cppbind.ts");
 
   const output = resolve(cfg.codegenDir, "cpp.zig");
+  const outputRs = resolve(cfg.codegenDir, "cpp.rs");
 
   // Write the .cpp file list for cppbind to scan. Build system owns the
   // glob (glob-sources.ts); we hand the result to cppbind
@@ -617,7 +703,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   writeIfChanged(cxxSourcesFile, cxxSourcesLines.join("\n") + "\n");
 
   n.build({
-    outputs: [output],
+    outputs: [output, outputRs],
     rule: "codegen",
     inputs: [script],
     // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
@@ -637,15 +723,16 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "cpp.zig (cppbind)",
+      desc: "cpp.{zig,rs} (cppbind)",
       // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
       // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
     },
   });
 
-  o.all.push(output);
-  o.zigInputs.push(output);
+  o.all.push(output, outputRs);
+  // bun_jsc `include!`s cpp.rs — the cargo edge must order after this.
+  o.rustInputs.push(output, outputRs);
 }
 
 function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
@@ -668,7 +755,7 @@ function emitCiInfo({ n, cfg, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(output);
-  o.zigInputs.push(output);
+  o.rustInputs.push(output);
 }
 
 function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -688,10 +775,17 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "InternalModuleRegistry+enum.h"),
     resolve(cfg.codegenDir, "InternalModuleRegistry+numberOfModules.h"),
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
-    resolve(cfg.codegenDir, "ResolvedSourceTag.zig"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
     js2nativeZig,
+    // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
+    // a declared output so the cargo edge re-invokes when bundle-modules.ts /
+    // generate-js2native.ts changes — the includer shim's mtime never moves.
+    resolve(cfg.codegenDir, "generated_js2native.rs"),
+    // Specifier → module-ID tag table: include!()'d by the
+    // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
+    // reason as generated_js2native.rs.
+    resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
   ];
 
   n.build({
@@ -709,7 +803,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  o.zigInputs.push(...outputs);
+  o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
 }
@@ -721,12 +815,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // The script doesn't read it; CMake copy-paste. We skip it.
 
   // CMake only declares bake.client.js and bake.server.js as outputs. The
-  // script also emits bake.error.js (build.zig embeds it). We declare
+  // script also emits bake.error.js (the runtime embeds it). We declare
   // all three.
   //
   // Debug uses order-only deps on these .js files (loaded at runtime,
-  // no need to relink zig on change). Release uses implicit (embedded
-  // via @embedFile, must relink).
+  // no need to relink on change). Release uses implicit (embedded into
+  // the binary, must relink).
   const outputs = [
     resolve(cfg.codegenDir, "bake.client.js"),
     resolve(cfg.codegenDir, "bake.server.js"),
@@ -746,12 +840,12 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   });
 
   o.all.push(...outputs);
-  // Debug: read at RUNTIME (not embedded) → zig only needs existence.
-  // Release: embedded via @embedFile → content changes must rebuild zig.
+  // Debug: read at RUNTIME (not embedded) → the build only needs existence.
+  // Release: embedded into the binary → content changes must trigger a relink.
   if (cfg.debug) {
-    o.zigOrderOnly.push(...outputs);
+    o.rustOrderOnly.push(...outputs);
   } else {
-    o.zigInputs.push(...outputs);
+    o.rustInputs.push(...outputs);
   }
 }
 
@@ -812,7 +906,7 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
   o.bindgenV2Zig.push(...zigOutputs);
-  o.zigInputs.push(...zigOutputs);
+  o.rustInputs.push(...zigOutputs);
 }
 
 function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -839,7 +933,7 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(cppOut, zigOut);
   o.cppSources.push(cppOut);
-  o.zigInputs.push(zigOut);
+  o.rustInputs.push(zigOut);
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
@@ -847,14 +941,16 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   const hashTableScript = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
-  // generate-jssink.ts writes JSSink.{cpp,h,lut.txt}, then internally spawns
-  // create-hash-table.ts to convert .lut.txt → .lut.h. So all four are outputs
-  // of this one step (though .lut.txt is really an intermediate — we don't
-  // expose it).
+  // generate-jssink.ts writes JSSink.{cpp,h,lut.txt} + generated_jssink.rs (the
+  // Rust `#[no_mangle]` thunks), then internally spawns create-hash-table.ts to
+  // convert .lut.txt → .lut.h. So all of {cpp,h,lut.h,rs} are outputs of this
+  // one step (.lut.txt is really an intermediate — we don't expose it).
+  const jssinkRs = resolve(cfg.codegenDir, "generated_jssink.rs");
   const outputs = [
     resolve(cfg.codegenDir, "JSSink.cpp"),
     resolve(cfg.codegenDir, "JSSink.h"),
     resolve(cfg.codegenDir, "JSSink.lut.h"),
+    jssinkRs,
   ];
 
   n.build({
@@ -864,7 +960,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
-      desc: "JSSink.{cpp,h,lut.h}",
+      desc: "JSSink.{cpp,h,lut.h,rs}",
       args: shJoin(cfg, ["run", script, cfg.codegenDir]),
     },
   });
@@ -872,6 +968,13 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   o.all.push(...outputs);
   o.cppSources.push(outputs[0]!); // .cpp
   o.cppHeaders.push(outputs[1]!, outputs[2]!); // .h + .lut.h
+  // bun_runtime/build.rs panics if generated_jssink.rs is absent, so the
+  // rust_build edge must order after this codegen step — `rustInputs` is the
+  // implicit-dep list the cargo edge consumes (same as generated_host_exports).
+  // Without this, `mode: "rust-only"` (CI's build-rust job, which compiles no
+  // C++ so nothing else pulls JSSink.cpp/.h) never runs this edge and cargo
+  // hits the missing file.
+  o.rustInputs.push(jssinkRs);
 }
 
 /**

@@ -97,7 +97,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_async_close(loop->data.wakeup_async);
 }
 
-void us_wakeup_loop(struct us_loop_t *loop) {
+__attribute__((always_inline)) void us_wakeup_loop(struct us_loop_t *loop) {
 #ifndef LIBUS_USE_LIBUV
     __atomic_fetch_add(&loop->pending_wakeups, 1, __ATOMIC_RELEASE);
 #endif
@@ -326,7 +326,7 @@ void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
 }
 
-long long us_loop_iteration_number(struct us_loop_t *loop) {
+__attribute__((always_inline)) long long us_loop_iteration_number(struct us_loop_t *loop) {
     return loop->data.iteration_nr;
 }
 
@@ -610,6 +610,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             }
                         }
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
+                        #else
+                        /* Windows AFD_POLL_ABORT is not level-triggered the way
+                         * epoll's EPOLLHUP|EPOLLERR are: a peer RST that lands
+                         * while this poll_cb is on the stack — typically when an
+                         * on_data JS handler drainMicrotasks() into a same-process
+                         * fetch().abort() so the http-client thread RSTs over
+                         * loopback before we return — falls between the completed
+                         * AFD ioctl and its re-submission, and the next AFD poll
+                         * never reports it. recv() does: the socket is already in
+                         * a reset state, so a single non-blocking probe yields
+                         * WSAECONNRESET (→ close below) or 0 (→ eof) instead of
+                         * relying on the re-armed poll. The common case is
+                         * WSAEWOULDBLOCK → break, costing one extra syscall per
+                         * readable event. Skip if on_data paused/closed us so we
+                         * don't pull bytes the caller asked to defer. */
+                        if (s && !us_socket_is_closed(s) && !s->flags.is_paused && repeat_recv_count++ == 0) {
+                            continue;
+                        }
                         #endif
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
@@ -786,7 +804,7 @@ void us_loop_integrate(struct us_loop_t *loop) {
     /* Timer is now controlled dynamically by socket count, not enabled automatically */
 }
 
-void *us_loop_ext(struct us_loop_t *loop) {
+__attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
     return loop + 1;
 }
 

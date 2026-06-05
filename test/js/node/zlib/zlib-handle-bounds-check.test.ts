@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -85,5 +86,63 @@ describe("zlib native handle bounds checking", () => {
     expect(() => {
       handle.writeSync(0, null, 0, 0, outBuf, 0, 1024);
     }).not.toThrow();
+  });
+});
+
+describe("zlib native handle writeState", () => {
+  test("writeSync updates the writeState array", () => {
+    const zlib = require("zlib");
+    const deflate = zlib.createDeflateRaw();
+    const handle = deflate._handle;
+    const ws = deflate._writeState;
+    const inBuf = Buffer.from("hello world ".repeat(10));
+    const outBuf = Buffer.alloc(1024);
+
+    ws[0] = 0;
+    ws[1] = 0xffffffff;
+    handle.writeSync(2 /* Z_SYNC_FLUSH */, inBuf, 0, inBuf.length, outBuf, 0, outBuf.length);
+
+    // writeState receives (availOut, availIn) after the write completes.
+    expect(ws[0]).toBeGreaterThan(0);
+    expect(ws[0]).toBeLessThan(outBuf.length);
+    expect(ws[1]).toBe(0);
+  });
+
+  test("write completion with a detached writeState backing store does not crash", async () => {
+    // The native handle caches the writeState array passed to init(). If its
+    // backing ArrayBuffer is detached mid-stream, completing a write must
+    // re-resolve the array and skip the update rather than write through a
+    // stale pointer into freed/transferred memory.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const zlib = require("zlib");
+          const deflate = zlib.createDeflateRaw();
+          const handle = deflate._handle;
+          const ws = deflate._writeState;
+          const input = Buffer.from("hello world ".repeat(10));
+          const out = Buffer.alloc(1024);
+          handle.writeSync(2, input, 0, input.length, out, 0, out.length);
+          // Detach the writeState backing store; the transferred copy is
+          // dropped immediately and collected.
+          structuredClone(ws.buffer, { transfer: [ws.buffer] });
+          Bun.gc(true);
+          // This write completion must not touch the detached store.
+          handle.writeSync(2, Buffer.from("more data here"), 0, 14, out, 0, out.length);
+          // A fresh stream still works end-to-end.
+          const compressed = zlib.deflateRawSync("still works");
+          console.log(zlib.inflateRawSync(compressed).toString());
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("still works");
+    expect(exitCode).toBe(0);
   });
 });

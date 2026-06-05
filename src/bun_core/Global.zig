@@ -150,12 +150,12 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
 
     // clear signal handler
     if (bun.Environment.os != .windows) {
-        var sa: std.c.Sigaction = .{
+        var sa: bun.sys.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.DFL },
-            .mask = std.posix.sigemptyset(),
+            .mask = bun.sys.sigemptyset(),
             .flags = std.posix.SA.RESETHAND,
         };
-        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+        bun.sys.sigaction(@intFromEnum(sig), &sa, null);
     }
 
     // kill self

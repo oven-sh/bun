@@ -808,6 +808,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     if (!scope.exception() && strongExportsObject && strongExportsObject.get() != resultValue) {
         PutPropertySlot slot(strongObject.get(), false);
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
+        RETURN_IF_EXCEPTION(scope, void());
     }
 
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
@@ -1243,12 +1244,20 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
 
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
 {
-    NAPI_PREAMBLE(env);
-    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    // This function must be callable from finalizers that run while the
+    // garbage collector is sweeping: deleting the reference returned by
+    // napi_wrap is documented to be done from the finalize callback, and
+    // node-addon-api's ObjectWrap destructor relies on that. Node declares
+    // napi_delete_reference with node_api_basic_env and deliberately omits
+    // both CHECK_ENV_NOT_IN_GC and the pending-exception check, so we must
+    // not use NAPI_CHECK_ENV_NOT_IN_GC or the throw-scope preamble here.
+    // Deleting the NapiRef mid-sweep is safe: its WeakImpl is already in the
+    // Finalized state, so clearing it only marks it Deallocated.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
     delete napiRef;
-    NAPI_RETURN_SUCCESS(env);
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
@@ -2225,7 +2234,7 @@ extern "C" napi_status napi_get_value_int64(napi_env env, napi_value value, int6
     NAPI_RETURN_SUCCESS(env);
 }
 
-// must match src/runtime/node/types.zig#Encoding, which matches WebCore::BufferEncodingType
+// must match Encoding in src/runtime/node/types.rs, which matches WebCore::BufferEncodingType
 enum class NapiStringEncoding : uint8_t {
     utf8 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf8),
     utf16 = static_cast<uint8_t>(WebCore::BufferEncodingType::utf16le),
@@ -2865,9 +2874,9 @@ extern "C" napi_status napi_call_function(napi_env env, napi_value recv,
     // Ideally, funcValue is never of type AsyncContextFrame, as that type
     // should never be exposed to user-code. To preserve async local storage
     // contexts across napi_threadsafe_callback, AsyncContextFrame is created.
-    // An alternative here would be to unwrap the frame in napi.zig
-    // ThreadSafeCallback.call, but doing the work assigning and restoring the
-    // global state is not trivial since there are no Zig bindings for that.
+    // An alternative here would be to unwrap the frame on the native side
+    // (ThreadSafeFunction in src/runtime/napi/napi_body.rs), but doing the work
+    // assigning and restoring the global state is not trivial there.
     // Most, if not all, threadsafe callbacks will not pass the callback to JS,
     // they will just call it with this function.
     NAPI_RETURN_EARLY_IF_FALSE(env, funcValue.isCallable() || dynamicDowncast<AsyncContextFrame>(funcValue), napi_invalid_arg);

@@ -20,9 +20,9 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, BunString* name, BunString* value);
-extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
+extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
 namespace Bun {
 
@@ -68,10 +68,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalOb
 }
 
 // Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
-// variants) are read by fetch()'s Zig-side proxy resolution via
-// env_loader.getHttpProxyFor(). Writes from JS must sync back to the Zig env
+// variants) are read by fetch()'s native proxy resolution via
+// env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
 // map so runtime changes take effect. Unlike the generic getter, this does
-// NOT cache on the JS object — the Zig env map is the single source of truth
+// NOT cache on the JS object — the native env map is the single source of truth
 // so set-then-get stays consistent and the CustomAccessor isn't clobbered.
 JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -108,6 +108,24 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     BunString name = Bun::toStringView(propertyName.publicName());
     BunString val = Bun::toStringView(view);
     Bun__setEnvValue(globalObject, &name, &val);
+
+    // The proxy-var accessors are added with `DontEnum` when the var was not
+    // present in the OS env at startup. The regular env-var setter
+    // (`jsSetterEnvironmentVariable`) makes a written var enumerable by
+    // replacing the accessor with a data property; this setter keeps the
+    // accessor (so the native env map stays the source of truth) but must
+    // still clear `DontEnum` — otherwise `process.env.HTTP_PROXY = "..."`
+    // followed by `Bun.spawn({env: {...process.env}})` silently drops the var
+    // (the spread skips non-enumerable properties).
+    unsigned attributes;
+    JSValue existing = object->getDirect(vm, propertyName, attributes);
+    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
+        // putDirectCustomAccessor asserts NewProperty, so delete first.
+        object->deleteProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        object->putDirectCustomAccessor(vm, propertyName, existing,
+            attributes & ~JSC::PropertyAttribute::DontEnum);
+    }
     return true;
 }
 
@@ -352,7 +370,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    // Proxy-related env vars need write-back to the Zig env map so that
+    // Proxy-related env vars need write-back to the native env map so that
     // fetch()'s getHttpProxyFor() observes runtime changes.
     static constexpr ASCIILiteral proxyVarNames[] = {
         "HTTP_PROXY"_s,
@@ -369,6 +387,17 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         for (size_t j = 0; j < proxyVarCount; j++) {
             if (name == proxyVarNames[j]) return j;
         }
+#if OS(WINDOWS)
+        // Windows env var names are case-insensitive, so the OS env block can
+        // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
+        // fallback the per-key loop falls through, the bottom loop then adds
+        // the canonical accessor with `DontEnum` (because hasProxyVar[*] stayed
+        // false), and `{...process.env}` (which most spawn env merges do) drops
+        // the var even though `process.env.HTTP_PROXY` reads it fine.
+        for (size_t j = 0; j < proxyVarCount; j++) {
+            if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
+        }
+#endif
         return std::nullopt;
     };
 
@@ -456,7 +485,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     for (size_t j = 0; j < proxyVarCount; j++) {
         // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving Zig's env map stale (same as TZ).
+        // without calling the setter, leaving the native env map stale (same as TZ).
         // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
         // strict mode, so we leave it deletable and document the gap.
         unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;

@@ -780,7 +780,7 @@ pub const Writer = MySQLConnection.Writer;
 const debug = bun.Output.scoped(.MySQLConnection, .visible);
 
 const AnyMySQLError = @import("../../sql/mysql/protocol/AnyMySQLError.zig");
-const CachedStructure = @import("../../sql_jsc/shared/CachedStructure.zig");
+const CachedStructure = @import("../shared/CachedStructure.zig");
 const ErrorPacket = @import("../../sql/mysql/protocol/ErrorPacket.zig");
 const JSMySQLQuery = @import("./JSMySQLQuery.zig");
 const MySQLConnection = @import("./MySQLConnection.zig");

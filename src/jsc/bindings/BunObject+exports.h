@@ -74,7 +74,6 @@
     macro(sleepSync) \
     macro(spawn) \
     macro(spawnSync) \
-    macro(stringWidth) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \
@@ -87,12 +86,12 @@
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-// declaration for the exported function in BunObject.zig
+// declaration for the exported function in src/runtime/api/BunObject.rs
 #define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_lazyPropCb_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-// definition of the C++ wrapper to call the Zig function
+// definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
     return JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object)); \
 } \

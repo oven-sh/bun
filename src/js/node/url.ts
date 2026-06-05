@@ -538,7 +538,7 @@ Url.prototype.format = function format() {
   pathname = pathname.replace(/[?#]/g, function (match) {
     return encodeURIComponent(match);
   });
-  search = search.replace("#", "%23");
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };

@@ -15,8 +15,9 @@ import {
   type TestContext,
 } from "./dummy.registry";
 
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 

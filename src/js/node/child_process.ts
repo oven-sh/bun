@@ -132,6 +132,7 @@ if ($debug) {
  */
 function spawn(file, args, options) {
   options = normalizeSpawnArguments(file, args, options);
+  if (options.windowsBatchFileError) throw options.windowsBatchFileError;
   validateTimeout(options.timeout);
   validateAbortSignal(options.signal, "options.signal");
   const killSignal = sanitizeKillSignal(options.killSignal);
@@ -490,6 +491,26 @@ function spawnSync(file, args, options) {
     maxBuffer: MAX_BUFFER,
     ...normalizeSpawnArguments(file, args, options),
   };
+
+  if (options.windowsBatchFileError) {
+    const error = new SystemError(
+      `spawnSync ${options.file} EINVAL`,
+      options.file,
+      "spawnSync " + options.file,
+      -4071,
+      "EINVAL",
+    );
+    error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    return {
+      signal: null,
+      status: null,
+      output: [null, null, null],
+      pid: 0,
+      stdout: null,
+      stderr: null,
+      error,
+    };
+  }
 
   const maxBuffer = options.maxBuffer;
   const encoding = options.encoding;
@@ -931,6 +952,7 @@ function normalizeSpawnArguments(file, args, options) {
     validateBoolean(windowsVerbatimArguments, "options.windowsVerbatimArguments");
   }
 
+  let windowsBatchFileError: Error | undefined;
   // Handle shell
   if (options.shell) {
     validateArgumentNullCheck(options.shell, "options.shell");
@@ -952,6 +974,13 @@ function normalizeSpawnArguments(file, args, options) {
       else file = "/bin/sh";
       args = ["-c", command];
     }
+  } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
+    // CreateProcess routes .bat/.cmd through cmd.exe, which re-parses argv
+    // with shell metacharacter rules. Reject unless the caller explicitly
+    // opted into shell semantics. Surface via the returned options so each
+    // caller can deliver the error in its API-appropriate shape (synchronous
+    // throw for spawn(), `result.error` for spawnSync()).
+    windowsBatchFileError = new SystemError(`spawn ${file} EINVAL`, file, "spawn", -4071, "EINVAL");
   }
 
   // Handle argv0
@@ -1008,6 +1037,7 @@ function normalizeSpawnArguments(file, args, options) {
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
     argv0: options.argv0,
+    windowsBatchFileError,
   };
 }
 
@@ -1452,7 +1482,7 @@ class ChildProcess extends EventEmitter {
     // We still need this send function because
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
-      // we don't need to because the send callback is called on nextTick by ipc.zig
+      // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
         callback(err);
       } else if (err) {

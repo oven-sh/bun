@@ -47,7 +47,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
-/// These are callbacks defined in Zig and to be run after their associated JS version is run
+/// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -77,14 +77,14 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
 {
+    auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
+    auto pathString = path->transferToWTFString();
 
     if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
         return false;
 
-    // Avoid unnecessary string copies
-    auto namespaceString = namespaceStr ? namespaceStr->toWTFString(BunString::ZeroCopy) : String();
     unsigned index = 0;
     auto* group = list.group(namespaceString, index);
     if (group == nullptr) {
@@ -92,7 +92,6 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
     }
 
     auto& filters = *group;
-    auto pathString = path->toWTFString(BunString::ZeroCopy);
 
     for (auto& filter : filters) {
         if (filter.match(vm, pathString)) {
@@ -102,7 +101,7 @@ static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& li
 
     return false;
 }
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
 {
     if (isOnLoad) {
         return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
@@ -506,16 +505,14 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     reifyStaticProperties(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const BunString* namespaceString, const BunString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }
 
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String();
-    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
 
     JSFunction* function = plugin->onLoadFunction.get(plugin);
     if (!function) [[unlikely]]
@@ -529,8 +526,10 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
-    arguments.append(JSC::jsString(plugin->vm(), pathStr));
-    arguments.append(JSC::jsString(plugin->vm(), namespaceStringStr));
+    arguments.append(path->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(namespaceString->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
     arguments.append(JSC::jsNumber(defaultLoaderId));
     arguments.append(JSC::jsBoolean(isServerSide));
 
@@ -540,7 +539,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
         auto exception = scope.exception();
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 1 (Load). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 1 (Load). JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,
@@ -550,16 +549,9 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, const
     }
 }
 
-extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, const BunString* namespaceString, const BunString* path, const BunString* importer, void* context, uint8_t kindId)
+extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-    WTF::String namespaceStringStr = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : WTF::String("file"_s);
-    if (namespaceStringStr.length() == 0) {
-        namespaceStringStr = WTF::String("file"_s);
-    }
-    WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
-    WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
-    auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
     if (!function) [[unlikely]]
@@ -570,11 +562,14 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     if (callData.type == JSC::CallData::Type::None) [[unlikely]]
         return;
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(JSC::jsString(vm, pathStr));
-    arguments.append(JSC::jsString(vm, namespaceStringStr));
-    arguments.append(JSC::jsString(vm, importerStr));
+    arguments.append(path->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(namespaceString->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
+    arguments.append(importer->transferToJS(globalObject));
+    RETURN_IF_EXCEPTION(scope, void());
     arguments.append(WRAP_BUNDLER_PLUGIN(context));
     arguments.append(JSC::jsNumber(kindId));
 
@@ -584,7 +579,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 0 (Resolve). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 0 (Resolve). JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,

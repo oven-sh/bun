@@ -256,6 +256,11 @@ enum SerializationTag {
     ErrorTag = 255
 };
 
+// Releases the +1 taken by `BlockList::on_structured_clone_serialize` so the
+// shared backing is freed once the SerializedScriptValue holding the raw
+// pointer is gone.
+extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
+
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
     Int8ArrayTag = 1,
@@ -899,6 +904,7 @@ public:
         WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
         Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers,
+        Vector<void*>& serializedBlockListRefs,
         SerializationForStorage forStorage, SerializationForCrossProcessTransfer forTransfer)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers,
@@ -917,7 +923,9 @@ public:
             wasmMemoryHandles,
 #endif
             out, context, sharedBuffers, forStorage, forTransfer);
-        return serializer.serialize(value);
+        auto code = serializer.serialize(value);
+        serializedBlockListRefs = WTF::move(serializer.m_serializedBlockListRefs);
+        return code;
     }
 
     static bool serialize(StringView string, Vector<uint8_t>& out)
@@ -1807,6 +1815,10 @@ private:
             }
 #if ENABLE(WEB_CRYPTO)
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
+                if (m_forStorage == SerializationForStorage::Yes && !key->extractable()) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
                 write(CryptoKeyTag);
                 Vector<uint8_t> serializedKey;
                 // Vector<URLKeepingBlobAlive> dummyBlobHandles;
@@ -1978,6 +1990,8 @@ private:
                 StructuredCloneableSerialize to_write = WTF::move(_cloneable.value());
                 write(to_write.tag);
                 to_write.write(this, m_lexicalGlobalObject);
+                if (to_write.tag == Bun__nodenet_BlockList)
+                    m_serializedBlockListRefs.append(to_write.impl);
                 return true;
             }
 
@@ -2466,9 +2480,9 @@ private:
         write(key.secondPrimeInfo().factorCRTExponent);
         write(key.secondPrimeInfo().factorCRTCoefficient);
         for (unsigned i = 2; i < primeCount; ++i) {
-            write(key.otherPrimeInfos()[i].primeFactor);
-            write(key.otherPrimeInfos()[i].factorCRTExponent);
-            write(key.otherPrimeInfos()[i].factorCRTCoefficient);
+            write(key.otherPrimeInfos()[i - 2].primeFactor);
+            write(key.otherPrimeInfos()[i - 2].factorCRTExponent);
+            write(key.otherPrimeInfos()[i - 2].factorCRTCoefficient);
         }
     }
 
@@ -2580,6 +2594,7 @@ private:
     Identifier m_emptyIdentifier;
     SerializationContext m_context;
     ArrayBufferContentsArray& m_sharedBuffers;
+    Vector<void*> m_serializedBlockListRefs;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray& m_wasmModules;
     WasmMemoryHandleArray& m_wasmMemoryHandles;
@@ -3625,6 +3640,23 @@ private:
         LengthType byteLength;
         if (!read(byteLength))
             return false;
+        // The backing store of an ArrayBufferView can only be an ArrayBuffer (or a
+        // reference to one already in the object pool). Reject anything else before
+        // recursing into readTerminal() so a crafted payload of nested
+        // ArrayBufferViewTags can't consume one native stack frame per level and
+        // overflow the stack.
+        if (m_ptr >= m_end)
+            return false;
+        switch (static_cast<SerializationTag>(*m_ptr)) {
+        case ArrayBufferTag:
+        case ResizableArrayBufferTag:
+        case ArrayBufferTransferTag:
+        case SharedArrayBufferTag:
+        case ObjectReferenceTag:
+            break;
+        default:
+            return false;
+        }
         JSValue arrayBufferValue = readTerminal();
         if (!arrayBufferValue || !arrayBufferValue.inherits<JSArrayBuffer>())
             return false;
@@ -3972,7 +4004,7 @@ private:
 
     bool read(BIO** bio, uint64_t length)
     {
-        if (m_ptr + length > m_end)
+        if (static_cast<uint64_t>(m_end - m_ptr) < length)
             return false;
         *bio = BIO_new_mem_buf(m_ptr, length);
         if (!*bio)
@@ -4056,9 +4088,15 @@ private:
         if (primeCount < 2)
             return false;
 
+        // Each additional prime is encoded as three length-prefixed byte vectors, so it
+        // requires at least 3 * sizeof(uint32_t) bytes of remaining input. Reject counts
+        // that could not possibly be satisfied to avoid a huge up-front allocation.
+        if (static_cast<uint64_t>(primeCount - 2) > static_cast<uint64_t>(m_end - m_ptr) / (3 * sizeof(uint32_t)))
+            return false;
+
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
         CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
-        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos(primeCount - 2);
+        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos;
 
         if (!read(firstPrimeInfo.primeFactor))
             return false;
@@ -4071,12 +4109,14 @@ private:
         if (!read(secondPrimeInfo.factorCRTCoefficient))
             return false;
         for (unsigned i = 2; i < primeCount; ++i) {
-            if (!read(otherPrimeInfos[i].primeFactor))
+            CryptoKeyRSAComponents::PrimeInfo info;
+            if (!read(info.primeFactor))
                 return false;
-            if (!read(otherPrimeInfos[i].factorCRTExponent))
+            if (!read(info.factorCRTExponent))
                 return false;
-            if (!read(otherPrimeInfos[i].factorCRTCoefficient))
+            if (!read(info.factorCRTCoefficient))
                 return false;
+            otherPrimeInfos.append(WTF::move(info));
         }
 
         auto keyData = CryptoKeyRSAComponents::createPrivateWithAdditionalData(modulus, exponent, privateExponent, firstPrimeInfo, secondPrimeInfo, otherPrimeInfos);
@@ -4626,14 +4666,15 @@ private:
                 return JSValue();
             }
 
-            BIO* bio = nullptr;
-            if (!read(&bio, pemSize)) {
+            BIO* rawBio = nullptr;
+            if (!read(&rawBio, pemSize)) {
                 fail();
                 return JSValue();
             }
+            ncrypto::BIOPointer bio(rawBio);
 
             if (keyType == CryptoKeyType::Public) {
-                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
                 if (!pkey) {
                     fail();
                     return JSValue();
@@ -4643,7 +4684,7 @@ private:
                 return JSPublicKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             }
 
-            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
             if (!pkey) {
                 fail();
                 return JSValue();
@@ -4688,6 +4729,11 @@ private:
             m_gcBuffer.appendWithCrashOnOverflow(bigInt);
             return bigInt;
 #endif
+        }
+
+        if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
+            fail();
+            return JSValue();
         }
 
 #if USE(BIGINT32)
@@ -4951,7 +4997,10 @@ private:
             if (!readStringData(flags))
                 return JSValue();
             auto reFlags = Yarr::parseFlags(flags->string());
-            ASSERT(reFlags.has_value());
+            if (!reFlags.has_value()) {
+                fail();
+                return JSValue();
+            }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
             return RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);
@@ -4991,7 +5040,7 @@ private:
         }
         case ObjectReferenceTag: {
             auto index = readConstantPoolIndex(m_gcBuffer);
-            if (!index) {
+            if (!index || *index >= m_gcBuffer.size()) {
                 fail();
                 return JSValue();
             }
@@ -5494,7 +5543,11 @@ error:
     return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
 }
 
-SerializedScriptValue::~SerializedScriptValue() = default;
+SerializedScriptValue::~SerializedScriptValue()
+{
+    for (auto* ptr : m_serializedBlockListRefs)
+        BlockList__onStructuredCloneDestroy(ptr);
+}
 
 SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::unique_ptr<ArrayBufferContentsArray>&& arrayBufferContentsArray
 #if ENABLE(WEB_RTC)
@@ -6246,6 +6299,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     WasmMemoryHandleArray wasmMemoryHandles;
 #endif
     std::unique_ptr<ArrayBufferContentsArray> sharedBuffers = makeUnique<ArrayBufferContentsArray>();
+    Vector<void*> serializedBlockListRefs;
 #if ENABLE(WEB_CODECS)
     Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>> serializedVideoChunks;
     Vector<RefPtr<WebCodecsVideoFrame>> serializedVideoFrames;
@@ -6281,7 +6335,13 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         wasmModules,
         wasmMemoryHandles,
 #endif
-        buffer, context, *sharedBuffers, forStorage, forTransfer);
+        buffer, context, *sharedBuffers, serializedBlockListRefs, forStorage, forTransfer);
+
+    auto releaseSerializedBlockListRefs = [&] {
+        for (auto* ptr : serializedBlockListRefs)
+            BlockList__onStructuredCloneDestroy(ptr);
+        serializedBlockListRefs.clear();
+    };
 
     // Serialize may throw an exception. This code looks weird, but we'll rethrow it
     // in maybeThrowExceptionIfSerializationFailed (since that may also throw other
@@ -6292,11 +6352,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 
     // If we rethrew an exception just now, or we failed with a status code other than success,
     // we should exit right now.
-    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]]
+    if (scope.exception() || code != SerializationReturnCode::SuccessfullyCompleted) [[unlikely]] {
+        releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, exceptionForSerializationFailure(code));
+    }
 
     auto arrayBufferContentsArray = transferArrayBuffers(vm, arrayBuffers);
     if (arrayBufferContentsArray.hasException()) {
+        releaseSerializedBlockListRefs();
         RELEASE_AND_RETURN(scope, arrayBufferContentsArray.releaseException());
     }
 
@@ -6340,7 +6403,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     // #endif
     //             ));
     scope.releaseAssertNoException();
-    return adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
+    auto result = adoptRef(*new SerializedScriptValue(WTF::move(buffer), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTF::move(sharedBuffers) : nullptr
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         ,
         WTF::move(detachedCanvases)
@@ -6358,6 +6421,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrameData)
 #endif
             ));
+    result->m_serializedBlockListRefs = WTF::move(serializedBlockListRefs);
+    return result;
 }
 
 RefPtr<SerializedScriptValue> SerializedScriptValue::create(StringView string)

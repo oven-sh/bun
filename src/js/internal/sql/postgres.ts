@@ -210,7 +210,20 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
     return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
   }
   if (typeOfType === "string") {
-    return (typeNameOrID as string)?.toUpperCase();
+    const type = (typeNameOrID as string).toUpperCase();
+    // Allow `NUMERIC(10,2)`, `CHARACTER VARYING(255)`, `MYSCHEMA.MY_ENUM`,
+    // `TIMESTAMP(3) WITH TIME ZONE`: identifier words separated by spaces or
+    // dots, each optionally followed by a `(digits[,digits])` modifier.
+    // Parentheses may only wrap digit lists so the value can never close the
+    // enclosing expression and break out of the `$N::${type}[]` cast.
+    if (
+      !/^[A-Z_][A-Z0-9_]*(\( *[0-9]+( *, *[0-9]+)* *\))?([ .][A-Z_][A-Z0-9_]*(\( *[0-9]+( *, *[0-9]+)* *\))?)*$/.test(
+        type,
+      )
+    ) {
+      throw $ERR_INVALID_ARG_VALUE("type", typeNameOrID, "must be a valid PostgreSQL type name");
+    }
+    return type;
   }
   // default to JSON so we accept most of the types
   return "JSON";
@@ -766,8 +779,15 @@ class PostgresAdapter
     };
   }
 
-  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
-    // PostgreSQL accepts any transaction options
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // The string is interpolated into `BEGIN ${options}`, so refuse anything that
+    // could terminate the statement or start a new one.
+    if (!/^[A-Za-z ,]*$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options can only contain letters, spaces, and commas.",
+      };
+    }
     return { valid: true };
   }
 

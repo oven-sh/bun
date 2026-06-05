@@ -47,6 +47,7 @@ impl Status {
 
 unsafe extern "C" {
     pub fn simdutf__has_implementation() -> bool;
+    pub fn simdutf__recover_implementation_under_rosetta() -> bool;
     pub fn simdutf__detect_encodings(input: *const u8, length: usize) -> c_int;
     pub(crate) fn simdutf__validate_utf8(buf: *const u8, len: usize) -> bool;
     pub(crate) fn simdutf__validate_utf8_with_errors(buf: *const u8, len: usize) -> SIMDUTFResult;
@@ -858,6 +859,24 @@ pub mod base64 {
 pub fn has_any_implementation() -> bool {
     // SAFETY: reads a single static-lifetime byte inside the C++ shim.
     unsafe { simdutf__has_implementation() }
+}
+
+/// Recovers simdutf dispatch when the unsupported stub was selected under
+/// Rosetta 2, returning whether simdutf is usable afterwards.
+///
+/// Rosetta 2 on macOS 15+ executes every instruction the default x64 build
+/// emits (the whole binary is `-march=haswell`), but its translated
+/// CPUID/XGETBV under-report the feature set, so simdutf's dispatcher can
+/// select the unsupported stub even though the compiled kernels run fine.
+/// The C++ shim then forces the least-demanding compiled kernel and
+/// re-probes it. Always false off macOS x86_64, when the process is not
+/// translated, or when `SIMDUTF_FORCE_IMPLEMENTATION` is set (an explicit
+/// override is honored, not second-guessed); the caller should then abort
+/// with the CPU-requirement diagnostic.
+pub fn recover_implementation_under_rosetta() -> bool {
+    // SAFETY: no arguments; the shim reads a sysctl and process-wide
+    // simdutf dispatch state.
+    unsafe { simdutf__recover_implementation_under_rosetta() }
 }
 
 // ported from: src/simdutf_sys/simdutf.zig

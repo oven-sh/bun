@@ -158,11 +158,21 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // ~16 seconds churning through ~4 GB of bad allocations before crashing
     // with an opaque SIGSEGV. Detect that up front and explain why.
     //
+    // One exception: under Rosetta 2 the stub means the translated
+    // CPUID/XGETBV under-reported the feature set, not that the host cannot
+    // execute the compiled kernels (it is already executing this
+    // `-march=haswell` binary), so dispatch is recovered and Bun keeps
+    // running. Before that recovery, `bun install` hung forever under
+    // Rosetta on macOS 15: the stub claims a non-ASCII byte at index 0 for
+    // every input, so `first_non_ascii`-driven scan loops never advanced.
+    //
     // This must run before convert_env_to_wtf8/init_argv on Windows — both
     // convert UTF-16 via simdutf and would panic on a null unwrap before
     // any diagnostic could be printed. It therefore cannot depend on
     // Output being initialized and writes to raw stderr instead.
-    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+    if !bun_simdutf_sys::simdutf::has_any_implementation()
+        && !bun_simdutf_sys::simdutf::recover_implementation_under_rosetta()
+    {
         abort_for_unsupported_simdutf();
     }
 

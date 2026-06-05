@@ -154,17 +154,12 @@ export function serialize(message, handle, options) {
     return [native, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {
+    // The native socket is paused on the Rust side once the handle is
+    // confirmed transferable (do_send) - pausing here would be premature:
+    // IPCSerialize never forwards `options`, and a reverted send would
+    // leave the socket paused forever.
     const native = handle._handle;
     if (!native) return null;
-    // Stop reading in this process — from here the receiver owns the bytes.
-    // (node detaches the handle entirely; we keep our copy open and paused.
-    // SCM_RIGHTS dups the fd at sendmsg time, so the receiver's copy is
-    // independent of this one.)
-    if (!options?.keepOpen) {
-      try {
-        native.pause();
-      } catch {}
-    }
     return [native, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
   }
   if (handle instanceof require("node:dgram").Socket) {

@@ -2549,7 +2549,11 @@ function listenInCluster(
     // node resolves hostnames in the worker (lookupAndListen) before asking
     // the primary, so the primary only ever binds IP literals. Do the same
     // rather than letting the primary fall back to a blocking getaddrinfo.
+    // Bump the listening id here too so a listen() that arrives while this
+    // DNS lookup is in flight invalidates the stale callback.
+    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
     require("node:dns").lookup(address, (err, ip, family) => {
+      if (lookupListeningId !== server[kClusterListeningId]) return;
       if (err) {
         setTimeout(emitErrorNextTick, 1, server, err);
         return;

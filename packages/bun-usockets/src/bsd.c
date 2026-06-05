@@ -1087,8 +1087,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     char port_string[16];
     snprintf(port_string, 16, "%d", port);
 
-    if (getaddrinfo(host, port_string, &hints, &result)) {
-        *error = LIBUS_ERR;
+    int gai = getaddrinfo(host, port_string, &hints, &result);
+    if (gai != 0) {
+#ifdef _WIN32
+        /* On Windows getaddrinfo returns WSA error codes directly, which is
+         * the domain the caller's uv_translate_sys_error expects. */
+        *error = gai;
+#else
+        /* POSIX getaddrinfo errors are EAI_* (a different domain from errno);
+         * there is no faithful errno for them, so report EINVAL. */
+        *error = EINVAL;
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 

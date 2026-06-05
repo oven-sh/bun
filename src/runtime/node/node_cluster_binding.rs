@@ -244,16 +244,20 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         };
         message.put(global, b"$hasHandle", JSValue::TRUE);
         // Windows: the fd cannot ride the pipe as ancillary data; serialize
-        // the socket for the worker process and attach it to the message.
-        // When the export fails (worker died) the receiver NACKs and the
-        // normal retransmission/giving-up path runs.
+        // the socket for the worker process and attach it to the message. A
+        // failed export (worker already dead, WSA error) means the handle can
+        // never arrive - report send failure instead of emitting a newconn
+        // the worker could not act on; the caller's worker-removal path
+        // reclaims the pending connection.
         #[cfg(windows)]
-        let _ = crate::ipc_host::attach_windows_socket_payload(
+        if !crate::ipc_host::attach_windows_socket_payload(
             global,
             message,
             native_fd,
             subprocess.pid() as u32,
-        );
+        ) {
+            return Ok(JSValue::FALSE);
+        }
         native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
     }
     let success = ipc_data.serialize_and_send(
@@ -714,8 +718,18 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
                 }
             }
-            if family == libc::AF_INET6 && flags & 0x1 != 0 {
-                libc::setsockopt(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, one_ptr, one_len);
+            if family == libc::AF_INET6 {
+                // Always set the option explicitly (0 or 1): some kernels
+                // default to v6only=1 (FreeBSD, sysctl'd Linux), and node's
+                // uv__tcp_bind always writes it for AF_INET6.
+                let v6only: libc::c_int = if flags & 0x1 != 0 { 1 } else { 0 };
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_V6ONLY,
+                    (&raw const v6only).cast(),
+                    one_len,
+                );
             }
 
             if libc::bind(fd, (&raw const ss).cast(), ss_len) != 0 {

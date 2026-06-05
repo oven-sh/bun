@@ -20,7 +20,6 @@ const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 
-let fs;
 // Minimal stand-in for node's TCPWrap client handle: the primary hands off an
 // accepted connection as a raw fd over the IPC channel (surfaced as
 // `message.$fd`). net.ts adopts `.fd`; `.close()` covers the rejected path.

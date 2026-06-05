@@ -185,6 +185,9 @@ pub(crate) fn do_send(
     }
 
     let mut zig_handle: Option<Handle> = None;
+    // Native socket whose reads must stop once the transfer is confirmed
+    // (the receiver owns the bytes from here; node detaches the handle).
+    let mut pause_target = JSValue::UNDEFINED;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
@@ -218,6 +221,9 @@ pub(crate) fn do_send(
                     && options_
                         .get(global_object, "keepOpen")?
                         .is_some_and(|v| v.to_boolean());
+                if !keep_open {
+                    pause_target = handle;
+                }
                 zig_handle = Some(if keep_open {
                     Handle::init(fd, handle)
                 } else {
@@ -240,6 +246,22 @@ pub(crate) fn do_send(
     // instead of a NODE_HANDLE wrapper the receiver could never pair.
     if zig_handle.is_none() {
         message = original_message;
+    } else if !pause_target.is_undefined() && pause_target.is_object() {
+        // Only now - with the handle confirmed transferable - stop reading on
+        // the sender's copy. Doing this earlier (it used to live in Ipc.ts
+        // serialize()) left the socket paused forever when the send was
+        // reverted, and ignored keepOpen.
+        match pause_target.get(global_object, "pause") {
+            Ok(Some(f)) if f.is_callable() => {
+                if f.call(global_object, pause_target, &[]).is_err() {
+                    global_object.clear_exception();
+                }
+            }
+            Ok(_) => {}
+            Err(_) => {
+                global_object.clear_exception();
+            }
+        }
     }
 
     let status = ipc_data.serialize_and_send(

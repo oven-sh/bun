@@ -460,9 +460,8 @@ impl Listener {
             }),
             UnixOrHost::Fd(fd) => {
                 // Adopt an already-bound fd (node listen({fd}), cluster shared
-                // handles): listen(2) happens in usockets. POSIX only — the C
-                // side returns NULL on Windows builds and we fall into the
-                // generic error path below.
+                // handles): listen(2) happens in usockets, on every platform
+                // (Windows polls raw SOCKETs through the libuv backend).
                 let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
                 this_ref.group.with_mut(|g| {
                     g.listen_fd(

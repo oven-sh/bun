@@ -159,8 +159,10 @@ export default class RoundRobinHandle {
     this.inFlight.set(worker.id, handle);
     sendHelper(worker.process[kHandle], message, handle, reply => {
       // remove() may have reclaimed the handle when the worker died before
-      // acking; in that case this (late) reply must not touch it again.
-      if (!this.inFlight.delete(worker.id)) return;
+      // acking - or the worker was re-added and a newer handoff is in
+      // flight; a stale reply must not touch either handle.
+      if (this.inFlight.get(worker.id) !== handle) return;
+      this.inFlight.delete(worker.id);
       if (reply.accepted) handle.close();
       else this.distribute(0, handle); // Worker is shutting down. Send to another.
 

@@ -856,7 +856,7 @@ impl<'a> Resolver<'a> {
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
     /// subsequent map access are re-derived from the raw singleton:
-    /// `HashMapExt::put` does this internally, and `DirInfo::slot_ptr_at`
+    /// `DirInfo::put_slot` does this internally, and `DirInfo::slot_ptr_at`
     /// covers index-based lookups (see `dir_info_cached_miss`,
     /// `dir_info_for_resolution`). This is NOT yet universal: read paths that
     /// go through `at_index(..).map(DirInfoRef::from_slot)` (e.g. the
@@ -3561,13 +3561,18 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // NOTE: `HashMapExt::put` returns a `*mut` re-derived from the raw
+        // NOTE: `DirInfo::put_slot` returns a `*mut` re-derived from the raw
         // singleton (`DirInfo::slot_ptr_at`), so `self.dir_cache` (and `*self`)
         // are reborrowable for the call below without popping this pointer.
-        let dir_info_ptr: *mut DirInfo::DirInfo = self
-            .dir_cache_mut()
-            .put(&mut dir_cache_info_result, DirInfo::DirInfo::default())
-            .expect("unreachable");
+        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+        let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+            DirInfo::put_slot(
+                self.dir_cache(),
+                &mut dir_cache_info_result,
+                DirInfo::DirInfo::default(),
+            )
+        }
+        .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
@@ -4635,13 +4640,18 @@ impl<'a> Resolver<'a> {
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
             // SAFETY: ARENA — `dir_cache()` singleton (see NOTE). Stacked Borrows:
-            // `HashMapExt::put` re-derives the returned slot pointer from the raw
+            // `DirInfo::put_slot` re-derives the returned slot pointer from the raw
             // singleton (`DirInfo::slot_ptr_at`), and `parent_dir_ptr` is derived
             // the same way below — both pointers are rooted at the static, so the
             // later map reborrows inside `dir_info_uncached` cannot pop their tags.
-            let dir_info_ptr: *mut DirInfo::DirInfo = self
-                .dir_cache_mut()
-                .put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+                DirInfo::put_slot(
+                    self.dir_cache(),
+                    &mut queue_top.result,
+                    DirInfo::DirInfo::default(),
+                )
+            }?;
             // SAFETY: `top_parent.index` is either a sentinel (`slot_ptr_at`
             // returns `None`) or a slot previously assigned by `put`; resolver
             // mutex held. `from_raw`: `slot_ptr_at` yields a live BSSMap slot.

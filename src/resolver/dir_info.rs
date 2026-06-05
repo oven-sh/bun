@@ -459,21 +459,58 @@ impl DirInfo {
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
+/// Insert `value` at `result`'s slot in the BSSMap singleton and return a slot
+/// pointer re-derived from the raw singleton (see [`slot_ptr_at`]).
+///
+/// Takes the raw map pointer (not `&mut HashMap`) on purpose: a `&mut self`
+/// receiver would be FnEntry-protected for the whole call under Stacked
+/// Borrows, and `slot_ptr_at` accesses the map through the singleton's root
+/// tag — an *ancestor* of that protected Unique — which would disable the
+/// protected tag (UB). The inherent `put` instead runs through a local
+/// reborrow that dies before `slot_ptr_at` touches the root.
+///
+/// The `&mut DirInfo` the inherent `put` returns is deliberately DISCARDED:
+/// its tag would descend from the local reborrow, which any later fresh
+/// `&mut *hash_map_instance()` Unique retag would pop (`backing_buf` is inline
+/// in the map allocation). The re-derived pointer is rooted at the static and
+/// survives sibling retags outright.
+///
+/// # Safety
+/// `map` must be the live `hash_map_instance()` singleton and the caller must
+/// hold the resolver mutex.
+pub(crate) unsafe fn put_slot(
+    map: *mut HashMap,
+    result: &mut allocators::Result,
+    value: DirInfo,
+) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+    // `map` is always the `hash_map_instance()` singleton: `Resolver.dir_cache`
+    // is set to it in `init1` and never reassigned, and no other `HashMap`
+    // instance exists. `slot_ptr_at` below relies on this.
+    debug_assert!(core::ptr::eq(
+        map.cast_const(),
+        hash_map_instance().cast_const()
+    ));
+    // SAFETY: caller contract — `map` is the live singleton; resolver mutex
+    // held. The method-call auto-ref `&mut *map` ends when `put` returns, so
+    // no protector is live when `slot_ptr_at` accesses the root below.
+    unsafe { (*map).put(result, value) }.map_err(bun_core::Error::from)?;
+    // SAFETY: `result.index` was just assigned (or confirmed) by `put`, so it
+    // is a non-sentinel, in-bounds, initialized slot; callers hold the
+    // resolver mutex.
+    Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
+}
+
 /// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
 /// the resolver's error type (`bun_core::Error`) and pointer-return shape, plus
-/// `values_mut` which has no inherent equivalent. The four name-colliding
+/// `values_mut` which has no inherent equivalent. The name-colliding
 /// methods are shadowed by inherent methods under dot-syntax (Rust resolves
 /// inherent before trait), so the bodies below delegate without recursing.
+/// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
 pub trait HashMapExt {
     fn get_or_put(
         &mut self,
         key: &[u8],
     ) -> core::result::Result<allocators::Result, bun_core::Error>;
-    fn put(
-        &mut self,
-        result: &mut allocators::Result,
-        value: DirInfo,
-    ) -> core::result::Result<*mut DirInfo, bun_core::Error>;
     fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
@@ -486,32 +523,6 @@ impl HashMapExt for HashMap {
     ) -> core::result::Result<allocators::Result, bun_core::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
-    }
-    #[inline]
-    fn put(
-        &mut self,
-        result: &mut allocators::Result,
-        value: DirInfo,
-    ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
-        // `self` is always the `hash_map_instance()` singleton: `Resolver.dir_cache`
-        // is set to it in `init1` and never reassigned, and no other `HashMap`
-        // instance exists. `slot_ptr_at` below relies on this.
-        debug_assert!(core::ptr::eq(
-            core::ptr::from_ref::<HashMap>(self),
-            hash_map_instance().cast_const(),
-        ));
-        // `result.index` is written back, so `&mut`. The `&mut DirInfo` the
-        // inherent `put` returns is deliberately DISCARDED: its tag descends from
-        // the caller's `&mut HashMap`, which any later fresh
-        // `&mut *hash_map_instance()` Unique retag would pop (`backing_buf` is
-        // inline in the map allocation). Re-derive the slot pointer from the raw
-        // singleton instead so its provenance is rooted at the static and
-        // survives sibling retags outright (see `slot_ptr_at`).
-        self.put(result, value).map_err(bun_core::Error::from)?;
-        // SAFETY: `result.index` was just assigned (or confirmed) by `put`, so it
-        // is a non-sentinel, in-bounds, initialized slot; callers hold the
-        // resolver mutex.
-        Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
     }
     #[inline]
     fn mark_not_found(&mut self, result: allocators::Result) {

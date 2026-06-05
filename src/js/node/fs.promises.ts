@@ -108,8 +108,9 @@ function cp(src, dest, options) {
 }
 
 async function cpImpl(src, dest, opts) {
-  src = require("internal/validators").getValidatedPath(src);
-  dest = require("internal/validators").getValidatedPath(dest);
+  const cpSyncImpl = require("internal/fs/cp-sync");
+  src = cpSyncImpl.getValidatedCpPath(src, "src");
+  dest = cpSyncImpl.getValidatedCpPath(dest, "dest");
   if (opts.dereference || opts.filter || opts.preserveTimestamps || opts.verbatimSymlinks) {
     return require("internal/fs/cp")(src, dest, opts);
   }

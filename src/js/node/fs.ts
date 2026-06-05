@@ -850,8 +850,8 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 function cpSync(src, dest, options) {
   const cpSyncImpl = require("internal/fs/cp-sync");
   const opts = cpSyncImpl.validateCpOptions(options);
-  src = require("internal/validators").getValidatedPath(src);
-  dest = require("internal/validators").getValidatedPath(dest);
+  src = cpSyncImpl.getValidatedCpPath(src, "src");
+  dest = cpSyncImpl.getValidatedCpPath(dest, "dest");
   if (opts.dereference || opts.filter || opts.preserveTimestamps || opts.verbatimSymlinks) {
     return cpSyncImpl(src, dest, opts);
   }

@@ -355,7 +355,10 @@ for (const [name, copy] of impls) {
         "hey": "hi",
       });
 
-      await copy(basename + "/hey", basename + "/hey");
+      // Node rejects identical src and dest with ERR_FS_CP_EINVAL before
+      // touching the file, so EBUSY can never surface.
+      const err = await copyShouldThrow(basename + "/hey", basename + "/hey");
+      expect(err.code).toBe("ERR_FS_CP_EINVAL");
     });
   });
 }

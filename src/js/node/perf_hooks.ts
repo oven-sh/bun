@@ -1,6 +1,6 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -200,19 +200,27 @@ class NodePerformanceObserver extends PerformanceObserver {
     if (!$isObject(options)) {
       throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
-    let nodeOnly = false;
     if (options.entryTypes !== undefined) {
       const entryTypes = options.entryTypes;
       if (!$isArray(entryTypes)) {
         throw $ERR_INVALID_ARG_TYPE("options.entryTypes", "string[]", entryTypes);
       }
-      const webTypes = entryTypes.filter(type => type !== "function");
-      if (webTypes.length !== entryTypes.length) {
-        functionObservers.add(this);
-        nodeOnly = webTypes.length === 0;
+      if (entryTypes.length === 0) {
+        return;
       }
-      if (!nodeOnly) {
-        return super.observe({ ...options, entryTypes: webTypes });
+      const webTypes = entryTypes.filter(type => type !== "function");
+      const observesFunction = webTypes.length !== entryTypes.length;
+      if (webTypes.length !== 0) {
+        super.observe({ ...options, entryTypes: webTypes });
+      }
+      // The entryTypes form replaces the observed set (unlike the additive
+      // type form), so clear any prior "function" registration when the new
+      // list doesn't include it. Registration happens after super.observe()
+      // so a throw there doesn't leave a stale entry behind.
+      if (observesFunction) {
+        functionObservers.add(this);
+      } else {
+        functionObservers.delete(this);
       }
       return;
     }
@@ -236,8 +244,12 @@ Object.defineProperty(NodePerformanceObserver, "name", { value: "PerformanceObse
 
 function timerify(fn, options = {}) {
   validateFunction(fn, "fn");
+  validateObject(options, "options");
   const { histogram } = options;
-  if (histogram !== undefined && (typeof histogram !== "object" || typeof histogram.record !== "function")) {
+  if (
+    histogram !== undefined &&
+    (histogram === null || typeof histogram !== "object" || typeof histogram.record !== "function")
+  ) {
     throw $ERR_INVALID_ARG_TYPE("options.histogram", "RecordableHistogram", histogram);
   }
 

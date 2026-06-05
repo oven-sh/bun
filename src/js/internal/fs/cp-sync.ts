@@ -36,6 +36,16 @@ function isSrcSubdir(src, dest) {
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
 }
 
+// Like getValidatedPath, but without resolving to an absolute path: node
+// passes the caller's strings through to filter callbacks and error messages
+// verbatim, so resolving here would change what user code observes.
+function getValidatedCpPath(p, name) {
+  if (p instanceof URL) return Bun.fileURLToPath(p);
+  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string or URL", p);
+  if (p.startsWith("file:")) return Bun.fileURLToPath(p);
+  return p;
+}
+
 // const { codes } = require("internal/errors");
 // const {
 //   ERR_FS_CP_DIR_TO_NON_DIR,
@@ -89,7 +99,12 @@ function checkPathsSync(src, dest, opts) {
 
   if (destStat) {
     if (areIdentical(srcStat, destStat)) {
-      throw $ERR_FS_CP_EINVAL("src and dest cannot be the same");
+      throw cpSystemError("ERR_FS_CP_EINVAL", "Invalid src or dest", {
+        message: "src and dest cannot be the same",
+        path: dest,
+        errno: EINVAL,
+        code: "EINVAL",
+      });
     }
     if (srcStat.isDirectory() && !destStat.isDirectory()) {
       throw cpSystemError("ERR_FS_CP_DIR_TO_NON_DIR", "Cannot overwrite non-directory with directory", {
@@ -403,3 +418,4 @@ function validateCpOptions(options) {
 
 cpSyncFn.validateCpOptions = validateCpOptions;
 cpSyncFn.isSrcSubdir = isSrcSubdir;
+cpSyncFn.getValidatedCpPath = getValidatedCpPath;

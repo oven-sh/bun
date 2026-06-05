@@ -107,6 +107,7 @@ const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
 pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
 pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
+const TJPARAM_COLORSPACE: c_int = 8;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
@@ -114,6 +115,9 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 /// parser keeps the profile around for `tj3GetICCProfile`.
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
+const TJPF_CMYK: c_int = 11;
+const TJCS_CMYK: c_int = 3;
+const TJCS_YCCK: c_int = 4;
 const TJSAMP_420: c_int = 2;
 
 pub fn decode(
@@ -150,6 +154,13 @@ pub fn decode(
     let src_w: u32 = u32::try_from(rw).expect("int cast");
     let src_h: u32 = u32::try_from(rh).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
+    // 4-component (CMYK / YCCK) JPEGs: libjpeg-turbo refuses to decompress
+    // these to any RGB pixel format, so ask for packed CMYK — conveniently
+    // also 4 bytes/px, so every buffer/pitch/crop bound below is unchanged —
+    // and convert to RGBA ourselves after the decompress.
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let cs = unsafe { tj3Get(h, TJPARAM_COLORSPACE) };
+    let cmyk = cs == TJCS_CMYK || cs == TJCS_YCCK;
 
     let mut w = src_w;
     let mut ht = src_h;
@@ -240,7 +251,7 @@ pub fn decode(
             bytes.len(),
             out.as_mut_ptr(),
             c_int::try_from(w * 4).expect("int cast"),
-            TJPF_RGBA,
+            if cmyk { TJPF_CMYK } else { TJPF_RGBA },
         )
     } != 0
     {
@@ -249,6 +260,23 @@ pub fn decode(
     // SAFETY: `h` is live; tj3Get only reads handle state.
     if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) != rw || tj3Get(h, TJPARAM_JPEGHEIGHT) != rh } {
         return Err(codecs::Error::DecodeFailed);
+    }
+    if cmyk {
+        // libjpeg hands back the STORED component values (YCCK is undone to
+        // the same CMYK representation internally). Adobe writers — the
+        // producers of essentially every CMYK JPEG in the wild — store
+        // inverted CMYK (byte = 255 − ink), so "no ink" is 255 and the
+        // conversion on the raw bytes is R = C·K/255 (ditto M→G, Y→B).
+        // This is the same formula browsers (Skia/Chromium, Firefox) apply;
+        // a colorimetric conversion would need a CMS and the source's CMYK
+        // profile.
+        for px in out.chunks_exact_mut(4) {
+            let k = u32::from(px[3]);
+            px[0] = u8::try_from((u32::from(px[0]) * k + 127) / 255).expect("int cast");
+            px[1] = u8::try_from((u32::from(px[1]) * k + 127) / 255).expect("int cast");
+            px[2] = u8::try_from((u32::from(px[2]) * k + 127) / 255).expect("int cast");
+            px[3] = 255;
+        }
     }
 
     // Extract the APP2 ICC profile (if the source carried one). The marker
@@ -264,6 +292,13 @@ pub fn decode(
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
+        // A CMYK/YCCK source's ICC profile describes the four ink channels;
+        // the conversion above leaves (approximately) sRGB pixels, so
+        // carrying the profile into the RGBA output would misdescribe it —
+        // drop it instead.
+        if cmyk {
+            break 'blk None;
+        }
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
         if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
         {

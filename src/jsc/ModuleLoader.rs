@@ -58,22 +58,12 @@ impl ModuleLoader {
         let smol = jsc_vm.smol;
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
             if smol {
-                // `--smol` trades CPU for the lowest steady-state RSS: always
-                // pay `mi_heap_destroy` + `mi_heap_new` so no dead transpile
-                // garbage is retained between modules.
+                // --smol prioritizes RSS: always destroy, retain nothing.
                 arena.reset();
                 bun_core::scoped_log!(ModuleLoader, "reset_arena: free_all");
             } else {
-                // Cap-gated retain, matching the other per-cycle arena call
-                // sites — see `MimallocArena::reset_retain_with_limit` for why
-                // retaining the warm heap (bounded by the 8 MiB cap) beats an
-                // unconditional destroy/new round-trip (purged pages get
-                // re-committed and re-zeroed each cycle otherwise).
                 let retained = arena.reset_retain_with_limit(8 * 1024 * 1024);
-                // Debug-only observability for the branch taken (`retained` =
-                // footprint stayed under the cap; `recycled` = over-cap, full
-                // destroy/new). Asserted by
-                // test/js/bun/resolve/load-same-js-file-a-lot.test.ts.
+                // Asserted by load-same-js-file-a-lot.test.ts.
                 bun_core::scoped_log!(
                     ModuleLoader,
                     "reset_arena: {}",

@@ -34,23 +34,11 @@ test(
   isDebug || isASAN ? 20_000 : 5000,
 );
 
-// The module loader's per-transpile arena reset (ModuleLoader::reset_arena)
-// runs after every *synchronous* transpile cycle — require() takes this path;
-// dynamic import() of non-main JS-like modules routes through the concurrent
-// transpiler store and never reaches it. Under --smol the heap is destroyed
-// outright (free_all); otherwise the warm heap is retained while its
-// footprint stays under an 8 MiB cap and recycled once a module pushes it
-// past the cap. On the success path the give-back guard inside the transpile
-// hook resets the arena before parking it, so reset_arena's over-limit branch
-// only sees a fat arena on the parse-error path (the arena is parked un-reset
-// there so error log spans stay valid) — hence the oversized *broken* modules
-// below.
-//
-// On debug builds the branch taken is asserted via the BUN_DEBUG_ModuleLoader
-// scoped log, so reverting to an unconditional reset (or inverting the smol
-// gate) fails this test. In any build, a bug in either reset path (freeing
-// memory a parked source still references, corrupting the retained heap)
-// would crash or corrupt module evaluation in the subprocess.
+// ModuleLoader::reset_arena: --smol destroys the transpile arena every cycle;
+// otherwise it retains the warm heap under an 8 MiB cap and recycles when over.
+// The over-cap branch is only reachable via the parse-error path (success
+// resets the arena before parking it), hence the oversized broken modules.
+// Debug builds assert the branch taken via the BUN_DEBUG_ModuleLoader log.
 for (const smol of [false, true]) {
   test(
     `transpile arena reset policy (${smol ? "--smol" : "default"})`,
@@ -58,18 +46,13 @@ for (const smol of [false, true]) {
       const iters = isASAN || isDebug ? 50 : 200;
       const brokenCount = isASAN || isDebug ? 1 : 2;
 
-      // Each big module must push the transpile arena past the 8 MiB retain
-      // cap before the parser finishes: 150k statements at well over ~55
-      // bytes of arena footprint each (Stmt + S.Local + Decl + Binding +
-      // E.Number + symbol) clears the cap with margin.
+      // 150k statements pushes the transpile arena well past the 8 MiB cap.
       const bigLines: string[] = [];
       for (let i = 0; i < 150_000; i++) {
         bigLines.push(`const v${i} = ${i};`);
       }
       const bigValid = bigLines.join("\n") + "\nexport const sum = v0 + v149999;";
-      // Syntax error at the END so the parser allocates the full AST into
-      // the arena before failing; the error path parks the arena un-reset
-      // and reset_arena reclaims it (over-limit branch in default mode).
+      // Syntax error at the end so the full AST is in the arena before failing.
       const bigBroken = bigLines.join("\n") + "\n}";
 
       const files: Record<string, string> = {
@@ -78,9 +61,8 @@ for (const smol of [false, true]) {
           let total = 0;
           let caught = 0;
           for (let i = 0; i < ${iters}; i++) {
-            // require(), not import(): dynamic import of a non-main module
-            // goes through the concurrent transpiler store and skips the
-            // module loader's synchronous arena reset entirely.
+            // require(), not import(): dynamic import skips the synchronous
+            // arena reset (concurrent transpiler store).
             const m = require("./small_" + i + ".ts");
             total += m.value;
             if (i % 10 === 0) Bun.gc(true);
@@ -113,8 +95,7 @@ for (const smol of [false, true]) {
 
       await using proc = Bun.spawn({
         cmd,
-        // The scoped log is compiled out of release builds; only ask for it
-        // (and assert on it) when the build under test is a debug build.
+        // The scoped log is compiled out of release builds.
         env: isDebug ? { ...bunEnv, BUN_DEBUG_ModuleLoader: "1" } : bunEnv,
         cwd: String(dir),
         stdout: "pipe",
@@ -125,22 +106,16 @@ for (const smol of [false, true]) {
 
       expect(stdout).toContain(`total=${iters + 149999} caught=${brokenCount}`);
       if (isDebug) {
-        // Differential assertions: count reset_arena branch logs. Pre-change
-        // behavior (unconditional destroy/new) or an inverted smol gate
-        // produces the wrong branch tags and fails here.
         const logs = stdout + stderr;
         const occurrences = (needle: string) => logs.split(needle).length - 1;
         if (smol) {
-          // --smol must always take the full-destroy path.
           expect(occurrences("reset_arena: free_all")).toBeGreaterThanOrEqual(iters + brokenCount);
           expect(occurrences("reset_arena: retained")).toBe(0);
           expect(occurrences("reset_arena: recycled")).toBe(0);
         } else {
-          // Default mode: post-success resets see an already-recycled arena
-          // (under the cap, so retained); each oversized parse failure parks
-          // a fat arena and must trip the over-limit recycle. If the broken
-          // fixture ever stops clearing the 8 MiB cap, the recycled
-          // assertion fails instead of silently losing branch coverage.
+          // Each oversized parse failure must trip the over-cap recycle; if the
+          // broken fixture stops clearing the cap, this fails rather than
+          // silently losing branch coverage.
           expect(occurrences("reset_arena: retained")).toBeGreaterThanOrEqual(iters);
           expect(occurrences("reset_arena: recycled")).toBeGreaterThanOrEqual(brokenCount);
           expect(occurrences("reset_arena: free_all")).toBe(0);

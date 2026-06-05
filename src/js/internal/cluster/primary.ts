@@ -252,7 +252,12 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
-    if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
+    if (
+      schedulingPolicy !== SCHED_RR ||
+      message.sharedOnly === true ||
+      message.addressType === "udp4" ||
+      message.addressType === "udp6"
+    ) {
       handle = new SharedHandle(key, address, message);
     } else {
       handle = new RoundRobinHandle(key, address, message);
@@ -265,7 +270,9 @@ function queryServer(worker, message) {
 
   // Set custom server data
   handle.add(worker, (errno, reply, handle) => {
-    const { data } = handles.get(key);
+    // A bind error can fan out to several queued workers; the first callback
+    // deletes the key, so guard the second lookup.
+    const data = handles.get(key)?.data;
 
     if (errno) handles.delete(key); // Gives other workers a chance to retry.
 

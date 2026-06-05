@@ -2537,6 +2537,46 @@ function listenInCluster(
 
   if (cluster === undefined) cluster = require("node:cluster");
 
+  if (
+    !cluster.isPrimary &&
+    !exclusive &&
+    typeof address === "string" &&
+    address.length > 0 &&
+    typeof port === "number" &&
+    port >= 0 &&
+    isIP(address) === 0
+  ) {
+    // node resolves hostnames in the worker (lookupAndListen) before asking
+    // the primary, so the primary only ever binds IP literals. Do the same
+    // rather than letting the primary fall back to a blocking getaddrinfo.
+    require("node:dns").lookup(address, (err, ip, family) => {
+      if (err) {
+        setTimeout(emitErrorNextTick, 1, server, err);
+        return;
+      }
+      listenInCluster(
+        server,
+        ip,
+        port,
+        family === 6 ? 6 : 4,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        allowHalfOpen,
+        reusePort,
+        flags,
+        options,
+        path,
+        hostname,
+        tls,
+        contexts,
+        onListen,
+      );
+    });
+    return;
+  }
+
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](
       path,
@@ -2562,6 +2602,10 @@ function listenInCluster(
     flags,
     backlog,
     ...options,
+    // Bun's TLS accept lifecycle lives in the native listener, so a TLS
+    // worker cannot adopt round-robin connection fds; ask the primary for a
+    // shared handle and do the real (TLS) listen on the duplicated fd.
+    sharedOnly: tls ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, reply) {
@@ -2593,26 +2637,38 @@ function listenInCluster(
       // does the real listen on the duplicated fd. The Bun listener owns the
       // fd from here; closing the server tells the primary to drop us from
       // the shared-handle refcount.
-      handle.adopted = true;
       server[kClusterHandle] = handle;
       // Tag the wrapper so Worker.prototype._disconnect() escalates through
       // server.close() (draining the real listener) instead of calling
       // handle.close(), which after adoption no longer closes the listener.
       handle[kClusterOwner] = server;
       server.once("close", () => handle.close());
-      server[kRealListen](
-        path,
-        port,
-        hostname,
-        exclusive,
-        ipv6Only,
-        allowHalfOpen,
-        reusePort,
-        tls,
-        contexts,
-        onListen,
-        handle.sharedFd,
-      );
+      try {
+        // The fd must win over `path` (kRealListen checks `path` first): the
+        // primary already bound the pipe path, so a fresh path bind would
+        // EADDRINUSE and the duplicated fd would leak.
+        server[kRealListen](
+          undefined,
+          port,
+          hostname,
+          exclusive,
+          ipv6Only,
+          allowHalfOpen,
+          reusePort,
+          tls,
+          contexts,
+          onListen,
+          handle.sharedFd,
+        );
+        // The listener owns the fd only once the listen succeeded; until
+        // then handle.close() must close the duplicated fd itself.
+        handle.adopted = true;
+      } catch (err) {
+        server[kClusterHandle] = null;
+        handle[kClusterOwner] = null;
+        handle.close();
+        setTimeout(emitErrorNextTick, 1, server, err);
+      }
       return;
     }
     // Round-robin: adopt the faux handle — this worker never binds; accepted

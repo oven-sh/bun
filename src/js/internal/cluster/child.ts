@@ -259,7 +259,7 @@ function rr(message, { indexesKey, index }, cb) {
 
   $assert(handles.has(key) === false);
   handles.set(key, handle);
-  cb(0, handle);
+  cb(0, handle, message);
 }
 
 // Round-robin connection.

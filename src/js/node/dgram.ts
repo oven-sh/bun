@@ -423,12 +423,25 @@ function bunBindSocket(self, state, options) {
       },
       err => {
         state.bindState = BIND_STATE_UNBOUND;
+        releaseClusterHandle(state);
         self.emit("error", err);
       },
     );
   } catch (err) {
     state.bindState = BIND_STATE_UNBOUND;
+    releaseClusterHandle(state);
     self.emit("error", err);
+  }
+}
+
+// The bind failed, so the adopted fd never made it into a native socket:
+// reclaim ownership (close() skips the fd once `adopted` is set) and close it.
+function releaseClusterHandle(state) {
+  const handle = state.clusterHandle;
+  if (handle) {
+    state.clusterHandle = null;
+    handle.adopted = false;
+    handle.close();
   }
 }
 

@@ -255,12 +255,14 @@ impl Listener {
 
                 // we need to add support for the backlog parameter on listen here we use the
                 // default value of nodejs
+                let mut pipe_errno: c_int = 0;
                 match WindowsNamedPipeListeningContext::listen(
                     global,
                     &pipe_buf[..pipe_len],
                     511,
                     ssl_cfg_taken.as_ref(),
                     this,
+                    &mut pipe_errno,
                 ) {
                     Ok(named_pipe) => {
                         this_ref.listener.set(ListenerType::NamedPipe(
@@ -279,10 +281,34 @@ impl Listener {
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and (the moved) handlers exactly once.
                         drop(unsafe { bun_core::heap::take(this) });
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        // A failed uv pipe bind/listen must carry the real
+                        // error code (EADDRINUSE, EACCES, ...) like the
+                        // TCP/unix path below - not ERR_INVALID_ARG_TYPE.
+                        let err = global.create_error_instance(format_args!(
                             "Failed to listen at {}",
                             bstr::BStr::new(&pipe_buf[..pipe_len])
-                        )));
+                        ));
+                        if pipe_errno != 0 {
+                            err.put(
+                                global,
+                                b"syscall",
+                                jsc::bun_string_jsc::create_utf8_for_js(global, b"listen")?,
+                            );
+                            err.put(global, b"errno", JSValue::js_number(pipe_errno as f64));
+                            err.put(
+                                global,
+                                b"address",
+                                ZigString::init_utf8(&pipe_buf[..pipe_len]).to_js(global),
+                            );
+                            if let Some(name) = bun_sys::UV_E::name(pipe_errno) {
+                                err.put(
+                                    global,
+                                    b"code",
+                                    ZigString::init(name.as_bytes()).to_js(global),
+                                );
+                            }
+                        }
+                        return Err(global.throw_value(err));
                     }
                 }
 
@@ -1681,6 +1707,7 @@ impl WindowsNamedPipeListeningContext {
         backlog: i32,
         ssl_config: Option<&SSLConfig>,
         listener: *mut Listener,
+        uv_errno_out: &mut c_int,
     ) -> Result<*mut WindowsNamedPipeListeningContext, bun_core::Error> {
         // Heap-allocate at the final address so libuv can
         // store a pointer back into `uv_pipe`.
@@ -1747,6 +1774,9 @@ impl WindowsNamedPipeListeningContext {
             )
         };
         if listen_rc.is_err() {
+            // Surface the (negative) uv error code so the caller can build a
+            // properly-coded JS error.
+            *uv_errno_out = listen_rc.0;
             return Err(bun_core::err!("FailedToBindPipe"));
         }
         //TODO: add readableAll and writableAll support if someone needs it

@@ -173,6 +173,12 @@ export function serialize(message, handle, options) {
     }
     return [native, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
   }
+  if (handle instanceof require("node:dgram").Socket) {
+    // node can send dgram sockets; Bun cannot yet. Deliver the message
+    // without the handle (the pre-handle-passing behavior) instead of
+    // ERR_INVALID_HANDLE_TYPE, which node reserves for unknown types.
+    return null;
+  }
   throw $ERR_INVALID_HANDLE_TYPE();
 
   /*

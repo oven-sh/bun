@@ -604,6 +604,13 @@ impl UDPSocket {
             )
         };
         drop(hostname_z);
+        if created.is_null() && err == 0 && config.fd.is_some() {
+            // create_from_fd has no error out-param (it only fails on
+            // unsupported platforms or allocation); report EINVAL so the
+            // thrown error carries a code instead of the bare
+            // "Failed to bind socket".
+            err = libc::EINVAL;
+        }
         this.socket.set(if created.is_null() {
             None
         } else {

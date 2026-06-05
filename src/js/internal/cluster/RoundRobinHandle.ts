@@ -17,6 +17,7 @@ export default class RoundRobinHandle {
   handle;
   server;
   listening;
+  warnedDrop;
   // worker.id -> handle sent in a `newconn` whose ack hasn't arrived yet.
   // If that worker dies first, the ack never comes and the handle would leak
   // (keeping the accepted socket - and the primary's event loop - alive).
@@ -40,7 +41,14 @@ export default class RoundRobinHandle {
       if (process.platform === "win32") {
         // Connections cannot be handed to workers on Windows (no handle
         // transfer over the IPC pipe yet); reset them instead of letting
-        // them queue up forever.
+        // them queue up forever, and tell the user once why nothing answers.
+        if (!this.warnedDrop) {
+          this.warnedDrop = true;
+          process.emitWarning(
+            "cluster round-robin scheduling cannot deliver connections to workers on Windows yet; dropping incoming connection",
+            "UnsupportedWarning",
+          );
+        }
         socket.destroy();
         return;
       }

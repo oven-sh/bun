@@ -478,8 +478,9 @@ Server.prototype.listen = function () {
         act: "listening",
         port: (isObjectAddress && address.port) || port,
         data: null,
-        address: (isObjectAddress ? address.address : null) ?? host ?? null,
-        addressType: isObjectAddress && address.family === "IPv6" ? 6 : 4,
+        address: (isObjectAddress ? address.address : null) ?? socketPath ?? host ?? null,
+        // node reports addressType -1 for pipe servers.
+        addressType: socketPath ? -1 : isObjectAddress && address.family === "IPv6" ? 6 : 4,
       };
       sendHelper(message, null);
     });

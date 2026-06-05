@@ -634,4 +634,3 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
     }
 }
-

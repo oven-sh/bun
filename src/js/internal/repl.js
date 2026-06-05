@@ -3,9 +3,13 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
+'use strict';
 
-const { Number, NumberIsNaN, NumberParseInt } = primordials;
+const {
+  Number,
+  NumberIsNaN,
+  NumberParseInt,
+} = primordials;
 
 const REPL = require("node:repl");
 const { kStandaloneREPL } = require("internal/repl/utils");
@@ -14,7 +18,7 @@ __node_module__.exports = { __proto__: REPL };
 __node_module__.exports.createInternalRepl = createRepl;
 
 function createRepl(env, opts, cb) {
-  if (typeof opts === "function") {
+  if (typeof opts === 'function') {
     cb = opts;
     opts = null;
   }
@@ -32,8 +36,8 @@ function createRepl(env, opts, cb) {
 
   if (env.NODE_REPL_MODE) {
     opts.replMode = {
-      "strict": REPL.REPL_MODE_STRICT,
-      "sloppy": REPL.REPL_MODE_SLOPPY,
+      'strict': REPL.REPL_MODE_STRICT,
+      'sloppy': REPL.REPL_MODE_SLOPPY,
     }[env.NODE_REPL_MODE.toLowerCase().trim()];
   }
 
@@ -48,8 +52,8 @@ function createRepl(env, opts, cb) {
     opts.size = 1000;
   }
 
-  const term = "terminal" in opts ? opts.terminal : process.stdout.isTTY;
-  opts.filePath = term ? env.NODE_REPL_HISTORY : "";
+  const term = 'terminal' in opts ? opts.terminal : process.stdout.isTTY;
+  opts.filePath = term ? env.NODE_REPL_HISTORY : '';
 
   const repl = REPL.start(opts);
 

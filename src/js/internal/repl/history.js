@@ -3,7 +3,7 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
+'use strict';
 
 const {
   ArrayPrototypeIndexOf,
@@ -24,44 +24,46 @@ const { validateNumber, validateArray } = require("internal/validators");
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
-let debug = require("internal/repl/node-shims").debuglog("repl", fn => {
+let debug = require("internal/repl/node-shims").debuglog('repl', (fn) => {
   debug = fn;
 });
 const permission = require("internal/repl/node-shims");
 const { clearTimeout, setTimeout } = require("node:timers");
-const { reverseString } = require("internal/readline/utils");
+const {
+  reverseString,
+} = require("internal/readline/utils");
 
 // The debounce is to guard against code pasted into the REPL.
 const kDebounceHistoryMS = 15;
 const kHistorySize = 30;
 
 // Class fields
-const kTimer = Symbol("_kTimer");
-const kWriting = Symbol("_kWriting");
-const kPending = Symbol("_kPending");
-const kRemoveHistoryDuplicates = Symbol("_kRemoveHistoryDuplicates");
-const kHistoryHandle = Symbol("_kHistoryHandle");
-const kHistoryPath = Symbol("_kHistoryPath");
-const kContext = Symbol("_kContext");
-const kIsFlushing = Symbol("_kIsFlushing");
-const kHistory = Symbol("_kHistory");
-const kSize = Symbol("_kSize");
-const kIndex = Symbol("_kIndex");
+const kTimer = Symbol('_kTimer');
+const kWriting = Symbol('_kWriting');
+const kPending = Symbol('_kPending');
+const kRemoveHistoryDuplicates = Symbol('_kRemoveHistoryDuplicates');
+const kHistoryHandle = Symbol('_kHistoryHandle');
+const kHistoryPath = Symbol('_kHistoryPath');
+const kContext = Symbol('_kContext');
+const kIsFlushing = Symbol('_kIsFlushing');
+const kHistory = Symbol('_kHistory');
+const kSize = Symbol('_kSize');
+const kIndex = Symbol('_kIndex');
 
 // Class methods
-const kNormalizeLineEndings = Symbol("_kNormalizeLineEndings");
-const kWriteToOutput = Symbol("_kWriteToOutput");
-const kOnLine = Symbol("_kOnLine");
-const kOnExit = Symbol("_kOnExit");
-const kInitializeHistory = Symbol("_kInitializeHistory");
-const kHandleHistoryInitError = Symbol("_kHandleHistoryInitError");
-const kHasWritePermission = Symbol("_kHasWritePermission");
-const kValidateOptions = Symbol("_kValidateOptions");
-const kResolveHistoryPath = Symbol("_kResolveHistoryPath");
-const kReplHistoryMessage = Symbol("_kReplHistoryMessage");
-const kFlushHistory = Symbol("_kFlushHistory");
-const kGetHistoryPath = Symbol("_kGetHistoryPath");
-const kCloseHandle = Symbol("_kCloseHandle");
+const kNormalizeLineEndings = Symbol('_kNormalizeLineEndings');
+const kWriteToOutput = Symbol('_kWriteToOutput');
+const kOnLine = Symbol('_kOnLine');
+const kOnExit = Symbol('_kOnExit');
+const kInitializeHistory = Symbol('_kInitializeHistory');
+const kHandleHistoryInitError = Symbol('_kHandleHistoryInitError');
+const kHasWritePermission = Symbol('_kHasWritePermission');
+const kValidateOptions = Symbol('_kValidateOptions');
+const kResolveHistoryPath = Symbol('_kResolveHistoryPath');
+const kReplHistoryMessage = Symbol('_kReplHistoryMessage');
+const kFlushHistory = Symbol('_kFlushHistory');
+const kGetHistoryPath = Symbol('_kGetHistoryPath');
+const kCloseHandle = Symbol('_kCloseHandle');
 
 class ReplHistory {
   constructor(context, options) {
@@ -82,7 +84,7 @@ class ReplHistory {
 
   initialize(onReadyCallback) {
     // Empty string disables persistent history
-    if (this[kHistoryPath] === "") {
+    if (this[kHistoryPath] === '') {
       // Save a reference to the context's original _historyPrev
       this.historyPrev = this[kContext]._historyPrev;
       this[kContext]._historyPrev = this[kReplHistoryMessage].bind(this);
@@ -93,7 +95,8 @@ class ReplHistory {
     if (!resolvedPath) {
       ReplHistory[kWriteToOutput](
         this[kContext],
-        "\nError: Could not get the home directory.\n" + "REPL session history will not be persisted.\n",
+        '\nError: Could not get the home directory.\n' +
+        'REPL session history will not be persisted.\n',
       );
 
       // Save a reference to the context's original _historyPrev
@@ -105,14 +108,15 @@ class ReplHistory {
     if (!this[kHasWritePermission]()) {
       ReplHistory[kWriteToOutput](
         this[kContext],
-        "\nAccess to FileSystemWrite is restricted.\n" + "REPL session history will not be persisted.\n",
+        '\nAccess to FileSystemWrite is restricted.\n' +
+        'REPL session history will not be persisted.\n',
       );
       return onReadyCallback(null, this[kContext]);
     }
 
     this[kContext].pause();
 
-    this[kInitializeHistory](onReadyCallback).catch(err => {
+    this[kInitializeHistory](onReadyCallback).catch((err) => {
       this[kHandleHistoryInitError](err, onReadyCallback);
     });
   }
@@ -120,7 +124,7 @@ class ReplHistory {
   addHistory(isMultiline, lastCommandErrored) {
     const line = this[kContext].line;
 
-    if (line.length === 0) return "";
+    if (line.length === 0) return '';
 
     // If the history is disabled then return the line
     if (this[kSize] === 0) return line;
@@ -138,7 +142,7 @@ class ReplHistory {
       ArrayPrototypeShift(this[kHistory]);
     }
 
-    const normalizedLine = ReplHistory[kNormalizeLineEndings](line, "\n", "\r");
+    const normalizedLine = ReplHistory[kNormalizeLineEndings](line, '\n', '\r');
 
     if (this[kHistory].length === 0 || this[kHistory][0] !== normalizedLine) {
       if (this[kRemoveHistoryDuplicates]) {
@@ -151,7 +155,8 @@ class ReplHistory {
       ArrayPrototypeUnshift(this[kHistory], normalizedLine);
 
       // Only store so many
-      if (this[kHistory].length > this[kSize]) ArrayPrototypePop(this[kHistory]);
+      if (this[kHistory].length > this[kSize])
+        ArrayPrototypePop(this[kHistory]);
     }
 
     this[kIndex] = -1;
@@ -162,7 +167,7 @@ class ReplHistory {
     // to remove the last added entry if it is sensitive and should
     // not be persisted in the history, like a password
     // Emit history event to notify listeners of update
-    this[kContext].emit("history", this[kHistory]);
+    this[kContext].emit('history', this[kHistory]);
 
     return finalLine;
   }
@@ -175,12 +180,13 @@ class ReplHistory {
     if (!this.canNavigateToNext()) {
       return null;
     }
-    const search = substringSearch || "";
+    const search = substringSearch || '';
     let index = this[kIndex] - 1;
 
     while (
       index >= 0 &&
-      (!StringPrototypeStartsWith(this[kHistory][index], search) || this[kContext].line === this[kHistory][index])
+      (!StringPrototypeStartsWith(this[kHistory][index], search) ||
+        this[kContext].line === this[kHistory][index])
     ) {
       index--;
     }
@@ -191,23 +197,24 @@ class ReplHistory {
       return search;
     }
 
-    return ReplHistory[kNormalizeLineEndings](this[kHistory][index], "\r", "\n");
+    return ReplHistory[kNormalizeLineEndings](this[kHistory][index], '\r', '\n');
   }
 
   canNavigateToPrevious() {
     return this[kHistory].length !== this[kIndex] && this[kHistory].length > 0;
   }
 
-  navigateToPrevious(substringSearch = "") {
+  navigateToPrevious(substringSearch = '') {
     if (!this.canNavigateToPrevious()) {
       return null;
     }
-    const search = substringSearch || "";
+    const search = substringSearch || '';
     let index = this[kIndex] + 1;
 
     while (
       index < this[kHistory].length &&
-      (!StringPrototypeStartsWith(this[kHistory][index], search) || this[kContext].line === this[kHistory][index])
+      (!StringPrototypeStartsWith(this[kHistory][index], search) ||
+        this[kContext].line === this[kHistory][index])
     ) {
       index++;
     }
@@ -218,33 +225,21 @@ class ReplHistory {
       return search;
     }
 
-    return ReplHistory[kNormalizeLineEndings](this[kHistory][index], "\r", "\n");
+    return ReplHistory[kNormalizeLineEndings](this[kHistory][index], '\r', '\n');
   }
 
-  get size() {
-    return this[kSize];
-  }
-  get isFlushing() {
-    return this[kIsFlushing];
-  }
-  get history() {
-    return this[kHistory];
-  }
-  set history(value) {
-    this[kHistory] = value;
-  }
-  get index() {
-    return this[kIndex];
-  }
-  set index(value) {
-    this[kIndex] = value;
-  }
+  get size() { return this[kSize]; }
+  get isFlushing() { return this[kIsFlushing]; }
+  get history() { return this[kHistory]; }
+  set history(value) { this[kHistory] = value; }
+  get index() { return this[kIndex]; }
+  set index(value) { this[kIndex] = value; }
 
   // Start private methods
 
   static [kGetHistoryPath](options) {
     let historyPath = options.filePath;
-    if (typeof historyPath === "string") {
+    if (typeof historyPath === 'string') {
       historyPath = StringPrototypeTrim(historyPath);
     }
     return historyPath;
@@ -262,9 +257,9 @@ class ReplHistory {
   }
 
   static [kWriteToOutput](context, message) {
-    if (typeof context._writeToOutput === "function") {
+    if (typeof context._writeToOutput === 'function') {
       context._writeToOutput(message);
-      if (typeof context._refreshLine === "function") {
+      if (typeof context._refreshLine === 'function') {
         context._refreshLine();
       }
     }
@@ -273,7 +268,7 @@ class ReplHistory {
   [kResolveHistoryPath]() {
     if (!this[kHistoryPath]) {
       try {
-        this[kHistoryPath] = path.join(os.homedir(), ".node_repl_history");
+        this[kHistoryPath] = path.join(os.homedir(), '.node_repl_history');
         return this[kHistoryPath];
       } catch (err) {
         debug(err.stack);
@@ -284,15 +279,16 @@ class ReplHistory {
   }
 
   [kHasWritePermission]() {
-    return !(permission.isEnabled() && permission.has("fs.write", this[kHistoryPath]) === false);
+    return !(permission.isEnabled() &&
+             permission.has('fs.write', this[kHistoryPath]) === false);
   }
 
   [kValidateOptions](options) {
-    if (typeof options.history !== "undefined") {
-      validateArray(options.history, "history");
+    if (typeof options.history !== 'undefined') {
+      validateArray(options.history, 'history');
     }
-    if (typeof options.size !== "undefined") {
-      validateNumber(options.size, "size", 0);
+    if (typeof options.size !== 'undefined') {
+      validateNumber(options.size, 'size', 0);
     }
   }
 
@@ -301,12 +297,12 @@ class ReplHistory {
       // Open and close file first to ensure it exists
       // History files are conventionally not readable by others
       // 0o0600 = read/write for owner only
-      const hnd = await fs.promises.open(this[kHistoryPath], "a+", 0o0600);
+      const hnd = await fs.promises.open(this[kHistoryPath], 'a+', 0o0600);
       await hnd.close();
 
       let data;
       try {
-        data = await fs.promises.readFile(this[kHistoryPath], "utf8");
+        data = await fs.promises.readFile(this[kHistoryPath], 'utf8');
       } catch (err) {
         return this[kHandleHistoryInitError](err, onReadyCallback);
       }
@@ -317,17 +313,17 @@ class ReplHistory {
         this[kHistory] = [];
       }
 
-      validateArray(this[kHistory], "history");
+      validateArray(this[kHistory], 'history');
 
-      const handle = await fs.promises.open(this[kHistoryPath], "r+");
+      const handle = await fs.promises.open(this[kHistoryPath], 'r+');
       this[kHistoryHandle] = handle;
 
       await handle.truncate(0);
 
-      this[kContext].on("line", this[kOnLine].bind(this));
-      this[kContext].once("exit", this[kOnExit].bind(this));
+      this[kContext].on('line', this[kOnLine].bind(this));
+      this[kContext].once('exit', this[kOnExit].bind(this));
 
-      this[kContext].once("flushHistory", () => {
+      this[kContext].once('flushHistory', () => {
         if (!this[kContext].closed) {
           this[kContext].resume();
           onReadyCallback(null, this[kContext]);
@@ -346,7 +342,8 @@ class ReplHistory {
     // Don't crash, just don't persist history.
     ReplHistory[kWriteToOutput](
       this[kContext],
-      "\nError: Could not open history file.\n" + "REPL session history will not be persisted.\n",
+      '\nError: Could not open history file.\n' +
+      'REPL session history will not be persisted.\n',
     );
     debug(err.stack);
 
@@ -375,10 +372,10 @@ class ReplHistory {
     }
 
     this[kWriting] = true;
-    const historyData = ArrayPrototypeJoin(this[kHistory], "\n");
+    const historyData = ArrayPrototypeJoin(this[kHistory], '\n');
 
     try {
-      await this[kHistoryHandle].write(historyData, 0, "utf8");
+      await this[kHistoryHandle].write(historyData, 0, 'utf8');
       this[kWriting] = false;
 
       if (this[kPending]) {
@@ -387,21 +384,21 @@ class ReplHistory {
       } else {
         this[kIsFlushing] = Boolean(this[kTimer]);
         if (!this[kIsFlushing]) {
-          this[kContext].emit("flushHistory");
+          this[kContext].emit('flushHistory');
         }
       }
     } catch (err) {
       this[kWriting] = false;
-      debug("Error writing history file:", err);
+      debug('Error writing history file:', err);
     }
   }
 
   async [kOnExit]() {
     if (this[kIsFlushing]) {
-      this[kContext].once("flushHistory", this[kOnExit].bind(this));
+      this[kContext].once('flushHistory', this[kOnExit].bind(this));
       return;
     }
-    this[kContext].off("line", this[kOnLine].bind(this));
+    this[kContext].off('line', this[kOnLine].bind(this));
 
     await this[kCloseHandle]();
   }
@@ -413,7 +410,7 @@ class ReplHistory {
       try {
         await handle.close();
       } catch (err) {
-        debug("Error closing history file:", err);
+        debug('Error closing history file:', err);
       }
     }
   }
@@ -430,9 +427,9 @@ class ReplHistory {
     if (this[kHistory].length === 0) {
       ReplHistory[kWriteToOutput](
         this[kContext],
-        "\nPersistent history support disabled. " +
-          "Set the NODE_REPL_HISTORY environment\nvariable to " +
-          "a valid, user-writable path to enable.\n",
+        '\nPersistent history support disabled. ' +
+        'Set the NODE_REPL_HISTORY environment\nvariable to ' +
+        'a valid, user-writable path to enable.\n',
       );
     }
     // First restore the original method on the context

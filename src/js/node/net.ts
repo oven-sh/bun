@@ -755,11 +755,10 @@ function Socket(options?) {
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
       if (
-        stats !== undefined &&
-        (stats.isFIFO() ||
-          stats.isCharacterDevice() ||
-          stats.isFile() ||
-          (stats.isSocket() && options.readable !== true))
+        stats.isFIFO() ||
+        stats.isCharacterDevice() ||
+        stats.isFile() ||
+        (stats.isSocket() && options.readable !== true)
       ) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
@@ -1160,6 +1159,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   const syncFd = this[kSyncWriteFd];
   if (syncFd !== undefined) {
     this[kSyncWriteFd] = undefined;
+    // Drop the instance overrides so a later connect() on this (reusable)
+    // socket goes through the fresh handle's normal write path.
+    delete this._write;
+    delete this._writev;
     if (syncFd > 2) {
       try {
         require("node:fs").closeSync(syncFd);
@@ -1373,6 +1376,9 @@ function fdSyncWrite(chunk, encoding, callback) {
     while (offset < buf.length) {
       offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
     }
+    // No native handle on this path, so feed bytesWritten/_bytesDispatched
+    // directly (node accounts these via the libuv handle).
+    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
     callback();
   } catch (err) {
     callback(err);
@@ -1382,6 +1388,7 @@ function fdSyncWrite(chunk, encoding, callback) {
 function fdSyncWritev(data, callback) {
   const fs = require("node:fs");
   try {
+    let total = 0;
     for (let i = 0; i < data.length; i++) {
       const { chunk, encoding } = data[i];
       const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
@@ -1389,7 +1396,10 @@ function fdSyncWritev(data, callback) {
       while (offset < buf.length) {
         offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
       }
+      total += offset;
     }
+    // See fdSyncWrite: no native handle to account these on.
+    this[kBytesWritten] = (this[kBytesWritten] || 0) + total;
     callback();
   } catch (err) {
     callback(err);

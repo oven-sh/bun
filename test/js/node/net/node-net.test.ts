@@ -942,6 +942,8 @@ describe("Socket fd adoption", () => {
       socket.end("hello");
     });
     expect(fs.readFileSync(path, "utf8")).toBe("hello");
+    // Sync fd writes must feed the byte counters (no native handle to do it).
+    expect(socket._bytesDispatched).toBe(5);
     // The adopted fd must be released on destroy (node closes the wrapping
     // libuv handle in the equivalent path).
     expect(() => fs.fstatSync(fd)).toThrow();

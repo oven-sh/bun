@@ -95,7 +95,17 @@ pub struct RuntimeState {
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
+    pub isolation_handles: IsolationHandles,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IsolationHandle {
+    FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
+    StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
+    Server(crate::server::AnyServer),
+}
+
+pub type IsolationHandles = bun_collections::ArrayHashMap<IsolationHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -153,6 +163,16 @@ pub(crate) fn timer_all_mut() -> &'static mut timer::All {
     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
     // single JS thread so no concurrent `&mut`.
     unsafe { &mut (*state).timer }
+}
+
+#[inline]
+pub(crate) fn isolation_handles() -> Option<&'static mut IsolationHandles> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`.
+    Some(unsafe { &mut (*state).isolation_handles })
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -307,6 +327,7 @@ unsafe fn init_runtime_state(
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: Box::new(crate::webcore::body::HiveAllocator::init()),
+        isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1585,6 +1606,34 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // A microtask still pending at end-of-file (e.g. queued by
+    // `tick_immediate_tasks` or `handle_rejected_promises`) can register new
+    // handles when it runs. Drain first so they land in the registry before
+    // it empties — matches the swap's own drain-before-teardown ordering.
+    let _ = vm.event_loop_mut().drain_microtasks();
+    loop {
+        // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
+        // the close below re-enters JS.
+        let Some(kv) = (unsafe { &mut (*state).isolation_handles }).pop() else {
+            break;
+        };
+        match kv.key {
+            // SAFETY: live until it unregisters in `detach`.
+            IsolationHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
+            // Live until it unregisters in `close()` (JS thread, us) — a
+            // registered entry implies `close()` has not run, and `deinit`
+            // cannot fire before `close()` drops the wrapper's Strong ref.
+            IsolationHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
+            IsolationHandle::Server(mut s) => s.stop(true),
+        }
     }
 }
 
@@ -2957,14 +3006,15 @@ fn transpile_source_code_inner(
                             module_info_ptr,
                         )
                     };
-                    if let Err(err) = print_result {
-                        // The printer never took ownership of `module_info`;
-                        // destroy it here.
-                        if let Some(mi) = module_info {
+                    // The printer never took ownership of `module_info`;
+                    // explicit destroy (not Drop) mirrors the async-path
+                    // error arm.
+                    if print_result.is_err() {
+                        if let Some(mi) = module_info.take() {
                             mi.destroy();
                         }
-                        return Err(err);
                     }
+                    print_result?;
                 }
 
                 if is_main {

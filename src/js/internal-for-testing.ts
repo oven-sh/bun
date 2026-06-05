@@ -199,6 +199,16 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+
+/**
+ * `bun test --isolate` SourceProvider cache introspection: returns the cached
+ * provider's JSC sourceType name ("Module", "BunTranspiledModule", ...) for a
+ * resolved specifier, or null when the specifier isn't cached.
+ */
+export const isolatedModuleCacheSourceType: (specifier: string) => string | null = $cpp(
+  "IsolatedModuleCache.cpp",
+  "createIsolatedModuleCacheSourceTypeForTesting",
+);
 export const Dequeue = require("internal/fifo");
 
 export const fs = require("node:fs/promises").$data;

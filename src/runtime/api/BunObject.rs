@@ -1650,6 +1650,17 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             }
             server_ref.js_value.set_strong(obj, global_object);
 
+            if global_object.bun_vm().test_isolation_enabled {
+                if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                            server.cast_const(),
+                        )),
+                        (),
+                    ));
+                }
+            }
+
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is

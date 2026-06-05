@@ -289,10 +289,14 @@ pub mod vlq {
         let mut len: u8 = 0;
         let mut bytes: [u8; VLQ_MAX_IN_BYTES] = [0; VLQ_MAX_IN_BYTES];
 
+        // Sign-magnitude: i32::MIN has no representation (its magnitude
+        // overflows the u32 VLQ), so it wraps to "-0" instead of panicking.
+        // The crash handler encodes bitcast u32 address halves through here
+        // and must not panic while already reporting a crash.
         let mut vlq: u32 = if value >= 0 {
             (value << 1) as u32
         } else {
-            ((-value << 1) | 1) as u32
+            (value.unsigned_abs() << 1) | 1
         };
 
         // source mappings are limited to i32
@@ -397,6 +401,30 @@ pub mod vlq {
     #[inline]
     pub fn decode_assume_valid(encoded: &[u8], start: usize) -> VLQResult {
         decode_impl::<true>(encoded, start)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn encode_decode_roundtrip() {
+            for value in [0, 1, -1, 255, 256, -255, -256, i32::MAX, i32::MIN + 1] {
+                let encoded = VLQ::encode(value);
+                let result = decode(encoded.slice(), 0);
+                assert_eq!(result.value, value);
+                assert_eq!(result.start, encoded.len as usize);
+            }
+            assert_eq!(VLQ::encode(i32::MAX).slice(), b"+/////D");
+            assert_eq!(VLQ::encode(i32::MIN + 1).slice(), b"//////D");
+        }
+
+        #[test]
+        fn encode_i32_min_does_not_panic() {
+            // i32::MIN is outside the sign-magnitude domain; it wraps to "-0".
+            let encoded = VLQ::encode(i32::MIN);
+            assert_eq!(decode(encoded.slice(), 0).value, 0);
+        }
     }
 }
 

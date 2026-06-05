@@ -54,10 +54,7 @@ where
 /// Error for a kevent changelist entry that came back with `EV_ERROR` set:
 /// the kernel stores the errno *value* in `data`. That is not the -1-sentinel
 /// return-code convention `errno_sys` decodes — feeding `data` through it
-/// yields `None` for every real errno. `EV_DELETE` reports EBADF/ENOENT here
-/// when the knote is already gone (e.g. the fd was closed while the poll was
-/// still registered, which removes its kevents); the deinit path tolerates
-/// that race by discarding the returned error.
+/// yields `None` for every real errno.
 #[cfg(any(target_os = "macos", all(test, not(windows))))]
 #[inline]
 fn kevent_change_error(data: i64) -> sys::Result<()> {
@@ -65,6 +62,26 @@ fn kevent_change_error(data: i64) -> sys::Result<()> {
         sys::SystemErrno::init(data).unwrap_or(sys::E::EINVAL),
         sys::Tag::kevent,
     ))
+}
+
+/// Is this errno from a failed deregistration just "the registration is
+/// already gone"? Two routine producers:
+/// - the fd was closed while the poll was still registered (close() removes
+///   an fd's kevents; epoll drops closed fds automatically) → EBADF/ENOENT
+/// - on macOS, closing a pty master marks the slave's knotes
+///   `EV_EOF|EV_ONESHOT`, so the kernel deletes them when the hangup event is
+///   delivered; the reader's teardown `EV_DELETE` then finds nothing → ENOENT.
+///   This happens on every terminal window/tab close while a tty is polled.
+///
+/// Both mean the kernel-side state already matches what unregistration wants,
+/// so they count as success — in particular the registration flags must still
+/// be cleared, which an error return would skip, leaving the poll claiming to
+/// be registered and re-issuing doomed deletes on later teardown calls. libuv
+/// ignores the same errnos for its kqueue/epoll delete operations.
+#[cfg(not(windows))]
+#[inline]
+fn deregistration_already_gone(errno: sys::E) -> bool {
+    matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
 pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
@@ -1012,8 +1029,10 @@ impl FilePoll {
                 linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
             };
 
-            if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-                return errno;
+            match sys::get_errno(ctl) {
+                sys::E::SUCCESS => {}
+                e if deregistration_already_gone(e) => {}
+                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl)),
             }
         }
         #[cfg(target_os = "macos")]
@@ -1112,11 +1131,16 @@ impl FilePoll {
             // such error events; they are packed from index 0 regardless of
             // which change failed. xnu ORs EV_ERROR into the existing action
             // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
-            if rc >= 1 && (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return kevent_change_error(changelist[0].data);
-            }
-            if rc >= 2 && (changelist[1].flags & EV::ERROR) != 0 && changelist[1].data != 0 {
-                return kevent_change_error(changelist[1].data);
+            for i in 0..usize::try_from(rc.min(2)).expect("int cast") {
+                if (changelist[i].flags & EV::ERROR) == 0 || changelist[i].data == 0 {
+                    continue;
+                }
+                if sys::SystemErrno::init(changelist[i].data)
+                    .is_some_and(deregistration_already_gone)
+                {
+                    continue;
+                }
+                return kevent_change_error(changelist[i].data);
             }
         }
         #[cfg(target_os = "freebsd")]
@@ -1159,8 +1183,10 @@ impl FilePoll {
                     ptr::null(),
                 )
             };
-            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-                return err;
+            match sys::get_errno(rc) {
+                sys::E::SUCCESS => {}
+                e if deregistration_already_gone(e) => {}
+                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
             }
         }
 

@@ -33,9 +33,9 @@ use super::uuid::UUID;
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
 //   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `websocket_deflate`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
-//   - `fs_watchers_for_isolation` / `stat_watchers_for_isolation` → per-entry
-//     (ptr, close-fn) so `close_all_watchers_for_isolation` works without
-//     naming the watcher types.
+//   - the `bun test --isolate` watcher/server registries → moved to
+//     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
+//     concrete types.
 //   - `stdin/stdout/stderr_store` → erased `*mut blob::Store` constructed via
 //     `__bun_stdio_blob_store_new` (link-time extern; same fn MiniEventLoop uses).
 //   - `valkey_context` was a stateless ZST with empty `deinit`; dropped.
@@ -192,19 +192,6 @@ impl CleanupHook {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// IsolationWatcher — per-entry vtable so `close_all_watchers_for_isolation`
-// can fire `detach`/`close` without naming `bun_runtime::node::FSWatcher` /
-// `StatWatcher` (cycle break, docs/PORTING.md §Dispatch cold path).
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-pub struct IsolationWatcher {
-    pub ptr: *mut c_void,
-    /// `FSWatcher::detach` / `StatWatcher::close` — supplied by the registrant.
-    pub close: unsafe fn(*mut c_void),
-}
-
 /// Erased high-tier slot with paired destructor (e.g. `WebSocketDeflate::RareData`).
 pub struct ErasedBox {
     pub ptr: NonNull<c_void>,
@@ -293,9 +280,6 @@ pub struct RareData {
     /// owns the data, no sidecar `Mutex<()>`).
     pub listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub fs_watchers_for_isolation: Vec<IsolationWatcher>,
-    pub stat_watchers_for_isolation: Vec<IsolationWatcher>,
-
     pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
@@ -353,8 +337,6 @@ impl Default for RareData {
             mime_types: None,
             node_fs_stat_watcher_scheduler: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
-            fs_watchers_for_isolation: Vec::new(),
-            stat_watchers_for_isolation: Vec::new(),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -787,76 +769,6 @@ impl RareData {
             // Prevent TIME_WAIT state so the relaunched process can rebind.
             syscall::disable_linger(socket);
             socket.close();
-        }
-    }
-
-    // ── isolation watchers (FSWatcher / StatWatcher) ──────────────────────
-    pub fn add_fs_watcher_for_isolation(
-        &mut self,
-        watcher: *mut c_void,
-        detach: unsafe fn(*mut c_void),
-    ) {
-        self.fs_watchers_for_isolation.push(IsolationWatcher {
-            ptr: watcher,
-            close: detach,
-        });
-    }
-    pub fn remove_fs_watcher_for_isolation(&mut self, watcher: *mut c_void) {
-        if let Some(i) = self
-            .fs_watchers_for_isolation
-            .iter()
-            .position(|w| w.ptr == watcher)
-        {
-            self.fs_watchers_for_isolation.swap_remove(i);
-        }
-    }
-    pub fn add_stat_watcher_for_isolation(
-        &mut self,
-        watcher: *mut c_void,
-        close: unsafe fn(*mut c_void),
-    ) {
-        self.stat_watchers_for_isolation.push(IsolationWatcher {
-            ptr: watcher,
-            close,
-        });
-    }
-    pub fn remove_stat_watcher_for_isolation(&mut self, watcher: *mut c_void) {
-        if let Some(i) = self
-            .stat_watchers_for_isolation
-            .iter()
-            .position(|w| w.ptr == watcher)
-        {
-            self.stat_watchers_for_isolation.swap_remove(i);
-        }
-    }
-    pub fn close_all_watchers_for_isolation(&mut self) {
-        // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
-        // `b818e70e1c57` NodeHTTPResponse::cork): `(w.close)(w.ptr)` is an
-        // opaque fn-pointer call that receives nothing derived from `self`. It
-        // re-enters JS (FSWatcher.close → "close" event), which can call
-        // `add_*_watcher_for_isolation` and push back onto these same Vecs.
-        // With `noalias self`, LLVM may cache the Vec's `len`/`ptr` across the
-        // call body and miss the push. ASM-verified PROVEN_CACHED. Launder
-        // `self` so every `pop()` goes through an opaque pointer.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        loop {
-            // SAFETY: `this` is the unique live `RareData` (boxed by VM);
-            // momentary `&mut` only, ended before the re-entrant close.
-            let Some(w) = (unsafe { &mut (*this).fs_watchers_for_isolation }).pop() else {
-                break;
-            };
-            // SAFETY: registered via add_fs_watcher_for_isolation; still live.
-            unsafe { (w.close)(w.ptr) };
-            core::hint::black_box(this);
-        }
-        loop {
-            // SAFETY: as above.
-            let Some(w) = (unsafe { &mut (*this).stat_watchers_for_isolation }).pop() else {
-                break;
-            };
-            // SAFETY: registered via add_stat_watcher_for_isolation; still live.
-            unsafe { (w.close)(w.ptr) };
-            core::hint::black_box(this);
         }
     }
 

@@ -2930,6 +2930,14 @@ mod draft {
                 libc::SIGFPE,
                 libc::SIGHUP,
                 libc::SIGTERM,
+                // The trap below raises SIGTRAP on aarch64 (`brk`), not the
+                // SIGILL of x86_64's `ud2`. If JS registered a SIGTRAP
+                // listener (`process.on("SIGTRAP")` — npm's `signal-exit`
+                // package does), the forwarding sigaction returns after
+                // enqueueing, the trap instruction re-executes, and the
+                // process spins in signal delivery forever instead of dying.
+                // Reset it so the first trap is lethal.
+                libc::SIGTRAP,
             ] {
                 // SAFETY: &sigact is a valid sigaction; null oldact is permitted.
                 unsafe {

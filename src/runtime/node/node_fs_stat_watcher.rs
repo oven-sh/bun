@@ -714,17 +714,14 @@ impl StatWatcher {
         // collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("deinit: watcher"));
 
-        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
-        if this_ref.ctx.test_isolation_enabled {
-            // `as_mut()` routes through the thread-local `*mut VM` (write
-            // provenance) so `rare_data()`'s `&mut self` borrow is sound on
-            // the JS thread.
-            this_ref
-                .ctx
-                .as_mut()
-                .rare_data()
-                .remove_stat_watcher_for_isolation(this.cast::<c_void>());
-        }
+        // Isolation-registry removal lives in `close()`, NOT here: the last
+        // `deref` can happen on the work-pool thread (queue ref dropped in
+        // `work_pool_callback` / `InitialStatTask`), where the thread-local
+        // `isolation_handles()` is null and the removal would silently no-op,
+        // leaving a dangling registry pointer. Every deinit of a registered
+        // watcher is preceded by a JS-thread `close()` (the Strong `this_value`
+        // self-ref keeps the wrapper alive until `close()` downgrades it, so
+        // `finalize` cannot drop the wrapper ref first).
         this_ref.persistent.set(false);
         if cfg!(debug_assertions) {
             if this_ref.poll_ref.get().is_active() {
@@ -774,7 +771,20 @@ impl StatWatcher {
     }
 
     /// Stops file watching but does not free the instance.
+    ///
+    /// Always runs on the JS thread (`do_close`, `close_isolation_handles`,
+    /// `shutdown_for_exit`), so this is where the watcher leaves the
+    /// isolation registry — `deinit` can fire on the work-pool thread where
+    /// the thread-local registry is unreachable.
     pub(crate) fn close(&self) {
+        // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
+        if self.ctx.test_isolation_enabled {
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::StatWatcher(
+                    NonNull::from(self),
+                ));
+            }
+        }
         if self.persistent.get() {
             self.persistent.set(false);
         }
@@ -1039,25 +1049,14 @@ impl StatWatcher {
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
-            // `as_mut()` routes through the thread-local `*mut VM` (write
-            // provenance) so `rare_data()`'s `&mut self` borrow is sound.
-            this_ref
-                .ctx
-                .as_mut()
-                .rare_data()
-                .add_stat_watcher_for_isolation(
-                    this_ptr.cast::<c_void>(),
-                    // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                    // (ptr, close-fn) so it can fire close without naming
-                    // StatWatcher. BACKREF — `p` is the live watcher we registered
-                    // above; `ParentRef` Deref gives safe `&StatWatcher`.
-                    |p| {
-                        ParentRef::from(
-                            NonNull::new(p.cast::<StatWatcher>()).expect("isolation close cb"),
-                        )
-                        .close()
-                    },
-                );
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                bun_core::handle_oom(handles.put(
+                    crate::jsc_hooks::IsolationHandle::StatWatcher(
+                        NonNull::new(this_ptr).expect("init: watcher"),
+                    ),
+                    (),
+                ));
+            }
         }
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
         InitialStatTask::create_and_schedule(this_ptr);

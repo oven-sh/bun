@@ -468,6 +468,10 @@ impl GridTemplateAreas {
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
+        //
+        // NOTE: only one row string is consumed (`if let`, not `while let` as
+        // upstream); must become a loop when this is wired into the typed
+        // property table.
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
             // parser's input arena and remains valid for the duration of this parse.
@@ -520,11 +524,11 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                // TODO: this intentionally falls through without `continue`,
-                // which is likely a bug (per upstream lightningcss, a `.`
-                // null-cell token should push None and continue; as written,
-                // any string containing `.` fails the name-codepoint check
-                // below and the whole value fails to parse).
+                // A run of `.` characters is a single null-cell token (CSS Grid 2 §7.3).
+                let idx = rest.iter().position(|&c| c != b'.').unwrap_or(rest.len());
+                tokens.append(None);
+                string = &rest[idx..];
+                continue;
             }
 
             let starts_with_name_codepoint = 'brk: {
@@ -568,3 +572,96 @@ fn is_name_codepoint(c: u8) -> bool {
 }
 
 crate::css_eql_partialeq!(TrackSize, RepeatCount);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse one row string; cells are `None` for `.` null-cell tokens.
+    fn parse_areas(s: &'static [u8]) -> Result<(u32, Vec<Option<&'static [u8]>>), ()> {
+        let bump = bun_alloc::Arena::new();
+        let mut tokens = SmallList::<Option<*const [u8]>, 1>::default();
+        let columns = GridTemplateAreas::parse_string(&bump, s, &mut tokens)?;
+        let cells = tokens
+            .slice()
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    // SAFETY: `p` is a subslice of the `'static` input `s`.
+                    unsafe { &*p }
+                })
+            })
+            .collect();
+        Ok((columns, cells))
+    }
+
+    #[test]
+    fn named_areas_only() {
+        let (columns, cells) = parse_areas(b"a b c").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![
+                Some(b"a".as_slice()),
+                Some(b"b".as_slice()),
+                Some(b"c".as_slice())
+            ]
+        );
+    }
+
+    #[test]
+    fn single_dot_null_cell() {
+        let (columns, cells) = parse_areas(b"a . b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn multi_dot_run_is_one_null_cell() {
+        let (columns, cells) = parse_areas(b"a ... b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_null_cells() {
+        let (columns, cells) = parse_areas(b". c .").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(cells, vec![None, Some(b"c".as_slice()), None]);
+    }
+
+    #[test]
+    fn all_null_cells() {
+        let (columns, cells) = parse_areas(b".. ..").unwrap();
+        assert_eq!(columns, 2);
+        assert_eq!(cells, vec![None, None]);
+    }
+
+    #[test]
+    fn dot_run_directly_followed_by_name() {
+        // `..a` is a null cell followed by the named area `a`.
+        let (columns, cells) = parse_areas(b"..a b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![None, Some(b"a".as_slice()), Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn empty_string_is_error() {
+        assert_eq!(parse_areas(b""), Err(()));
+        assert_eq!(parse_areas(b" \t\n"), Err(()));
+    }
+
+    #[test]
+    fn invalid_codepoint_is_error() {
+        assert_eq!(parse_areas(b"a !b"), Err(()));
+    }
+}

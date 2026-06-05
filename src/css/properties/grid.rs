@@ -9,7 +9,6 @@ use bun_core::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 pub enum TrackSizing {
     /// No explicit grid tracks.
     None,
@@ -39,7 +38,6 @@ impl TrackList {
 
             if let Ok(track_size) = input.try_parse(TrackSize::parse) {
                 // TODO: error handling
-                // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
             } else if let Ok(repeat) = input.try_parse(TrackRepeat::parse) {
                 // TODO: error handling
@@ -142,7 +140,6 @@ impl TrackSize {
 
         input.expect_function_matching(b"fit-content")?;
 
-        // TODO(port): css.voidWrap(LengthPercentage, LengthPercentage.parse) — wraps a parse fn for parseNestedBlock; using a closure directly
         let len = input.parse_nested_block(|i: &mut Parser| LengthPercentage::parse(i))?;
 
         Ok(TrackSize::FitContent(len))
@@ -289,13 +286,10 @@ impl TrackRepeat {
         input.expect_function_matching(b"repeat")?;
 
         input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackRepeat> {
-            // TODO(port): Zig uses `@call(.auto, @field(RepeatCount, "parse"), .{i})` — direct call here
             let count = RepeatCount::parse(i)?;
 
             i.expect_comma()?;
 
-            // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.Vec(T).init(i.arena)` — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 
@@ -305,7 +299,7 @@ impl TrackRepeat {
                     .unwrap_or_else(|_| CustomIdentList::default());
                 line_names.push(line_name);
 
-                // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+                // Use the nested parser `i`, not the outer `input`.
                 if let Ok(track_size) = i.try_parse(TrackSize::parse) {
                     // TODO: error handling
                     track_sizes.push(track_size);
@@ -391,7 +385,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
     input.parse_nested_block(|i: &mut Parser| -> css::Result<CustomIdentList> {
         let mut values = CustomIdentList::default();
 
-        // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+        // Use the nested parser `i`, not the outer `input`.
         while let Ok(ident) = i.try_parse(CustomIdent::parse) {
             values.append(ident);
         }
@@ -404,7 +398,6 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
 /// used in the `repeat()` function.
 ///
 /// See [TrackRepeat](TrackRepeat).
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 #[derive(PartialEq, Eq)]
 pub enum RepeatCount {
     /// The number of times to repeat.
@@ -416,8 +409,8 @@ pub enum RepeatCount {
 }
 
 impl RepeatCount {
-    // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
-    // order (Number → keyword `auto-fill` → keyword `auto-fit`).
+    // Variants tried in declaration order (Number → keyword `auto-fill` →
+    // keyword `auto-fit`).
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(n) = input.try_parse(CSSIntegerFns::parse) {
             return Ok(RepeatCount::Number(n));
@@ -433,7 +426,6 @@ impl RepeatCount {
         Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
     }
 
-    // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             RepeatCount::Number(n) => CSSIntegerFns::to_css(*n, dest),
@@ -454,7 +446,7 @@ pub enum GridTemplateAreas {
         columns: u32,
         /// A flattened list of grid area names.
         /// Unnamed areas specified by the `.` token are represented as null.
-        // TODO(port): arena-owned slice lifetime — Zig `?[]const u8` in CSS arena
+        // TODO: arena-owned slice lifetime — should be `Option<&'bump [u8]>`
         areas: SmallList<Option<*const [u8]>, 1>,
     },
 }
@@ -472,7 +464,7 @@ impl GridTemplateAreas {
         let mut row: u32 = 0;
         let mut columns: u32 = 0;
 
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
@@ -483,7 +475,6 @@ impl GridTemplateAreas {
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {
-                    // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)
                     return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
                 }
             };
@@ -529,8 +520,11 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
-                // is supposed to push None and continue). Mirroring Zig control flow exactly.
+                // TODO: this intentionally falls through without `continue`,
+                // which is likely a bug (per upstream lightningcss, a `.`
+                // null-cell token should push None and continue; as written,
+                // any string containing `.` fails the name-codepoint check
+                // below and the whole value fails to parse).
             }
 
             let starts_with_name_codepoint = 'brk: {
@@ -553,7 +547,7 @@ impl GridTemplateAreas {
                 rest.len()
             };
             let token = &rest[..token_len];
-            // TODO(port): arena-owned slice — Zig stores borrowed slice into SmallList; using raw ptr here
+            // TODO: arena-owned slice — should store a borrowed slice into SmallList; using raw ptr here
             let _ = bump;
             tokens.append(Some(std::ptr::from_ref::<[u8]>(token)));
             string = &rest[token_len..];
@@ -574,5 +568,3 @@ fn is_name_codepoint(c: u8) -> bool {
 }
 
 crate::css_eql_partialeq!(TrackSize, RepeatCount);
-
-// ported from: src/css/properties/grid.zig

@@ -38,7 +38,7 @@ use crate::{ConnectingSocket, us_bun_verify_error_t, us_socket_t};
 pub trait Handler: 'static {
     /// What `us_socket_ext` holds. Ignored when `HAS_EXT == false`.
     type Ext;
-    /// Zig: `@hasDecl(H, "Ext")`. When false, handlers take `(s, …)` instead
+    /// When false, handlers take `(s, …)` instead
     /// of `(ext, s, …)` and recover their owner from `s.group().owner::<T>()`.
     const HAS_EXT: bool = true;
 
@@ -206,9 +206,8 @@ impl<H: Handler> Make<H> {
 pub(crate) struct Trampolines<H>(core::marker::PhantomData<H>);
 
 impl<H: Handler> Trampolines<H> {
-    // Zig: `inline fn call(s, comptime f, extra)` — conditionally prepends
-    // `s.ext(@typeInfo(E).pointer.child)` to the arg tuple. Rust can't splat
-    // tuples into a call, so each trampoline inlines the HAS_EXT branch.
+    // Rust can't splat tuples into a call, so each trampoline inlines the
+    // HAS_EXT branch.
     #[inline(always)]
     fn ext(s: *mut us_socket_t) -> &'static mut H::Ext {
         // S008: `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the
@@ -343,5 +342,3 @@ impl<H: Handler> Trampolines<H> {
         }
     }
 }
-
-// ported from: src/uws_sys/vtable.zig

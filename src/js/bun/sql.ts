@@ -1039,7 +1039,7 @@ SQL.SQLiteError = SQLiteError;
 SQL.MySQLError = MySQLError;
 
 // // Helper functions for native code to create error instances
-// // These are internal functions used by Zig/C++ code
+// // These are internal functions used by native code
 // export function $createPostgresError(
 //   message: string,
 //   code: string,

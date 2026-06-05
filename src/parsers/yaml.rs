@@ -1,14 +1,11 @@
-//! YAML parser ported from src/interchange/yaml.zig
+//! YAML parser.
 //!
-//! NOTE ON GENERICITY: Zig's `Parser(comptime enc: Encoding)` returns a type whose
-//! `enc.unit()` is `u8` or `u16`. Rust const generics cannot return types, so this
-//! port models `Encoding` as a trait with an associated `Unit` type, and `Parser<Enc>`
-//! is generic over `Enc: Encoding`.
+//! `Encoding` is modeled as a trait with an associated `Unit` type (`u8` or
+//! `u16`), and `Parser<Enc>` is generic over `Enc: Encoding`.
 //!
-//! NOTE ON LABELED SWITCH: Zig's `label: switch (x) { ... continue :label y; }` is a
-//! state-machine loop. These are ported as `let mut __c = x; loop { match __c { ... } }`
-//! with `__c = y; continue;` for `continue :label y`. Each is marked
-//! `// PORT NOTE: labeled-switch loop`.
+//! Several scanners are state-machine loops written as
+//! `let mut __c = x; loop { match __c { ... } }` with `__c = y; continue;`.
+//! Each is marked `// labeled-switch loop`.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -31,7 +28,6 @@ impl YAML {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<Expr, YamlParseError> {
-        // Zig: `bun.analytics.Features.yaml_parse += 1;`
         bun_core::analytics::Features::yaml_parse_inc();
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents());
@@ -56,7 +52,6 @@ impl YAML {
                     ast::ExprNodeList::init_capacity(stream.docs.len());
                 for doc in &stream.docs {
                     items.push(doc.root);
-                    // PERF(port): was appendAssumeCapacity
                 }
                 Ok(Expr::init(
                     E::Array {
@@ -83,11 +78,8 @@ pub enum YamlParseError {
 bun_core::oom_from_alloc!(YamlParseError);
 
 impl From<YamlParseError> for bun_core::Error {
-    // PORT NOTE: Zig `YAML.ParseError` is an `error{...}` set, so callers
-    // (e.g. `try YAML.parse(...)` in `ParseTask.getAST`) coerce it into the
-    // wider inferred error union. Mirror that by mapping each variant to its
-    // Zig-tag string via `bun.err!`, the same shape `json5::ExternalError`
-    // uses one file over.
+    // Map each variant to its tag string via `bun.err!`, the same shape
+    // `json5::ExternalError` uses one file over.
     fn from(e: YamlParseError) -> Self {
         match e {
             YamlParseError::OutOfMemory => bun_core::err!("OutOfMemory"),
@@ -101,7 +93,10 @@ impl From<YamlParseError> for bun_core::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> ParseResult<Enc> {
+pub fn parse<'i, Enc: Encoding>(
+    bump: &'i bun_alloc::Arena,
+    input: &'i [Enc::Unit],
+) -> ParseResult<'i, Enc> {
     let mut parser: Parser<Enc> = Parser::init(bump, input);
 
     match parser.parse() {
@@ -110,12 +105,8 @@ pub fn parse<Enc: Encoding>(bump: &bun_alloc::Arena, input: &[Enc::Unit]) -> Par
     }
 }
 
-pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<Enc>, writer: &mut W) -> fmt::Result {
-    // Zig body (yaml.zig:44-53) constructs `Parser(encoding).Printer(@TypeOf(writer))`
-    // and calls `printer.print()`. The `Printer` type is commented out in the spec
-    // (yaml.zig:4927-5250) and operates on the removed `Node` enum, so any Zig
-    // call to `print()` is a compile error on instantiation. Rust eagerly checks
-    // generics, so we cannot mirror that; instead this is a hard panic on the
+pub fn print<Enc: Encoding, W: fmt::Write>(stream: Stream<'_, Enc>, writer: &mut W) -> fmt::Result {
+    // The printer was never implemented; this is a hard panic on the
     // (currently unreachable — `rg yaml::print src/` has no callers) path.
     let _ = (stream, writer);
     panic!(
@@ -271,8 +262,7 @@ impl IndentIndicator {
             7 => IndentIndicator::N7,
             8 => IndentIndicator::N8,
             9 => IndentIndicator::N9,
-            // Zig's safety-checked `@enumFromInt` traps on out-of-range; the
-            // only caller (`read_indentation_indicator`) passes `digit - b'0'`
+            // The only caller (`read_indentation_indicator`) passes `digit - b'0'`
             // after a `b'1'..=b'9'` guard, so this arm is unreachable.
             _ => panic!("invalid IndentIndicator"),
         }
@@ -393,11 +383,8 @@ impl Line {
     }
 }
 
-// Zig: comptime { bun.assert(Pos != Indent); ... } — type-distinctness checks.
-// Rust newtypes are already distinct; nothing to assert.
-
 // ───────────────────────────────────────────────────────────────────────────
-// Encoding trait (replaces Zig `Encoding` enum + `enc.unit()` type fn)
+// Encoding trait
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -407,11 +394,10 @@ pub enum EncodingKind {
     Utf16,
 }
 
-/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Replaces Zig's
-/// `enc.literal("...")` (a `comptime` utf8→utf16 transcode via
-/// `std.unicode.utf8ToUtf16LeStringLiteral`). Rust cannot do const transcoding
-/// behind a trait method, so the literal is widened at the call site into this
-/// inline buffer instead. All call sites in this file pass ≤4-byte ASCII; the
+/// Stack buffer for an ASCII literal widened to `Enc::Unit`. Rust cannot do
+/// const transcoding behind a trait method, so the literal is widened at the
+/// call site into this inline buffer instead.
+/// All call sites in this file pass ≤4-byte ASCII; the
 /// cap of 8 leaves headroom for new literals.
 #[derive(Clone, Copy)]
 pub struct EncLit<U: Copy + Default> {
@@ -441,7 +427,7 @@ impl<U: Copy + Default> AsRef<[U]> for EncLit<U> {
     }
 }
 
-/// Trait modeling Zig's `Encoding` comptime enum where `unit()` returns a type.
+/// Code-unit encoding of the parser input; `Unit` is `u8` or `u16`.
 pub trait Encoding: Copy + 'static {
     type Unit: Copy + Eq + Ord + Default + fmt::Debug + Into<u32> + 'static;
 
@@ -458,19 +444,17 @@ pub trait Encoding: Copy + 'static {
         u.into()
     }
 
-    /// `enc.literal("...")` — Zig's comptime string literal in the target
-    /// encoding. Callers pass ASCII only; widened into an inline `EncLit`
-    /// buffer (see `EncLit` doc for the const-generics rationale).
+    /// A string literal in the target encoding. Callers pass ASCII only;
+    /// widened into an inline `EncLit` buffer (see `EncLit` doc for the
+    /// const-generics rationale).
     fn literal(s: &'static [u8]) -> EncLit<Self::Unit>;
 
     /// Number of leading units to skip if `input` starts with [3] c-byte-order-mark.
     fn bom_len(input: &[Self::Unit]) -> usize;
 
     /// Reinterpret a `&[Unit]` slice as `&[u8]` for `StringHashMap` keying
-    /// (`anchors` / `tag_handles`). Zig's `bun.StringHashMap` is keyed by
-    /// `[]const u8`; calls like `tag_handles.put(handle.slice(self.input), {})`
-    /// only type-check there for `unit() == u8` thanks to lazy generic
-    /// instantiation. Rust eagerly checks generics, so we route through this
+    /// (`anchors` / `tag_handles`). `StringHashMap` is keyed by `&[u8]`, so we
+    /// route through this
     /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
     /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
     /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
@@ -478,9 +462,7 @@ pub trait Encoding: Copy + 'static {
 
     /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
     /// (identity); the `u8` encodings mark this `unreachable!()` because every
-    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`. Mirrors Zig's
-    /// `text.append(@intCast(cp))` paths in `scanDoubleQuotedScalar` /
-    /// `decodeHexCodePoint` where `unit() == u16`.
+    /// call site is gated on `Enc::KIND == EncodingKind::Utf16`.
     fn unit_from_u16(u: u16) -> Self::Unit;
 
     /// Reinterpret `&[Unit]` as `&[u16]`. Identity for `Utf16`; the `u8`
@@ -577,8 +559,7 @@ impl Encoding for Utf16 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u16> {
-        // Zig: `std.unicode.utf8ToUtf16LeStringLiteral` (comptime). All call
-        // sites pass ASCII, so widen byte-by-byte into the inline buffer.
+        // All call sites pass ASCII, so widen byte-by-byte into the inline buffer.
         debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
         let mut buf = [0u16; 8];
         let mut i = 0;
@@ -614,7 +595,7 @@ impl Encoding for Utf16 {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// chars — character classification (Zig: `Encoding.chars()` returned a type)
+// chars — character classification
 // ───────────────────────────────────────────────────────────────────────────
 
 pub mod chars {
@@ -846,8 +827,8 @@ impl StringRange {
     }
 }
 
-// PORT NOTE: reshaped for borrowck — Zig captured `parser.pos` lazily via a
-// pointer field; in Rust that pins an immutable borrow across mutating scans.
+// Capturing `parser.pos` lazily via a pointer field would pin an immutable
+// borrow across mutating scans.
 // Capture only `off` and have callers pass the end `Pos` explicitly.
 #[derive(Clone, Copy)]
 pub struct StringRangeStart {
@@ -861,6 +842,7 @@ impl StringRangeStart {
     }
 }
 
+#[derive(Clone)]
 pub enum YamlString<Enc: Encoding> {
     Range(StringRange),
     List(Vec<Enc::Unit>),
@@ -900,16 +882,16 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 }
 
-// `String.Builder` — owns a back-reference into the parser. The Zig code stored
-// `parser: *Parser(enc)` and mutated `parser.whitespace_buf`. In Rust this is a
-// borrow-checker hazard (the builder borrows `&mut Parser` while the parser also
-// drives scanning). We keep a raw pointer with SAFETY notes.
-// TODO(port): refactor whitespace_buf out of Parser or pass &mut explicitly.
+// `String.Builder` — owns a back-reference into the parser and mutates
+// `parser.whitespace_buf`. A `&mut Parser` field would be a borrow-checker
+// hazard (the builder borrows `&mut Parser` while the parser also drives
+// scanning). We keep a raw pointer with SAFETY notes.
+// TODO: refactor whitespace_buf out of Parser or pass &mut explicitly.
 pub struct StringBuilder<'a, Enc: Encoding> {
-    // PORT NOTE: a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
+    // a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
     // to Parser's input lifetime (invariant under &mut), which both fails
-    // borrowck at `string_builder()` and is exactly the aliasing the Zig already
-    // had. Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
+    // borrowck at `string_builder()`.
+    // Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
     // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
     parser: *mut Parser<'a, Enc>,
     pub str: YamlString<Enc>,
@@ -962,7 +944,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     }
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
-        // PORT NOTE: reshaped for borrowck — take ownership of buf, process, clear.
+        // reshaped for borrowck — take ownership of buf, process, clear.
         let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
         let input = self.input();
         for ws in &buf {
@@ -986,7 +968,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                         let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
                         list.extend_from_slice(range.slice(input));
                         list.push(*unit);
-                        // PERF(port): was assume_capacity
                         self.str = YamlString::List(list);
                     }
                     YamlString::List(list) => list.push(*unit),
@@ -1080,7 +1061,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
                 list.extend_from_slice(range.slice(input));
                 list.push(unit);
-                // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
             }
             YamlString::List(list) => list.push(unit),
@@ -1099,7 +1079,6 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
                 list.extend_from_slice(range.slice(input));
                 list.extend_from_slice(s);
-                // PERF(port): was assume_capacity
                 self.str = YamlString::List(list);
             }
             YamlString::List(list) => list.extend_from_slice(s),
@@ -1147,10 +1126,8 @@ pub enum FirstChar {
     Other,
 }
 
-// PORT NOTE: Zig defined this inline inside scanPlainScalar. Hoisted to module
-// scope so methods can be `impl`'d. `parser` is `*mut` because the outer
-// `&mut self` in scan_plain_scalar drives scanning concurrently — see
-// LIFETIMES.tsv BACKREF.
+// `parser` is `*mut` because the outer `&mut self` in scan_plain_scalar
+// drives scanning concurrently — see LIFETIMES.tsv BACKREF.
 pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub str_builder: StringBuilder<'i, Enc>,
 
@@ -1290,8 +1267,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
         self.str_builder.append_whitespace_n_times(unit, n)
     }
-
-    // PORT NOTE: Zig `Keywords` enum (yaml.zig:1862-1887) was unused; not ported.
 
     pub fn resolve(
         &mut self,
@@ -1503,7 +1478,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
         let mut first = true;
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(parser!().next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
@@ -1765,8 +1740,8 @@ fn parse_double_generic<Enc: Encoding>(s: &[Enc::Unit]) -> Result<f64, ()> {
     }
 }
 
-/// Port of `std.fmt.parseUnsigned(u64, slice, 0)` over an encoding-generic
-/// slice. Radix 0 = auto-detect `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
+/// Parses a `u64` from an encoding-generic slice with radix
+/// auto-detection: `0x`/`0X` (hex), `0o`/`0O` (oct), `0b`/`0B`
 /// (bin), else decimal; `_` is a digit separator. Utf8/Latin1 narrow via
 /// `Enc::key_bytes`; Utf16 narrows via [`bun_core::strings::narrow_ascii_u16`].
 fn parse_unsigned_radix0<Enc: Encoding>(s: &[Enc::Unit]) -> Result<u64, ()> {
@@ -1826,6 +1801,7 @@ impl NodeTag {
     }
 }
 
+#[derive(Clone)]
 pub enum NodeScalar<Enc: Encoding> {
     Null,
     Boolean(bool),
@@ -1840,20 +1816,14 @@ impl<Enc: Encoding> NodeScalar<Enc> {
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
             NodeScalar::Number(value) => Expr::init(E::Number { value: *value }, pos.loc()),
             NodeScalar::String(value) => {
-                // Zig: `.init(E.String, .{ .data = value.slice(input) }, pos.loc())`.
-                // `E.String.data` is `[]const u8`, so the Zig source only
-                // type-checks for `unit() == u8`. For `Utf16` we route through
-                // `E::String::init_utf16` instead of mirroring the Zig compile
-                // error (Rust eagerly monomorphizes).
+                // For `Utf16` we route through `E::String::init_utf16`.
                 //
-                // LIFETIME: Zig's `String.list` is `array_list.Managed` backed
-                // by `parser.allocator` (the bump arena), so `list.items`
-                // outlives the scalar token. The Rust port uses a global-alloc
-                // `Vec` that is dropped with the local `scalar` immediately
-                // after this returns — the resulting `EString.data` would
-                // dangle. Dupe `.list` bytes into the bump arena to recover the
-                // Zig lifetime; `.range` already borrows `input` (source text)
-                // which outlives the Expr → JS conversion.
+                // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
+                // dropped with the local `scalar` immediately after this
+                // returns — the resulting `EString.data` would dangle. Dupe
+                // the list bytes into the bump arena; `.range` already borrows
+                // `input` (source text) which outlives the Expr → JS
+                // conversion.
                 let s: &[Enc::Unit] = match value {
                     YamlString::Range(range) => range.slice(input),
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
@@ -1917,10 +1887,59 @@ pub struct Document {
 
 // impl Drop for Document — Vec<Directive> auto-drops; Expr is arena-backed.
 
-pub struct Stream<Enc: Encoding> {
+/// Should only be used with expressions created with the YAML parser. It assumes
+/// only null, boolean, number, string, array, object are possible. It also only
+/// does pointer comparison with arrays and objects (so exponential merges are avoided).
+/// Operates on already-built `Expr`s, so it is independent of the input encoding.
+fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+    if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
+        return false;
+    }
+    match (&l.data, &r.data) {
+        (ast::ExprData::ENull(_), _) => true,
+        (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
+        (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
+        (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
+            // UTF-8/UTF-16-aware string equality.
+            if ls.is_utf16 != rs.is_utf16 {
+                if ls.is_utf16 {
+                    rs.eql_bytes(ls.data.slice())
+                } else {
+                    ls.eql_bytes(rs.data.slice())
+                }
+            } else if ls.is_utf16 {
+                ls.slice16() == rs.slice16()
+            } else {
+                ls.data == rs.data
+            }
+        }
+        // pointer comparison
+        (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
+        (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
+        _ => false,
+    }
+}
+
+/// Encoding-independent companion to [`yaml_merge_key_expr_eql`].
+fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
+    match &key.data {
+        ast::ExprData::ENull(_) => 0,
+        ast::ExprData::EBoolean(b) => 1 + b.value as u64,
+        ast::ExprData::ENumber(n) => {
+            let value = if n.value == 0.0 { 0.0 } else { n.value };
+            value.to_bits()
+        }
+        ast::ExprData::EString(s) => s.hash(),
+        ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
+        ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
+        _ => u64::MAX,
+    }
+}
+
+pub struct Stream<'i, Enc: Encoding> {
     pub docs: Vec<Document>,
-    pub input: *const [Enc::Unit],
-    // TODO(port): lifetime — Zig stored `[]const enc.unit()` borrowing parser input.
+    /// Borrows the parser input.
+    pub input: &'i [Enc::Unit],
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1934,6 +1953,9 @@ pub struct TokenInit {
     pub line: Line,
 }
 
+// `Clone` deep-copies the `Vec` inside `YamlString::List`, which is fine for
+// the read-only uses here.
+#[derive(Clone)]
 pub struct Token<Enc: Encoding> {
     pub start: Pos,
     pub indent: Indent,
@@ -1941,20 +1963,7 @@ pub struct Token<Enc: Encoding> {
     pub data: TokenData<Enc>,
 }
 
-impl<Enc: Encoding> Clone for Token<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): TokenData contains NodeScalar<Enc> which holds a Vec for
-        // String::List. Zig copied tokens by value (struct copy). TODO(port):
-        // make Token cheaply-copyable or store scalars by index.
-        Token {
-            start: self.start,
-            indent: self.indent,
-            line: self.line,
-            data: self.data.clone(),
-        }
-    }
-}
-
+#[derive(Clone)]
 pub enum TokenData<Enc: Encoding> {
     Eof,
     /// `-`
@@ -1992,61 +2001,7 @@ pub enum TokenData<Enc: Encoding> {
     Scalar(TokenScalar<Enc>),
 }
 
-impl<Enc: Encoding> Clone for TokenData<Enc> {
-    fn clone(&self) -> Self {
-        // TODO(port): see Token::clone note
-        match self {
-            TokenData::Eof => TokenData::Eof,
-            TokenData::SequenceEntry => TokenData::SequenceEntry,
-            TokenData::MappingKey => TokenData::MappingKey,
-            TokenData::MappingValue => TokenData::MappingValue,
-            TokenData::CollectEntry => TokenData::CollectEntry,
-            TokenData::SequenceStart => TokenData::SequenceStart,
-            TokenData::SequenceEnd => TokenData::SequenceEnd,
-            TokenData::MappingStart => TokenData::MappingStart,
-            TokenData::MappingEnd => TokenData::MappingEnd,
-            TokenData::Anchor(r) => TokenData::Anchor(*r),
-            TokenData::Alias(r) => TokenData::Alias(*r),
-            TokenData::Tag(t) => TokenData::Tag(*t),
-            TokenData::Directive => TokenData::Directive,
-            TokenData::Reserved => TokenData::Reserved,
-            TokenData::DocumentStart => TokenData::DocumentStart,
-            TokenData::DocumentEnd => TokenData::DocumentEnd,
-            TokenData::Scalar(_) => {
-                // TODO(port): Scalar contains a Vec; Zig copied by value. Reshape to make it Copy.
-                unreachable!("Token<Scalar> should not be cloned")
-            }
-        }
-    }
-}
-
-impl<Enc: Encoding> TokenData<Enc> {
-    pub fn discriminant(&self) -> u8 {
-        // SAFETY: #[repr(...)] not declared; use mem::discriminant for comparisons instead.
-        // This helper exists only for the labeled-switch-loop ports below.
-        // TODO(port): replace with core::mem::discriminant comparisons.
-        match self {
-            TokenData::Eof => 0,
-            TokenData::SequenceEntry => 1,
-            TokenData::MappingKey => 2,
-            TokenData::MappingValue => 3,
-            TokenData::CollectEntry => 4,
-            TokenData::SequenceStart => 5,
-            TokenData::SequenceEnd => 6,
-            TokenData::MappingStart => 7,
-            TokenData::MappingEnd => 8,
-            TokenData::Anchor(_) => 9,
-            TokenData::Alias(_) => 10,
-            TokenData::Tag(_) => 11,
-            TokenData::Directive => 12,
-            TokenData::Reserved => 13,
-            TokenData::DocumentStart => 14,
-            TokenData::DocumentEnd => 15,
-            TokenData::Scalar(_) => 16,
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
     pub data: NodeScalar<Enc>,
     pub multiline: bool,
@@ -2221,13 +2176,13 @@ impl<Enc: Encoding> Token<Enc> {
 // ParseResult
 // ───────────────────────────────────────────────────────────────────────────
 
-pub enum ParseResult<Enc: Encoding> {
-    Result(ParseResultOk<Enc>),
+pub enum ParseResult<'i, Enc: Encoding> {
+    Result(ParseResultOk<'i, Enc>),
     Err(ParseResultError),
 }
 
-pub struct ParseResultOk<Enc: Encoding> {
-    pub stream: Stream<Enc>,
+pub struct ParseResultOk<'i, Enc: Encoding> {
+    pub stream: Stream<'i, Enc>,
     // allocator dropped — global mimalloc
 }
 
@@ -2314,12 +2269,12 @@ impl ParseResultError {
     }
 }
 
-impl<Enc: Encoding> ParseResult<Enc> {
-    pub fn success(stream: Stream<Enc>, _parser: &Parser<Enc>) -> Self {
+impl<'i, Enc: Encoding> ParseResult<'i, Enc> {
+    pub fn success(stream: Stream<'i, Enc>, _parser: &Parser<'_, Enc>) -> Self {
         ParseResult::Result(ParseResultOk { stream })
     }
 
-    pub fn fail(err: ParseError, parser: &Parser<Enc>) -> Self {
+    pub fn fail(err: ParseError, parser: &Parser<'_, Enc>) -> Self {
         let e = match err {
             ParseError::OutOfMemory => ParseResultError::Oom,
             ParseError::StackOverflow => ParseResultError::StackOverflow,
@@ -2407,7 +2362,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub line: Line,
     pub token: Token<Enc>,
 
-    /// Zig `parser.allocator`. Growable buffers in this port use the global
+    /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
     /// `NodeScalar::to_expr`).
@@ -2472,7 +2427,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         ParseError::UnexpectedToken
     }
 
-    pub fn parse(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub fn parse(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         self.scan(ScanOptions {
             first_scan: true,
             ..Default::default()
@@ -2480,7 +2435,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.parse_stream()
     }
 
-    pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
+    pub fn parse_stream(&mut self) -> Result<Stream<'i, Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
 
         // we want one null document if eof, not zero documents.
@@ -2493,11 +2448,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         Ok(Stream {
             docs,
-            input: std::ptr::from_ref::<[Enc::Unit]>(self.input),
+            input: self.input,
         })
     }
 
-    // PERF(port): was comptime monomorphization — profile
     fn peek(&self, n: usize) -> Enc::Unit {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -2654,7 +2608,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub fn parse_document(&mut self) -> Result<Document, ParseError> {
         let mut directives: Vec<Directive> = Vec::new();
 
-        // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
         self.anchors.clear();
         self.tag_handles.clear();
 
@@ -2822,10 +2775,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`]` scan happens AFTER `.flow_in` is popped (yaml.zig:771),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`]` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2908,13 +2860,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.context.set(Context::FlowIn)?;
 
-        // PORT NOTE: Zig `defer self.context.unset(.flow_in)` — capture the
-        // fallible body's result and unset on EVERY exit (including `?` paths).
-        // The post-`}` scan happens AFTER `.flow_in` is popped (yaml.zig:852),
-        // so only the loop body lives inside the closure.
+        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
+        // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
+        // popped, so only the loop body lives inside the closure.
         let result: Result<(), ParseError> = (|| {
             {
-                // Zig `defer self.context.unset(.flow_key)` — unset before propagating.
+                // Unset `FlowKey` before propagating.
                 self.context.set(Context::FlowKey)?;
                 let r = self.scan(ScanOptions::default());
                 self.context.unset(Context::FlowKey);
@@ -3037,8 +2988,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         self.block_indents.push(sequence_indent)?;
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
@@ -3090,53 +3041,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         result
     }
 
-    /// Should only be used with expressions created with the YAML parser. It assumes
-    /// only null, boolean, number, string, array, object are possible. It also only
-    /// does pointer comparison with arrays and objects (so exponential merges are avoided)
-    fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
-        if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
-            return false;
-        }
-        match (&l.data, &r.data) {
-            (ast::ExprData::ENull(_), _) => true,
-            (ast::ExprData::EBoolean(lb), ast::ExprData::EBoolean(rb)) => lb.value == rb.value,
-            (ast::ExprData::ENumber(ln), ast::ExprData::ENumber(rn)) => ln.value == rn.value,
-            (ast::ExprData::EString(ls), ast::ExprData::EString(rs)) => {
-                // Zig: `ls.eqlEString(rs)` — inline the UTF-8/UTF-16 + slice-eq logic.
-                if ls.is_utf16 != rs.is_utf16 {
-                    if ls.is_utf16 {
-                        rs.eql_bytes(ls.data.slice())
-                    } else {
-                        ls.eql_bytes(rs.data.slice())
-                    }
-                } else if ls.is_utf16 {
-                    ls.slice16() == rs.slice16()
-                } else {
-                    ls.data == rs.data
-                }
-            }
-            // pointer comparison
-            (ast::ExprData::EArray(la), ast::ExprData::EArray(ra)) => la.as_ptr() == ra.as_ptr(),
-            (ast::ExprData::EObject(lo), ast::ExprData::EObject(ro)) => lo.as_ptr() == ro.as_ptr(),
-            _ => false,
-        }
-    }
-
-    fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
-        match &key.data {
-            ast::ExprData::ENull(_) => 0,
-            ast::ExprData::EBoolean(b) => 1 + b.value as u64,
-            ast::ExprData::ENumber(n) => {
-                let value = if n.value == 0.0 { 0.0 } else { n.value };
-                value.to_bits()
-            }
-            ast::ExprData::EString(s) => s.hash(),
-            ast::ExprData::EArray(a) => a.as_ptr() as usize as u64,
-            ast::ExprData::EObject(o) => o.as_ptr() as usize as u64,
-            _ => u64::MAX,
-        }
-    }
-
     fn parse_block_mapping(
         &mut self,
         first_key: Expr,
@@ -3162,8 +3066,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.block_indents.push(mapping_indent)?;
         }
 
-        // PORT NOTE: Zig `defer self.block_indents.pop()` — capture the fallible
-        // body's result and pop on EVERY exit (including `?` paths).
+        // Capture the fallible body's result and pop `block_indents` on EVERY
+        // exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut props = MappingProps::init();
             let mut first_entry_end_line = mapping_line;
@@ -3241,8 +3145,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             self.context.set(Context::BlockIn)?;
 
-            // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
-            // capture-then-unset pattern, nested.
+            // Same capture-then-unset pattern, nested.
             let inner: Result<Expr, ParseError> = (|| {
                 let mut previous_line = first_entry_end_line;
 
@@ -3414,12 +3317,11 @@ impl MappingProps {
         budget: &mut usize,
     ) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len().min(*budget));
-        // PERF(port): was ensureUnusedCapacity
 
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
-            let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
+            let hash = yaml_merge_key_expr_hash(key);
             self.merge_index
                 .get_or_put(hash)?
                 .value_ptr
@@ -3429,19 +3331,17 @@ impl MappingProps {
 
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            let merge_hash = Parser::<Utf8>::yaml_merge_key_expr_hash(merge_key);
+            let merge_hash = yaml_merge_key_expr_hash(merge_key);
             if let Some(candidates) = self.merge_index.get(&merge_hash) {
                 for existing_idx in candidates.iter() {
                     let existing_key = self.list[*existing_idx as usize].key.as_ref().unwrap();
-                    if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
-                        // TODO(port): yaml_merge_key_expr_eql is generic-agnostic; using Utf8 monomorph here is a hack.
+                    if yaml_merge_key_expr_eql(existing_key, merge_key) {
                         continue 'next_merge_prop;
                     }
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields
-            // (Zig copied the struct by value).
+            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
             self.list.push(G::Property {
                 key: merge_prop.key,
                 value: merge_prop.value,
@@ -3450,7 +3350,6 @@ impl MappingProps {
                 initializer: merge_prop.initializer,
                 ..Default::default()
             });
-            // PERF(port): was appendAssumeCapacity
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr
@@ -3723,8 +3622,8 @@ impl Default for ScanOptions {
 // Escape
 // ───────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was a comptime parameter (Zig `comptime escape`); ConstParamTy needs
-// nightly `adt_const_params`. Downgraded to a runtime arg — branch is trivially
+// PERF: a const-generic parameter would need nightly `adt_const_params`
+// (ConstParamTy). Kept as a runtime arg — branch is trivially
 // predicted (3 fixed call sites). Re-evaluate.
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -3963,9 +3862,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             node_props.set_anchor(anchor)?;
         }
 
-        // PORT NOTE: labeled-switch loop on `self.token.data`. The Zig
-        // `continue :node self.token.data` re-enters with the new token after
-        // scanning. We loop and re-match.
+        // labeled-switch loop on `self.token.data`: loop and re-match with
+        // the new token after scanning.
         let node: Expr = 'node: loop {
             match &self.token.data {
                 TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd => {
@@ -4013,7 +3911,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         Some(e) => *e,
                         None => {
                             // we failed to find the alias, but it might be cyclic and
-                            // available later. (see Zig comment block)
+                            // available later.
                             return Err(ParseError::UnresolvedAlias);
                         }
                     };
@@ -4345,7 +4243,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let scalar_line = self.token.line;
                     let scalar_tab_after_indent = self.tab_after_indent;
 
-                    // PORT NOTE: reshaped for borrowck — we must hold the scalar
+                    // reshaped for borrowck — we must hold the scalar
                     // payload across `self.scan()` which replaces self.token.
                     // Take it out before scanning.
                     let scalar = match core::mem::replace(
@@ -4371,7 +4269,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
-                        // (see Zig comments for cases 1-4)
                         if self.token.indent.is_less_than(scalar_indent)
                             || (opts.explicit_mapping_key
                                 && scalar_line != self.token.line
@@ -4495,7 +4392,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn fold_lines(&mut self) -> usize {
         let mut total: usize = 0;
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
@@ -4548,7 +4445,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
     // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
     //
-    // TODO(port): borrowck reshape — TODO(port): either (a) move
+    // TODO: borrowck reshape — either (a) move
     // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
     // per call instead of storing it. The raw-pointer aliasing below is sound
     // because `ctx` never outlives `&mut self` and never re-enters Parser
@@ -4588,7 +4485,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             multiline: false,
         };
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(parser!().next());
         loop {
             match __c {
@@ -4933,7 +4830,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut indent_indicator: Option<IndentIndicator> = None;
         let mut chomp: Option<Chomp> = None;
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut __c = Enc::wide(self.next());
         loop {
             match __c {
@@ -5009,11 +4906,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // ── scanAutoIndentedLiteralScalar ───────────────────────────────────────
     //
-    // TODO(port): Another large labeled-switch state machine (yaml.zig:2703-2979)
-    // with an inner `LiteralScalarCtx` struct. The two-phase loop (find
-    // content_indent, then scan body) with `ctx.append`/`ctx.done` and chomp
-    // handling is preserved structurally below; verify the nested `newlines:`
-    // switch translation against the Zig original.
+    // Another large labeled-switch state machine with an inner
+    // `LiteralScalarCtx` struct: a two-phase loop (find content_indent,
+    // then scan body) with `ctx.append`/`ctx.done` (verified against the
+    // official yaml-test-suite):
+    // - explicit `indent_indicator` support;
+    // - EOF chomping normalized via `leading_newlines` in `done()` so Clip and
+    //   Keep agree with eemeli/yaml + js-yaml (L24T/01, JEF9/02);
+    // - folded more-indented lines tracked with `prev/cur_more_indented`
+    //   flags, so breaks adjacent to more-indented lines are not folded
+    //   (spec [73]-[74]);
+    // - the per-line indent guard is the precomputed `min_indent`
+    //   (>= content_indent AND > parent block indent);
+    // - `---`/`...` document markers additionally require line start.
 
     fn scan_auto_indented_literal_scalar(
         &mut self,
@@ -5147,7 +5052,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 1: find content_indent and first non-ws char
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         let mut consumed_indent_this_line = false;
         let (content_indent, first): (Indent, u32) = 'phase1: loop {
             let __c = Enc::wide(self.next());
@@ -5239,7 +5144,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         // Phase 2: scan body
-        // PORT NOTE: labeled-switch loop with nested `newlines:` switch
+        // labeled-switch loop with nested `newlines:` switch
         let mut __c = first;
         loop {
             match __c {
@@ -5386,7 +5291,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5448,7 +5353,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
+                            // TODO: wrong!
                             multiline: self.line != scalar_line,
                             is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
@@ -5469,7 +5374,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let scalar_indent = self.line_indent;
         let mut text: Vec<Enc::Unit> = Vec::new();
 
-        // PORT NOTE: labeled-switch loop
+        // labeled-switch loop
         loop {
             let c = Enc::wide(self.next());
             match c {
@@ -5526,7 +5431,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         indent: scalar_indent,
                         line: scalar_line,
                         resolved: TokenScalar {
-                            // TODO: wrong! (matches Zig comment)
+                            // TODO: wrong!
                             multiline: self.line != scalar_line,
                             is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
@@ -5635,8 +5540,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
             }
             EncodingKind::Utf16 => {
-                // Zig: std.unicode.utf16CodepointSequenceLength + manual surrogate split.
-                // utf16CodepointSequenceLength rejects surrogate code points; mirror that.
+                // Surrogate code points are rejected.
                 if (0xD800..=0xDFFF).contains(&cp) {
                     return Err(ParseError::UnexpectedCharacter);
                 }
@@ -5820,7 +5724,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         let previous_token_line = self.token.line;
 
-        // PORT NOTE: labeled-switch loop with `inline` whitespace dispatch.
+        // labeled-switch loop with `inline` whitespace dispatch.
         // We loop on `Enc::wide(self.next())` and break with the resulting token.
         let token: Token<Enc> = 'next: loop {
             let c = Enc::wide(self.next());
@@ -6073,8 +5977,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token = Token::reserved(self.token_init(start));
                     return Err(Self::unexpected_token());
                 }
-                // PORT NOTE: ScanCtx.scanWhitespace inlined.
-                // whitespace — Zig used `inline '\r','\n',' ','\t' => |ws| ctx.scanWhitespace(ws)`
+                // ScanCtx.scanWhitespace inlined.
                 0x0D /* '\r' */ => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -6417,12 +6320,3 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 fn eq_ascii<Enc: Encoding>(s: &[Enc::Unit], lit: &[u8]) -> bool {
     s.len() == lit.len() && s.iter().zip(lit).all(|(a, b)| Enc::wide(*a) == *b as u32)
 }
-
-// ───────────────────────────────────────────────────────────────────────────
-// Omitted: large commented-out blocks from yaml.zig
-//   - `Node` struct (lines 4758-4881) — commented out in source
-//   - `Printer` fn   (lines 4927-5248) — commented out in source
-// These were not active code; intentionally not ported.
-// ───────────────────────────────────────────────────────────────────────────
-
-// ported from: src/interchange/yaml.zig

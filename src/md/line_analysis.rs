@@ -4,9 +4,7 @@ use super::types;
 use super::types::{Align, Container, OFF};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Result types for the anonymous-struct returns in the Zig source.
-// Kept as named structs (not tuples) so field names line up with the .zig
-// for side-by-side diffing.
+// Result types, kept as named structs (not tuples) for readable field access.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
@@ -845,5 +843,3 @@ impl Parser<'_> {
         }
     }
 }
-
-// ported from: src/md/line_analysis.zig

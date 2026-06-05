@@ -11,5 +11,3 @@ pub static PREFER: phf::Map<&'static [u8], OfflineMode> = phf::phf_map! {
     b"latest" => OfflineMode::Latest,
     b"online" => OfflineMode::Online,
 };
-
-// ported from: src/options_types/OfflineMode.zig

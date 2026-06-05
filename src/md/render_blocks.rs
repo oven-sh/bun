@@ -157,11 +157,9 @@ impl Parser<'_> {
                                 && ci + 1 < cell_content.len()
                                 && cell_content[ci + 1] == b'|'
                             {
-                                // PERF(port): was appendAssumeCapacity
                                 buf.push(b'|');
                                 ci += 2;
                             } else {
-                                // PERF(port): was appendAssumeCapacity
                                 buf.push(cell_content[ci]);
                                 ci += 1;
                             }
@@ -210,5 +208,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/render_blocks.zig

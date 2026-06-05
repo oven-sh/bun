@@ -1,6 +1,4 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
-//!
-//! Ported from `src/css/properties/custom.zig`.
 //
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
@@ -79,8 +77,8 @@ mod ext {
     /// Vec<u8>`, which this round adds in css_parser.rs).
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // PORT NOTE: reshaped for borrowck — `get_import_records` borrows
-            // &mut *dest, so capture arena/filename first.
+            // `get_import_records` borrows &mut *dest, so capture
+            // arena/filename first.
             let arena = dest.arena;
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
             let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
@@ -102,7 +100,6 @@ mod ext {
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
-                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global arena
                 dependencies.push(crate::Dependency::Url(d));
             }
 
@@ -111,8 +108,8 @@ mod ext {
 
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
-        // PORT NOTE: reshaped for borrowck — `get_import_record_url` reborrows
-        // &mut *dest, so capture `is_internal` first.
+        // `get_import_record_url` reborrows &mut *dest, so capture
+        // `is_internal` first.
         let url: &'static [u8] = {
             let u = dest.get_import_record_url(this.import_record_idx)?;
             // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
@@ -120,7 +117,6 @@ mod ext {
         };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile if hot.
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
@@ -160,7 +156,7 @@ mod ext {
 
     /// Forwarder to `DashedIdentReference::to_css` (now un-gated in
     /// `values/ident.rs`). `CssModule::reference_dashed` is real; the
-    /// CSS-Modules `dashed_idents` remapping path (ident.zig:44-52) is wired.
+    /// CSS-Modules `dashed_idents` remapping path is wired.
     #[inline]
     pub(super) fn dashed_ident_ref_to_css(
         this: &DashedIdentReference,
@@ -274,7 +270,6 @@ impl CssEql for Token {
 impl CssHash for Token {
     fn hash(&self, hasher: &mut Wyhash) {
         use Token::*;
-        // Zig `implementHash`: tag prefix + payload bytes.
         // `Token::kind() as u32` gives a stable per-variant discriminant.
         hasher.update(&(self.kind() as u32).to_ne_bytes());
         match self {
@@ -303,16 +298,14 @@ impl<'bump> DeepClone<'bump> for Token {
     #[inline]
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
         // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
-        // is a placeholder) — identity copy is correct (matches generics.zig
-        // "const strings" fast-path). `Num`/`Dimension` are POD.
+        // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
         self.clone()
     }
 }
 
-// PERF(port): the token vecs here are plain global-alloc `Vec<TokenOrValue>`;
-// the Zig original was arena-backed. Thread `&'bump Bump` if profiling shows it.
+// PERF: the token vecs here are plain global-alloc `Vec<TokenOrValue>`;
+// Thread `&'bump Bump` if profiling shows it.
 
-/// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.
 pub use css_parser::CssResult as Result;
 
 /// PERF: nullable optimization
@@ -482,8 +475,7 @@ impl TokenList {
             if tokens[tokens.len() - 1].is_whitespace() {
                 end -= 1;
             }
-            // PORT NOTE: Zig does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
-            // (frees only the backing array). `drain` moves the elements out without deep-cloning.
+            // `drain` moves the elements out without deep-cloning.
             let newlist: Vec<TokenOrValue> = tokens.drain(start..end).collect();
             return Ok(TokenList { v: newlist });
         }
@@ -567,7 +559,7 @@ impl TokenList {
             let Ok(tok) = input.next_including_whitespace() else {
                 break;
             };
-            // PORT NOTE: reshaped for borrowck — clone the token so we can call &mut methods on `input` below.
+            // Clone the token so we can call &mut methods on `input` below.
             let tok = tok.clone();
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
@@ -752,7 +744,6 @@ impl TokenList {
 
         let mut res = css::SmallList::<Fallbacks, 2>::default();
         if fallbacks.contains(ColorFallbackKind::P3) {
-            // PERF(port): was assume_capacity
             res.append((
                 ColorFallbackKind::P3.supports_condition(),
                 self.get_fallback(bump, ColorFallbackKind::P3),
@@ -760,7 +751,6 @@ impl TokenList {
         }
 
         if fallbacks.contains(ColorFallbackKind::LAB) {
-            // PERF(port): was assume_capacity
             res.append((
                 ColorFallbackKind::LAB.supports_condition(),
                 self.get_fallback(bump, ColorFallbackKind::LAB),
@@ -985,7 +975,6 @@ impl UnresolvedColor {
                 })
             }),
             b"light-dark" => return input.parse_nested_block(|input2| {
-                // errdefer doesn't fire on `return .{ .err = ... }` in Zig — but in Rust,
                 // `?` drops `light` automatically on the error path.
                 let light = input2.parse_until_before(Delimiters::COMMA, |i| {
                     TokenListFns::parse(i, options, depth + 1)
@@ -1016,9 +1005,8 @@ impl UnresolvedColor {
 
 // `ComponentParser::parse_relative` is generic over `C: LightDarkOwned` so the
 // `from light-dark(...)` relative-color path can rebuild a `light-dark()` of
-// whatever output type the caller is producing. Zig duck-types this via
-// `lightDarkOwned` on both `CssColor` and `UnresolvedColor`; in Rust the trait
-// lives in `values::color` and we wire `UnresolvedColor` into it here.
+// whatever output type the caller is producing. The trait lives in
+// `values::color` and we wire `UnresolvedColor` into it here.
 impl css_values::color::LightDarkOwned for UnresolvedColor {
     #[inline]
     fn light_dark_owned(light: Self, dark: Self) -> Self {
@@ -1191,9 +1179,7 @@ impl EnvironmentVariableName {
 }
 
 /// A UA-defined environment variable name.
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
-// to_css/deep_clone via comptime reflection over @tagName. Replaced by an
-// `EnumProperty` impl below (kebab-case match) — same protocol surface.
+// The `EnumProperty` impl below provides parse/to_css via a kebab-case match.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
 pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
@@ -1336,8 +1322,7 @@ impl TokenOrValue {
 // `TokenList` payload, and `media_query::MediaFeatureValue` derives
 // `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
 // (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
-// the structural clone here. PORT NOTE: Zig had no `Clone` distinction —
-// shallow struct copy was implicit; arena-slice payloads (`*const [u8]`) are
+// the structural clone here. Arena-slice payloads (`*const [u8]`) are
 // `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
 
 impl Clone for TokenList {
@@ -1538,7 +1523,7 @@ pub enum CustomPropertyName {
     Unknown(Ident),
 }
 
-// PORT NOTE: `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
+// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
 // intentionally don't derive `PartialEq` (pointer-eq would be wrong).
 // `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
 impl PartialEq for CustomPropertyName {
@@ -1552,7 +1537,7 @@ impl CustomPropertyName {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => {
-                // Spec custom.zig:1496-1501 → DashedIdent.toCss → dest.writeDashedIdent(ident, true),
+                // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
                 // which applies CSS-Modules dashed-ident renaming.
                 dest.write_dashed_ident(custom, true)
             }
@@ -1627,5 +1612,3 @@ pub(crate) fn try_parse_color_token(
 
     None
 }
-
-// ported from: src/css/properties/custom.zig

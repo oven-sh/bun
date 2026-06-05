@@ -82,15 +82,6 @@ export const subprocessInternals = {
 
 export const iniInternals = {
   parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
-  // loadNpmrc: (
-  //   src: string,
-  //   env?: Record<string, string>,
-  // ): {
-  //   default_registry_url: string;
-  //   default_registry_token: string;
-  //   default_registry_username: string;
-  //   default_registry_password: string;
-  // } => $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2)(src, env),
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 

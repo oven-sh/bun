@@ -236,5 +236,3 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     b"x-user-defined" => EncodingLabel::XUserDefined,
     b"replacement" => EncodingLabel::Replacement,
 };
-
-// ported from: src/runtime/webcore/EncodingLabel.zig

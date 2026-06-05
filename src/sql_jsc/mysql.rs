@@ -27,8 +27,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Submodule tree (files use PascalCase basenames, mirroring the Zig sources;
-// wired via `#[path]`).
+// Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "mysql/MySQLContext.rs"]
@@ -92,5 +91,3 @@ pub use my_sql_context::MySQLContext;
 pub use my_sql_query::MySQLQuery;
 pub use my_sql_request_queue::MySQLRequestQueue;
 pub use my_sql_statement::MySQLStatement;
-
-// ported from: src/sql_jsc/mysql.zig

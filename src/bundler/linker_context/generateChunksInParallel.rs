@@ -5,8 +5,6 @@ use std::io::Write as _;
 use bun_collections::AutoBitSet;
 use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
-// PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
-// are free types in that module, not associated types on the struct.
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
@@ -35,21 +33,18 @@ use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
 
-/// `bun.BYTECODE_EXTENSION` (bun.zig). Local because `bun_core` doesn't
-/// re-export it; matches `bun.rs::bytecode_extension`.
+/// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
 bun_core::declare_scope!(PartRanges, hidden);
 
-// PORT NOTE: `Chunk.final_rel_path` / `metafile_chunk_json` are owned
-// `Box<[u8]>` (Zig stored them as linker-arena `[]const u8`); assignments
+// `Chunk.final_rel_path` / `metafile_chunk_json` are owned
+// `Box<[u8]>`; assignments
 // below move the boxed buffer directly — no lifetime promotion needed.
 use crate::linker_context_mod::debug;
 
-// TODO(port): Zig's return type is `!if (is_dev_server) void else ArrayList(OutputFile)`.
-// Rust const generics cannot vary the return type, so we always return
-// `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec. Could be
-// split into two monomorphized wrappers if the unused Vec matters.
+// Const generics cannot vary the return type, so we always return
+// `Vec<OutputFile>` and the IS_DEV_SERVER path returns an empty Vec.
 pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     c: &mut LinkerContext,
     chunks: &mut [Chunk],
@@ -66,7 +61,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     {
         // TODO: instead of running a renamer per chunk, run it per file
         debug!(" START {} renamers", chunks.len());
-        // PORT NOTE: Zig `defer debug(...)` is moved to end-of-scope explicitly below.
         let ctx = GenerateChunkCtx {
             chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
@@ -84,7 +78,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     if c.source_maps.line_offset_tasks.len() > 0 {
         debug!(" START {} source maps (line offset)", chunks.len());
         c.source_maps.line_offset_wait_group.wait();
-        // PORT NOTE: `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
+        // `c.arena().free(...)` + `.len = 0` → Vec drop semantics.
         c.source_maps.line_offset_tasks = Box::default();
         debug!("  DONE {} source maps (line offset)", chunks.len());
     }
@@ -107,7 +101,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!(" START {} prepare CSS ast (total count)", total_count);
 
             let mut batch = ThreadPoolLib::Batch::default();
-            // PERF(port): was c.arena().alloc — using Vec on global mimalloc
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
@@ -117,7 +110,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             callback: prepare_css_asts_for_chunk,
                         },
                         chunk: std::ptr::from_mut::<Chunk>(chunk),
-                        // PORT NOTE: `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
+                        // `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
                         linker: std::ptr::from_mut::<LinkerContext>(c).cast(),
                     });
@@ -142,14 +135,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
 
     {
-        // PERF(port): was c.arena().alloc — using Vec on global mimalloc
         let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
 
         {
             let mut total_count: usize = 0;
-            // PORT NOTE: `GenerateChunkCtx` fields are raw pointers; capture them
+            // `GenerateChunkCtx` fields are raw pointers; capture them
             // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
-            // stored in every ctx (Zig stores `[]Chunk` by value).
+            // stored in every ctx.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
@@ -186,7 +178,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
-            // PERF(port): was c.arena().alloc — using Vec on global mimalloc.
             // Pre-reserved to `total_count` so pushes never reallocate; the
             // batch holds raw pointers into this buffer.
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
@@ -223,8 +214,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_js_chunk,
                                 },
-                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
-                                // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
+                                // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
@@ -246,8 +237,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     node: ThreadPoolLib::Node::default(),
                                     callback: generate_compile_result_for_css_chunk,
                                 },
-                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
-                                // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                                // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
+                                // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
                                 // before `chunk_contexts` drops (we `wait_for_all` below).
@@ -268,8 +259,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 node: ThreadPoolLib::Node::default(),
                                 callback: generate_compile_result_for_html_chunk,
                             },
-                            // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`
-                            // (Zig: `*GenerateChunkCtx`), conflating the borrow with
+                            // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
+                            // conflating the borrow with
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
                             // before `chunk_contexts` drops (we `wait_for_all` below).
@@ -353,7 +344,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk. This can technically be done in parallel but it
         // probably doesn't matter so much because we're not hashing that much data.
-        // PORT NOTE: reshaped for borrowck — index loop so `chunks` can be passed
+        // Reshaped for borrowck — index loop so `chunks` can be passed
         // whole to `append_isolated_hashes_for_imported_chunks` and then indexed.
         for index in 0..chunks.len() {
             let mut hash = ContentHasher::default();
@@ -368,10 +359,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             chunk.template.placeholder.hash = Some(hash.digest());
 
             let mut rel_path: Vec<u8> = Vec::new();
-            // PORT NOTE: use the byte-writer (`PathTemplate::print`) directly —
+            // Use the byte-writer (`PathTemplate::print`) directly —
             // routing through `Display`/`write!` goes via `from_utf8_lossy`,
             // which would replace non-UTF-8 dir bytes with U+FFFD and corrupt
-            // the output path. Zig's `std.fmt.allocPrint` writes raw bytes.
+            // the output path.
             chunk
                 .template
                 .print(&mut rel_path)
@@ -447,7 +438,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
 
-            // PORT NOTE: Zig `inline for` over a homogeneous tuple → const array + plain for.
             for (name, template) in [
                 ("entry", entry_naming),
                 ("chunk", chunk_naming),
@@ -508,7 +498,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
-                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result (Zig: catch unreachable)
+                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result
             }
         }
 
@@ -557,14 +547,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // Free the ModuleInfo now that it's been serialized to bytes.
             // It was allocated with bun.default_allocator (not the arena),
             // so it must be explicitly destroyed.
-            // PORT NOTE: in Rust, dropping the Option<Box<ModuleInfo>> frees it.
+            // In Rust, dropping the Option<Box<ModuleInfo>> frees it.
             js.module_info = None;
         }
     }
 
     // Generate metafile JSON fragments for each chunk (after paths are resolved)
     if c.options.metafile {
-        // PORT NOTE: reshaped for borrowck — `generate_chunk_json` reads all chunks
+        // Reshaped for borrowck — `generate_chunk_json` reads all chunks
         // immutably while we write one chunk's `metafile_chunk_json`; index split.
         for i in 0..chunks.len() {
             let json =
@@ -605,8 +595,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let bundler: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
     let mut static_route_visitor = StaticRouteVisitor {
-        // SAFETY: Zig stores `c: *LinkerContext` (raw). Launder via raw ptr so this
-        // long-lived shared borrow doesn't conflict with `c.log_disjoint()` inside
+        // SAFETY: launder via raw ptr so this long-lived
+        // shared borrow doesn't conflict with `c.log_disjoint()` inside
         // the chunk loop below. `c` outlives `static_route_visitor`.
         c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
         cache: bun_collections::ArrayHashMap::default(),
@@ -618,16 +608,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
     // the HTML assembly step in codeWithSourceMapShifts, not here.
     //
-    // PORT NOTE: Zig `defer` frees each buffer with `Chunk.IntermediateOutput.allocatorForSize(len)`.
-    // Rust `Vec<Option<Box<[u8]>>>` frees via `Drop` (global mimalloc); if `allocatorForSize`
-    // returns a distinct arena for large buffers, matched-arena dealloc must be
-    // restored here.
+    // Buffers are freed via `Drop` (global mimalloc); if
+    // `Chunk::allocator_for_size` ever becomes size-dependent, matched-arena
+    // dealloc must be restored here.
     let mut standalone_chunk_contents: Option<Vec<Option<Box<[u8]>>>> = None;
 
     if is_standalone {
         let mut scc: Vec<Option<Box<[u8]>>> = vec![None; chunks.len()];
 
-        // PORT NOTE: `IntermediateOutput.code_standalone` reads `&Chunk` /
+        // `IntermediateOutput.code_standalone` reads `&Chunk` /
         // `&[Chunk]` (chunk is `&chunks[ci]`). Take `intermediate_output` out
         // by value so the only `&mut` is disjoint from those shared borrows.
         for ci in 0..chunks.len() {
@@ -675,7 +664,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         )?;
     } else {
         // In-memory build (also used for standalone mode)
-        // PORT NOTE: `code()` / `code_standalone()` read `chunk` (= `&chunks[i]`)
+        // `code()` / `code_standalone()` read `chunk` (= `&chunks[i]`)
         // and the full `&[Chunk]` slice simultaneously. Iterate by index so both
         // can be safe shared reborrows of `chunks`; the only per-chunk mutation
         // is the `intermediate_output` take/restore, done via `chunks[i]`.
@@ -810,9 +799,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             + a.len()
                             + b.len()
                             + b"\n".len();
-                        // TODO(port): Zig uses Chunk.IntermediateOutput.allocatorForSize(total_len)
                         let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        // PERF(port): was appendSliceAssumeCapacity
                         buf.extend_from_slice(&code_result.buffer);
                         buf.extend_from_slice(source_map_start);
                         buf.extend_from_slice(a);
@@ -849,10 +836,8 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                     let total_len =
                         code_result.buffer.len() + source_map_start.len() + encode_len + 1;
-                    // TODO(port): Zig uses Chunk.IntermediateOutput.allocatorForSize(total_len)
                     let mut buf: Vec<u8> = Vec::with_capacity(total_len);
 
-                    // PERF(port): was appendSliceAssumeCapacity
                     buf.extend_from_slice(&code_result.buffer);
                     buf.extend_from_slice(source_map_start);
 
@@ -970,7 +955,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             }));
                         } else {
                             // an error
-                            // logger OOM-only (Zig: catch unreachable)
+                            // logger OOM-only
                             // Split-borrow — `static_route_visitor.c` holds a
                             // detached `&LinkerContext`; `log_disjoint` returns the
                             // disjoint `Transpiler.log` backref so no `&mut c` is
@@ -1107,8 +1092,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         None
                     },
                     referenced_css_chunks: match &chunk.content {
-                        // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `output_file::Index`
-                        // is `#[repr(transparent)]` over u32.
+                        // `output_file::Index` is `#[repr(transparent)]` over u32.
                         crate::chunk::Content::Javascript(js) => js
                             .css_chunks
                             .iter()
@@ -1164,13 +1148,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // Deinit dropped items to free their heap allocations (paths, buffers).
         let mut result = output_files.take();
         let mut write_idx: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig iterates by pointer and assigns into items[write_idx].
         let len = result.len();
         for i in 0..len {
             if result[i].loader == Loader::Html {
                 result.swap(write_idx, i);
-                // PORT NOTE: Zig copies item then leaves original; using swap keeps semantics
-                // (the slot at `i` will be truncated/dropped below).
                 write_idx += 1;
             }
             // else: item at `i` will be dropped by truncate below (impl Drop handles deinit)
@@ -1184,9 +1165,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
 pub use crate::ThreadPool;
 
-// TODO(port): narrow error set
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::BakeExtra;
-
-// ported from: src/bundler/linker_context/generateChunksInParallel.zig

@@ -39,6 +39,7 @@ pub mod ipc_host;
 pub mod jsc_hooks;
 pub mod linear_fifo_testing;
 pub mod napi;
+pub mod pe_testing;
 #[path = "../bun.js.rs"]
 pub mod run_main;
 pub mod timer;

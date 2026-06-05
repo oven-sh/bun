@@ -132,8 +132,8 @@ export const memfd_create: (size: number) => number = $newZigFunction(
   1,
 );
 
-// Feed a (possibly hostile) addon PE through pe.PEFile.addLinkedAddon
-// against a host PE image. Used by the adversarial-input tests so they
+// Feed a (possibly hostile) addon PE through PEFile::add_linked_addon
+// (src/exe_format/pe.rs) against a host PE image. Used by the adversarial-input tests so they
 // can run on every platform without a Windows bun.exe template. Returns
 // one of { skipped: true } / { error: string } / { skipped: false,
 // output: Buffer, metadata: Buffer, rvaBase: number }.

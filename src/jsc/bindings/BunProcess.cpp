@@ -327,7 +327,7 @@ struct Bun__LinkedNodeModuleResolved {
     // collide. Not a real HMODULE — never pass it to Win32.
     void* handle_token;
     // True when this call ran bind() (and therefore DllMain), in
-    // which case the Zig-side lock is *still held* across the return
+    // which case the binder lock is *still held* across the return
     // so a concurrent Worker on the cached-hit path cannot reach
     // DLHandleMap.get() before we .add(). Caller MUST call
     // Bun__linkedNodeModuleUnlock() exactly once before any

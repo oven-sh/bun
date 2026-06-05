@@ -1091,7 +1091,7 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphELFVaddr()
 
 static uint64_t* pe_section_size = nullptr;
 static uint8_t* pe_section_data = nullptr;
-// .bunL — statically-merged `.node` addon metadata (see pe.zig
+// .bunL — statically-merged `.node` addon metadata (see pe.rs
 // LinkedAddon). Absent in a non-compiled bun or when no addons were
 // merged; callers treat missing as "fall back to tmpfile LoadLibrary".
 static uint64_t* pe_linked_size = nullptr;

@@ -212,6 +212,17 @@ pub struct LOLHTMLContext {
     pub element_handlers: Vec<Box<ElementHandler>>,
     #[expect(clippy::vec_box)]
     pub document_handlers: Vec<Box<DocumentHandler>>,
+    pub active_rewriters: usize,
+}
+
+impl LOLHTMLContext {
+    fn drain_end_tag_handlers(&self) {
+        for handler in &self.element_handlers {
+            handler
+                .end_tag_handlers
+                .with_mut(|handlers| handlers.clear());
+        }
+    }
 }
 
 impl Drop for LOLHTMLContext {
@@ -526,8 +537,15 @@ impl HTMLRewriterLoader {
         if self.finalized {
             return;
         }
-        // SAFETY: rewriter created via builder.build(); not yet freed.
-        unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+        if !self.rewriter.is_null() {
+            // SAFETY: rewriter created via builder.build(); not yet freed.
+            unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+            let mut ctx = self.context.borrow_mut();
+            ctx.active_rewriters -= 1;
+            if ctx.active_rewriters == 0 {
+                ctx.drain_end_tag_handlers();
+            }
+        }
         self.backpressure = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         self.finalized = true;
     }
@@ -643,6 +661,7 @@ impl HTMLRewriterLoader {
         // POD struct copy of an `ArrayListUnmanaged`, which in Rust would
         // double-own `Vec`/`Box` heap buffers. Clone the Rc instead.
         self.context = context;
+        self.context.borrow_mut().active_rewriters += 1;
         self.output = output;
 
         None
@@ -868,6 +887,7 @@ impl BufferOutputSink {
                     return Ok(create_lolhtml_error(global));
                 }
             };
+            (*sink).context.borrow_mut().active_rewriters += 1;
         }
 
         // SAFETY: result and original are both live *Response (result allocated
@@ -1140,6 +1160,11 @@ impl Drop for BufferOutputSink {
         if !self.rewriter.is_null() {
             // SAFETY: rewriter created via builder.build() and not yet freed.
             unsafe { lolhtml::HTMLRewriter::destroy(self.rewriter) };
+            let mut ctx = self.context.borrow_mut();
+            ctx.active_rewriters -= 1;
+            if ctx.active_rewriters == 0 {
+                ctx.drain_end_tag_handlers();
+            }
         }
     }
 }
@@ -1495,6 +1520,8 @@ pub struct ElementHandler {
     pub on_text_callback: Option<ProtectedJSValue>,
     pub this_object: ProtectedJSValue,
     pub global: GlobalRef, // JSC_BORROW
+    #[expect(clippy::vec_box)]
+    pub end_tag_handlers: JsCell<Vec<Box<EndTagHandler>>>,
 }
 
 impl ElementHandler {
@@ -1505,6 +1532,7 @@ impl ElementHandler {
             on_text_callback: None,
             this_object: ProtectedJSValue::adopt(JSValue::ZERO),
             global: GlobalRef::from(global),
+            end_tag_handlers: JsCell::new(Vec::new()),
         };
 
         if !this_object.is_object() {
@@ -1541,6 +1569,9 @@ impl ElementHandler {
     }
 
     pub fn on_element(this: *mut Self, value: *mut lolhtml::Element) -> bool {
+        if let Some(el) = lolhtml::Element::from_ptr(value) {
+            el.set_user_data(this.cast::<core::ffi::c_void>());
+        }
         handler_callback::<Self, Element, lolhtml::Element>(
             this,
             value,
@@ -1907,9 +1938,7 @@ pub struct EndTag {
 }
 
 pub struct EndTagHandler {
-    // TODO(port): bare JSValue heap field kept alive via JSC gcProtect —
-    // evaluate bun_jsc::Strong (see DocumentHandler note).
-    pub callback: Option<JSValue>,
+    pub callback: Option<ProtectedJSValue>,
     pub global: GlobalRef, // JSC_BORROW
 }
 
@@ -1919,7 +1948,7 @@ impl EndTagHandler {
             this,
             value,
             |w| w.end_tag.set(core::ptr::null_mut()),
-            |h| h.callback,
+            |h| h.callback.as_ref().map(ProtectedJSValue::value),
         )
     }
 
@@ -1932,7 +1961,9 @@ impl EndTagHandler {
 
 impl lolhtml::DirectiveCallback<lolhtml::EndTag> for EndTagHandler {
     fn call(&mut self, container: &mut lolhtml::EndTag) -> bool {
-        EndTagHandler::on_end_tag(self, container)
+        let result = EndTagHandler::on_end_tag(self, container);
+        self.callback = None;
+        result
     }
 }
 
@@ -2184,25 +2215,37 @@ impl Element {
             return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
         }
 
-        let end_tag_handler = bun_core::heap::into_raw(Box::new(EndTagHandler {
+        let Some(element_handler) = el.get_user_data::<ElementHandler>() else {
+            let err = create_lolhtml_error(global_object);
+            return Err(global_object.throw_value(err));
+        };
+
+        let mut end_tag_handler = Box::new(EndTagHandler {
             global: GlobalRef::from(global_object),
-            callback: Some(function),
-        }));
+            callback: Some(function.protected()),
+        });
+        let end_tag_handler_ptr: NonNull<EndTagHandler> = NonNull::from(&mut *end_tag_handler);
 
         if el
             .on_end_tag(
                 EndTagHandler::ON_END_TAG_HANDLER,
-                end_tag_handler.cast::<core::ffi::c_void>(),
+                end_tag_handler_ptr.as_ptr().cast::<core::ffi::c_void>(),
             )
             .is_err()
         {
-            // SAFETY: end_tag_handler allocated above and not yet handed to lol-html.
-            unsafe { drop(bun_core::heap::take(end_tag_handler)) };
             let err = create_lolhtml_error(global_object);
             return Err(global_object.throw_value(err));
         }
 
-        function.protect();
+        // SAFETY: `element_handler` is the element user_data set in
+        // `ElementHandler::on_element`: the live `Box<ElementHandler>` owned by
+        // `LOLHTMLContext::element_handlers`, which outlives this call. Aliased
+        // `&ElementHandler` is sound (see `handler_callback`); the only
+        // mutation goes through the `JsCell` field.
+        let element_handler = unsafe { &*element_handler };
+        element_handler
+            .end_tag_handlers
+            .with_mut(|handlers| handlers.push(end_tag_handler));
         Ok(call_frame.this())
     }
 

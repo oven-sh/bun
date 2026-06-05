@@ -38,9 +38,8 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   60_000, // symbolizing the debug binary takes several seconds
 );
 
-// On Windows, debug builds symbolize crash traces in-process via dbghelp.dll,
-// which needs the PDB produced next to the executable. Skip if the binary was
-// copied around without it.
+// Windows debug builds symbolize in-process via dbghelp.dll, which needs the
+// PDB next to the executable.
 const hasPdb = isWindows && existsSync(bunExe().replace(/\.exe$/i, ".pdb"));
 
 test.if(isDebug && isWindows && hasPdb)(
@@ -55,13 +54,9 @@ test.if(isDebug && isWindows && hasPdb)(
 
     expect(stderr).toContain("panic(main thread): invoked crashByPanic() handler");
 
-    // The in-process symbolizer prints frames to stderr as
-    // `file:line:col: 0x... in <symbol> (<module>)`. Before the dbghelp lookup
-    // was implemented, every Windows frame printed `???` for the symbol name
-    // (and the trace fell through to bare addresses), even with a PDB shipped.
+    // Frames print as `file:line:col: 0x... in <symbol> (<module>)`.
     const output = stdout + stderr;
     expect(output).toContain("js_panic");
-    // SymGetLineFromAddrW64 must produce file:line for Bun's own frames.
     expect(output).toMatch(/\.rs:\d+:/);
     expect(exitCode).not.toBe(0);
   },

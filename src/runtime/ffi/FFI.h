@@ -268,7 +268,10 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 
 static EncodedJSValue UINT32_TO_JSVALUE(uint32_t val) {
   EncodedJSValue res;
-  if(val <= MAX_INT32) {
+  // MAX_INT32 is 2^31, not INT32_MAX. Use strict `<` so val == 2^31 (which
+  // doesn't fit in int32_t) routes to the double encoding instead of wrapping
+  // to a negative int32 when JSC reads it back. See issue #7007.
+  if(val < MAX_INT32) {
     res.asInt64 = NumberTag | val;
     return res;
   } else {
@@ -344,7 +347,10 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  // MAX_INT32 is 2^31, not INT32_MAX. Use strict `<` so val == 2^31 (which
+  // overflows when cast to int32_t) routes to the double encoding. The
+  // negative bound is non-strict because INT32_MIN == -2^31 fits in int32_t.
+  if (val >= -MAX_INT32 && val < MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

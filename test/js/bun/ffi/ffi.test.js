@@ -666,6 +666,82 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
+describe("JSCallback validation", () => {
+  // The native code rejected this earlier, but the constructor previously
+  // destructured the error instance and silently assigned `ptr = undefined`.
+  // Now the constructor throws on Error.isError(result).
+  it("throws (does not silently succeed) on an unknown arg type", () => {
+    expect(
+      () =>
+        new JSCallback(() => {}, {
+          returns: "void",
+          args: ["NOT_A_REAL_TYPE"],
+        }),
+    ).toThrow();
+  });
+
+  // The threadsafe-vs-non-void-return guard in the native helper used to read
+  // a freshly-defaulted `function.threadsafe` (which was always false), making
+  // the check dead code. Combined with the constructor swallowing errors,
+  // this previously returned a half-baked callback whose return type was
+  // ABI-incompatible with the threadsafe trampoline.
+  it("throws on a threadsafe callback that declares a non-void return type", () => {
+    expect(
+      () =>
+        new JSCallback(() => 42, {
+          threadsafe: true,
+          returns: "int32_t",
+          args: [],
+        }),
+    ).toThrow(/[Tt]hreadsafe.+void/);
+  });
+
+  it("accepts a valid void-return threadsafe callback", () => {
+    const cb = new JSCallback(() => {}, {
+      threadsafe: true,
+      returns: "void",
+      args: ["int32_t"],
+    });
+    expect(typeof cb.ptr === "number" || typeof cb.ptr === "bigint").toBe(true);
+    expect(cb.threadsafe).toBe(true);
+    cb.close();
+  });
+});
+
+describe("read.* rejects invalid byteOffset", () => {
+  // `addr_from_args` used `usize::try_from(...).expect("int cast")`, which
+  // panics the process on any negative offset. The fix returns a JS error.
+  it("throws on a negative byteOffset (does not crash the process)", () => {
+    const buf = new Uint8Array(64);
+    for (let i = 0; i < buf.length; i++) buf[i] = i;
+    const addr = ptr(buf);
+
+    for (const fn of [
+      read.u8,
+      read.u16,
+      read.u32,
+      read.i8,
+      read.i16,
+      read.i32,
+      read.u64,
+      read.i64,
+      read.f32,
+      read.f64,
+      read.ptr,
+      read.intptr,
+    ]) {
+      expect(() => fn(addr, -1)).toThrow();
+    }
+  });
+
+  it("still works for a valid non-negative byteOffset", () => {
+    const buf = new Uint8Array([1, 2, 3, 4]);
+    const addr = ptr(buf);
+    expect(read.u8(addr, 0)).toBe(1);
+    expect(read.u8(addr, 3)).toBe(4);
+  });
+});
+
 it('suffix does not start with a "."', () => {
   expect(suffix).not.toMatch(/^\./);
 });

@@ -274,7 +274,12 @@ pub mod reader {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
         let off = if arguments.len() > 1 {
-            usize::try_from(arguments[1].to_int32()).expect("int cast")
+            let off_i32 = arguments[1].to_int32();
+            if off_i32 < 0 {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("byteOffset must be non-negative")));
+            }
+            off_i32 as usize
         } else {
             0usize
         };

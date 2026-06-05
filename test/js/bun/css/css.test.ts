@@ -7168,13 +7168,10 @@ describe("css tests", () => {
     minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
     minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
 
-    // Individual transform properties whose payloads carry heap-allocated
-    // calc() values must survive the property handler's deep clone intact.
+    // calc() payloads must survive the transform property handler's deep clone.
     minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
-    // All three individual properties buffered and flushed in canonical order.
     minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
-    // A later `transform` declaration resets buffered individual properties,
-    // including ones holding heap-allocated calc() payloads.
+    // A later `transform` declaration resets buffered individual properties.
     minify_test(
       ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
       ".foo{transform:translate(2px,3px)}",
@@ -7572,9 +7569,8 @@ describe("css tests", () => {
   });
 
   describe("grid-template-areas", () => {
-    // `grid-template-areas` is not yet in the typed property table, so these
-    // exercise the unparsed-token round-trip; `.` null-cell tokens (including
-    // multi-dot runs like `...`) must survive parse + serialize unchanged.
+    // Not in the typed property table yet; `.` null-cell tokens (including
+    // multi-dot runs) must survive the unparsed-token round-trip unchanged.
     minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
     minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");

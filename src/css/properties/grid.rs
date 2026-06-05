@@ -469,11 +469,9 @@ impl GridTemplateAreas {
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
         //
-        // NOTE: only a single row string is consumed here (`if let`, not a
-        // loop), so multi-row values like `"a ." ". b"` are truncated to the
-        // first row and the cross-row `columns` validation below never fires.
-        // Upstream lightningcss loops (`while let`); this must become a loop
-        // when `grid-template-areas` is wired into the typed property table.
+        // NOTE: only one row string is consumed (`if let`, not `while let` as
+        // upstream); must become a loop when this is wired into the typed
+        // property table.
         if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
             // parser's input arena and remains valid for the duration of this parse.
@@ -526,9 +524,7 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                // A run of one or more `.` characters is a single null-cell
-                // token (CSS Grid 2 §7.3); record it as `None` and move on to
-                // the next token. Matches upstream lightningcss.
+                // A run of `.` characters is a single null-cell token (CSS Grid 2 §7.3).
                 let idx = rest.iter().position(|&c| c != b'.').unwrap_or(rest.len());
                 tokens.append(None);
                 string = &rest[idx..];
@@ -581,9 +577,7 @@ crate::css_eql_partialeq!(TrackSize, RepeatCount);
 mod tests {
     use super::*;
 
-    /// Run `GridTemplateAreas::parse_string` over a single row string and
-    /// return `(columns, cells)`, where each cell is `None` for a `.`
-    /// null-cell token or `Some(name)` for a named area.
+    /// Parse one row string; cells are `None` for `.` null-cell tokens.
     fn parse_areas(s: &'static [u8]) -> Result<(u32, Vec<Option<&'static [u8]>>), ()> {
         let bump = bun_alloc::Arena::new();
         let mut tokens = SmallList::<Option<*const [u8]>, 1>::default();
@@ -593,8 +587,7 @@ mod tests {
             .iter()
             .map(|t| {
                 t.map(|p| {
-                    // SAFETY: each pointer was produced from a subslice of
-                    // `s`, which is `'static` test input.
+                    // SAFETY: `p` is a subslice of the `'static` input `s`.
                     unsafe { &*p }
                 })
             })
@@ -652,8 +645,7 @@ mod tests {
 
     #[test]
     fn dot_run_directly_followed_by_name() {
-        // `.` runs terminate at the first non-`.` codepoint, so `..a` is a
-        // null cell followed by the named area `a`.
+        // `..a` is a null cell followed by the named area `a`.
         let (columns, cells) = parse_areas(b"..a b").unwrap();
         assert_eq!(columns, 3);
         assert_eq!(

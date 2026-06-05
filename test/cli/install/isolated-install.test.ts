@@ -2091,22 +2091,30 @@ describe("bun link integration", () => {
       "marker.js": "module.exports = 'FROM_PRODUCER_MARKER';",
     });
 
-    await using linkProc = spawn({
-      cmd: [bunExe(), "link"],
-      cwd: String(producer),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [linkStdout, linkStderr, linkExit] = await Promise.all([
-      linkProc.stdout.text(),
-      linkProc.stderr.text(),
-      linkProc.exited,
-    ]);
-    if (linkExit !== 0) {
-      throw new Error(`bun link failed:\nstdout: ${linkStdout}\nstderr: ${linkStderr}`);
+    // On any throw before `return`, the caller's `using` never binds, so
+    // dispose here to keep the producer dir from leaking on persistent
+    // CI runners.
+    try {
+      await using linkProc = spawn({
+        cmd: [bunExe(), "link"],
+        cwd: String(producer),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [linkStdout, linkStderr, linkExit] = await Promise.all([
+        linkProc.stdout.text(),
+        linkProc.stderr.text(),
+        linkProc.exited,
+      ]);
+      if (linkExit !== 0) {
+        throw new Error(`bun link failed:\nstdout: ${linkStdout}\nstderr: ${linkStderr}`);
+      }
+      return producer;
+    } catch (e) {
+      producer[Symbol.dispose]();
+      throw e;
     }
-    return producer;
   }
 
   test("isolated: npm-resolved dep honors active bun link", async () => {

@@ -1065,6 +1065,10 @@ impl Task {
                             // symlink-only contract isn't available, so without this the
                             // `.bun/<storepath>` body stays pinned to the (stale) tarball
                             // cache while the top-level symlink points at the producer.
+                            //
+                            // Relaxed load of `supported_backend` is okay because it's an
+                            // optimization hint; a stale read is harmless (same rationale
+                            // as the cache-backend switch further down).
                             if InstallMethod::from_u8(
                                 installer.supported_backend.load(Ordering::Relaxed),
                             ) != InstallMethod::Symlink

@@ -794,6 +794,74 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("called as a constructor", () => {
+    test("returns a new instance and records it", () => {
+      const fn = jest.fn();
+      const a = new fn();
+      expect(typeof a).toBe("object");
+      expect(a).not.toBeNull();
+      const b = Reflect.construct(fn, []);
+      expect(typeof b).toBe("object");
+      expect(b).not.toBe(a);
+      expect(fn.mock.instances[0]).toBe(a);
+      expect(fn.mock.instances[1]).toBe(b);
+      expect(fn.mock.contexts[0]).toBe(a);
+      expect(fn.mock.contexts[1]).toBe(b);
+      expect(fn.mock.calls).toEqual([[], []]);
+      expect(fn.mock.results[0]).toEqual({ type: "return", value: undefined });
+    });
+
+    test("implementation runs with the instance as this", () => {
+      const fn = jest.fn(function (value) {
+        this.value = value;
+      });
+      const a = new fn(42);
+      expect(a.value).toBe(42);
+      expect(fn.mock.calls[0]).toEqual([42]);
+      expect(fn.mock.results[0]).toEqual({ type: "return", value: undefined });
+    });
+
+    test("object returned from the implementation becomes the result", () => {
+      const obj = { tag: "explicit" };
+      const fn = jest.fn(() => obj);
+      expect(new fn()).toBe(obj);
+    });
+
+    test("primitive returned from the implementation is ignored", () => {
+      const fn = jest.fn(() => 42);
+      const a = new fn();
+      expect(typeof a).toBe("object");
+      expect(a).not.toBeNull();
+      expect(fn.mock.results[0]).toEqual({ type: "return", value: 42 });
+    });
+
+    test("mockReturnValue with an object becomes the result", () => {
+      const obj = { tag: "return value" };
+      const fn = jest.fn();
+      fn.mockReturnValue(obj);
+      expect(new fn()).toBe(obj);
+    });
+
+    test("uses the prototype property when set", () => {
+      const fn = jest.fn();
+      fn.prototype = { marker: true };
+      const a = new fn();
+      expect(Object.getPrototypeOf(a)).toBe(fn.prototype);
+      expect(a instanceof fn).toBe(true);
+      expect(a.marker).toBe(true);
+    });
+
+    test("throwing implementation still records the instance", () => {
+      const instance = new Error("boom");
+      const fn = jest.fn(() => {
+        throw instance;
+      });
+      expect(() => new fn()).toThrow("boom");
+      expect(fn.mock.instances).toHaveLength(1);
+      expect(fn.mock.results[0]).toEqual({ type: "throw", value: instance });
+    });
+  });
 });
 
 describe("spyOn", () => {

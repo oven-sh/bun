@@ -48,6 +48,20 @@ const pendingCaptures = new Map<number, { resolve: (v: NativeImage) => void; rej
 let nextCssKey = 1;
 let nextFileDialogId = 1;
 const pendingFileDialogs = new Map<number, (result: { canceled: boolean; filePaths: string[] }) => void>();
+let nextDevtoolsId = 1;
+const pendingDevtools = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+
+// Compute the origin of a URL for the sendSync CORS allowlist. data: URLs
+// have a "null" origin (always allowed natively); others contribute their
+// real origin.
+function originOf(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.protocol === "data:" || u.protocol === "file:" ? null : u.origin;
+  } catch {
+    return null;
+  }
+}
 
 // "#rrggbb" / "#aarrggbb" -> CEF cef_color_t hex (AARRGGBB).
 function parseBackgroundColor(color: string): string | undefined {
@@ -105,6 +119,44 @@ export class WebContents extends EventEmitter {
   isLoading(): boolean {
     return this.win._isLoading;
   }
+
+  /** Runs a Chrome DevTools Protocol method, resolving with its result. */
+  _devtools(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    if (this.win.isDestroyed()) {
+      return Promise.reject(new Error("webContents was destroyed"));
+    }
+    const callId = nextDevtoolsId++;
+    return new Promise((resolve, reject) => {
+      pendingDevtools.set(callId, {
+        resolve: (v) => resolve(v as Record<string, unknown>),
+        reject,
+      });
+      this.win._whenBrowserReady(() => {
+        native.devtoolsMethod(this.win.id, callId, method, JSON.stringify(params));
+      });
+    });
+  }
+
+  /** Prints the page to a PDF Buffer (DevTools Page.printToPDF). */
+  async printToPDF(options: { landscape?: boolean; printBackground?: boolean; pageSize?: string } = {}): Promise<Buffer> {
+    const result = await this._devtools("Page.printToPDF", {
+      landscape: options.landscape ?? false,
+      printBackground: options.printBackground ?? false,
+    });
+    if (typeof result.data !== "string") throw new Error("printToPDF failed");
+    return Buffer.from(result.data, "base64");
+  }
+
+  async setUserAgent(userAgent: string): Promise<void> {
+    await this._devtools("Network.setUserAgentOverride", { userAgent });
+    this._userAgent = userAgent;
+  }
+
+  getUserAgent(): string {
+    return this._userAgent ?? "";
+  }
+
+  private _userAgent?: string;
 
   executeJavaScript(code: string, _userGesture?: boolean): Promise<unknown> {
     if (this.win.isDestroyed()) {
@@ -257,6 +309,8 @@ export class BrowserWindow extends EventEmitter {
 
   loadURL(url: string): Promise<void> {
     if (this._destroyed) return Promise.reject(new Error("window was destroyed"));
+    const origin = originOf(url);
+    if (origin) native.allowIpcOrigin(origin);
     return new Promise<void>((resolve, reject) => {
       this._loadResolvers.push({ resolve, reject });
       this._whenBrowserReady(() => this._command("load_url", url));
@@ -526,6 +580,16 @@ export class BrowserWindow extends EventEmitter {
             canceled: Boolean(ev.canceled),
             filePaths: Array.isArray(ev.paths) ? (ev.paths as string[]) : [],
           });
+        }
+        break;
+      }
+      case "devtools-result": {
+        const pending = pendingDevtools.get(ev.callId as number);
+        if (pending) {
+          pendingDevtools.delete(ev.callId as number);
+          const result = ev.result as Record<string, unknown> | null;
+          if (ev.success) pending.resolve(result ?? {});
+          else pending.reject(new Error(String((result as { message?: string })?.message ?? "devtools method failed")));
         }
         break;
       }

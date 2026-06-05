@@ -182,11 +182,25 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
   `Response` objects or `{data, mimeType, statusCode}`), backed by a CEF
   scheme handler factory.
 - **Window icons**: `BrowserWindow.setIcon` (PNG → `CefImage`).
+- **`webContents.printToPDF`** and **`setUserAgent`/`getUserAgent`** via the
+  DevTools protocol (`Page.printToPDF`, `Network.setUserAgentOverride`).
+- **`safeStorage`**: `encryptString`/`decryptString`/`isEncryptionAvailable`,
+  real AES-256-GCM with a per-user key file (the OS-keychain backend Electron
+  uses is the only difference).
+- **`clipboard`**: text/HTML/RTF/bookmark read+write, `availableFormats`,
+  `has`, `clear` (process-local store — no system clipboard on headless CI).
+- **`globalShortcut`**: register/unregister/isRegistered with Electron's
+  accelerator parsing and `CommandOrControl` resolution (registry only; no OS
+  key capture).
+- **`Tray`**, **`Notification`**: data models with events (no OS rendering).
 
-Not implemented yet: `Tray`, context isolation (preload and page share one
-context), `nodeIntegration` (renderers are plain Chromium; use IPC), OS
-menu-bar / native context-menu rendering, partitioned sessions, `webRequest`
-interception, image resize/crop in `nativeImage`.
+Implemented as data models / process-local (no OS surface wired up): `Menu`
+rendering, `Tray` icon, `Notification` display, `clipboard` (no system
+clipboard), `globalShortcut` key capture.
+
+Not implemented: context isolation (preload and page share one context),
+`nodeIntegration`, partitioned sessions, `webRequest` interception, image
+resize/crop in `nativeImage`, `powerMonitor`, `desktopCapturer`.
 
 ## Testing
 
@@ -198,8 +212,9 @@ xvfb-run -a bun test test/     # linux headless; on macOS just: bun test test/
 
 Tests are ported from Electron's spec suite (names preserved where behavior
 carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
-`menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`, and
-`window-icon` test files (112 tests total). App-lifecycle scenarios spawn fresh
+`menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`,
+`window-icon`, `safe-storage`, `clipboard`, `global-shortcut`, and
+`tray-notification` test files (146 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

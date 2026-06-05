@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -237,6 +238,7 @@ struct WindowEntry {
   CefRefPtr<CefBrowser> browser;
   CefRefPtr<CefRegistration> devtools_registration;
   std::map<int, int32_t> pending_captures;  // devtools message id -> capture id
+  std::map<int, int32_t> pending_devtools;  // devtools message id -> call id
   WindowState state;
   bool destroyed = false;
 };
@@ -809,22 +811,39 @@ class CaptureObserver : public CefDevToolsMessageObserver {
                               size_t result_size) override {
     auto entry = FindWindow(window_id_);
     if (!entry) return;
-    int32_t capture_id;
+    std::string json(static_cast<const char*>(result), result_size);
+
+    int32_t capture_id = 0, devtools_id = 0;
     {
       std::lock_guard<std::mutex> lock(g_windows_mutex);
-      auto it = entry->pending_captures.find(message_id);
-      if (it == entry->pending_captures.end()) return;
-      capture_id = it->second;
-      entry->pending_captures.erase(it);
+      auto cit = entry->pending_captures.find(message_id);
+      if (cit != entry->pending_captures.end()) {
+        capture_id = cit->second;
+        entry->pending_captures.erase(cit);
+      }
+      auto dit = entry->pending_devtools.find(message_id);
+      if (dit != entry->pending_devtools.end()) {
+        devtools_id = dit->second;
+        entry->pending_devtools.erase(dit);
+      }
     }
-    std::string json(static_cast<const char*>(result), result_size);
-    EmitEvent(JsonObj()
-                  .AddString("type", "capture-result")
-                  .AddInt("windowId", window_id_)
-                  .AddInt("captureId", capture_id)
-                  .AddBool("success", success)
-                  .AddRaw("result", json.empty() ? "null" : json)
-                  .Build());
+    if (capture_id) {
+      EmitEvent(JsonObj()
+                    .AddString("type", "capture-result")
+                    .AddInt("windowId", window_id_)
+                    .AddInt("captureId", capture_id)
+                    .AddBool("success", success)
+                    .AddRaw("result", json.empty() ? "null" : json)
+                    .Build());
+    } else if (devtools_id) {
+      EmitEvent(JsonObj()
+                    .AddString("type", "devtools-result")
+                    .AddInt("windowId", window_id_)
+                    .AddInt("callId", devtools_id)
+                    .AddBool("success", success)
+                    .AddRaw("result", json.empty() ? "null" : json)
+                    .Build());
+    }
   }
 
  private:
@@ -867,6 +886,47 @@ void CapturePageOnUI(int32_t window_id, int32_t capture_id) {
   }
 }
 
+void DevToolsMethodOnUI(int32_t window_id,
+                        int32_t call_id,
+                        std::string method,
+                        std::string params_json) {
+  CEF_REQUIRE_UI_THREAD();
+  auto entry = FindWindow(window_id);
+  if (!entry || !entry->browser) {
+    EmitEvent(JsonObj()
+                  .AddString("type", "devtools-result")
+                  .AddInt("windowId", window_id)
+                  .AddInt("callId", call_id)
+                  .AddBool("success", false)
+                  .AddRaw("result", "{\"message\":\"window destroyed\"}")
+                  .Build());
+    return;
+  }
+  CefRefPtr<CefBrowserHost> host = entry->browser->GetHost();
+  if (!entry->devtools_registration) {
+    entry->devtools_registration =
+        host->AddDevToolsMessageObserver(new CaptureObserver(window_id));
+  }
+  CefRefPtr<CefDictionaryValue> params;
+  if (!params_json.empty()) {
+    CefRefPtr<CefValue> v = CefParseJSON(params_json, JSON_PARSER_RFC);
+    if (v && v->GetType() == VTYPE_DICTIONARY) params = v->GetDictionary();
+  }
+  int message_id = host->ExecuteDevToolsMethod(0, method, params);
+  if (message_id > 0) {
+    std::lock_guard<std::mutex> lock(g_windows_mutex);
+    entry->pending_devtools[message_id] = call_id;
+  } else {
+    EmitEvent(JsonObj()
+                  .AddString("type", "devtools-result")
+                  .AddInt("windowId", window_id)
+                  .AddInt("callId", call_id)
+                  .AddBool("success", false)
+                  .AddRaw("result", "{\"message\":\"devtools method failed\"}")
+                  .Build());
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Custom-scheme resource handling: backs ipcRenderer.sendSync (scheme
 // "beipc", sync XHR from the renderer answered asynchronously here) and the
@@ -877,6 +937,20 @@ std::vector<std::string> g_custom_schemes;  // user schemes from init kv
 
 std::mutex g_resources_mutex;
 std::atomic<int32_t> g_next_resource_id{1};
+
+// Origins the app explicitly loaded (via loadURL) are trusted to read
+// sendSync replies. "null" (data:/sandboxed) and "file://" local content are
+// always allowed since the app authored them. Anything navigated to by page
+// content (e.g. a remote site reached via a link) is NOT in this set, so its
+// sendSync replies are not cross-origin readable.
+std::mutex g_ipc_origins_mutex;
+std::set<std::string> g_ipc_allowed_origins;
+
+bool IsAllowedIpcOrigin(const std::string& origin) {
+  if (origin.empty() || origin == "null" || origin == "file://") return true;
+  std::lock_guard<std::mutex> lock(g_ipc_origins_mutex);
+  return g_ipc_allowed_origins.count(origin) > 0;
+}
 
 class PendingResourceHandler;
 std::map<int32_t, CefRefPtr<PendingResourceHandler>> g_pending_resources;
@@ -947,7 +1021,8 @@ class PendingResourceHandler : public CefResourceHandler {
     // the caller's exact origin rather than using a wildcard, so no other
     // origin can read replies. User protocol schemes set their own headers
     // (via the JS handler's Response); we don't inject CORS for them.
-    if (is_sync_ipc_ && !request_origin_.empty()) {
+    if (is_sync_ipc_ && IsAllowedIpcOrigin(request_origin_) &&
+        !request_origin_.empty()) {
       CefResponse::HeaderMap headers;
       response->GetHeaderMap(headers);
       headers.insert({"Access-Control-Allow-Origin", request_origin_});
@@ -1677,6 +1752,23 @@ BE_EXPORT void be_window_eval_js(int32_t id, const char* code, int32_t eval_id) 
 
 BE_EXPORT void be_capture_page(int32_t id, int32_t capture_id) {
   PostToUI(base::BindOnce(&CapturePageOnUI, id, capture_id));
+}
+
+BE_EXPORT void be_devtools_method(int32_t id,
+                                  int32_t call_id,
+                                  const char* method,
+                                  const char* params_json) {
+  if (!method) return;
+  PostToUI(base::BindOnce(&DevToolsMethodOnUI, id, call_id, std::string(method),
+                          std::string(params_json ? params_json : "")));
+}
+
+// Trust an origin to read sendSync replies (called for each URL the app
+// explicitly loads via loadURL).
+BE_EXPORT void be_allow_ipc_origin(const char* origin) {
+  if (!origin || !*origin) return;
+  std::lock_guard<std::mutex> lock(g_ipc_origins_mutex);
+  g_ipc_allowed_origins.insert(origin);
 }
 
 BE_EXPORT void be_ipc_send(int32_t id, const char* channel, const char* args_json) {

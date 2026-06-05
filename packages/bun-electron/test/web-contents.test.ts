@@ -93,6 +93,29 @@ describe("webContents module", () => {
   });
 
 
+  describe("webContents.printToPDF()", () => {
+    test("resolves with a PDF Buffer", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body><h1>print me</h1></body>"));
+      const pdf = await w.webContents.printToPDF({});
+      expect(Buffer.isBuffer(pdf)).toBe(true);
+      // PDFs start with "%PDF-".
+      expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+    });
+  });
+
+  describe("webContents.setUserAgent()/getUserAgent()", () => {
+    test("overrides the user agent seen by the page", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body></body>"));
+      await w.webContents.setUserAgent("BunElectron/1.0 test-agent");
+      expect(w.webContents.getUserAgent()).toBe("BunElectron/1.0 test-agent");
+      await w.loadURL(dataURL("<body>reloaded</body>"));
+      const ua = await w.webContents.executeJavaScript("navigator.userAgent");
+      expect(ua).toBe("BunElectron/1.0 test-agent");
+    });
+  });
+
   describe("console-message event", () => {
     test("is emitted for console.log in the page", async () => {
       const w = createWindow();

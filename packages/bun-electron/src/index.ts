@@ -19,6 +19,12 @@ export { dialog } from "./dialog";
 export { screen } from "./screen";
 export { session } from "./session";
 export { protocol } from "./protocol";
+export { clipboard } from "./clipboard";
+export { safeStorage } from "./safe-storage";
+export { globalShortcut } from "./global-shortcut";
+export { Tray } from "./tray";
+export { Notification } from "./notification";
+export type { NotificationConstructorOptions } from "./notification";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -30,5 +36,27 @@ import { protocol } from "./protocol";
 import { screen } from "./screen";
 import { session } from "./session";
 import { shell } from "./shell";
+import { clipboard } from "./clipboard";
+import { safeStorage } from "./safe-storage";
+import { globalShortcut } from "./global-shortcut";
+import { Tray } from "./tray";
+import { Notification } from "./notification";
 
-export default { app, BrowserWindow, dialog, ipcMain, Menu, MenuItem, nativeImage, protocol, screen, session, shell };
+export default {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  MenuItem,
+  nativeImage,
+  Notification,
+  protocol,
+  safeStorage,
+  screen,
+  session,
+  shell,
+  Tray,
+};

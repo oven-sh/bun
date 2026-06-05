@@ -1265,10 +1265,11 @@ impl Task {
                                     let mut dest = OsAutoPath::init();
                                     installer.append_store_path(&mut dest, self.entry_id);
 
-                                    // Full skip lists matching Zig Installer.zig:646-681:
-                                    // default excludes for the producer's working tree
+                                    // Default excludes for the producer's working tree
                                     // (lockfiles, VCS state, env files, OS junk) that
-                                    // `bun pm pack` would also drop.
+                                    // `bun pm pack` would also drop. Full pack parity
+                                    // (`package.json#files` whitelists, `.npmignore`
+                                    // rules) is not implemented for linked producers.
                                     let skip_dirs: &[&paths::OSPathSlice] = &[
                                         bun_paths::os_path_literal!("node_modules"),
                                         bun_paths::os_path_literal!(".git"),

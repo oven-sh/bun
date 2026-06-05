@@ -2428,11 +2428,10 @@ describe("bun link integration", () => {
   // binds the linker's behavior to bun's own publish semantics (which
   // already handle `package.json#files`, `.npmignore`, default excludes,
   // etc.), so the test doesn't go stale when those rules evolve.
-  // Windows: `pack_command.collectPublishablePaths` is POSIX-only for now
-  // (see the `publishable: ?…` comptime gate in `Installer.zig` and the
-  // Scope/follow-ups list in PR #30289). Windows falls back to a Walker
-  // that only applies the default basename skip list, so `files` whitelists
-  // and `.npmignore` won't be honored. Gate parity tests accordingly.
+  // The current implementation applies only a default basename skip list
+  // (Installer.rs) on every platform, so `files` whitelists and
+  // `.npmignore` are not honored yet; these tests stay todo until pack's
+  // publishable-path selection is ported to the linked-producer copy.
   test.todo("isolated: .bun entry contains exactly what `bun pm pack` would publish", async () => {
     using home = tempDir("link-home-", {});
     const env = hermeticEnv(String(home));

@@ -804,6 +804,17 @@ describe.concurrent(() => {
         // Own as-is properties (toJSON powers JSON.stringify(process.env)).
         expect(typeof process.env.toJSON).toBe("function");
         expect(JSON.parse(JSON.stringify(process.env)).BUN_TEST_ENV_PROXY).toBe("value");
+        // toJSON must keep the original-case key names, not the canonical
+        // UPPERCASE storage keys (children echoing their env over IPC or
+        // JSON.stringify must see the same casing the parent saw).
+        process.env.Bun_Test_Env_Proxy_Mixed = "mixed";
+        try {
+          const json = JSON.parse(JSON.stringify(process.env));
+          expect(json.Bun_Test_Env_Proxy_Mixed).toBe("mixed");
+          expect(json.BUN_TEST_ENV_PROXY_MIXED).toBeUndefined();
+        } finally {
+          delete process.env.Bun_Test_Env_Proxy_Mixed;
+        }
         // Enumeration still works and sees the var.
         expect(Object.keys(process.env)).toContain("BUN_TEST_ENV_PROXY");
       } finally {

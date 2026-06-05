@@ -403,7 +403,14 @@ export function windowsEnv(
   };
 
   (internalEnv as any).toJSON = () => {
-    return { ...internalEnv };
+    // Mirror enumeration: original-case key names, case-insensitive values.
+    // Spreading internalEnv directly would leak the canonical UPPERCASE
+    // storage keys into JSON.stringify(process.env) and IPC env echoes.
+    let o = {};
+    for (let k of envMapList) {
+      o[k] = internalEnv[k.toUpperCase()];
+    }
+    return o;
   };
 
   return new Proxy(internalEnv, {

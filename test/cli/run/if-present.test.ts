@@ -1,6 +1,8 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { chmodSync } from "fs";
+import { join } from "path";
+import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
 
 let cwd: string;
 
@@ -114,6 +116,83 @@ describe("bun --if-present", () => {
     });
     expect(stdout.toString()).toMatch(/Here!/);
     expect(stderr.toString()).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/31877
+// `bun run --if-present <name>` must only run a package.json script, matching
+// npm. A missing script that happens to share a name with a binary on $PATH or
+// in node_modules/.bin must not be executed; `--if-present` exits 0 instead.
+describe("bun run --if-present does not fall back to a same-named binary", () => {
+  test.skipIf(!isPosix)("does not run a system $PATH binary", () => {
+    // `test` is /usr/bin/test on POSIX; with no args it exits 1. Before the
+    // fix, `bun run --if-present test` executed it and exited 1.
+    const dir = tempDirWithFiles("if-present-path", {
+      "package.json": JSON.stringify({ name: "no-scripts" }),
+    });
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--if-present", "test"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    expect(stderr.toString()).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isPosix)("does not run a node_modules/.bin binary", () => {
+    const dir = tempDirWithFiles("if-present-bin", {
+      "package.json": JSON.stringify({ name: "no-scripts" }),
+      "node_modules/.bin/mytool": "#!/bin/sh\necho BIN_RAN\nexit 3\n",
+    });
+    chmodSync(join(dir, "node_modules", ".bin", "mytool"), 0o755);
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--if-present", "mytool"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).not.toContain("BIN_RAN");
+    expect(stderr.toString()).toBeEmpty();
+    expect(exitCode).toBe(0);
+  });
+
+  // The fix is scoped to --if-present: without it, the node_modules/.bin entry
+  // must still run, so a test that deletes the `if_present` guard fails here.
+  test.skipIf(!isPosix)("without --if-present, the node_modules/.bin binary still runs", () => {
+    const dir = tempDirWithFiles("if-present-bin-control", {
+      "package.json": JSON.stringify({ name: "no-scripts" }),
+      "node_modules/.bin/mytool": "#!/bin/sh\necho BIN_RAN\nexit 3\n",
+    });
+    chmodSync(join(dir, "node_modules", ".bin", "mytool"), 0o755);
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "mytool"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain("BIN_RAN");
+    expect(exitCode).toBe(3);
+  });
+
+  // A present script must still run even though --if-present is set.
+  test("still runs a present script", () => {
+    const dir = tempDirWithFiles("if-present-present", {
+      "package.json": JSON.stringify({ name: "has-script", scripts: { test: "echo SCRIPT_RAN" } }),
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--if-present", "test"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toContain("SCRIPT_RAN");
     expect(exitCode).toBe(0);
   });
 });

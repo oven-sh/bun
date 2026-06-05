@@ -2690,7 +2690,13 @@ impl RunCommand {
         // Search the prepended `.bin` dirs
         // (PATH minus ORIGINAL_PATH) unless `--bun` was passed, in which case
         // search the whole stitched PATH.
-        {
+        //
+        // Skip this when `--if-present` is set: the flag means "run it only if
+        // the named script/entrypoint exists", so a missing script must not
+        // fall through to a same-named binary on `$PATH` (e.g. `bun run
+        // --if-present test` running `/usr/bin/test`). npm's `--if-present`
+        // likewise only consults the package.json `scripts` object.
+        if !ctx.runtime_options.if_present {
             let _ = force_using_bun;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let fs = unsafe { &mut *this_transpiler.fs };

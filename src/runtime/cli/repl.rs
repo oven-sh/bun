@@ -171,8 +171,11 @@ enum Key {
     AltLeft,
     AltRight,
 
-    // Regular printable character
+    // Regular printable ASCII character
     Char(u8),
+
+    // A full multi-byte UTF-8 sequence (len bytes of the array are valid)
+    Text([u8; 4], usize),
 
     // Unknown/unhandled
     Unknown,
@@ -415,16 +418,42 @@ impl LineEditor {
         Ok(())
     }
 
+    /// Byte offset of the start of the codepoint ending just before `pos`.
+    /// Walks back over UTF-8 continuation bytes (0x80..=0xBF).
+    fn prev_boundary(&self, pos: usize) -> usize {
+        let mut i = pos;
+        while i > 0 {
+            i -= 1;
+            if self.buffer[i] & 0xC0 != 0x80 {
+                break;
+            }
+        }
+        i
+    }
+
+    /// Byte offset of the start of the codepoint after the one beginning at
+    /// `pos`. Advances by the lead byte's UTF-8 sequence length, clamped to the
+    /// buffer so a truncated/invalid sequence still makes progress.
+    fn next_boundary(&self, pos: usize) -> usize {
+        if pos >= self.buffer.len() {
+            return self.buffer.len();
+        }
+        let step = (strings::wtf8_byte_sequence_length(self.buffer[pos]) as usize).max(1);
+        (pos + step).min(self.buffer.len())
+    }
+
     pub(crate) fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.buffer.remove(self.cursor);
+            let end = self.next_boundary(self.cursor);
+            self.buffer.drain(self.cursor..end);
         }
     }
 
     pub(crate) fn backspace(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
-            self.buffer.remove(self.cursor);
+            let start = self.prev_boundary(self.cursor);
+            self.buffer.drain(start..self.cursor);
+            self.cursor = start;
         }
     }
 
@@ -461,13 +490,13 @@ impl LineEditor {
 
     pub(crate) fn move_left(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
+            self.cursor = self.prev_boundary(self.cursor);
         }
     }
 
     pub(crate) fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.cursor += 1;
+            self.cursor = self.next_boundary(self.cursor);
         }
     }
 
@@ -1133,6 +1162,28 @@ impl<'a> Repl<'a> {
             return Some(Key::Escape);
         }
 
+        // Multi-byte UTF-8: assemble the whole sequence so it is inserted as
+        // one unit. A lone/invalid lead byte yields a length of 0; fall back to
+        // reading it as a single raw byte so it is still dropped (not split).
+        let seq_len = strings::utf8_byte_sequence_length(byte) as usize;
+        if seq_len > 1 {
+            let mut bytes = [0u8; 4];
+            bytes[0] = byte;
+            for slot in bytes.iter_mut().take(seq_len).skip(1) {
+                let Some(cont) = self.read_byte() else {
+                    // Stream ended mid-sequence; drop the truncated bytes.
+                    return Some(Key::Unknown);
+                };
+                // A byte that is not a continuation byte (0x80..=0xBF) means the
+                // sequence is malformed; drop it rather than corrupt the buffer.
+                if cont & 0xC0 != 0x80 {
+                    return Some(Key::Unknown);
+                }
+                *slot = cont;
+            }
+            return Some(Key::Text(bytes, seq_len));
+        }
+
         Some(Key::from_byte(byte))
     }
 
@@ -1185,8 +1236,13 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Position cursor
-        let cursor_pos = prompt_len + self.line_editor.cursor;
+        // Position cursor. The cursor is a byte offset, but the terminal column
+        // is the display width of the text before it, so multi-byte UTF-8 and
+        // wide (e.g. CJK) characters advance the column correctly.
+        let cursor_col = strings::visible::width::exclude_ansi_colors::utf8(
+            &line[..self.line_editor.cursor],
+        );
+        let cursor_pos = prompt_len + cursor_col;
         if cursor_pos < self.terminal_width as usize {
             self.write(b"\r");
             if cursor_pos > 0 {
@@ -2084,6 +2140,10 @@ impl<'a> Repl<'a> {
                 }
                 Key::Char(c) => {
                     let _ = self.line_editor.insert(c);
+                    self.refresh_line();
+                }
+                Key::Text(bytes, len) => {
+                    let _ = self.line_editor.insert_slice(&bytes[..len]);
                     self.refresh_line();
                 }
                 _ => {}

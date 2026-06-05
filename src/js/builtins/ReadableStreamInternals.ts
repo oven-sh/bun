@@ -1604,17 +1604,9 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   const state = $getByIdDirectPrivate(stream, "state");
   if (state === $streamClosed) return Promise.$resolve();
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
+  // readableStreamClose drains pending readIntoRequests for BYOB readers
+  // (spec close steps with undefined), covering the cancel path too.
   $readableStreamClose(stream);
-
-  const reader = $getByIdDirectPrivate(stream, "reader");
-  if (reader && $isReadableStreamBYOBReader(reader)) {
-    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
-    if (readIntoRequests?.isNotEmpty()) {
-      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
-      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift())
-        $fulfillPromise(request, { value: undefined, done: true });
-    }
-  }
 
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
   if (controller === null) return Promise.$resolve();
@@ -1683,6 +1675,17 @@ export function readableStreamClose(stream) {
 
       for (var request = requests.shift(); request; request = requests.shift())
         $fulfillPromise(request, { value: undefined, done: true });
+    }
+  } else if ($isReadableStreamBYOBReader(reader)) {
+    // Spec (ReadableStreamClose): perform each readIntoRequest's close steps
+    // with undefined, i.e. resolve { value: undefined, done: true }. Without
+    // this a BYOB read pending at EOF (or cancel, which routes through here)
+    // never settles.
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+      for (var readIntoRequest = readIntoRequests.shift(); readIntoRequest; readIntoRequest = readIntoRequests.shift())
+        $fulfillPromise(readIntoRequest, { value: undefined, done: true });
     }
   }
 

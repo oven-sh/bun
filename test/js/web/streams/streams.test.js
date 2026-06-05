@@ -1276,3 +1276,23 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
   expect(value.subarray(1).every(b => b === 0)).toBe(true);
   reader.cancel();
 });
+
+it("ReadableStream BYOB read pending at controller.close() resolves done", async () => {
+  // Spec (ReadableStreamClose): pending readIntoRequests get their close
+  // steps with undefined - { value: undefined, done: true }. This used to
+  // hang forever.
+  let ctrl;
+  const rs = new ReadableStream({
+    type: "bytes",
+    start(c) {
+      ctrl = c;
+    },
+  });
+  const reader = rs.getReader({ mode: "byob" });
+  const pending = reader.read(new Uint8Array(16));
+  ctrl.close();
+  const { value, done } = await pending;
+  expect(done).toBe(true);
+  expect(value).toBeUndefined();
+  await reader.closed;
+});

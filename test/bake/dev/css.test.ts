@@ -206,6 +206,46 @@ devTest("syntax error crash", {
     expect((await dev.fetch("/")).status).toBe(500);
   },
 });
+devTest("css url resolve error on hot reload is recoverable", {
+  files: {
+    "styles.css": `
+      body {
+        color: red;
+      }
+    `,
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+    // A CSS file that parses but fails import resolution must fail the
+    // rebuild with an error instead of being treated as a valid CSS chunk.
+    // previously: panic: assertion failed: !chunk.content.is_css()
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          background-image: url(./missing.png);
+        }
+      `,
+      {
+        errors: ['styles.css:2:21: error: Could not resolve: "./missing.png"'],
+      },
+    );
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          color: blue;
+        }
+      `,
+    );
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
 devTest("circular css imports handle hot reload", {
   files: {
     "index.html": emptyHtmlFile({

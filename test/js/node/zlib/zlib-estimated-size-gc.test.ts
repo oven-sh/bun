@@ -1,32 +1,18 @@
+// https://github.com/oven-sh/bun/issues/31865
+// NativeBrotli/NativeZstd estimatedSize runs on JSC's concurrent GC marking
+// thread, so it must not touch the `stream` JsCell. The external footprint is
+// fixed at construction, so estimateShallowMemoryUsageOf(handle) stays constant
+// across the stream's lifetime, including after close() mutates the mode on the
+// JS thread: `after === before` is the contract.
+
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import zlib from "node:zlib";
 
-// NativeBrotli/NativeZstd report external allocations to the GC via an
-// estimatedSize function. The codegen contract for that flag is "Called from
-// any thread", i.e. it runs inside JSC's concurrent GC visitChildren on the
-// marking thread. Those impls used to read `self.stream.get().mode` through a
-// JsCell whose Send/Sync impl is only sound under JS-thread affinity. While
-// the JS thread holds `&mut` inside a `stream.with_mut(...)` drive loop (init,
-// do_work), the marking thread could materialize an aliasing `&` through
-// `stream.get()` - a Rust aliasing violation.
-//
-// The fix caches the per-mode footprint in a plain immutable field at
-// construction, so estimatedSize never reads `self.stream`. The footprint is
-// then fixed for the life of the handle, independent of the `mode` field that
-// close() mutates on the JS thread.
-
-// estimateShallowMemoryUsageOf(cell) returns sizeof(cell) + estimated_size().
-// The native stream handle lives on engine._handle. We keep our own reference
-// to it, read its estimated size while live, then destroy the engine (which
-// closes the handle and, on the old code, set mode = NONE so estimatedSize
-// reported 0 for the external state). With the cached footprint the reported
-// external size does not collapse after close; it stays tied to the
-// construction-time mode. That is the observable effect of no longer reading
-// the live `mode` through the JsCell.
-//
-// `min` is the per-mode external footprint the constructor caches:
-//   brotli encode 5143, brotli decode 855, zstd compress 5272, zstd decompress 95968.
+// estimateShallowMemoryUsageOf(cell) == sizeof(cell) + estimated_size(). `min`
+// is a floor below the per-mode footprint the constructor caches (brotli encode
+// 5143, brotli decode 855, zstd compress 5272, zstd decompress 95968).
 function checkFootprintStableAcrossClose(create: () => any, min: number) {
   const engine = create();
   engine.on("error", () => {});
@@ -40,30 +26,25 @@ function checkFootprintStableAcrossClose(create: () => any, min: number) {
 }
 
 test("brotli compress: estimated size stays tied to construction mode across close", () => {
-  const zlib = require("zlib");
   checkFootprintStableAcrossClose(() => zlib.createBrotliCompress(), 5000);
 });
 
 test("brotli decompress: estimated size stays tied to construction mode across close", () => {
-  const zlib = require("zlib");
   checkFootprintStableAcrossClose(() => zlib.createBrotliDecompress(), 855);
 });
 
 test("zstd compress: estimated size stays tied to construction mode across close", () => {
-  const zlib = require("zlib");
   checkFootprintStableAcrossClose(() => zlib.createZstdCompress(), 5000);
 });
 
 test("zstd decompress: estimated size stays tied to construction mode across close", () => {
-  const zlib = require("zlib");
   checkFootprintStableAcrossClose(() => zlib.createZstdDecompress(), 90000);
 });
 
 // GC-safety guard: drive a write so the JS thread enters with_mut, then force
 // GC so estimatedSize/visitChildren fires on the marking thread against a live
 // stream. Asserts the stream still works and the process exits cleanly (this
-// build has ASAN under `bun bd`). This guards the aliasing contract the fix
-// established: estimatedSize must never touch the JsCell.
+// build has ASAN under `bun bd`).
 const brotliGcFixture = /* js */ `
   const zlib = require("zlib");
   const buf = Buffer.alloc(256 * 1024, "abcdefgh");

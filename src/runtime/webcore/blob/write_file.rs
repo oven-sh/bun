@@ -961,19 +961,17 @@ mod windows_impl {
             // `AsyncMkdirp::schedule` heap-allocates the task and hands
             // ownership to the work pool, which frees it after the completion
             // callback returns.
-            crate::node::fs::async_::AsyncMkdirp::schedule(
-                crate::node::fs::async_::AsyncMkdirp {
-                    completion: Self::on_mkdirp_complete_concurrent,
-                    completion_ctx: ctx,
-                    // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
-                    // points into `self.file_blob.store`, which outlives the mkdirp
-                    // task (it's released only in `deinit()`).
-                    path: bun_core::dirname(path)
-                        // this shouldn't happen
-                        .unwrap_or(path) as *const [u8],
-                    ..Default::default()
-                },
-            );
+            crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
+                completion: Self::on_mkdirp_complete_concurrent,
+                completion_ctx: ctx,
+                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                // points into `self.file_blob.store`, which outlives the mkdirp
+                // task (it's released only in `deinit()`).
+                path: bun_core::dirname(path)
+                    // this shouldn't happen
+                    .unwrap_or(path) as *const [u8],
+                ..Default::default()
+            });
         }
 
         /// # Safety

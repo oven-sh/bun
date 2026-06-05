@@ -1132,9 +1132,13 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
-  if ((state[kState] & kDestroyed) !== 0) {
-    return this;
-  }
+  // Deliberate divergence from Node 26: upstream early-returns here (and in
+  // pause()) when the stream is destroyed. Legacy Readable subclasses like
+  // fd-slicer assign `this.destroyed = true` (the prototype setter) right
+  // before push(null), so with the guard a piped destination's drain can no
+  // longer resume the source and the final buffered chunk is never delivered —
+  // silently truncating yauzl/extract-zip/puppeteer downloads. Keep the
+  // Node 24 behavior of letting destroyed streams flush their buffer.
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1174,9 +1178,7 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
-  if ((state[kState] & kDestroyed) !== 0) {
-    return this;
-  }
+  // No destroyed early-return: see the comment in resume() above.
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");

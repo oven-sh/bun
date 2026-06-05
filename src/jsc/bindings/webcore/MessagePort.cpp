@@ -155,6 +155,12 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
         return;
+    // During worker teardown contextDestroyed() runs from ~ScriptExecutionContext
+    // inside ~VM's lastChanceToFinalize, where allocating a MessageEvent wrapper
+    // asserts (the heap is being finalized). markTerminating() precedes ~VM, and
+    // the Rust-side scriptExecutionStatus still reports Running at that point.
+    if (context->isTerminating())
+        return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Only deliver while JS can run; during teardown the queue is left for
     // m_pipe->close() to drop (it unwinds nested port chains iteratively).
@@ -226,6 +232,9 @@ void MessagePort::dispatchCloseEvent()
     m_closeEventDispatched = true;
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
+        return;
+    // No JS may run during worker teardown (see flushQueuedMessagesBeforeClose).
+    if (context->isTerminating())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
@@ -372,10 +381,27 @@ bool MessagePort::hasPendingActivity() const
     if (!m_hasMessageEventListener)
         return false;
 
+    // Keep alive while a drain task is pending or mid-dispatch. drainAndDispatch
+    // pops each message (queued -> 0) before invoking listeners, so the in-hand
+    // message is invisible to the queued count; without this bit a concurrent GC
+    // running inside that window (queue empty, peer already closed) severs the
+    // wrapper weak and the dispatch hits a dead JSEventListener wrapper (debug
+    // ASSERT m_wrapper). DrainScheduled is set from schedule until the inbox is
+    // observed empty, covering every dispatch.
     uint64_t s = m_pipe->state(m_side);
-    // Keep alive if there are messages already queued for us, or the peer
-    // is still open and could send more.
-    return MessagePortPipe::queuedCount(s) > 0 || m_pipe->isOtherSideOpen(m_side);
+    if (s & MessagePortPipe::DrainScheduled)
+        return true;
+
+    // Keep alive if the peer is still open and could send more, or messages are
+    // already queued for us. Order matters: the peer's last send() happens before
+    // its close() (both release-stores from the same thread), so a GC that
+    // observes the peer Closed is guaranteed to see that send in our inbox when
+    // it loads our state *afterwards*. Reading our inbox first races: a 0-queued
+    // load taken before the send, combined with a Closed load taken after the
+    // close, collects the wrapper while a message is in flight.
+    if (m_pipe->isOtherSideOpen(m_side))
+        return true;
+    return MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0;
 }
 
 ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector<RefPtr<MessagePort>>&& ports)

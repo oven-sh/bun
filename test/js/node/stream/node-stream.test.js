@@ -821,19 +821,47 @@ describe("node v26 stream semantics", () => {
     expect(r.read()).toBeNull();
   });
 
-  // Upstream: nodejs/node#62557 (test-stream-readable-pause-and-resume.js).
-  it("pause() and resume() are no-ops on destroyed streams", async () => {
-    const r = new Readable({ read() {} });
-    r.destroy();
-    const emitted = [];
-    r.on("pause", () => emitted.push("pause"));
-    r.on("resume", () => emitted.push("resume"));
-    expect(r.resume()).toBe(r);
-    expect(r.readableFlowing).toBeNull();
-    expect(r.pause()).toBe(r);
-    expect(r.readableFlowing).toBeNull();
-    await new Promise(resolve => setImmediate(resolve));
-    expect(emitted).toEqual([]);
+  // Deliberate divergence from Node 26 (nodejs/node#62557 made pause/resume
+  // no-ops on destroyed streams): legacy Readable subclasses like fd-slicer
+  // (yauzl → extract-zip → puppeteer/electron tooling) assign
+  // `this.destroyed = true` via the prototype setter right before push(null).
+  // With the upstream guard, a piped destination's drain can no longer resume
+  // the source, so the final buffered chunk is silently dropped and the
+  // pipeline never finishes. We keep the Node 24 behavior: a destroyed-flagged
+  // stream still flushes its buffered data to a piped destination.
+  it("drain still resumes a source that flagged itself destroyed before EOF (fd-slicer pattern)", async () => {
+    const { Transform } = require("node:stream");
+    const chunks = [Buffer.alloc(65536, 1), Buffer.alloc(65536, 2), Buffer.alloc(40000, 3)];
+    const src = new Readable({
+      read() {
+        const chunk = chunks.shift();
+        if (chunk) {
+          this.push(chunk);
+        } else {
+          // fd-slicer's ReadStream._read: sets the destroyed flag (which hits
+          // the prototype setter on modern streams) and then pushes EOF.
+          this.destroyed = true;
+          this.push(null);
+        }
+      },
+    });
+    // Small writableHighWaterMark forces write() to return false so the pipe
+    // pauses and must be revived by 'drain' → src.resume().
+    const slow = new Transform({
+      writableHighWaterMark: 1024,
+      transform(chunk, encoding, callback) {
+        setImmediate(() => callback(null, chunk));
+      },
+    });
+    let received = 0;
+    slow.on("data", c => (received += c.length));
+    const ended = new Promise((resolve, reject) => {
+      slow.on("end", resolve);
+      slow.on("error", reject);
+    });
+    src.pipe(slow);
+    await ended;
+    expect(received).toBe(65536 * 2 + 40000);
   });
 
   // Upstream: nodejs/node#60907 (test-stream-compose-operator.js).

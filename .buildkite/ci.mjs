@@ -776,7 +776,7 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
       `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
     ],
   };

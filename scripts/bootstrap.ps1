@@ -436,6 +436,9 @@ function Install-IntelSde {
   $tarXz = Download-File "https://buncistore.blob.core.windows.net/artifacts/sde-external-$version-win.tar.xz" -Name "sde-external-$version-win.tar.xz"
   $actualHash = (Get-FileHash $tarXz -Algorithm SHA256).Hash
   if ($actualHash -ne $sha256) {
+    # Delete the bad file: Download-File skips the download when the target
+    # already exists, so leaving it would poison every subsequent run.
+    Remove-Item $tarXz -ErrorAction SilentlyContinue
     throw "Intel SDE checksum mismatch: expected $sha256, got $actualHash"
   }
 

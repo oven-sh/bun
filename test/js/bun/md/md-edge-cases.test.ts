@@ -686,20 +686,24 @@ describe("pathological bracket inputs", () => {
   // ~256 KB). Label recursion is now capped at depth 32; deeper labels are
   // emitted as plain text.
   test("nested image/link labels render in linear time", async () => {
+    // The first case's alt="![ check fails deterministically on the unfixed
+    // build (a label was never emitted verbatim), independent of the 30s
+    // kill, so the sizes only need to be large enough to make the quadratic
+    // visible, not to outlast the timeout.
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
-          ["nested inline images", fill(20000, "![") + fill(20000, "](u)"), out => out.includes('<img src="u"') && out.includes('alt="![')],
-          ["link/image alternation", fill(18000, "[![") + fill(18000, "](u)"), out => out.includes('<a href="u"')],
-          ["nested reference images", "[r]: /u\\n\\n" + fill(20000, "![") + fill(20000, "][r]"), out => out.includes('<img src="/u"')],
-          ["nested images, unclosed tail", fill(30000, "![") + "x", out => out.includes("![![")],
+          ["nested inline images", fill(10000, "![") + fill(10000, "](u)"), out => out.includes('<img src="u"') && out.includes('alt="![')],
+          ["link/image alternation", fill(9000, "[![") + fill(9000, "](u)"), out => out.includes('<a href="u"')],
+          ["nested reference images", "[r]: /u\\n\\n" + fill(10000, "![") + fill(10000, "][r]"), out => out.includes('<img src="/u"')],
+          ["nested images, unclosed tail", fill(15000, "![") + "x", out => out.includes("![![")],
         ];
         for (const [name, input, check] of cases) {
           const out = Bun.markdown.html(input);
           if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
           console.log("OK " + name);
         }
-        Bun.markdown.ansi(fill(20000, "![") + fill(20000, "](u)"), { colors: false });
+        Bun.markdown.ansi(fill(10000, "![") + fill(10000, "](u)"), { colors: false });
         console.log("OK ansi nested images");
         console.log("DONE");
       `);

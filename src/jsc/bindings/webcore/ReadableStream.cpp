@@ -232,16 +232,25 @@ static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadab
 
 bool ReadableStream::isLocked() const
 {
-    auto clientData = WebCore::clientData(m_globalObject->vm());
-    auto& privateName = clientData->builtinNames().readerPrivateName();
-    return readableStream()->getDirect(m_globalObject->vm(), privateName).isTrue();
+    return isLocked(globalObject(), readableStream());
 }
 
 bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
+    // Mirror isReadableStreamLocked() in ReadableStreamInternals.ts. The builtins
+    // store a reader object or an empty {} sentinel in the $reader slot, never the
+    // literal `true`, so a `.isTrue()` check never matches. A stream is locked when
+    // $reader holds a value, or once the native reader has been detached ($bunNativePtr
+    // set to -1 by ReadableStream__detach).
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
     auto& privateName = clientData->builtinNames().readerPrivateName();
-    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
+    JSValue reader = readableStream->getDirect(vm, privateName);
+    if (!reader.isEmpty() && !reader.isUndefinedOrNull())
+        return true;
+
+    JSValue nativePtr = readableStream->nativePtr();
+    return nativePtr.isInt32() && nativePtr.asInt32() == -1;
 }
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)

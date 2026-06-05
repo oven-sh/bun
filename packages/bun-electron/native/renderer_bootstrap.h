@@ -115,8 +115,18 @@ static const char kRendererBootstrapJs[] = R"BEJS(
       case 'arraybuffer': return base64ToBytes(v.v).buffer;
       case 'typedarray': {
         var bytes = base64ToBytes(v.v);
-        var Ctor = globalThis[v.kind];
-        if (!Ctor || v.kind === 'Uint8Array' || v.kind === 'Buffer') return bytes;
+        // Explicit allowlist — never construct from an arbitrary global.
+        var ctors = {
+          Int8Array: Int8Array, Uint8ClampedArray: Uint8ClampedArray,
+          Int16Array: Int16Array, Uint16Array: Uint16Array,
+          Int32Array: Int32Array, Uint32Array: Uint32Array,
+          Float32Array: Float32Array, Float64Array: Float64Array,
+          BigInt64Array: typeof BigInt64Array !== 'undefined' ? BigInt64Array : null,
+          BigUint64Array: typeof BigUint64Array !== 'undefined' ? BigUint64Array : null,
+          DataView: DataView,
+        };
+        var Ctor = ctors[v.kind];
+        if (!Ctor) return bytes; // Uint8Array, Buffer, or unknown -> raw bytes
         return new Ctor(bytes.buffer);
       }
       case 'object': {

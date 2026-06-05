@@ -6,6 +6,21 @@
 
 const TAG = "$bunElectron";
 
+// Allowlisted typed-array constructors for decode (no dynamic global lookup).
+const TYPED_ARRAY_CTORS: Record<string, new (b: ArrayBuffer) => ArrayBufferView> = {
+  Int8Array,
+  Uint8ClampedArray,
+  Int16Array,
+  Uint16Array,
+  Int32Array,
+  Uint32Array,
+  Float32Array,
+  Float64Array,
+  BigInt64Array,
+  BigUint64Array,
+  DataView,
+};
+
 export function encodeValue(value: unknown): unknown {
   if (value === undefined) return { [TAG]: "undefined" };
   if (typeof value === "number") {
@@ -77,10 +92,9 @@ export function decodeValue(value: unknown): unknown {
     case "typedarray": {
       const bytes = base64ToBytes(obj.v as string);
       const kind = obj.kind as string;
-      const Ctor = (globalThis as Record<string, unknown>)[kind] as
-        | (new (b: ArrayBuffer) => ArrayBufferView)
-        | undefined;
-      if (!Ctor || kind === "Uint8Array" || kind === "Buffer") return bytes;
+      // Explicit allowlist — never look up an arbitrary global constructor.
+      const Ctor = TYPED_ARRAY_CTORS[kind];
+      if (!Ctor) return bytes; // Uint8Array, Buffer, or unknown -> raw bytes
       return new Ctor(bytes.buffer as ArrayBuffer);
     }
     case "object": {

@@ -892,6 +892,7 @@ class PendingResourceHandler : public CefResourceHandler {
     handle_request = false;
     callback_ = callback;
     id_ = g_next_resource_id.fetch_add(1);
+    request_origin_ = request->GetHeaderByName("Origin").ToString();
     {
       std::lock_guard<std::mutex> lock(g_resources_mutex);
       g_pending_resources[id_] = this;
@@ -941,10 +942,18 @@ class PendingResourceHandler : public CefResourceHandler {
                           CefString& redirectUrl) override {
     response->SetStatus(status_);
     response->SetMimeType(mime_.empty() ? "application/json" : mime_);
-    CefResponse::HeaderMap headers;
-    response->GetHeaderMap(headers);
-    headers.insert({"Access-Control-Allow-Origin", "*"});
-    response->SetHeaderMap(headers);
+    // The internal sendSync channel (beipc) is reached cross-origin by the
+    // app's own renderer, so it needs CORS to read the response — but reflect
+    // the caller's exact origin rather than using a wildcard, so no other
+    // origin can read replies. User protocol schemes set their own headers
+    // (via the JS handler's Response); we don't inject CORS for them.
+    if (is_sync_ipc_ && !request_origin_.empty()) {
+      CefResponse::HeaderMap headers;
+      response->GetHeaderMap(headers);
+      headers.insert({"Access-Control-Allow-Origin", request_origin_});
+      headers.insert({"Vary", "Origin"});
+      response->SetHeaderMap(headers);
+    }
     response_length = static_cast<int64_t>(body_.size());
   }
 
@@ -977,6 +986,7 @@ class PendingResourceHandler : public CefResourceHandler {
   int status_ = 200;
   std::string mime_;
   std::string body_;
+  std::string request_origin_;
   size_t offset_ = 0;
   IMPLEMENT_REFCOUNTING(PendingResourceHandler);
 };

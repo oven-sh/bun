@@ -2809,13 +2809,15 @@ it("http2 decoded header bytes stay intact across interleaved decode/encode and 
             console.error(err);
             process.exit(1);
           });
+          const pSuffix = Buffer.alloc(64, "p").toString();
+          const qSuffix = Buffer.alloc(48, "q").toString();
           for (let i = 0; i < 40; i++) {
             const reqHeaders = { ":path": "/" + i };
             for (let j = 0; j < 12; j++) {
               // Fixed values are HPACK dynamic-table indexed after round 0;
               // varying values are literal every round.
-              reqHeaders["x-fixed-" + j] = "value-" + j + "-" + "p".repeat(64);
-              reqHeaders["x-vary-" + j] = i + "-" + j + "-" + "q".repeat(48);
+              reqHeaders["x-fixed-" + j] = "value-" + j + "-" + pSuffix;
+              reqHeaders["x-vary-" + j] = i + "-" + j + "-" + qSuffix;
             }
             reqHeaders["x-secret"] = "hunter2-" + i;
             reqHeaders[http2.sensitiveHeaders] = ["x-secret"];

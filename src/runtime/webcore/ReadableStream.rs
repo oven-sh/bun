@@ -295,8 +295,10 @@ impl ReadableStream {
         ReadableStream__isLocked(self.value, global_object)
     }
 
-    /// Whether a reader is attached (`$reader` is truthy), matching the JS
-    /// `$isReadableStreamLocked` builtin. `is_locked` above only matches a
+    /// Whether a reader is attached (`$reader` is truthy) — the reader half
+    /// of the JS `$isReadableStreamLocked` builtin (the other half,
+    /// `$bunNativePtr === -1`, marks force-detached streams, which are also
+    /// disturbed and tag as `Invalid`). `is_locked` above only matches a
     /// literal `true` sentinel that the stream builtins never store, so it
     /// cannot see readers; use this to decide whether a stream may be
     /// converted/consumed natively.

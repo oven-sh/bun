@@ -384,10 +384,11 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
 }
 
-// Whether `$reader` is truthy — the same test the `$isReadableStreamLocked`
-// builtin performs. `ReadableStream::isLocked` above checks `$reader.isTrue()`,
-// which never matches the reader objects (or the `{}` released-reader
-// sentinel) the stream builtins actually store.
+// Whether `$reader` is truthy — the reader half of the `$isReadableStreamLocked`
+// builtin (the other half, `$bunNativePtr === -1`, marks force-detached streams).
+// `ReadableStream::isLocked` above checks `$reader.isTrue()`, which never
+// matches the reader objects (or the `{}` released-reader sentinel) the stream
+// builtins actually store.
 extern "C" bool ReadableStream__hasReader(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     ASSERT(globalObject);

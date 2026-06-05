@@ -887,3 +887,33 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(() => new Response(stream)).toThrow("ReadableStream has already been used");
   });
 });
+
+describe("converted streams are marked disturbed", () => {
+  // When a body's stream is converted to a blob internally (the native
+  // fast path), a captured reference to it must behave like any consumed
+  // stream: wrapping it in a new Response and reading again must throw,
+  // not silently yield "".
+  test("re-wrapping a blob-bodied Response's consumed body throws", async () => {
+    const response = new Response(new Blob([Buffer.alloc(64 * 1024, 0x41)]));
+    const captured = response.body!;
+    expect(await response.text()).toHaveLength(64 * 1024);
+    expect(async () => {
+      await new Response(captured).text();
+    }).toThrow("already been used");
+  });
+
+  test("re-wrapping a consumed fetch body throws", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Buffer.alloc(64 * 1024, 0x42)),
+    });
+    const response = await fetch(server.url);
+    const captured = response.body!;
+    // let the body buffer fully so consumption takes the Bytes conversion path
+    await Bun.sleep(50);
+    expect(await response.text()).toHaveLength(64 * 1024);
+    expect(async () => {
+      await new Response(captured).text();
+    }).toThrow("already been used");
+  });
+});

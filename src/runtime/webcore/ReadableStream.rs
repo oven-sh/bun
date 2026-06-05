@@ -183,14 +183,16 @@ impl ReadableStream {
         // TODO: properly propagate exception upwards
         let _ = self.reload_tag(global_this);
 
-        match self.ptr {
+        // Post-success bookkeeping is hoisted below the match: every arm that
+        // produces a blob must leave the stream done AND disturbed, or a
+        // captured reference can be wrapped into a new Response and silently
+        // re-consumed (yielding "" or re-reading the file) where the JS
+        // streaming path throws "ReadableStream has already been used".
+        let converted: Option<webcore::blob::Any> = match self.ptr {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
-                if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done(global_this);
-                    return Some(blob);
-                }
+                blobby.to_any_blob(global_this)
             }
             Source::File(_) => {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
@@ -211,15 +213,9 @@ impl ReadableStream {
                     }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done(global_this);
-                    // The FileReader keeps its lazy store (the blob above only
-                    // clones it), so without this a captured stream reference
-                    // could be wrapped into a new Response and re-read the
-                    // file from disk. Mark the JS stream disturbed and drop
-                    // its native ptr — the exact state the JS streaming path
-                    // used to leave a consumed file stream in.
-                    self.force_detach(global_this);
-                    return Some(webcore::blob::Any::Blob(blob));
+                    Some(webcore::blob::Any::Blob(blob))
+                } else {
+                    None
                 }
             }
             Source::Bytes(_) => {
@@ -227,16 +223,16 @@ impl ReadableStream {
                 let bytes = self.ptr.bytes().expect("matched Bytes");
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
-                if let Some(blob) = bytes.to_any_blob() {
-                    self.done(global_this);
-                    return Some(blob);
-                }
-                return None;
+                bytes.to_any_blob()
             }
-            _ => {}
-        }
+            _ => None,
+        };
 
-        None
+        if converted.is_some() {
+            self.done(global_this);
+            self.force_detach(global_this);
+        }
+        converted
     }
 
     pub fn done(&self, global_this: &JSGlobalObject) {

@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -382,4 +383,43 @@ test("jest.restoreAllMocks clears the on-demand requireMock cache", () => {
   expect(second.plainFunction()).toBeUndefined();
   // And the handles are distinct — cache was cleared, not replaced in place.
   expect(second).not.toBe(first);
+});
+
+test("jest.requireMock with a relative specifier doesn't break later ESM imports", async () => {
+  // requireMock resolves its specifier against the caller's source origin but
+  // caches in a side-map, never allocating virtualModules. If it set
+  // `mustDoExpensiveRelativeLookup` (which jest.mock does), a later ESM import
+  // from a file that never called jest.mock would trip the module loader's
+  // `!mustDoExpensiveRelativeLookup` assert under the debug/ASAN build.
+  // Run in a fresh process so the global starts with virtualModules == null.
+  // Use a `file:` specifier — that branch sets the flag unconditionally once
+  // the URL is valid (the relative branch only sets it when resolution
+  // fails), so it reliably reproduces the flag-set-but-map-null state.
+  using dir = tempDir("requiremock-esm", {
+    "real.ts": `export const value = 42;`,
+    "fixture.test.ts": `
+      import { test, expect, jest } from "bun:test";
+      test("requireMock then import", async () => {
+        // file: specifier → resolver sets the flag pre-fix.
+        jest.requireMock("file:./real.ts");
+        // A real ESM import afterwards must not hit the assert.
+        const mod = await import("./real.ts");
+        expect(mod.value).toBe(42);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
 });

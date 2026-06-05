@@ -507,13 +507,21 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 // place. Shared by `JSMock__jsModuleMock` and `JSMock__jsRequireMock` so
 // `jest.requireMock(id)` lands on the same resolved key that
 // `jest.mock(id)` installed into `virtualModules` — the two must produce
-// identical output. Returns false if it threw (caller should propagate).
-static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSC::ThrowScope& scope, WTF::String& specifier, JSC::JSString*& specifierString)
+// identical output. Throws (via `scope`) on an invalid `file:` URL; the
+// caller propagates with RETURN_IF_EXCEPTION.
+//
+// `setExpensiveLookupFlag` gates `onLoadPlugins.mustDoExpensiveRelativeLookup`.
+// Only callers that go on to install a `virtualModules` entry (i.e.
+// `jest.mock`, via `addModuleMock`) may set it — the module loader asserts
+// `!mustDoExpensiveRelativeLookup` whenever `virtualModules` is null
+// (ZigGlobalObject.cpp). `jest.requireMock` caches in a separate side-map and
+// never allocates `virtualModules`, so it must leave the flag untouched.
+static void resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSC::ThrowScope& scope, WTF::String& specifier, JSC::JSString*& specifierString, bool setExpensiveLookupFlag)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
     if (sourceOrigin.isNull())
-        return true;
+        return;
     const URL& url = sourceOrigin.url();
 
     if (specifier.startsWith("file:"_s)) {
@@ -521,11 +529,12 @@ static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSG
         if (fileURL.isValid()) {
             specifier = fileURL.fileSystemPath();
             specifierString = jsString(vm, specifier);
-            globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
-            return true;
+            if (setExpensiveLookupFlag)
+                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+            return;
         }
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "Invalid \"file:\" URL"_s));
-        return false;
+        return;
     }
 
     if (url.isValid() && url.protocolIsFile()) {
@@ -548,7 +557,8 @@ static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSG
             auto relativeURL = URL(url, specifier);
 
             if (relativeURL.isValid()) {
-                globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
+                if (setExpensiveLookupFlag)
+                    globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                 if (relativeURL.protocolIsFile())
                     specifier = relativeURL.fileSystemPath();
@@ -559,8 +569,6 @@ static bool resolveModuleMockSpecifier(Zig::GlobalObject* globalObject, JSC::JSG
             }
         }
     }
-
-    return true;
 }
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
@@ -603,7 +611,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         return {};
     }
 
-    resolveModuleMockSpecifier(globalObject, lexicalGlobalObject, callframe, scope, specifier, specifierString);
+    // jest.mock installs into virtualModules (addModuleMock), so it's allowed
+    // to set mustDoExpensiveRelativeLookup.
+    resolveModuleMockSpecifier(globalObject, lexicalGlobalObject, callframe, scope, specifier, specifierString, /* setExpensiveLookupFlag */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
     // For auto-mock, synchronously require the real module and generate a
@@ -922,7 +932,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
 
     // Resolve against the caller's source origin so `jest.requireMock(id)`
     // lands on the same `virtualModules` key `jest.mock(id)` installed.
-    resolveModuleMockSpecifier(globalObject, lexicalGlobalObject, callframe, scope, specifier, specifierString);
+    // requireMock caches in requireMockCache and never allocates
+    // virtualModules, so it must NOT set mustDoExpensiveRelativeLookup —
+    // that would trip the module loader's `!mustDoExpensiveRelativeLookup`
+    // assert on the next import from a file that never called jest.mock.
+    resolveModuleMockSpecifier(globalObject, lexicalGlobalObject, callframe, scope, specifier, specifierString, /* setExpensiveLookupFlag */ false);
     RETURN_IF_EXCEPTION(scope, {});
 
     // If a `jest.mock(specifier)` has already installed a global mock for

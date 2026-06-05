@@ -1404,10 +1404,6 @@ impl<'a> Transpiler<'a> {
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                // `ClientEntryPoint::generate` builds the source via
-                // `Source::init_path_string`, so `contents` is `Cow::Borrowed`
-                // (borrowing the entry's `code_buffer`); `.clone()` is a
-                // shallow pointer copy that owns no heap memory.
                 break 'brk client_entry_point.source.clone();
             }
 
@@ -2820,11 +2816,8 @@ impl<'a> Transpiler<'a> {
         }
         self.options.transform_only = true;
 
-        // Invariant: only the main-thread transpiler reaches this method.
-        // Worker option clones (`BundleOptions::for_worker`) intentionally
-        // carry `output_dir_handle: None` because the handle is owning; if a
-        // worker ever called `transform()`, this branch would silently route
-        // output to stdout instead of the output directory.
+        // Only the main-thread transpiler reaches here; worker option clones
+        // carry `output_dir_handle: None` and would route output to stdout.
         if self.options.output_dir_handle.is_none() {
             let outstream = TransformOutstream::Stdout;
             match self.options.import_path_format {
@@ -2884,9 +2877,7 @@ impl<'a> Transpiler<'a> {
         // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
             options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
-        // Raw-fd view only: `self.options.output_dir_handle` keeps ownership
-        // (and closes the fd); duplicating an owning handle here would
-        // double-close.
+        // Non-owning fd view; `output_dir_handle` keeps ownership.
         final_result.root_dir = self
             .options
             .output_dir_handle

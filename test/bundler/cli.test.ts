@@ -421,14 +421,7 @@ test("log case 2", async () => {
   `);
 });
 
-// Regression guards for `bun build --outdir` output-directory handling. Note:
-// the CLI build path opens the output directory itself (build_command.rs) and
-// does not populate `BundleOptions.output_dir_handle`, so these do not
-// exercise the owning-handle code in `from_api`; they cover the user-visible
-// outdir open/write behavior around it.
 test("--outdir build succeeds when the output directory already exists with prior output", async () => {
-  // Pre-existing dist/ with stale content: the build must open the existing
-  // directory, write into it, and replace the stale file.
   using dir = tempDir("build-outdir-reuse", {
     "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
     "dist/entry.js": `console.log("stale");`,
@@ -451,7 +444,6 @@ test("--outdir build succeeds when the output directory already exists with prio
   expect(out).not.toContain("stale");
 });
 
-// Multiple entry points writing into the same --outdir.
 test("multi-entry build writes each entry point into the output directory", async () => {
   using dir = tempDir("build-multi-entry-outdir", {
     "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,

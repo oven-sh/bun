@@ -24,9 +24,7 @@ pub use bun_options_types::global_cache::GlobalCache;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
-/// Owning directory handle (closes the fd on `Drop`). `BundleOptions` is the
-/// single owner; everything downstream takes a raw `Fd` view via [`Dir::fd`]
-/// / [`bun_sys::Dir::borrow`] so the fd is closed exactly once.
+/// Owning directory handle (closes the fd on `Drop`).
 pub type Dir = bun_sys::Dir;
 /// Unified with the canonical
 /// `bun_ast::LoaderHashTable` so the resolver and
@@ -1477,10 +1475,8 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
-            // `output_dir_handle` is an owning handle (closes on Drop); the
-            // parent keeps sole ownership. Workers never write to the output
-            // dir through their options copy — duplicating the handle here
-            // would close the parent's fd when the worker options drop.
+            // The owning handle stays with the parent; copying it here would
+            // close the parent's fd when the worker options drop.
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
@@ -2176,8 +2172,7 @@ pub struct TransformResult {
     pub warnings: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
     pub outbase: Box<[u8]>,
-    /// Non-owning view of `BundleOptions.output_dir_handle` (which owns the
-    /// descriptor and closes it). Never close this fd.
+    /// Non-owning view of `BundleOptions.output_dir_handle`; never close it.
     pub root_dir: Option<bun_sys::Fd>,
 }
 

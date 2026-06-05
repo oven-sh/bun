@@ -242,10 +242,7 @@ pub enum Step {
     Failed { msg: Box<[u8]>, allocated: bool },
 }
 
-/// Draft-path sibling of `ffi_body::Compiled`. Like it, this stores no JS
-/// function value: symbol functions are rooted via the `symbolsValue` cached
-/// own-property on the FFI wrapper object, and callback functions via the
-/// C++ `FFICallbackFunctionWrapper`'s `JSC::Strong`.
+/// Draft-path sibling of `ffi_body::Compiled`; see it for JS function rooting.
 pub struct Compiled {
     pub ptr: *mut c_void,
     pub js_context: Option<*mut JSGlobalObject>,

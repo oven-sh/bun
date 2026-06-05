@@ -1235,8 +1235,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    // `cb` stays alive via the `symbolsValue` cached
-                    // own-property set below (GC-visited on the FFI wrapper).
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global_this, str.slice(), cb);
                 }
             }
@@ -1598,8 +1597,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    // `cb` stays alive via the `symbolsValue` cached
-                    // own-property set below (GC-visited on the FFI wrapper).
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global, str.slice(), cb);
                 }
             }
@@ -1695,8 +1693,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    // `cb` stays alive via the `symbolsValue` cached
-                    // own-property set below (GC-visited on the FFI wrapper).
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global, name.slice(), cb);
                 }
             }
@@ -2543,13 +2540,9 @@ pub enum Step {
     Failed { msg: Box<[u8]>, allocated: bool },
 }
 
-/// No JS function value is stored here. Liveness is owned elsewhere:
-/// symbol functions are kept alive by the `symbolsValue` cached own-property
-/// on the FFI wrapper object (declared in `ffi.classes.ts` `values:` and
-/// visited by the generated class's visitChildren), and callback functions
-/// are kept alive by the C++ `FFICallbackFunctionWrapper` (it holds a
-/// `JSC::Strong` to the function), which `Function::drop` derefs via
-/// `FFICallbackFunctionWrapper_destroy` after the trampoline can no longer run.
+/// Stores no JS function value: symbol functions are rooted by the
+/// `symbolsValue` cached own-property on the FFI wrapper, callbacks by the
+/// `JSC::Strong` inside `FFICallbackFunctionWrapper`.
 pub struct Compiled {
     pub ptr: *mut c_void,
     // Opaque storage, never dereferenced. NonNull avoids

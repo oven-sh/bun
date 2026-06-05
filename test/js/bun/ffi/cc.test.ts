@@ -388,16 +388,8 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
   });
 });
 
-// =============================================================================
-
-// GC rooting-invariant guard for FFI function values. This is not a
-// behavior test for any single change — it pins two liveness invariants:
-// (a) the compiled trampoline's executable memory survives the library
-// wrapper being collected (FFI finalization deliberately does not tear down
-// an unclosed library's compiled state), and (b) the JS closure behind a
-// JSCallback stays alive via the native callback wrapper's Strong reference
-// until close(). Drop every other reference, force GC between calls, and
-// the trampolines must still dispatch to live functions.
+// Pins GC liveness: compiled trampolines survive the library wrapper being
+// collected, and a JSCallback's closure stays alive until close().
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
 describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and callbacks", () => {
   it("keeps symbol functions and callback closures alive across forced GC", async () => {
@@ -411,10 +403,7 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
         import path from "path";
 
         function makeSymbols() {
-          // Only the two bound functions escape (kept alive by the caller's
-          // locals once this returns); the library wrapper and the symbols
-          // object become unreachable and may be collected, so the compiled
-          // trampoline memory must outlive them.
+          // Only the bound functions escape; the library wrapper becomes collectible.
           const { symbols } = cc({
             source: path.join(import.meta.dir, "lib.c"),
             symbols: {
@@ -426,8 +415,7 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
         }
 
         function makeCallback() {
-          // The closure has no reference outside the JSCallback; it must be
-          // kept alive by the native wrapper until close().
+          // Closure has no reference outside the JSCallback.
           return new JSCallback(x => x * 3, { args: ["int"], returns: "int" });
         }
 

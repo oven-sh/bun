@@ -476,8 +476,19 @@ pub(crate) fn writable_stream(
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload (Zig used `@ptrCast` on the fn ptrs directly).
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
+        let sink_ptr: *mut NetworkSink = ctx.cast();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
+        let outcome = wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) });
+        // The JS wrapper was GC-finalized mid-upload: the box was kept alive
+        // for this report; it is now done (even on JsTerminated) and this is
+        // the last reference — destroy it.
+        // SAFETY: `sink_ptr` is the heap allocation made at construction
+        // below; `pending_destroy` is only ever set by the GC finalizer,
+        // which transfers ownership of the box to this completion path.
+        if unsafe { (*sink_ptr).pending_destroy } {
+            NetworkSink::finalize_and_destroy(sink_ptr);
+        }
+        outcome
     }
     fn on_writable_thunk(task: *mut MultiPartUpload, ctx: *mut c_void, flushed: u64) {
         // SAFETY: task is the live MultiPartUpload; ctx is the NetworkSink set as callback_context.

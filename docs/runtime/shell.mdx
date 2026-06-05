@@ -628,6 +628,88 @@ await $`git ls-remote origin ${branch}`;
 
 ---
 
+## Sandboxed shells (experimental)
+
+`$.sandbox(options)` creates a restricted shell for running untrusted shell commands. Because Bun Shell implements its commands natively, the policy is enforced inside the interpreter, before any command or filesystem operation executes.
+
+```js
+import { $ } from "bun";
+
+const box = $.sandbox({
+  commands: { deny: ["rm"] },
+  fs: {
+    read: ["/workspace/data"],
+    write: ["/workspace/data/out"],
+  },
+  limits: { timeout: 5_000, maxOutputBytes: 1024 * 1024 },
+});
+
+await box`ls /workspace/data`; // ok
+await box`cat /etc/passwd`; // fails: read access not permitted in sandbox
+await box`git status`; // fails: external commands are not permitted in sandbox
+```
+
+The returned function is `$`-compatible: it supports interpolation, `.cwd()`, `.env()`, `.quiet()`, `.nothrow()`, `.text()`, and friends, and inherits the `cwd`/`env`/`throws` configuration of the shell it derives from (`Bun.$` or a `new $.Shell()` instance). A sandboxed shell cannot be re-sandboxed; derive a new sandbox from an unsandboxed shell instead.
+
+Blocked commands and file operations fail with exit code `1` and a `... not permitted in sandbox` message on stderr, so they compose with `&&`, `||`, and `.nothrow()` like any other failing command. Exceeded limits reject the promise with a descriptive error.
+
+### Command policy
+
+Only Bun Shell builtins can run inside a sandbox — external binaries are always blocked, before any `PATH` lookup happens. `commands.allow` and `commands.deny` restrict the builtin set further:
+
+```js
+const box = $.sandbox({
+  commands: {
+    allow: ["echo", "ls", "seq"], // only these builtins may run
+    deny: ["rm"], // deny always wins over allow
+  },
+});
+```
+
+Unknown command names in `allow`/`deny` throw, listing the valid builtin names. The available builtin set matches the regular shell's: on POSIX platforms `cat` and `cp` currently delegate to system binaries, so inside a sandbox they are blocked like any external command.
+
+Because external binaries cannot run, environment tricks like `PATH=/evil cmd` cannot smuggle a command in, and `which` never probes the host filesystem — it only reports policy-permitted builtins.
+
+### Filesystem policy
+
+By default a sandboxed shell has **no filesystem access**. `fs.read` and `fs.write` grant access under absolute path prefixes; a `write` prefix also grants read. Omit `write` for a read-only sandbox.
+
+Every path the script touches — command operands, redirect targets, glob walks, `cd`, and `[[ -f ... ]]` tests — is resolved against the shell's working directory and through symlinks before it is compared against the prefixes. This is what stops the classic escapes:
+
+```js
+const box = $.sandbox({ fs: { read: ["/workspace/data"] } });
+
+await box`ls /workspace/data/../secrets`; // fails: `..` is resolved first
+await box`echo x < /workspace/data/link`; // fails if `link` points outside
+await box`echo /etc/*`; // fails: glob walks outside the prefixes are refused
+await box`cd /etc`; // fails: the new cwd must be readable
+```
+
+File tests like `[[ -f /etc/passwd ]]` answer as if the file does not exist, so scripts cannot probe the host tree. Recursive operations (`ls -R`, `rm -r`) stay under their checked roots because traversal never follows symlinks.
+
+Paths granted to the policy and paths checked at runtime are both canonicalized the same way (symlinks resolved via the deepest existing ancestor), so grants work even when the directory itself is reached through a symlink, such as `/tmp` on macOS.
+
+### Network policy
+
+A sandboxed script cannot reach the network: external binaries are blocked, and no shell builtin performs network I/O. The `network` option is reserved for future allowlists and currently only accepts `false` (the default); passing `true` throws.
+
+### Limits
+
+- `limits.timeout` — wall-clock limit in milliseconds for the whole script. When it expires, the promise rejects with `Shell command timed out after <n>ms (sandbox limits.timeout)` and the interpreter stops scheduling work.
+- `limits.maxOutputBytes` — caps the total bytes the script may write to stdout, stderr, and file redirects combined. When exceeded, the promise rejects with `Shell command output exceeded <n> bytes (sandbox limits.maxOutputBytes)`.
+
+Both rejections carry the output captured up to that point on `error.stdout` / `error.stderr`.
+
+### Current limitations
+
+This API is experimental, and the policy surface is designed to grow (finer-grained network rules and an overlay filesystem where writes land in a scratch layer are planned). Current limitations to be aware of:
+
+- JavaScript objects interpolated into the command (`Bun.file()`, `Response`, buffers) are provided by the calling code, not the untrusted script, so they are intentionally not subject to the filesystem policy.
+- A builtin blocked forever on a pipe that never receives data keeps its read poll active after a timeout; the promise still rejects and the caller regains control.
+- Path checks happen when an operation starts. With external binaries disabled, scripts cannot race the interpreter from another thread, but processes outside the sandbox mutating the same tree concurrently can still change what a checked path points at.
+
+---
+
 ## Credits
 
 Large parts of this API were inspired by [zx](https://github.com/google/zx), [dax](https://github.com/dsherret/dax), and [bnx](https://github.com/wobsoriano/bnx). Thank you to the authors of those projects.

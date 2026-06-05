@@ -24,8 +24,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       super("");
     }
 
-    initialize(output: ShellOutput, code: number) {
-      this.message = `Failed with exit code ${code}`;
+    initialize(output: ShellOutput, code: number, message?: string) {
+      this.message = message !== undefined ? message : `Failed with exit code ${code}`;
       this.#output = output;
       this.name = "ShellError";
 
@@ -108,7 +108,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #hasRun: boolean = false;
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
-    #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #reject: (code: number, stdout: Buffer, stderr: Buffer, message?: string) => void;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
@@ -131,8 +131,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        reject = (code, stdout, stderr) => {
-          potentialError!.initialize(new ShellOutput(stdout, stderr, code), code);
+        reject = (code, stdout, stderr, message) => {
+          potentialError!.initialize(new ShellOutput(stdout, stderr, code), code, message);
           rej(potentialError);
         };
       });
@@ -256,11 +256,146 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");
+  const sandboxSymbol = Symbol("sandbox");
+
+  function validateStringArray(value, what: string): string[] | undefined {
+    if (value === undefined) return undefined;
+    if (!$isJSArray(value)) {
+      throw new TypeError(`$.sandbox: ${what} must be an array of strings`);
+    }
+    const out: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (typeof item !== "string") {
+        throw new TypeError(`$.sandbox: ${what} must be an array of strings`);
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
+  function validatePathArray(value, what: string): string[] | undefined {
+    const paths = validateStringArray(value, what);
+    if (paths === undefined) return undefined;
+    const { isAbsolute } = require("node:path");
+    for (const path of paths) {
+      if (path.length === 0 || !isAbsolute(path)) {
+        throw new TypeError(`$.sandbox: ${what} paths must be absolute, got ${JSON.stringify(path)}`);
+      }
+      if (path.includes("\0")) {
+        throw new TypeError(`$.sandbox: ${what} paths must not contain NUL bytes`);
+      }
+    }
+    return paths;
+  }
+
+  function validateLimit(value, what: string): number | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+      throw new TypeError(`$.sandbox: ${what} must be a positive integer`);
+    }
+    return value;
+  }
+
+  function validateKeys(object, allowed: string[], what: string) {
+    for (const key of Object.keys(object)) {
+      if (!allowed.includes(key)) {
+        throw new TypeError(`$.sandbox: unknown option '${what}${key}'`);
+      }
+    }
+  }
+
+  // Validates the `$.sandbox()` options object and deep-copies it into a
+  // frozen, null-prototype policy object (later mutation of the caller's
+  // object must not affect the sandbox). The native side
+  // (`ParsedShellScript.setSandbox`) re-validates, including builtin names
+  // in commands.allow/deny, which only it knows.
+  function normalizeSandboxOptions(options) {
+    if (typeof options !== "object" || options === null) {
+      throw new TypeError("$.sandbox: expected an options object");
+    }
+    validateKeys(options, ["commands", "fs", "network", "limits"], "");
+
+    const normalized: Record<string, any> = { __proto__: null };
+
+    const commands = options.commands;
+    if (commands !== undefined) {
+      if (typeof commands !== "object" || commands === null) {
+        throw new TypeError("$.sandbox: commands must be an object");
+      }
+      validateKeys(commands, ["allow", "deny"], "commands.");
+      normalized.commands = Object.freeze({
+        __proto__: null,
+        allow: validateStringArray(commands.allow, "commands.allow"),
+        deny: validateStringArray(commands.deny, "commands.deny"),
+      });
+    }
+
+    const fs = options.fs;
+    if (fs !== undefined) {
+      if (typeof fs !== "object" || fs === null) {
+        throw new TypeError("$.sandbox: fs must be an object");
+      }
+      validateKeys(fs, ["read", "write"], "fs.");
+      normalized.fs = Object.freeze({
+        __proto__: null,
+        read: validatePathArray(fs.read, "fs.read"),
+        write: validatePathArray(fs.write, "fs.write"),
+      });
+    }
+
+    const network = options.network;
+    if (network !== undefined) {
+      if (typeof network !== "boolean") {
+        throw new TypeError("$.sandbox: network must be a boolean");
+      }
+      if (network) {
+        throw new TypeError(
+          "$.sandbox: network access cannot be enabled yet; sandboxed shells run only builtin commands, none of which perform network I/O. The only supported value is false.",
+        );
+      }
+      normalized.network = false;
+    }
+
+    const limits = options.limits;
+    if (limits !== undefined) {
+      if (typeof limits !== "object" || limits === null) {
+        throw new TypeError("$.sandbox: limits must be an object");
+      }
+      validateKeys(limits, ["timeout", "maxOutputBytes"], "limits.");
+      normalized.limits = Object.freeze({
+        __proto__: null,
+        timeout: validateLimit(limits.timeout, "limits.timeout"),
+        maxOutputBytes: validateLimit(limits.maxOutputBytes, "limits.maxOutputBytes"),
+      });
+    }
+
+    return Object.freeze(normalized);
+  }
 
   class ShellPrototype {
     [cwdSymbol]: string | undefined;
     [envSymbol]: Record<string, string | undefined> | undefined;
     [throwsSymbol]: boolean = true;
+    [sandboxSymbol]: object | undefined;
+
+    sandbox(options) {
+      if (this[sandboxSymbol]) {
+        throw new Error("$.sandbox: this shell is already sandboxed; derive a new sandbox from an unsandboxed shell");
+      }
+      const normalized = normalizeSandboxOptions(options);
+
+      var Shell = function Shell(first, ...rest) {
+        return runShellTemplate(Shell, first, rest);
+      };
+      Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+      Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
+      Shell[cwdSymbol] = this[cwdSymbol];
+      Shell[envSymbol] = this[envSymbol];
+      Shell[throwsSymbol] = this[throwsSymbol];
+      Shell[sandboxSymbol] = normalized;
+      return Shell;
+    }
 
     env(newEnv: Record<string, string | undefined>) {
       if (typeof newEnv === "undefined" || newEnv === originalDefaultEnv) {
@@ -299,19 +434,28 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
   }
 
-  var BunShell = function BunShell(first, ...rest) {
+  // Shared tagged-template body for `Bun.$`, `new $.Shell()` instances, and
+  // `$.sandbox()` shells: `shell` is the template function itself, carrying
+  // its configuration under the symbol keys.
+  function runShellTemplate(shell, first, rest: any[]) {
     if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
     const parsed_shell_script = createParsedShellScript(first.raw, rest);
 
-    const cwd = BunShell[cwdSymbol];
-    const env = BunShell[envSymbol];
-    const throws = BunShell[throwsSymbol];
+    const cwd = shell[cwdSymbol];
+    const env = shell[envSymbol];
+    const throws = shell[throwsSymbol];
+    const sandbox = shell[sandboxSymbol];
 
     // cwd must be set before env or else it will be injected into env as "PWD=/"
     if (cwd) parsed_shell_script.setCwd(cwd);
     if (env) parsed_shell_script.setEnv(env);
+    if (sandbox) parsed_shell_script.setSandbox(sandbox);
 
     return new ShellPromise(parsed_shell_script, throws);
+  }
+
+  var BunShell = function BunShell(first, ...rest) {
+    return runShellTemplate(BunShell, first, rest);
   };
 
   function Shell() {
@@ -320,18 +464,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     var Shell = function Shell(first, ...rest) {
-      if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-      const parsed_shell_script = createParsedShellScript(first.raw, rest);
-
-      const cwd = Shell[cwdSymbol];
-      const env = Shell[envSymbol];
-      const throws = Shell[throwsSymbol];
-
-      // cwd must be set before env or else it will be injected into env as "PWD=/"
-      if (cwd) parsed_shell_script.setCwd(cwd);
-      if (env) parsed_shell_script.setEnv(env);
-
-      return new ShellPromise(parsed_shell_script, throws);
+      return runShellTemplate(Shell, first, rest);
     };
 
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);

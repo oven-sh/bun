@@ -33,16 +33,31 @@ impl Cd {
 
         if args.len() == 1 {
             let first_arg = Builtin::of(interp, cmd).arg_bytes(0);
-            if first_arg == b"-" {
-                let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
-                if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
-                    return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
-                }
+            let target = if first_arg == b"-" {
+                Builtin::shell(interp, cmd).prev_cwd().to_vec()
             } else {
-                let target = first_arg.to_vec();
-                if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
+                first_arg.to_vec()
+            };
+            // The new cwd must be readable under the sandbox policy; every
+            // later relative path resolves against it and is checked again,
+            // but allowing a cd outside the policy would leak directory
+            // existence through the error messages.
+            if let Err(msg) = Builtin::sandbox_check_path(
+                interp,
+                cmd,
+                Kind::Cd,
+                &target,
+                crate::shell::sandbox::SandboxAccess::Read,
+            ) {
+                Self::state_mut(interp, cmd).state = State::WaitingIo;
+                return Builtin::write_failing_error(interp, cmd, &msg, 1);
+            }
+            if first_arg == b"-" {
+                if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
                     return Self::handle_change_cwd_err(interp, cmd, &err, &target);
                 }
+            } else if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
+                return Self::handle_change_cwd_err(interp, cmd, &err, &target);
             }
         }
 

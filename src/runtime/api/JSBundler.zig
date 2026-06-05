@@ -866,7 +866,7 @@ pub const JSBundler = struct {
 
             if (try config.getOptional(globalThis, "assetInlineLimit", i64)) |limit| {
                 if (limit < 0 or limit > std.math.maxInt(u32)) {
-                    return globalThis.throwInvalidArguments("assetInlineLimit must be a non-negative integer of bytes (0 to 4 GiB)", .{});
+                    return globalThis.throwInvalidArguments("assetInlineLimit must be a non-negative integer of bytes (0 to 4294967295)", .{});
                 }
                 this.asset_inline_limit = @intCast(limit);
             }

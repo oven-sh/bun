@@ -321,8 +321,12 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
-            const is_css = v.all_loaders[source_index.get()].isCSS();
+            // JS and HTML importers reference an asset's emitted file by URL, so
+            // either one must keep the physical file alive even when a CSS
+            // `url(...)` reference to the same asset gets inlined as a data: URI.
+            const importer_loader = v.all_loaders[source_index.get()];
+            const is_js = importer_loader.isJavaScriptLike() or importer_loader == .html;
+            const is_css = importer_loader.isCSS();
 
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
@@ -561,7 +565,7 @@ pub const BundleV2 = struct {
                         if (record.loader) |out_loader| {
                             break :brk out_loader;
                         }
-                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.file;
+                        break :brk Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse options.Loader.url;
                     };
                     // For virtual files, use the path text as-is (no relative path computation needed).
                     path_primary.pretty = bun.handleOom(this.allocator().dupe(u8, path_primary.text));
@@ -713,7 +717,7 @@ pub const BundleV2 = struct {
                 if (record.loader) |out_loader| {
                     break :brk out_loader;
                 }
-                break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
+                break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.url;
                 // HTML is only allowed at the entry point.
             };
             const idx = this.enqueueParseTask(
@@ -780,7 +784,7 @@ pub const BundleV2 = struct {
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
         const loader = brk: {
-            const default = path.loader(&this.transpiler.options.loaders) orelse .file;
+            const default = path.loader(&this.transpiler.options.loaders) orelse .url;
             break :brk default;
         };
 
@@ -842,6 +846,8 @@ pub const BundleV2 = struct {
         const source_index = Index.source(this.graph.input_files.len);
 
         const loader = brk: {
+            // Explicitly listed entry points always emit a physical output, so
+            // they fall back to `.file` rather than the inline-capable `.url`.
             const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
             break :brk loader;
         };
@@ -2120,7 +2126,7 @@ pub const BundleV2 = struct {
                         existing.value_ptr.* = source_index.get();
                         out_source_index = source_index;
                         this.graph.ast.append(this.allocator(), JSAst.empty) catch unreachable;
-                        const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+                        const loader = path.loader(&this.transpiler.options.loaders) orelse options.Loader.url;
 
                         this.graph.input_files.append(this.allocator(), .{
                             .source = .{
@@ -3059,7 +3065,7 @@ pub const BundleV2 = struct {
                 if (file_map.resolve(source.path.text, import_record.path.text)) |_file_map_result| {
                     var file_map_result = _file_map_result;
                     var path_primary = file_map_result.path_pair.primary;
-                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .file;
+                    const import_record_loader = import_record.loader orelse Fs.Path.init(path_primary.text).loader(&transpiler.options.loaders) orelse .url;
                     import_record.loader = import_record_loader;
 
                     if (this.pathToSourceIndexMap(target).get(path_primary.text)) |id| {
@@ -3304,17 +3310,15 @@ pub const BundleV2 = struct {
 
             const import_record_loader = brk: {
                 const user_loader = import_record.loader orelse path.loader(&transpiler.options.loaders);
-                // Unknown extension falls back to:
-                //   - `.url` when the import is a CSS `url(...)` reference, so
-                //     small assets can auto-inline as `data:` URIs while larger
-                //     assets still get emitted as physical files. The user can
-                //     opt out of inlining by explicitly configuring
-                //     `loader: { '.ext': 'file' }`, which always emits.
-                //   - `.file` otherwise (JS imports of binary assets, etc.).
-                const resolved_loader = user_loader orelse if (loader == .css and import_record.kind == .url)
-                    Loader.url
-                else
-                    Loader.file;
+                // Unknown extensions fall back to `.url`, which behaves like
+                // `.file` except that CSS `url(...)` references to assets below
+                // `asset_inline_limit` inline as `data:` URIs. The fallback must
+                // not depend on the importer: the first importer to resolve a
+                // path fixes the loader for its single parse task, and parse
+                // completion order across files is not deterministic. The user
+                // can opt out of inlining by explicitly configuring
+                // `loader: { '.ext': 'file' }`, which always emits.
+                const resolved_loader = user_loader orelse Loader.url;
                 // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                 // the file must be copied to the output directory as-is. If the resolved loader would
                 // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
@@ -3399,7 +3403,7 @@ pub const BundleV2 = struct {
         const path_to_source_index_map = this.pathToSourceIndexMap(target);
         while (iter.next()) |entry| {
             const value: *ParseTask = entry.value_ptr.*;
-            const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+            const loader = value.loader orelse value.path.loader(&this.transpiler.options.loaders) orelse options.Loader.url;
             const is_html_entrypoint = loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
             const map: *PathToSourceIndexMap = if (is_html_entrypoint) this.pathToSourceIndexMap(.browser) else path_to_source_index_map;
             const existing = map.getOrPut(this.allocator(), entry.key_ptr.*) catch unreachable;

@@ -45,10 +45,11 @@ const RESTORE_SEQUENCE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
 // codebase.
 //
 // Signature matches the authoritative `libuv_sys::libuv::uv_tty_reset_mode`
-// and the C definition in `wtf-bindings.cpp:42`. The `napi_body.rs:3610`
-// stub declares this as `fn()` (no return) as a symbol-export placeholder
-// that's never actually called — see the NOTE at `napi_body.rs:3109` —
-// so `clashing_extern_declarations` fires across the two; suppress it the
+// and the C definition in `wtf-bindings.cpp`. The napi_body.rs
+// `uv_functions_to_export` stub declares this as `fn()` (no return) as a
+// symbol-export placeholder that's never actually called — see the NOTE on
+// `uv_os_getpid` / `uv_os_getppid` in napi_body.rs — so
+// `clashing_extern_declarations` fires across the two; suppress it the
 // same way napi_body does (#[allow] on the block) since the real ABI is
 // the one here.
 #[cfg(unix)]

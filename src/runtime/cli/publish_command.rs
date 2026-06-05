@@ -984,10 +984,10 @@ impl PublishCommand {
             };
             return match bun_sigstore::verify_bundle(bytes, &subject) {
                 Ok(att) => {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<green>✓<r> Attached provenance bundle from <b>{}<r>",
                         bstr::BStr::new(cfg.provenance_file),
-                    ));
+                    );
                     Some(ProvenanceAttachment {
                         media_type: att.media_type,
                         bundle_json: att.bundle_json,
@@ -1020,13 +1020,13 @@ impl PublishCommand {
             }
         };
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<green>✓<r> Signed provenance statement with source and build information from \
              <b>{}<r>",
             provider.display_name(),
-        ));
+        );
         if let Some(url) = &att.transparency_log_url {
-            Output::prettyln(format_args!("<d>  Transparency log: {}<r>", url,));
+            bun_core::prettyln!("<d>  Transparency log: {}<r>", url);
         }
 
         Some(ProvenanceAttachment {

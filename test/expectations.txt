@@ -25,7 +25,7 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # unmodified main once the error actually surfaces. Needs a PathWatcher
 # investigation; the #29854 resolved_path fix covers only the ~path-length
 # portion.
-[ darwin ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
+[ DARWIN ] test/js/node/watch/fs.watch.test.ts [ FAIL ] # pre-existing leak, false-positive pass before the eval exception fix
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]

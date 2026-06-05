@@ -799,11 +799,12 @@ payloads.forEach(type => {
 
 // Regression guard (passes pre- and post-BufferError refactor): pins the
 // native stream-state error mapping that the BufferError split must preserve.
-// A locked/already-piped JS stream body has always surfaced ERR_STREAM_CANNOT_PIPE.
+// A JS-defined ReadableStream body is unsupported by transform() and has
+// always surfaced ERR_STREAM_CANNOT_PIPE (the Native catch-all branch).
 // The Js-propagation branch itself is not reachable from plain JS (it requires
 // to_readable_stream to throw inside the bufferer's double-waiter path), so it
 // has no direct JS-level test.
-it("transform() of a Response whose stream is already locked reports ERR_STREAM_CANNOT_PIPE", async () => {
+it("transform() of a Response with a JS-defined ReadableStream body reports ERR_STREAM_CANNOT_PIPE", async () => {
   const stream = new ReadableStream({
     pull(controller) {
       controller.enqueue(new TextEncoder().encode("<div>hello</div>"));
@@ -811,9 +812,6 @@ it("transform() of a Response whose stream is already locked reports ERR_STREAM_
     },
   });
   const response = new Response(stream, { headers: { "content-type": "text/html" } });
-  // Lock the body before transforming — the bufferer must surface the
-  // stream-state error (native error path), not a JS exception.
-  response.body.getReader();
 
   let outcome;
   try {

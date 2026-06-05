@@ -202,7 +202,7 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
 /// internally for uniformity with the other buffer kinds. The fifo only ever
 /// writes valid `T` (or, in debug builds, the 0xAA poison over *discarded*
 /// slots — callers of `.Slice` fifos must treat the backing slice's contents
-/// as unspecified once handed to the fifo, same as the Zig `undefined` fill).
+/// as unspecified once handed to the fifo).
 pub struct SliceBuffer<'a, T>(&'a mut [T]);
 
 impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {

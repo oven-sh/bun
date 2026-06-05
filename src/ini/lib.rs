@@ -260,20 +260,16 @@ mod draft {
     // Parser
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// `'a` is the parse-input lifetime (`src` and the caller-owned `arena`
-    /// the output `Expr` tree borrows); `'e` is the env-loader's own data
-    /// lifetime, split from `'a` so a `&mut DotEnvLoader<'static>` (the
-    /// VM-owned loader) can be reborrowed for a shorter parser lifetime
-    /// despite `&mut` invariance.
+    /// `'a` is the parse-input lifetime; `'e` is the env-loader's data
+    /// lifetime, split from `'a` so a `&mut DotEnvLoader<'static>` can be
+    /// reborrowed for a shorter parser lifetime despite `&mut` invariance.
     pub struct Parser<'a, 'e: 'a> {
         pub opts: Options,
         pub source: Source,
         pub src: &'a [u8],
         pub out: Expr,
         pub logger: Log,
-        /// Caller-owned bump arena; everything in `out` that isn't a borrow of
-        /// `src` is allocated here, so the arena must outlive every read of
-        /// `out`.
+        /// Caller-owned arena; must outlive every read of `out`.
         pub arena: &'a Arena,
         pub env: &'a mut DotEnvLoader<'e>,
     }
@@ -330,18 +326,10 @@ mod draft {
             }
         }
 
-        // deinit -> Drop: `logger` is owned and drops automatically; the
-        // arena is caller-owned.
-
         pub fn parse(&mut self) -> OOM<()> {
-            // `self.arena` is a `Copy` reference; reading it out detaches the
-            // `'a` arena borrow from the `&mut self` borrow below.
             let bump: &'a Arena = self.arena;
             let src = self.src;
             let mut iter = src.split(|&b| b == b'\n');
-            // `head` is a `Copy` store handle (the `E::Object` lives in the
-            // Expr Store, not on `self`); deref through it per use instead of
-            // holding a raw pointer across `prepare_str` calls.
             let mut head: StoreRef<E::Object> = match self.out.data {
                 ExprData::EObject(o) => o,
                 _ => unreachable!("Parser.out is E.Object"),
@@ -527,8 +515,6 @@ mod draft {
                     _ => value_raw,
                 };
 
-                // Deref the store handle; the pointee lives in the Expr
-                // Store, valid for the duration of parse().
                 let head_ref: &mut E::Object = &mut *head;
 
                 if is_array {
@@ -1335,10 +1321,8 @@ mod draft {
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        // The arena is owned here (declared before `parser`, so it drops
-        // after it); every string read out of `parser.out` below either
-        // borrows `source.contents` or this arena, and everything kept past
-        // this function is duped.
+        // Arena declared before `parser` so it drops after it; everything
+        // kept past this function is duped.
         let arena = Arena::new();
         let bump = &arena;
         let mut parser = Parser::init(npmrc_path.as_bytes(), source.contents.as_ref(), env, bump);

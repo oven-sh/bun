@@ -1,19 +1,15 @@
 use bun_core::strings;
 use bun_url::PercentEncoding;
 
-/// Byte range into [`URLPath::backing`]. `start == end == 0` is the empty
-/// sentinel produced by `Default` (valid against any backing, including
-/// `None`).
+/// Byte range into [`URLPath::backing`]; `Default` is the empty sentinel.
 #[derive(Clone, Copy, Default)]
 struct Span {
     start: usize,
     end: usize,
 }
 
-/// Parsed request path. Fully owned: `parse()` copies (or percent-decodes)
-/// the input into `backing`, and every component is stored as a byte range
-/// into that single allocation — no borrowed or lifetime-erased slices, so
-/// the struct can be stored anywhere without a use-after-free surface.
+/// Parsed request path. Fully owned: every component is a byte range into
+/// `backing`, so the struct can be stored anywhere.
 #[derive(Default)]
 pub struct URLPath {
     extname: Span,
@@ -21,15 +17,14 @@ pub struct URLPath {
     pathname: Span,
     first_segment: Span,
     query_string: Span,
-    /// `true` when the normalized `path` is the literal `"."` (root), which
-    /// is not a subslice of `backing`.
+    /// The normalized `path` is the literal `"."` (root), which is not a
+    /// subslice of `backing`.
     path_is_dot: bool,
     pub needs_redirect: bool,
     /// Treat URLs as non-sourcemap URLS
     /// Then at the very end, we check.
     pub is_source_map: bool,
-    /// Owned backing bytes for every span above. `None` only for
-    /// `URLPath::default()` (all spans empty).
+    /// Owned backing bytes for every span above; `None` only for `default()`.
     backing: Option<Box<[u8]>>,
 }
 
@@ -42,15 +37,14 @@ impl URLPath {
         }
     }
 
-    /// File extension of the (possibly sourcemap-stripped) path, without the
-    /// leading dot. Empty when there is none.
+    /// File extension without the leading dot; empty when there is none.
     #[inline]
     pub fn extname(&self) -> &[u8] {
         self.slice(self.extname)
     }
 
-    /// Normalized path: pathname without the leading `/` and without the
-    /// query string; `"."` for the root path.
+    /// Normalized path: pathname without the leading `/` or query string;
+    /// `"."` for the root path.
     #[inline]
     pub fn path(&self) -> &[u8] {
         if self.path_is_dot {
@@ -71,28 +65,22 @@ impl URLPath {
         self.slice(self.first_segment)
     }
 
-    /// The query string, starting at `?`. Empty when there is none.
+    /// Query string, starting at `?`; empty when there is none.
     #[inline]
     pub fn query_string(&self) -> &[u8] {
         self.slice(self.query_string)
     }
 
-    /// Take ownership of the backing allocation. The spans stored in `self`
-    /// were computed against exactly these bytes, so slices previously read
-    /// through the accessors remain valid against the returned `Box` (heap
-    /// address is stable across the move). After this call the accessors on
-    /// `self` all return empty slices, except `path()`, which still returns
-    /// `b"."` when the path is the root (`path_is_dot` is unaffected — `b"."`
-    /// is a static literal, not backed by this allocation).
+    /// Take ownership of the backing allocation; slices previously read
+    /// through the accessors stay valid against the returned `Box`. Afterwards
+    /// the accessors return empty (except the root `"."` case of `path()`).
     #[must_use = "dropping the returned storage frees the bytes previously returned by this URLPath's accessors"]
     pub fn take_backing(&mut self) -> Option<Box<[u8]>> {
         self.backing.take()
     }
 }
 
-/// Offset range of `sub` within `parent`. `sub` must be a subslice of
-/// `parent` (always the case in `parse` below — every component is sliced
-/// out of the single `decoded_pathname` buffer).
+/// Offset range of `sub` within `parent`; `sub` must be a subslice of `parent`.
 #[inline]
 fn span_of(parent: &[u8], sub: &[u8]) -> Span {
     debug_assert!(
@@ -115,8 +103,7 @@ fn span_of(parent: &[u8], sub: &[u8]) -> Span {
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut needs_redirect = false;
 
-    // Own the bytes up front: either a percent-decoded copy or a plain copy
-    // of the input. All spans below index into this one allocation.
+    // Own the bytes up front; all spans below index into this one allocation.
     let backing: Box<[u8]> = if strings::index_of_char(possibly_encoded_pathname_, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];

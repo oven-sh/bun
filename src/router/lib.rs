@@ -289,10 +289,8 @@ impl<'a> Router<'a> {
 
         // PERF: a borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
         // so we allocate per-request; revisit with an arena/SmallVec if hot.
-        // NOTE: the `Match` returned by `match_page` borrows `ctx` (through
-        // `ctx.url()`'s accessor slices), so the mutable `ctx` calls below are
-        // hoisted out of the block: the redirect path is copied to an owned
-        // buffer and handled after the borrow ends.
+        // The `Match` borrows `ctx`, so the mutable `ctx` calls are hoisted
+        // out: the redirect path is copied out and handled after the borrow ends.
         let redirect_to: Option<Vec<u8>> = {
             let mut params_list = route_param::List::default();
             if let Some(route) = app
@@ -336,10 +334,8 @@ pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
 pub struct RouteIndex {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
-    // `NonNull<Route>` / `*const Route` into the box interiors. The SoA list
-    // below moves the `Box` handles on realloc, but the boxed `Route`
-    // allocations themselves never move, so those pointers stay valid —
-    // storing `Route` inline in the column would dangle them.
+    // pointers into the box interiors; the SoA list moves the `Box` handles
+    // on realloc, but the boxed `Route`s never move.
     pub route: Box<Route>,
     pub name: &'static [u8],
     pub match_name: &'static [u8],
@@ -359,20 +355,15 @@ bun_collections::multi_array_columns! {
     }
 }
 
-/// `MultiArrayList(RouteIndex)` with per-field column accessors
-/// (`items_route()`, `items_name()`, … via [`RouteIndexColumns`]).
-///
-/// Newtype rather than a bare alias because `MultiArrayList`'s `Drop`
-/// intentionally frees the slab only (no per-element destructors — see its
-/// `Drop` doc); the `route` column uniquely owns `Box<Route>` allocations, so
-/// this wrapper runs `drop_elements()` first.
+/// `MultiArrayList(RouteIndex)` with per-field column accessors.
+/// Newtype so `Drop` runs `drop_elements()` first: the `route` column owns
+/// `Box<Route>` allocations and the inner list's `Drop` frees the slab only.
 #[derive(Default)]
 pub struct RouteIndexList(bun_collections::MultiArrayList<RouteIndex>);
 
 impl Drop for RouteIndexList {
     fn drop(&mut self) {
-        // Frees the `Box<Route>` column payloads; the slab itself is freed by
-        // the inner list's own Drop.
+        // Frees the `Box<Route>` payloads; the inner Drop frees the slab.
         self.0.drop_elements();
     }
 }

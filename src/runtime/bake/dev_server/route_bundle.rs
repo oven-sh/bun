@@ -34,10 +34,8 @@ pub struct Framework {
 }
 
 pub struct Html {
-    /// SHARED (LIFETIMES.tsv): the slot owns one intrusive ref, taken via
-    /// `RefPtr::init_ref` when DevServer stores it in `get_or_put_route_bundle`.
-    /// `RefPtr` has no `Drop` — the owned ref is released explicitly by
-    /// `DevServer::deinit`'s route-bundle teardown loop (`html_bundle.deref()`).
+    /// Owns one intrusive ref; `RefPtr` has no `Drop`, so `DevServer`'s
+    /// route-bundle teardown releases it explicitly.
     pub html_bundle: bun_ptr::RefPtr<HTMLBundleRoute>,
     pub bundled_file: incremental_graph::ClientFileIndex,
     pub script_injection_offset: Option<ByteOffset>,

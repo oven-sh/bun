@@ -19,11 +19,9 @@ use crate::{
 
 use bun_dotenv as dot_env;
 
-/// Task lives in an intrusive cross-thread queue (`next`, `package_manager`
-/// BACKREF), so the request payloads hold `*mut NetworkTask` raw pointers —
-/// the manager thread retains its own pointers into the same `NetworkTask`
-/// while the task is in flight, so an exclusive `&mut` borrow cannot soundly
-/// cross that boundary. See `Request` for the deref discipline.
+/// Lives in an intrusive cross-thread queue; request payloads hold
+/// `*mut NetworkTask` because the manager thread keeps its own pointers into
+/// the same slot while the task is in flight.
 pub struct Task {
     pub tag: Tag,
     pub request: Request,
@@ -264,12 +262,8 @@ impl Task {
                     // SAFETY: tag == PackageManifest discriminates the union
                     let manifest = unsafe { &mut *this.request.package_manifest };
 
-                    // SAFETY: `network` points to the pool-owned NetworkTask
-                    // vended for this resolve task. Access is temporally
-                    // partitioned: the manager thread wrote it before enqueue
-                    // and does not touch it again until this task is pushed to
-                    // `resolve_tasks`, so this worker-thread reborrow is
-                    // exclusive while it is live (scoped to this arm).
+                    // SAFETY: pool-owned slot; the manager thread does not touch
+                    // it while the task is in flight, so this reborrow is exclusive.
                     let network = unsafe { &mut *manifest.network };
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
@@ -388,10 +382,7 @@ impl Task {
 
                     // SAFETY: tag == Extract discriminates the union
                     let extract = unsafe { &mut *this.request.extract };
-                    // SAFETY: same temporal-partition argument as the
-                    // PackageManifest arm above — the pool slot is exclusively
-                    // this worker's while the task is in flight; the reborrow
-                    // is scoped to this statement.
+                    // SAFETY: same argument as the PackageManifest arm above.
                     let network = unsafe { &mut *extract.network };
                     // Take ownership so the
                     // tarball body drops on every exit of this arm.
@@ -654,9 +645,8 @@ pub union Request {
 
 pub struct PackageManifestRequest {
     pub name: StringOrTinyString,
-    // SHARED — pool-owned `NetworkTask` slot (`preallocated_network_tasks`);
-    // outlives the task and is never freed while the task is in flight.
-    // Deref with a statement-scoped `unsafe { &mut * }` reborrow only.
+    // SHARED — pool-owned `NetworkTask` slot that outlives the task; deref
+    // with a statement-scoped reborrow only.
     pub network: *mut NetworkTask,
 }
 

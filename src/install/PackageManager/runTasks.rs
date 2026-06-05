@@ -971,10 +971,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        // SAFETY: `req.network` is the pool-owned NetworkTask
-                        // for this task; the pool slot is returned only by the
-                        // `defer!` above, which runs at scope exit — after
-                        // this read.
+                        // SAFETY: the pool slot is returned only by the `defer!`
+                        // above, which runs after this read.
                         let url_buf = unsafe { &(*req.network).url_buf };
                         C::on_package_manifest_error(extract_ctx, name, err, url_buf);
                     } else {

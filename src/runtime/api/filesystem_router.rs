@@ -587,9 +587,6 @@ impl FileSystemRouter {
             };
         }
 
-        // `URLPath::parse` copies (or percent-decodes) the input into its own
-        // backing allocation, so `path`'s bytes are only borrowed for the
-        // duration of the call.
         let mut url_path = match URLPath::parse(path.slice()) {
             Ok(v) => v,
             Err(err) => {
@@ -613,18 +610,11 @@ impl FileSystemRouter {
             return Ok(JSValue::NULL);
         };
 
-        // `route.pathname`/`query_string` and the param values borrow
-        // `url_path`'s backing allocation, which would be freed when
-        // `url_path` drops at the end of this call. Widen the match, take
-        // ownership of the backing, and make it the `MatchedRoute` backing
-        // instead. (`Box<[u8]>` -> `Vec<u8>` -> `ZigStringSlice::Owned`
-        // reuses the same heap allocation, so the borrowed slices stay
-        // valid; nothing in `route` points into the original encoded `path`.)
-        //
-        // SAFETY: same invariant as the `detach_lifetime` inside
-        // `MatchedRoute::init` — every borrowed slice points into the backing
-        // moved (via `path`) into the same Box that stores this match, or
-        // into the resolver's process-lifetime DirnameStore.
+        // The match borrows `url_path`'s backing, which would drop at the end
+        // of this call; take ownership and make it the `MatchedRoute` backing.
+        // SAFETY: every borrowed slice points into the backing moved (via
+        // `path`) into the same Box that stores this match, or into the
+        // process-lifetime DirnameStore.
         let route: RouterMatch<'static> = unsafe { route.detach_lifetime() };
         if let Some(backing) = url_path.take_backing() {
             path = ZigStringSlice::init_owned(backing.into_vec());

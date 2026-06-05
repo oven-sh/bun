@@ -9569,10 +9569,9 @@ it("installs and re-verifies scoped folder dependencies (destination subpath buf
 });
 
 it("isolated install of scoped folder dependencies succeeds and reports progress cleanup safely", async () => {
-  // Exercises the isolated-install path whose progress-node pointers are now
-  // cleared by a scopeguard on every exit (previously only on the success
-  // path). A success run plus an immediate second run (lockfile present)
-  // covers both the fresh-store and verify paths.
+  // Exercises the isolated-install path, whose progress-node pointers must
+  // be cleared on every exit path. A success run plus an immediate second run
+  // (lockfile present) covers both the fresh-store and verify paths.
   using dir = tempDir("isolated-scoped-folder-dep", {
     "package.json": JSON.stringify({
       name: "app-isolated",

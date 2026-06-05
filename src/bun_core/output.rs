@@ -1060,16 +1060,10 @@ pub fn raw_error_writer() -> StreamType {
     SOURCE.with_borrow(|s| s.raw_error_stream)
 }
 
-// ─── Closure-scoped writer accessors (preferred) ────────────────────────────
-//
-// Replacements for the legacy `&'static mut` accessors below. The closure
-// receives a **raw** `*mut io::Writer` — the same discipline as
-// `with_dest_writer`/`print_to`: writes route through `IntoLogWrite` /
-// the vtable fn pointers (or a deliberately scoped `unsafe { &mut *w }`
-// reborrow when the callee provably does not re-enter this module), so a
-// re-entrant output call from inside `f` (scoped loggers, `flush()`,
-// `Display` impls) never aliases a live `&mut Writer` and never trips the
-// thread-local `RefCell` (the borrow is dropped before `f` runs).
+// Closure-scoped writer accessors: the closure receives a raw `*mut
+// io::Writer` (same discipline as `with_dest_writer`) so a re-entrant output
+// call from inside `f` never aliases a live `&mut Writer` and never trips
+// the thread-local `RefCell`.
 
 #[inline]
 fn with_source_writer<R>(
@@ -1077,30 +1071,30 @@ fn with_source_writer<R>(
     f: impl FnOnce(*mut io::Writer) -> R,
 ) -> R {
     debug_assert!(SOURCE_SET.get());
-    // Drop the RefCell borrow before invoking `f` (see `with_dest_writer`).
+    // Drop the RefCell borrow before invoking `f`.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| std::ptr::from_mut(project(s)));
     f(w)
 }
 
-/// Run `f` with the unbuffered stdout writer (raw pointer; see module note above).
+/// Run `f` with the unbuffered stdout writer.
 #[inline]
 pub fn with_writer<R>(f: impl FnOnce(*mut io::Writer) -> R) -> R {
     with_source_writer(Source::stream, f)
 }
 
-/// Run `f` with the buffered stdout writer (raw pointer; see module note above).
+/// Run `f` with the buffered stdout writer.
 #[inline]
 pub fn with_writer_buffered<R>(f: impl FnOnce(*mut io::Writer) -> R) -> R {
     with_source_writer(Source::buffered_stream, f)
 }
 
-/// Run `f` with the unbuffered stderr writer (raw pointer; see module note above).
+/// Run `f` with the unbuffered stderr writer.
 #[inline]
 pub fn with_error_writer<R>(f: impl FnOnce(*mut io::Writer) -> R) -> R {
     with_source_writer(Source::error_stream, f)
 }
 
-/// Run `f` with the buffered stderr writer (raw pointer; see module note above).
+/// Run `f` with the buffered stderr writer.
 #[inline]
 pub fn with_error_writer_buffered<R>(f: impl FnOnce(*mut io::Writer) -> R) -> R {
     with_source_writer(Source::buffered_error_stream, f)
@@ -1112,10 +1106,7 @@ pub fn with_error_writer_buffered<R>(f: impl FnOnce(*mut io::Writer) -> R) -> R 
 // TODO: these accessors hand out a `&'static mut` to a thread-local
 // `Source` field, and callers only use it briefly. Returning `&'static mut`
 // is *unsound* if two are alive at once — a known-unsound shim until the
-// remaining callers migrate to the `with_*` closure accessors above (the
-// crates this campaign owns already have; the rest are a mechanical
-// follow-up, after which these five accessors and `source_writer_escape`
-// can be deleted).
+// remaining callers migrate to the `with_*` closure accessors above.
 //
 // `source_writer_escape` centralises the escape: one `unsafe` for all five
 // public `*_writer*()` accessors (nonnull-asref reduction: 5 sites → 1).

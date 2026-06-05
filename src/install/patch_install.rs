@@ -479,10 +479,9 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // `PackageInstall` requires the destination subpath to be the
-        // NUL-terminated prefix of `destination_dir_subpath_buf` (it re-derives
-        // the `&ZStr` view from the buffer + length), so copy the tempdir name
-        // into a dedicated buffer rather than borrowing `tmpname_buf` twice.
+        // `PackageInstall` re-derives the subpath view from buffer + length,
+        // so copy the tempdir name into a dedicated buffer rather than
+        // borrowing `tmpname_buf` twice.
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());

@@ -831,8 +831,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stdout_len > 0 {
                 let stdout = self.stdout.final_buffer();
-                // SAFETY (scoped reborrow): `write_fmt` over a `BStr` of plain
-                // bytes does not re-enter `bun_core::output`.
+                // SAFETY: `write_fmt` here does not re-enter `bun_core::output`.
                 let _ = Output::with_error_writer(|w| {
                     unsafe { &mut *w }
                         .write_fmt(format_args!("{}\n", bstr::BStr::new(stdout.as_slice())))
@@ -843,7 +842,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             if stderr_len > 0 {
                 let stderr = self.stderr.final_buffer();
-                // SAFETY (scoped reborrow): see the stdout arm above.
+                // SAFETY: see the stdout arm above.
                 let _ = Output::with_error_writer(|w| {
                     unsafe { &mut *w }
                         .write_fmt(format_args!("{}\n", bstr::BStr::new(stderr.as_slice())))

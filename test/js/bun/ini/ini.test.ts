@@ -587,11 +587,9 @@ const wtf = {
 };
 
 describe("parser arena ownership", () => {
-  // The ini parser now borrows a caller-owned arena (instead of owning one
-  // behind raw-pointer borrow splitting). Repeated parses of inputs that
-  // allocate heavily from the arena (env expansion, quoted-JSON values,
-  // dotted sections) must each produce identical, self-consistent results —
-  // a dangling arena borrow would corrupt or crash on re-parse.
+  // Repeated parses of inputs that allocate heavily from the parser arena
+  // (env expansion, quoted-JSON values, dotted sections) must each produce
+  // identical results — a dangling arena borrow would corrupt on re-parse.
   test("repeated parses with quoted values and dotted sections are stable", () => {
     const ini = /* ini */ `
 top = plain value

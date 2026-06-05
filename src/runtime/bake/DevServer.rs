@@ -1247,9 +1247,8 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
-                // Release the intrusive ref taken at store time in
-                // `get_or_put_route_bundle` (`RefPtr` has no Drop, so this is
-                // the explicit matching deref).
+                // Release the ref taken in `get_or_put_route_bundle`
+                // (`RefPtr` has no Drop).
                 html.html_bundle.deref();
             }
         }
@@ -5373,9 +5372,8 @@ impl DevServer {
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
                     break 'brk route_bundle::Data::Html(route_bundle::Html {
-                        // Takes one intrusive ref; released by the route-bundle
-                        // teardown loop in `deinit` (explicit `.deref()` — RefPtr
-                        // has no Drop).
+                        // Ref released by `deinit`'s route-bundle teardown
+                        // (`RefPtr` has no Drop).
                         // SAFETY: caller guarantees `html` is a live allocation.
                         html_bundle: unsafe { bun_ptr::RefPtr::<HTMLBundleRoute>::init_ref(html) },
                         bundled_file: incremental_graph_index,

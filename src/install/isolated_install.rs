@@ -224,8 +224,7 @@ pub(crate) fn install_isolated_packages(
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
     // Provenance root for the progress-node cleanup scopeguard below;
-    // shadowing `manager` with a reborrow through it makes every body access a
-    // child of `mgr_root`, so the guard's later deref keeps provenance.
+    // reborrow `manager` through it so the guard's later deref stays valid.
     let mgr_root: *mut PackageManager = manager;
     // SAFETY: `mgr_root` is freshly derived from the unique `&mut` fn param.
     let manager = unsafe { &mut *mgr_root };
@@ -1951,14 +1950,11 @@ pub(crate) fn install_isolated_packages(
         }
 
         // The stored pointers target the stack locals above; clear them on
-        // EVERY exit path (including the early `?` returns below) — otherwise
-        // the long-lived `PackageManager` would retain pointers into this
-        // dead frame and `scripts_node_mut()`/`downloads_node_mut()` consumers
-        // would deref dangling pointers. Declared after the node locals so it
-        // drops before them.
+        // every exit path so `PackageManager` never retains pointers into a
+        // dead frame. Declared after the node locals so it drops before them.
         let _clear_progress_nodes = scopeguard::guard(mgr_root, |mgr| {
-            // SAFETY: `mgr` is the provenance root of `manager`, which
-            // outlives this frame; no `&mut PackageManager` is live at drop.
+            // SAFETY: the manager outlives this frame; no `&mut PackageManager`
+            // is live at drop.
             let m = unsafe { &mut *mgr };
             m.scripts_node = None;
             m.downloads_node = None;

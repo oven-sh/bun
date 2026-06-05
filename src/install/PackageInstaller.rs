@@ -1202,12 +1202,9 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
 
-        // Write the alias prefix + NUL into the subpath buffer up front.
-        // `PackageInstall` stores only the prefix length plus the single
-        // `&mut [u8]` buffer borrow; the `&ZStr` view is re-derived on demand
-        // (`PackageInstall::destination_dir_subpath`), so no aliased pair of
-        // references exists. The buffer borrow is created via a raw pointer
-        // because `progress_mut()` below reborrows all of `self`.
+        // Write the alias prefix + NUL into the subpath buffer up front;
+        // taken via raw pointer because `progress_mut()` below reborrows all
+        // of `self`.
         let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
         let destination_dir_subpath_len: usize = {
             let alias_slice = alias.slice(string_buf!());

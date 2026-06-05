@@ -28,11 +28,9 @@ pub struct PackageInstall<'a> {
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub cache_dir: Fd,
     pub cache_dir_subpath: &'a ZStr,
-    /// Length of the NUL-terminated destination subpath prefix stored in
-    /// `destination_dir_subpath_buf` (`destination_dir_subpath_buf[len] == 0`).
-    /// Use [`Self::destination_dir_subpath`] for the `&ZStr` view; install
-    /// steps temporarily append suffixes into the buf past this prefix and
-    /// restore the NUL afterwards.
+    /// Length of the NUL-terminated subpath prefix in
+    /// `destination_dir_subpath_buf`; install steps temporarily append past
+    /// it and restore the NUL. See [`Self::destination_dir_subpath`].
     pub destination_dir_subpath_len: usize,
     pub destination_dir_subpath_buf: &'a mut [u8],
 

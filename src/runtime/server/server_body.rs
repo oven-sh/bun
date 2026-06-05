@@ -833,14 +833,9 @@ pub struct ServerInitContext<'a> {
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 ///
-/// Intrusively refcounted via `#[derive(bun_ptr::CellRefCounted)]` (which also
-/// emits the `AnyRefCounted` bridge, so `bun_ptr::IntrusiveRc<ServePlugins>` /
-/// `ScopedRef` work). The refcount is incremented while other objects
-/// (HTMLBundle routes, DevServer) wait on plugin loads; the raw `*ServePlugins`
-/// crosses FFI as the JSPromise then/catch context pointer; the last deref
-/// frees. The derive's `deref` projects the count via `addr_of!` and frees
-/// through the original allocation pointer, preserving the `heap::alloc`
-/// provenance from [`ServePlugins::init`].
+/// Intrusively refcounted via `#[derive(bun_ptr::CellRefCounted)]`; the raw
+/// pointer crosses FFI as the JSPromise then/catch context and the last deref
+/// frees, preserving the `heap::alloc` provenance from [`ServePlugins::init`].
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ServePlugins {
     state: ServePluginsState,
@@ -893,10 +888,7 @@ impl ServePlugins {
         }))
     }
 
-    // `ref_()` / `deref(this: *mut Self)` are emitted by the
-    // `CellRefCounted` derive; the deref projects the refcount via `addr_of!`
-    // (never forming `&Self`) and frees through the raw allocation pointer,
-    // so provenance from `init()`'s `heap::into_raw` is preserved.
+    // `ref_()` / `deref(this: *mut Self)` are emitted by the `CellRefCounted` derive.
 
     pub fn get_or_start_load(
         &mut self,
@@ -1136,10 +1128,8 @@ pub(super) fn on_resolve_impl(
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); the
-    // adopted guard's drop-deref pairs with that ref (provenance: the raw ptr
-    // round-trips FFI untouched, so the final free sees `init()`'s allocation
-    // pointer).
+    // SAFETY: `plugins` was heap-allocated and ref()'d before `.then()`; the
+    // adopted guard's drop-deref pairs with that ref.
     let _guard = unsafe { bun_ptr::ScopedRef::<ServePlugins>::adopt(plugins) };
     plugins_result.ensure_still_alive();
 
@@ -1155,8 +1145,7 @@ pub(super) fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); the
-    // adopted guard's drop-deref pairs with that ref (see on_resolve above).
+    // SAFETY: see `on_resolve_impl`.
     let _guard = unsafe { bun_ptr::ScopedRef::<ServePlugins>::adopt(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);

@@ -666,8 +666,7 @@ test("bun pm cache rm does not create the directory named by a project-local .en
 
 it("pm hash-string prints the alphabetized lockfile string through the scoped stdout writer", async () => {
   // `bun pm hash-string` writes the lockfile's alphabetized name@version
-  // string through the closure-scoped stdout writer accessor (which replaced
-  // the legacy `&'static mut` thread-local writer escape). Output must be
+  // string through the closure-scoped stdout writer accessor; output must be
   // complete and the process must exit cleanly.
   using dir = tempDir("pm-hash-string-writer", {
     "package.json": JSON.stringify({

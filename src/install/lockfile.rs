@@ -1794,9 +1794,7 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        // SAFETY (scoped reborrow): `print_with_lockfile` is a pure
-        // serializer — it writes through `W` and never re-enters
-        // `bun_core::output`, so no second `&mut Writer` can alias this one.
+        // SAFETY: `print_with_lockfile` never re-enters `bun_core::output`.
         match Output::with_writer_buffered(|w| {
             Self::print_with_lockfile(&lockfile, format, unsafe { &mut *w })
         }) {
@@ -3147,8 +3145,7 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            // SAFETY (scoped reborrow): `write_all` goes straight to the
-            // stream vtable and does not re-enter `bun_core::output`.
+            // SAFETY: `write_all` does not re-enter `bun_core::output`.
             Output::with_writer(|w| unsafe { &mut *w }.write_all(alphabetized_name_version_string))
                 .expect("unreachable");
             Output::enable_buffering();

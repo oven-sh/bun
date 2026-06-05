@@ -746,11 +746,8 @@ it("query map and params stay valid under forced GC (owned URLPath/QueryStringMa
 });
 
 it("matches routes with extensions, sourcemap suffixes and root path after the SoA route-list rewrite", () => {
-  // Exercises RouteIndexList (now MultiArrayList-backed): construction over
-  // static + dynamic routes, the per-column accessors used by match, and that
-  // the boxed Route allocations stay valid for matching after the list is
-  // fully built (the routes column stores Box handles whose pointees are
-  // referenced by the index/static tables).
+  // Exercises RouteIndexList over static + dynamic routes; the boxed Route
+  // allocations must stay valid for matching after the list is fully built.
   const { dir } = make([
     "index.tsx",
     "a.tsx",

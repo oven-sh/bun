@@ -200,11 +200,6 @@ impl IniTestingAPIs {
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env_mut();
-        // `Parser<'a, 'e>` splits the env-data lifetime (`'e`, here the
-        // VM-owned loader's) from the parse-input lifetime `'a`, so `utf8str`
-        // and the local arena are borrowed directly — no `'static` erasure or
-        // raw-pointer borrow splitting. `utf8str` and `arena` are declared
-        // before `parser`, so they outlive every borrow it holds.
         let arena = bun_alloc::Arena::new();
         let mut parser = Parser::init(b"<src>", utf8str.slice(), env, &arena);
         parser.parse()?;

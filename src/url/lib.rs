@@ -891,9 +891,8 @@ pub(crate) type ParamList = Vec<Param>;
 #[derive(Clone)]
 pub struct QueryStringMap {
     // Allocator field dropped — global mimalloc per PORTING.md.
-    // All `StringPointer`s in `list` index into `buffer[..slice_len]`. The
-    // nothing-needs-decoding fast path copies the caller's query string into
-    // `buffer`, so the map never borrows external memory and is fully owned.
+    // All `StringPointer`s in `list` index into `buffer[..slice_len]`; the
+    // map fully owns its backing bytes.
     slice_len: usize,
     pub buffer: Vec<u8>,
     pub list: ParamList,

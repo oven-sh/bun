@@ -557,9 +557,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    /// API parity with the Windows `BaseWindowsPipeWriter::start_movable`:
-    /// POSIX never transfers fd ownership, so this simply forwards the inner
-    /// fd and leaves `rawfd` untouched.
+    /// API parity with Windows `start_movable`: POSIX never transfers fd
+    /// ownership, so this forwards to [`Self::start`].
     #[cfg(not(windows))]
     pub fn start_movable(
         &mut self,
@@ -1327,12 +1326,9 @@ pub trait BaseWindowsPipeWriter {
         self.start_with_current_pipe()
     }
 
-    /// Plain-`Fd` start. When `Source::open` produces a uv pipe/tty, libuv
-    /// (`uv_pipe_open`/`uv_tty_init`) takes ownership of the HANDLE and
-    /// `uv_close` will close it — a caller that retains a copy of `rawfd` and
-    /// closes it later double-closes. Callers that retain the fd must use
-    /// [`Self::start_movable`], which disarms their slot on the ownership
-    /// transfer.
+    /// Plain-`Fd` start. When the source opens as a uv pipe/tty, libuv takes
+    /// ownership of the HANDLE; callers that retain the fd must use
+    /// [`Self::start_movable`] to avoid a double-close.
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         debug_assert!(self.source().is_none());
@@ -1351,13 +1347,10 @@ pub trait BaseWindowsPipeWriter {
         self.start_with_current_pipe()
     }
 
-    /// `start` variant for callers that retain their fd slot past the call:
-    /// when libuv takes ownership of the HANDLE (the `Source::Pipe`/
-    /// `Source::Tty` success path), `rawfd` is `take()`n so the caller's
-    /// later close/Drop is a no-op instead of a double-close. On the
-    /// `Source::File`/`SyncFile` path — and on open failure — the slot is
-    /// left untouched: the caller still owns the fd (and fallback paths like
-    /// the shell's EBADF→`start_with_file` rely on it staying valid).
+    /// Like [`Self::start`], but when libuv takes ownership of the HANDLE
+    /// (`Source::Pipe`/`Tty`), `rawfd` is `take()`n so the caller's later
+    /// close is a no-op. On the `File`/`SyncFile` path — and on open failure —
+    /// the caller still owns the fd.
     fn start_movable(
         &mut self,
         rawfd: &mut sys::MovableIfWindowsFd,

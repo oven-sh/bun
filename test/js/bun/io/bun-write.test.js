@@ -730,4 +730,37 @@ describe("Bun.write(path, response) streams to disk", () => {
     expect(Buffer.compare(got.subarray(0, firstChunk.byteLength), firstChunk)).toBe(0);
     expect(Buffer.compare(got.subarray(firstChunk.byteLength), lastChunk)).toBe(0);
   });
+
+  it("rejects with an abort error when the response was aborted before the write", async () => {
+    // The drain callback observes the abort inside the streaming gate's
+    // to_readable_stream call and replaces the Locked body — this used to
+    // fall into the buffered task's Locked-only re-match and panic.
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        let timer;
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array(1024));
+              // keep the body open; never close
+              timer = setInterval(() => c.enqueue(new Uint8Array(1024)), 50);
+            },
+            cancel() {
+              clearInterval(timer);
+            },
+          }),
+        );
+      },
+    });
+
+    using dir = tempDir("bun-write-aborted", {});
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    controller.abort();
+
+    expect(async () => {
+      await Bun.write(join(String(dir), "aborted.bin"), res);
+    }).toThrow();
+  });
 });

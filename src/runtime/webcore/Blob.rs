@@ -5419,6 +5419,39 @@ pub fn write_file_internal(
                                 ));
                             }
                         }
+
+                        // `to_readable_stream` ran the producer's drain
+                        // callback, which can observe an abort (or a fully
+                        // drained body) and replace the Locked body instead
+                        // of handing us a stream. The buffered task below
+                        // requires a Locked body, so settle those here —
+                        // rejecting like the buffered path's ValueBufferer
+                        // would have — rather than panicking on the re-match.
+                        // SAFETY: re-borrow after `to_readable_stream`.
+                        match unsafe { &mut *body_value } {
+                            BodyValue::Locked(_) => {}
+                            BodyValue::Error(err) => {
+                                let js_err = err.to_js(global_this);
+                                destination_blob.detach();
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this, js_err,
+                                    ),
+                                ));
+                            }
+                            _ => {
+                                // Null/Empty: the drain observed an abort
+                                // before any stream materialized.
+                                use crate::jsc::CommonAbortReasonExt as _;
+                                destination_blob.detach();
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        jsc::CommonAbortReason::UserAbort.to_js(global_this),
+                                    ),
+                                ));
+                            }
+                        }
                     }
 
                     // No streaming-eligible body — keep the buffered path.
@@ -5433,9 +5466,12 @@ pub fn write_file_internal(
                             promise: jsc::JSPromiseStrong::init(global_this),
                             mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                         }));
-                    // SAFETY: re-borrow after the early-return paths.
+                    // SAFETY: re-borrow after the early-return paths. The
+                    // network-fed arm above settles every non-Locked variant,
+                    // and the non-network arm never materializes the stream,
+                    // so the body is still Locked here.
                     let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                        unreachable!()
+                        unreachable!("non-Locked bodies settled above")
                     };
                     locked.task = Some(task.cast::<c_void>());
                     locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
@@ -6192,6 +6228,7 @@ fn pipe_byte_stream_to_file_sink(
         let bytes = byte_stream.drain();
         let pipe = FileSinkPipe {
             promise: jsc::JSPromiseStrong::init(global_this),
+            accepted: core::cell::Cell::new(0),
             stream: webcore::readable_stream::ReadableStreamStrong::init(
                 readable_stream,
                 global_this,
@@ -6210,6 +6247,8 @@ fn pipe_byte_stream_to_file_sink(
                 if err.is_none() {
                     err = Some(e.to_js(global_this));
                 }
+            } else {
+                pipe.accepted.set(bytes.len());
             }
         }
         // `finish` consumes the boxed pipe; box it first so destroy()'s
@@ -6232,9 +6271,11 @@ fn pipe_byte_stream_to_file_sink(
             drain_err = Some(e.to_js(global_this));
         }
     }
+    let drained_prefix = if drain_err.is_none() { bytes.len() } else { 0 };
 
     let pipe = bun_core::heap::into_raw(Box::new(FileSinkPipe {
         promise: jsc::JSPromiseStrong::init(global_this),
+        accepted: core::cell::Cell::new(drained_prefix),
         stream: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
         sink: file_sink,
         global_this: bun_ptr::BackRef::new(global_this),
@@ -6265,6 +6306,10 @@ fn pipe_byte_stream_to_file_sink(
 /// the sink and a Strong on the stream for the pipe's lifetime.
 pub struct FileSinkPipe {
     pub promise: jsc::JSPromiseStrong,
+    /// Bytes handed to the sink. `Bun.write` resolves with this — the
+    /// writer's drain-callback accounting (`FileSink.written`) mixes
+    /// at-accept and at-drain reports for pollable fds and undercounts.
+    pub accepted: core::cell::Cell<usize>,
     pub stream: webcore::readable_stream::ReadableStreamStrong,
     // Same shape as `FileStreamWrapper.sink` (raw +1, intrusive refcount).
     pub sink: *mut webcore::FileSink,
@@ -6345,11 +6390,10 @@ impl FileSinkPipe {
                             return;
                         }
                         jsc::js_promise::Status::Fulfilled => {
-                            // SAFETY: `sink` live until destroy below.
-                            let written = unsafe { (*self.sink).written.get() };
+                            let accepted = self.accepted.get();
                             let _ = self
                                 .promise
-                                .resolve(global, JSValue::js_number(written as f64));
+                                .resolve(global, JSValue::js_number(accepted as f64));
                         }
                         jsc::js_promise::Status::Rejected => {
                             let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
@@ -6357,14 +6401,13 @@ impl FileSinkPipe {
                     }
                 } else {
                     // Synchronous completion. `end_from_js` returns only the
-                    // final flush's count — resolve with the sink's running
+                    // final flush's count — resolve with the pipe's accepted
                     // total, matching the buffered Bun.write paths.
                     let _ = value;
-                    // SAFETY: `sink` live until destroy below.
-                    let written = unsafe { (*self.sink).written.get() };
+                    let accepted = self.accepted.get();
                     let _ = self
                         .promise
-                        .resolve(global, JSValue::js_number(written as f64));
+                        .resolve(global, JSValue::js_number(accepted as f64));
                 }
             }
             bun_sys::Result::Err(err) => {
@@ -6387,8 +6430,12 @@ impl webcore::PipeHandler for FileSinkPipe {
         // sink. (The JS loop's discarded write *promise* still tripped
         // unhandled-rejection; discarding the raw error here would be
         // genuinely silent.)
+        let chunk_len = stream.slice().len();
         // SAFETY: `sink` is the live +1 held by this pipe.
         let write_result = unsafe { (*self.sink).write(&stream) };
+        if !matches!(write_result, streams::Writable::Err(_)) {
+            self.accepted.set(self.accepted.get() + chunk_len);
+        }
 
         // Owned payloads were allocated by ByteStream with the global
         // allocator; freeing them is this handler's responsibility (same tail
@@ -6450,15 +6497,16 @@ pub fn on_file_sink_pipe_resolve(
     // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
     // in `FileSinkPipe::finish`; we are the sole consumer.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
-    // Resolve with the sink's total bytes written — same value as the
-    // synchronous arms of `FileSinkPipe::finish`.
-    // SAFETY: `this` and its sink are live until destroy below.
-    let written = unsafe { (*(*this).sink).written.get() };
+    // Resolve with the pipe's accepted byte total — same value as the
+    // synchronous arms of `FileSinkPipe::finish`. (The sink's `written`
+    // drain accounting undercounts on pollable fds.)
+    // SAFETY: `this` is live until destroy below.
+    let accepted = unsafe { (*this).accepted.get() };
     // SAFETY: `this` is live until destroy below.
     let result = unsafe {
         (*this)
             .promise
-            .resolve(global_this, JSValue::js_number(written as f64))
+            .resolve(global_this, JSValue::js_number(accepted as f64))
     };
     // SAFETY: sole owner.
     unsafe { FileSinkPipe::destroy(this) };

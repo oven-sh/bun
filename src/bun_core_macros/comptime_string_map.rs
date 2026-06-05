@@ -149,6 +149,61 @@ fn key_lit(keys: &[(Vec<u8>, Span)], idx: usize) -> LitByteStr {
     LitByteStr::new(&keys[idx].0, keys[idx].1)
 }
 
+/// Longest constant slice-`==` LLVM still expands into inline loads instead
+/// of a `memcmp` call (4 × 16-byte loads on both aarch64 and x86-64-with-SSE).
+const MAX_INLINE_EQ_LEN: usize = 64;
+
+/// `key == lit` for keys longer than [`MAX_INLINE_EQ_LEN`], written the way
+/// `strings.eqlComptime` unrolls in the Zig original: XOR 8/4/2/1-byte chunks
+/// against constants and OR-accumulate, comparing once at the end. A single
+/// branchless block — MergeICmps only rewrites compare-and-branch chains, so
+/// this can never be turned back into a `memcmp` call.
+fn chunked_eq(key: &[u8], span: Span) -> TokenStream {
+    let mut terms = Vec::new();
+    let mut off = 0usize;
+    for width in [8usize, 4, 2, 1] {
+        while key.len() - off >= width {
+            let chunk = LitByteStr::new(&key[off..off + width], span);
+            let end = off + width;
+            let term = match width {
+                8 => quote! {
+                    (::core::primitive::u64::from_ne_bytes(
+                        key[#off..#end].try_into().unwrap(),
+                    ) ^ ::core::primitive::u64::from_ne_bytes(*#chunk))
+                },
+                4 => quote! {
+                    ((::core::primitive::u32::from_ne_bytes(
+                        key[#off..#end].try_into().unwrap(),
+                    ) ^ ::core::primitive::u32::from_ne_bytes(*#chunk)) as ::core::primitive::u64)
+                },
+                2 => quote! {
+                    ((::core::primitive::u16::from_ne_bytes(
+                        key[#off..#end].try_into().unwrap(),
+                    ) ^ ::core::primitive::u16::from_ne_bytes(*#chunk)) as ::core::primitive::u64)
+                },
+                _ => quote! {
+                    ((key[#off] ^ #chunk[0]) as ::core::primitive::u64)
+                },
+            };
+            terms.push(term);
+            off += width;
+        }
+    }
+    quote! { (#(#terms)|*) == 0 }
+}
+
+/// The equality check for one key in a `match key.len()` arm: plain `==` for
+/// keys LLVM inlines on its own, explicit chunked compares past that.
+fn eq_check(keys: &[(Vec<u8>, Span)], idx: usize) -> TokenStream {
+    let (key, span) = &keys[idx];
+    if key.len() > MAX_INLINE_EQ_LEN {
+        chunked_eq(key, *span)
+    } else {
+        let lit = key_lit(keys, idx);
+        quote! { key == #lit }
+    }
+}
+
 pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let MapParse(input) = syn::parse2(input)?;
     let Input {
@@ -173,9 +228,9 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     // them into word loads + a compare tree.
     let eq_arms = buckets.iter().map(|(len, idxs)| {
         let checks = idxs.iter().map(|&i| {
-            let lit = key_lit(&keys, i);
+            let check = eq_check(&keys, i);
             quote! {
-                if key == #lit {
+                if #check {
                     return ::core::option::Option::Some(&#entries_name[#i].1);
                 }
             }
@@ -347,9 +402,9 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
 
     let eq_arms = buckets.iter().map(|(len, idxs)| {
         let checks = idxs.iter().map(|&i| {
-            let lit = key_lit(&keys, i);
+            let check = eq_check(&keys, i);
             quote! {
-                if key == #lit {
+                if #check {
                     return true;
                 }
             }

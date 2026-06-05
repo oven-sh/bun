@@ -175,10 +175,7 @@ describe("bun run --if-present does not fall back to a same-named binary", () =>
     expect(exitCode).toBe(3);
   });
 
-  // On Windows the node_modules/.bin entry is a `.bunx` shim launched by the
-  // bunx fast-path, which is a separate code path from the POSIX $PATH search.
-  // A valid `.bunx` can only be produced by `bun install`, so install a local
-  // dep whose bin would print/exit non-zero if launched.
+  // Windows uses a `.bunx` shim (separate launch path); install a dep to make one.
   describe.if(isWindows)("windows .bunx fast-path", () => {
     function makeProject(prefix: string) {
       const dir = tempDirWithFiles(prefix, {

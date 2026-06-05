@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync } from "fs";
-import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
+import { chmodSync, existsSync } from "fs";
+import { bunEnv, bunExe, isPosix, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 let cwd: string;
@@ -173,6 +173,60 @@ describe("bun run --if-present does not fall back to a same-named binary", () =>
     });
     expect(stdout.toString()).toContain("BIN_RAN");
     expect(exitCode).toBe(3);
+  });
+
+  // On Windows the node_modules/.bin entry is a `.bunx` shim launched by the
+  // bunx fast-path, which is a separate code path from the POSIX $PATH search.
+  // A valid `.bunx` can only be produced by `bun install`, so install a local
+  // dep whose bin would print/exit non-zero if launched.
+  describe.if(isWindows)("windows .bunx fast-path", () => {
+    function makeProject(prefix: string) {
+      const dir = tempDirWithFiles(prefix, {
+        "package.json": JSON.stringify({
+          name: "test-project",
+          version: "1.0.0",
+          dependencies: { "mytool-pkg": "file:./mytool-pkg" },
+        }),
+        "mytool-pkg/package.json": JSON.stringify({
+          name: "mytool-pkg",
+          version: "1.0.0",
+          bin: { mytool: "./index.js" },
+        }),
+        "mytool-pkg/index.js": "console.log('BIN_RAN'); process.exit(3);\n",
+      });
+      const install = spawnSync({ cwd: dir, cmd: [bunExe(), "install"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      expect(install.exitCode).toBe(0);
+      expect(existsSync(join(dir, "node_modules", ".bin", "mytool.bunx"))).toBe(true);
+      return dir;
+    }
+
+    test("does not run a .bunx binary", () => {
+      const dir = makeProject("if-present-bunx");
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "--if-present", "mytool"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).not.toContain("BIN_RAN");
+      expect(stderr.toString()).toBeEmpty();
+      expect(exitCode).toBe(0);
+    });
+
+    // Control: without --if-present, the .bunx binary still runs.
+    test("without --if-present, the .bunx binary still runs", () => {
+      const dir = makeProject("if-present-bunx-control");
+      const { exitCode, stdout } = spawnSync({
+        cwd: dir,
+        cmd: [bunExe(), "run", "mytool"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toContain("BIN_RAN");
+      expect(exitCode).toBe(3);
+    });
   });
 
   test("still runs a present script", () => {

@@ -2651,8 +2651,11 @@ impl RunCommand {
         }
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
+        // Skipped under `--if-present` for the same reason as the
+        // `node_modules/.bin` / `$PATH` fallback below: a missing script must
+        // not fall through to a same-named `node_modules\.bin\<name>.bunx`.
         #[cfg(windows)]
-        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && !ctx.runtime_options.if_present {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path

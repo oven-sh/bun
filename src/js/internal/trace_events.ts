@@ -47,6 +47,10 @@ let suppressFsEvents = false;
 // agent's own stderr writes never show up as fs.sync.write trace events.
 const fsBinding = require("internal/fs/binding");
 const rawWriteSync = fsBinding.writeSync.bind(fsBinding);
+// Same reasoning for reads: pre_execution's --trace-env-js-stack source-line
+// lookup must not evaluate node:fs pre-user-code (which would freeze
+// unwrapped natives into its bound exports) nor show up as fs.sync events.
+const rawReadFileSync = fsBinding.readFileSync.bind(fsBinding);
 
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";
@@ -340,7 +344,7 @@ function mergeWorkerParts(fileName: string) {
     const partPath = path.join(dir, name);
     try {
       const parsed = JSON.parse(fs.readFileSync(partPath, "utf8"));
-      if (Array.isArray(parsed)) {
+      if ($isArray(parsed)) {
         for (const event of parsed) events.push(event);
       }
       fs.unlinkSync(partPath);
@@ -798,4 +802,5 @@ export default {
   inspectorStart,
   inspectorStop,
   rawWriteSync,
+  rawReadFileSync,
 };

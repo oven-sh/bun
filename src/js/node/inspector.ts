@@ -152,7 +152,7 @@ class Session extends EventEmitter {
           };
         }
         const includedCategories = (params as any)?.traceConfig?.includedCategories;
-        const categories = Array.isArray(includedCategories) ? includedCategories : [];
+        const categories = $isArray(includedCategories) ? includedCategories : [];
         const started = require("internal/trace_events").inspectorStart(categories);
         if (!started) {
           return { [kProtocolError]: { code: -32000, message: "Tracing is already started" } };

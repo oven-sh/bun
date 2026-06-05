@@ -30,7 +30,12 @@ function getSourceLine(file: string, line: number): string | null {
   let lines = sourceLineCache.$get(file);
   if (lines === undefined) {
     try {
-      lines = (require("node:fs").readFileSync(file, "utf8") as string).split("\n");
+      // Raw binding capture, NOT node:fs: evaluating node:fs here (the first
+      // user-code env access) would freeze unwrapped natives into its bound
+      // exports, so a later dynamic createTracing(...).enable() of fs
+      // categories would miss events; it also keeps this read out of
+      // fs.sync traces.
+      lines = (require("internal/trace_events").rawReadFileSync(file, "utf8") as string).split("\n");
     } catch {
       lines = null;
     }

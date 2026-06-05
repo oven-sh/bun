@@ -216,6 +216,10 @@ function ClientRequest(input, options, cb) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
+    // Close the http.client.request trace span if no response ever arrived
+    // (req.destroy()/abort before headers); deduped by the per-request flag.
+    traceClientResponseEnd(this);
+
     const res = this.res;
 
     // If we're aborting, we don't care about any more response data.
@@ -243,6 +247,10 @@ function ClientRequest(input, options, cb) {
 
   const socketCloseListener = () => {
     this.destroyed = true;
+
+    // Socket-level close without a response (connection reset, abort):
+    // close the trace span so it doesn't stay open forever.
+    traceClientResponseEnd(this);
 
     const res = this.res;
     if (res) {
@@ -444,6 +452,7 @@ function ClientRequest(input, options, cb) {
                 emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
 
                 res.complete = true;
+                traceClientResponseEnd(self);
                 maybeEmitClose();
                 return;
               }
@@ -508,6 +517,10 @@ function ClientRequest(input, options, cb) {
             }
 
             if (!!$debug) globalReportError(err);
+
+            // Request failed before any response (ECONNREFUSED, DNS, parse
+            // error): close the trace span; deduped by the per-request flag.
+            traceClientResponseEnd(this);
 
             try {
               this.emit("error", err);

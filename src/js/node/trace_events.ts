@@ -63,7 +63,7 @@ function createTracing(options: { categories: string[] }): Tracing {
     throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
   const categories = options.categories;
-  if (!Array.isArray(categories)) {
+  if (!$isArray(categories)) {
     throw $ERR_INVALID_ARG_TYPE("options.categories", "string[]", categories);
   }
   if (categories.length === 0) {

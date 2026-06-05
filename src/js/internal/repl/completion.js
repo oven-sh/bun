@@ -3,7 +3,7 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
+'use strict';
 
 const {
   ArrayPrototypeFilter,
@@ -45,21 +45,32 @@ const {
 
 const { sendInspectorCommand } = require("internal/repl/node-shims");
 
-const { isProxy } = require("internal/repl/node-shims");
+const {
+  isProxy,
+} = require("internal/repl/node-shims");
 
 const CJSModule = require("internal/repl/node-shims").Module;
 
-const { extensionFormatMap } = require("internal/repl/node-shims");
+const {
+  extensionFormatMap,
+} = require("internal/repl/node-shims");
 
 const path = require("node:path");
 const fs = require("node:fs");
 
 const {
-  constants: { ALL_PROPERTIES, SKIP_SYMBOLS },
+  constants: {
+    ALL_PROPERTIES,
+    SKIP_SYMBOLS,
+  },
   getOwnNonIndexProperties,
 } = require("internal/repl/node-shims");
 
-const { isIdentifierStart, isIdentifierChar, parse: acornParse } = require("internal/repl/acorn");
+const {
+  isIdentifierStart,
+  isIdentifierChar,
+  parse: acornParse,
+} = require("internal/repl/acorn");
 const acornWalk = require("internal/repl/acorn-walk");
 
 const importRE = /\bimport\s*\(\s*['"`](([\w@./:-]+\/)?(?:[\w@./:-]*))(?![^'"`])$/;
@@ -71,13 +82,14 @@ fixReplRequire(__node_module__);
 
 const { BuiltinModule } = require("internal/repl/node-shims");
 
-const nodeSchemeBuiltinLibs = ArrayPrototypeMap(getReplBuiltinLibs(), lib => `node:${lib}`);
-ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), lib =>
-  ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`),
+const nodeSchemeBuiltinLibs = ArrayPrototypeMap(getReplBuiltinLibs(), (lib) => `node:${lib}`);
+ArrayPrototypeForEach(
+  BuiltinModule.getSchemeOnlyModuleNames(),
+  (lib) => ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`),
 );
 
 function isIdentifier(str) {
-  if (str === "") {
+  if (str === '') {
     return false;
   }
   const first = StringPrototypeCodePointAt(str, 0);
@@ -98,32 +110,23 @@ function isIdentifier(str) {
 }
 
 function isNotLegacyObjectPrototypeMethod(str) {
-  return (
-    isIdentifier(str) &&
-    str !== "__defineGetter__" &&
-    str !== "__defineSetter__" &&
-    str !== "__lookupGetter__" &&
-    str !== "__lookupSetter__"
-  );
+  return isIdentifier(str) &&
+    str !== '__defineGetter__' &&
+    str !== '__defineSetter__' &&
+    str !== '__lookupGetter__' &&
+    str !== '__lookupSetter__';
 }
 
 function getGlobalLexicalScopeNames(contextId) {
-  return sendInspectorCommand(
-    session => {
-      let names = [];
-      session.post(
-        "Runtime.globalLexicalScopeNames",
-        {
-          executionContextId: contextId,
-        },
-        (error, result) => {
-          if (!error) names = result.names;
-        },
-      );
-      return names;
-    },
-    () => [],
-  );
+  return sendInspectorCommand((session) => {
+    let names = [];
+    session.post('Runtime.globalLexicalScopeNames', {
+      executionContextId: contextId,
+    }, (error, result) => {
+      if (!error) names = result.names;
+    });
+    return names;
+  }, () => []);
 }
 
 function filteredOwnPropertyNames(obj) {
@@ -133,7 +136,7 @@ function filteredOwnPropertyNames(obj) {
   //  Object.getPrototypeOf(Object.getPrototypeOf(X.constructor)) === X`.
   let isObjectPrototype = false;
   if (ObjectGetPrototypeOf(obj) === null) {
-    const ctorDescriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
+    const ctorDescriptor = ObjectGetOwnPropertyDescriptor(obj, 'constructor');
     if (ctorDescriptor?.value) {
       const ctorProto = ObjectGetPrototypeOf(ctorDescriptor.value);
       isObjectPrototype = ctorProto && ObjectGetPrototypeOf(ctorProto) === obj;
@@ -142,50 +145,18 @@ function filteredOwnPropertyNames(obj) {
   const filter = ALL_PROPERTIES | SKIP_SYMBOLS;
   return ArrayPrototypeFilter(
     getOwnNonIndexProperties(obj, filter),
-    isObjectPrototype ? isNotLegacyObjectPrototypeMethod : isIdentifier,
-  );
+    isObjectPrototype ? isNotLegacyObjectPrototypeMethod : isIdentifier);
 }
 
 function addCommonWords(completionGroups) {
   // Only words which do not yet exist as global property should be added to
   // this list.
   ArrayPrototypePush(completionGroups, [
-    "async",
-    "await",
-    "break",
-    "case",
-    "catch",
-    "const",
-    "continue",
-    "debugger",
-    "default",
-    "delete",
-    "do",
-    "else",
-    "export",
-    "false",
-    "finally",
-    "for",
-    "function",
-    "if",
-    "import",
-    "in",
-    "instanceof",
-    "let",
-    "new",
-    "null",
-    "return",
-    "switch",
-    "this",
-    "throw",
-    "true",
-    "try",
-    "typeof",
-    "var",
-    "void",
-    "while",
-    "with",
-    "yield",
+    'async', 'await', 'break', 'case', 'catch', 'const', 'continue',
+    'debugger', 'default', 'delete', 'do', 'else', 'export', 'false',
+    'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'let',
+    'new', 'null', 'return', 'switch', 'this', 'throw', 'true', 'try',
+    'typeof', 'var', 'void', 'while', 'with', 'yield',
   ]);
 }
 
@@ -198,7 +169,7 @@ function gracefulReaddir(...args) {
 }
 
 function completeFSFunctions(match) {
-  let baseName = "";
+  let baseName = '';
   let filePath = match[1];
   let fileList = gracefulReaddir(filePath, { withFileTypes: true });
 
@@ -209,8 +180,11 @@ function completeFSFunctions(match) {
   }
 
   const completions = ArrayPrototypeMap(
-    ArrayPrototypeFilter(fileList, dirent => StringPrototypeStartsWith(dirent.name, baseName)),
-    d => d.name,
+    ArrayPrototypeFilter(
+      fileList,
+      (dirent) => StringPrototypeStartsWith(dirent.name, baseName),
+    ),
+    (d) => d.name,
   );
 
   return [[completions], baseName];
@@ -236,7 +210,7 @@ function complete(line, callback) {
   // Ignore right whitespace. It could change the outcome.
   line = StringPrototypeTrimStart(line);
 
-  let filter = "";
+  let filter = '';
 
   let match;
   // REPL commands (e.g. ".break").
@@ -251,18 +225,19 @@ function complete(line, callback) {
     completeOn = match[1];
     filter = completeOn;
     if (this.allowBlockingCompletions) {
-      const subdir = match[2] || "";
+      const subdir = match[2] || '';
       const extensions = ObjectKeys(CJSModule._extensions);
-      const indexes = ArrayPrototypeMap(extensions, extension => `index${extension}`);
-      ArrayPrototypePush(indexes, "package.json", "index");
+      const indexes = ArrayPrototypeMap(extensions,
+                                        (extension) => `index${extension}`);
+      ArrayPrototypePush(indexes, 'package.json', 'index');
 
       group = [];
       let paths = [];
 
-      if (completeOn === ".") {
-        group = ["./", "../"];
-      } else if (completeOn === "..") {
-        group = ["../"];
+      if (completeOn === '.') {
+        group = ['./', '../'];
+      } else if (completeOn === '..') {
+        group = ['../'];
       } else if (RegExpPrototypeExec(/^\.\.?\//, completeOn) !== null) {
         paths = [process.cwd()];
       } else {
@@ -271,27 +246,30 @@ function complete(line, callback) {
         ArrayPrototypePushApply(paths, CJSModule.globalPaths);
       }
 
-      ArrayPrototypeForEach(paths, dir => {
+      ArrayPrototypeForEach(paths, (dir) => {
         dir = path.resolve(dir, subdir);
         const dirents = gracefulReaddir(dir, { withFileTypes: true }) || [];
-        ArrayPrototypeForEach(dirents, dirent => {
-          if (RegExpPrototypeExec(versionedFileNamesRe, dirent.name) !== null || dirent.name === ".npm") {
+        ArrayPrototypeForEach(dirents, (dirent) => {
+          if (RegExpPrototypeExec(versionedFileNamesRe, dirent.name) !== null ||
+              dirent.name === '.npm') {
             // Exclude versioned names that 'npm' installs.
             return;
           }
           const extension = path.extname(dirent.name);
           const base = StringPrototypeSlice(dirent.name, 0, -extension.length);
           if (!dirent.isDirectory()) {
-            if (StringPrototypeIncludes(extensions, extension) && (!subdir || base !== "index")) {
+            if (StringPrototypeIncludes(extensions, extension) &&
+                (!subdir || base !== 'index')) {
               ArrayPrototypePush(group, `${subdir}${base}`);
             }
             return;
           }
           ArrayPrototypePush(group, `${subdir}${dirent.name}/`);
           const absolute = path.resolve(dir, dirent.name);
-          if (
-            ArrayPrototypeSome(gracefulReaddir(absolute) || [], subfile => ArrayPrototypeIncludes(indexes, subfile))
-          ) {
+          if (ArrayPrototypeSome(
+            gracefulReaddir(absolute) || [],
+            (subfile) => ArrayPrototypeIncludes(indexes, subfile),
+          )) {
             ArrayPrototypePush(group, `${subdir}${dirent.name}`);
           }
         });
@@ -307,33 +285,34 @@ function complete(line, callback) {
     completeOn = match[1];
     filter = completeOn;
     if (this.allowBlockingCompletions) {
-      const subdir = match[2] || "";
+      const subdir = match[2] || '';
       // File extensions that can be imported:
       const extensions = ObjectKeys(extensionFormatMap);
 
       // Only used when loading bare module specifiers from `node_modules`:
-      const indexes = ArrayPrototypeMap(extensions, ext => `index${ext}`);
-      ArrayPrototypePush(indexes, "package.json");
+      const indexes = ArrayPrototypeMap(extensions, (ext) => `index${ext}`);
+      ArrayPrototypePush(indexes, 'package.json');
 
       group = [];
       let paths = [];
-      if (completeOn === ".") {
-        group = ["./", "../"];
-      } else if (completeOn === "..") {
-        group = ["../"];
+      if (completeOn === '.') {
+        group = ['./', '../'];
+      } else if (completeOn === '..') {
+        group = ['../'];
       } else if (RegExpPrototypeExec(/^\.\.?\//, completeOn) !== null) {
         paths = [process.cwd()];
       } else {
         paths = ArrayPrototypeSlice(__node_module__.paths);
       }
 
-      ArrayPrototypeForEach(paths, dir => {
+      ArrayPrototypeForEach(paths, (dir) => {
         dir = path.resolve(dir, subdir);
-        const isInNodeModules = path.basename(dir) === "node_modules";
+        const isInNodeModules = path.basename(dir) === 'node_modules';
         const dirents = gracefulReaddir(dir, { withFileTypes: true }) || [];
-        ArrayPrototypeForEach(dirents, dirent => {
+        ArrayPrototypeForEach(dirents, (dirent) => {
           const { name } = dirent;
-          if (RegExpPrototypeExec(versionedFileNamesRe, name) !== null || name === ".npm") {
+          if (RegExpPrototypeExec(versionedFileNamesRe, name) !== null ||
+              name === '.npm') {
             // Exclude versioned names that 'npm' installs.
             return;
           }
@@ -350,11 +329,9 @@ function complete(line, callback) {
           if (!subdir && isInNodeModules) {
             const absolute = path.resolve(dir, name);
             const subfiles = gracefulReaddir(absolute) || [];
-            if (
-              ArrayPrototypeSome(subfiles, subfile => {
-                return ArrayPrototypeIncludes(indexes, subfile);
-              })
-            ) {
+            if (ArrayPrototypeSome(subfiles, (subfile) => {
+              return ArrayPrototypeIncludes(indexes, subfile);
+            })) {
               ArrayPrototypePush(group, `${subdir}${name}`);
             }
           }
@@ -367,32 +344,36 @@ function complete(line, callback) {
     }
 
     ArrayPrototypePush(completionGroups, getReplBuiltinLibs(), nodeSchemeBuiltinLibs);
-  } else if ((match = RegExpPrototypeExec(fsAutoCompleteRE, line)) !== null && this.allowBlockingCompletions) {
+  } else if ((match = RegExpPrototypeExec(fsAutoCompleteRE, line)) !== null &&
+             this.allowBlockingCompletions) {
     ({ 0: completionGroups, 1: completeOn } = completeFSFunctions(match));
-  } else if (line.length === 0 || RegExpPrototypeExec(/\w|\.|\$/, line[line.length - 1]) !== null) {
+  } else if (line.length === 0 ||
+             RegExpPrototypeExec(/\w|\.|\$/, line[line.length - 1]) !== null) {
     const completeTarget = line.length === 0 ? line : findExpressionCompleteTarget(line);
 
     if (line.length !== 0 && !completeTarget) {
       completionGroupsLoaded();
       return;
     }
-    let expr = "";
+    let expr = '';
     completeOn = completeTarget;
-    if (StringPrototypeEndsWith(line, ".")) {
+    if (StringPrototypeEndsWith(line, '.')) {
       expr = StringPrototypeSlice(completeTarget, 0, -1);
     } else if (line.length !== 0) {
-      const bits = StringPrototypeSplit(completeTarget, ".");
+      const bits = StringPrototypeSplit(completeTarget, '.');
       filter = ArrayPrototypePop(bits);
-      expr = ArrayPrototypeJoin(bits, ".");
+      expr = ArrayPrototypeJoin(bits, '.');
     }
 
     // Resolve expr and get its completions.
     if (!expr) {
       // Get global vars synchronously
-      ArrayPrototypePush(completionGroups, getGlobalLexicalScopeNames(this[kContextId]));
+      ArrayPrototypePush(completionGroups,
+                         getGlobalLexicalScopeNames(this[kContextId]));
       let contextProto = this.context;
       while ((contextProto = ObjectGetPrototypeOf(contextProto)) !== null) {
-        ArrayPrototypePush(completionGroups, filteredOwnPropertyNames(contextProto));
+        ArrayPrototypePush(completionGroups,
+                           filteredOwnPropertyNames(contextProto));
       }
       const contextOwnNames = filteredOwnPropertyNames(this.context);
       if (!this.useGlobal) {
@@ -402,99 +383,82 @@ function complete(line, callback) {
         ArrayPrototypePush(contextOwnNames, ...globalBuiltins);
       }
       ArrayPrototypePush(completionGroups, contextOwnNames);
-      if (filter !== "") addCommonWords(completionGroups);
+      if (filter !== '') addCommonWords(completionGroups);
       completionGroupsLoaded();
       return;
     }
 
     // If the target ends with a dot (e.g. `obj.foo.`) such code won't be valid for AST parsing
     // so in order to make it correct we add an identifier to its end (e.g. `obj.foo.x`)
-    const parsableCompleteTarget = completeTarget.endsWith(".") ? `${completeTarget}x` : completeTarget;
+    const parsableCompleteTarget = completeTarget.endsWith('.') ? `${completeTarget}x` : completeTarget;
 
     let completeTargetAst;
     try {
-      completeTargetAst = acornParse(parsableCompleteTarget, {
-        __proto__: null,
-        sourceType: "module",
-        ecmaVersion: "latest",
-      });
-    } catch {
-      /* No need to specifically handle parse errors */
-    }
+      completeTargetAst = acornParse(
+        parsableCompleteTarget, { __proto__: null, sourceType: 'module', ecmaVersion: 'latest' },
+      );
+    } catch { /* No need to specifically handle parse errors */ }
 
     if (!completeTargetAst) {
       return completionGroupsLoaded();
     }
 
-    // Destructuring keeps the "eval" property name out of member-access
-    // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
-    // `x["eval"]` inside builtin sources, and minify-syntax would fold a
-    // bracket access back into dot form.
-    const { eval: evalFn } = this;
-
     return includesProxiesOrGetters(
       completeTargetAst.body[0].expression,
       parsableCompleteTarget,
-      evalFn,
+      this["eval"],
       this.context,
-      includes => {
+      (includes) => {
         if (includes) {
-          // The expression involves proxies or getters, meaning that it
-          // can trigger side-effectful behaviors, so bail out
+        // The expression involves proxies or getters, meaning that it
+        // can trigger side-effectful behaviors, so bail out
           return completionGroupsLoaded();
         }
 
-        let chaining = ".";
-        if (StringPrototypeEndsWith(expr, "?")) {
+        let chaining = '.';
+        if (StringPrototypeEndsWith(expr, '?')) {
           expr = StringPrototypeSlice(expr, 0, -1);
-          chaining = "?.";
+          chaining = '?.';
         }
 
         const memberGroups = [];
         const evalExpr = `try { ${expr} } catch {}`;
-        // ReflectApply keeps `this` bound like `this.eval(...)` would.
-        ReflectApply(evalFn, this, [
-          evalExpr,
-          this.context,
-          getREPLResourceName(),
-          (e, obj) => {
-            try {
-              let p;
-              if ((typeof obj === "object" && obj !== null) || typeof obj === "function") {
-                ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(obj));
-                p = ObjectGetPrototypeOf(obj);
-              } else {
-                p = obj.constructor ? obj.constructor.prototype : null;
-              }
-              // Circular refs possible? Let's guard against that.
-              let sentinel = 5;
-              while (p !== null && sentinel-- !== 0) {
-                ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(p));
-                p = ObjectGetPrototypeOf(p);
-              }
-            } catch {
-              // Maybe a Proxy object without `getOwnPropertyNames` trap.
-              // We simply ignore it here, as we don't want to break the
-              // autocompletion. Fixes the bug
-              // https://github.com/nodejs/node/issues/2119
+        this["eval"](evalExpr, this.context, getREPLResourceName(), (e, obj) => {
+          try {
+            let p;
+            if ((typeof obj === 'object' && obj !== null) ||
+              typeof obj === 'function') {
+              ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(obj));
+              p = ObjectGetPrototypeOf(obj);
+            } else {
+              p = obj.constructor ? obj.constructor.prototype : null;
             }
-
-            if (memberGroups.length) {
-              expr += chaining;
-              ArrayPrototypeForEach(memberGroups, group => {
-                ArrayPrototypePush(
-                  completionGroups,
-                  ArrayPrototypeMap(group, member => `${expr}${member}`),
-                );
-              });
-              filter &&= `${expr}${filter}`;
+            // Circular refs possible? Let's guard against that.
+            let sentinel = 5;
+            while (p !== null && sentinel-- !== 0) {
+              ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(p));
+              p = ObjectGetPrototypeOf(p);
             }
+          } catch {
+          // Maybe a Proxy object without `getOwnPropertyNames` trap.
+          // We simply ignore it here, as we don't want to break the
+          // autocompletion. Fixes the bug
+          // https://github.com/nodejs/node/issues/2119
+          }
 
-            completionGroupsLoaded();
-          },
-        ]);
-      },
-    );
+          if (memberGroups.length) {
+            expr += chaining;
+            ArrayPrototypeForEach(memberGroups, (group) => {
+              ArrayPrototypePush(completionGroups,
+                                 ArrayPrototypeMap(group,
+                                                   (member) => `${expr}${member}`));
+            });
+            filter &&= `${expr}${filter}`;
+          }
+
+          completionGroupsLoaded();
+        });
+      });
   }
 
   return completionGroupsLoaded();
@@ -506,11 +470,14 @@ function complete(line, callback) {
     if (completionGroups.length && filter) {
       const newCompletionGroups = [];
       const lowerCaseFilter = StringPrototypeToLocaleLowerCase(filter);
-      ArrayPrototypeForEach(completionGroups, group => {
-        const filteredGroup = ArrayPrototypeFilter(group, str => {
+      ArrayPrototypeForEach(completionGroups, (group) => {
+        const filteredGroup = ArrayPrototypeFilter(group, (str) => {
           // Filter is always case-insensitive following chromium autocomplete
           // behavior.
-          return StringPrototypeStartsWith(StringPrototypeToLocaleLowerCase(str), lowerCaseFilter);
+          return StringPrototypeStartsWith(
+            StringPrototypeToLocaleLowerCase(str),
+            lowerCaseFilter,
+          );
         });
         if (filteredGroup.length) {
           ArrayPrototypePush(newCompletionGroups, filteredGroup);
@@ -522,13 +489,13 @@ function complete(line, callback) {
     const completions = [];
     // Unique completions across all groups.
     const uniqueSet = new SafeSet();
-    uniqueSet.add("");
+    uniqueSet.add('');
     // Completion group 0 is the "closest" (least far up the inheritance
     // chain) so we put its completions last: to be closest in the REPL.
-    ArrayPrototypeForEach(completionGroups, group => {
+    ArrayPrototypeForEach(completionGroups, (group) => {
       ArrayPrototypeSort(group, (a, b) => (b > a ? 1 : -1));
       const setSize = uniqueSet.size;
-      ArrayPrototypeForEach(group, entry => {
+      ArrayPrototypeForEach(group, (entry) => {
         if (!uniqueSet.has(entry)) {
           ArrayPrototypeUnshift(completions, entry);
           uniqueSet.add(entry);
@@ -536,12 +503,12 @@ function complete(line, callback) {
       });
       // Add a separator between groups.
       if (uniqueSet.size !== setSize) {
-        ArrayPrototypeUnshift(completions, "");
+        ArrayPrototypeUnshift(completions, '');
       }
     });
 
     // Remove obsolete group entry, if present.
-    if (completions[0] === "") {
+    if (completions[0] === '') {
       ArrayPrototypeShift(completions);
     }
 
@@ -572,8 +539,8 @@ function findExpressionCompleteTarget(code) {
     return null;
   }
 
-  if (code.at(-1) === ".") {
-    if (code.at(-2) === "?") {
+  if (code.at(-1) === '.') {
+    if (code.at(-2) === '?') {
       // The code ends with the optional chaining operator (`?.`),
       // such code can't generate a valid AST so we need to strip
       // the suffix, run this function's logic and add back the
@@ -591,9 +558,9 @@ function findExpressionCompleteTarget(code) {
 
   let ast;
   try {
-    ast = acornParse(code, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
+    ast = acornParse(code, { __proto__: null, sourceType: 'module', ecmaVersion: 'latest' });
   } catch {
-    const keywords = code.split(" ");
+    const keywords = code.split(' ');
 
     if (keywords.length > 1) {
       // Something went wrong with the parsing, however this can be due to incomplete code
@@ -617,13 +584,13 @@ function findExpressionCompleteTarget(code) {
 
   // If the last statement is a block we know there is not going to be a potential
   // completion target (e.g. in `{ a: true }` there is no completion to be done)
-  if (lastBodyStatement.type === "BlockStatement") {
+  if (lastBodyStatement.type === 'BlockStatement') {
     return null;
   }
 
   // If the last statement is an expression and it has a right side, that's what we
   // want to potentially complete on, so let's re-run the function's logic on that
-  if (lastBodyStatement.type === "ExpressionStatement" && lastBodyStatement.expression.right) {
+  if (lastBodyStatement.type === 'ExpressionStatement' && lastBodyStatement.expression.right) {
     const exprRight = lastBodyStatement.expression.right;
     const exprRightCode = code.slice(exprRight.start, exprRight.end);
     return findExpressionCompleteTarget(exprRightCode);
@@ -631,7 +598,7 @@ function findExpressionCompleteTarget(code) {
 
   // If the last statement is a variable declaration statement the last declaration is
   // what we can potentially complete on, so let's re-run the function's logic on that
-  if (lastBodyStatement.type === "VariableDeclaration") {
+  if (lastBodyStatement.type === 'VariableDeclaration') {
     const lastDeclarationInit = lastBodyStatement.declarations.at(-1).init;
     if (!lastDeclarationInit) {
       // If there is no initialization we can simply return
@@ -643,11 +610,9 @@ function findExpressionCompleteTarget(code) {
 
   // If the last statement is an expression statement with a unary operator (delete, typeof, etc.)
   // we want to extract the argument for completion (e.g. for `delete obj.prop` we want `obj.prop`)
-  if (
-    lastBodyStatement.type === "ExpressionStatement" &&
-    lastBodyStatement.expression.type === "UnaryExpression" &&
-    lastBodyStatement.expression.argument
-  ) {
+  if (lastBodyStatement.type === 'ExpressionStatement' &&
+      lastBodyStatement.expression.type === 'UnaryExpression' &&
+      lastBodyStatement.expression.argument) {
     const argument = lastBodyStatement.expression.argument;
     const argumentCode = code.slice(argument.start, argument.end);
     return findExpressionCompleteTarget(argumentCode);
@@ -655,11 +620,9 @@ function findExpressionCompleteTarget(code) {
 
   // If the last statement is an expression statement with "new" syntax
   // we want to extract the callee for completion (e.g. for `new Sample` we want `Sample`)
-  if (
-    lastBodyStatement.type === "ExpressionStatement" &&
-    lastBodyStatement.expression.type === "NewExpression" &&
-    lastBodyStatement.expression.callee
-  ) {
+  if (lastBodyStatement.type === 'ExpressionStatement' &&
+      lastBodyStatement.expression.type === 'NewExpression' &&
+      lastBodyStatement.expression.callee) {
     const callee = lastBodyStatement.expression.callee;
     const calleeCode = code.slice(callee.start, callee.end);
     return findExpressionCompleteTarget(calleeCode);
@@ -668,7 +631,7 @@ function findExpressionCompleteTarget(code) {
   // Walk the AST for the current block of code, and check whether it contains any
   // statement or expression type that would potentially have side effects if evaluated.
   let isAllowed = true;
-  const disallow = () => (isAllowed = false);
+  const disallow = () => isAllowed = false;
   acornWalk.simple(lastBodyStatement, {
     ForInStatement: disallow,
     ForOfStatement: disallow,
@@ -700,12 +663,12 @@ function findExpressionCompleteTarget(code) {
  * @returns {void}
  */
 function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
-  if (expr?.type !== "MemberExpression") {
+  if (expr?.type !== 'MemberExpression') {
     // If the expression is not a member one for obvious reasons no getters are involved
     return callback(false);
   }
 
-  if (expr.object.type === "MemberExpression") {
+  if (expr.object.type === 'MemberExpression') {
     // The object itself is a member expression, so we need to recurse (e.g. the expression is `obj.foo.bar`)
     return includesProxiesOrGetters(
       expr.object,
@@ -725,7 +688,7 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
         // If a getter/proxy hasn't been found by the recursion call we need to check if maybe a getter/proxy
         // is present here (e.g. in `obj.foo.bar` we found that `obj.foo` doesn't involve any getters so we now
         // need to check if `bar` on `obj.foo` (i.e. `lastEvaledObj`) has a getter or if `obj.foo.bar` is a proxy)
-        return hasGetterOrIsProxy(lastEvaledObj, expr.property, doesHaveGetterOrIsProxy => {
+        return hasGetterOrIsProxy(lastEvaledObj, expr.property, (doesHaveGetterOrIsProxy) => {
           return callback(doesHaveGetterOrIsProxy);
         });
       },
@@ -735,7 +698,7 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
   // This is the base of the recursion we have an identifier for the object and an identifier or literal
   // for the property (e.g. we have `obj.foo` or `obj['foo']`, `obj` is the object identifier and `foo`
   // is the property identifier/literal)
-  if (expr.object.type === "Identifier") {
+  if (expr.object.type === 'Identifier') {
     return evalFn(`try { ${expr.object.name} } catch {}`, ctx, getREPLResourceName(), (err, obj) => {
       if (err) {
         return callback(false);
@@ -745,17 +708,18 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
         return callback(true);
       }
 
-      return hasGetterOrIsProxy(obj, expr.property, doesHaveGetterOrIsProxy => {
+      return hasGetterOrIsProxy(obj, expr.property, (doesHaveGetterOrIsProxy) => {
         if (doesHaveGetterOrIsProxy) {
           return callback(true);
         }
 
-        return evalFn(`try { ${exprStr} } catch {} `, ctx, getREPLResourceName(), (err, obj) => {
-          if (err) {
-            return callback(false);
-          }
-          return callback(false, obj);
-        });
+        return evalFn(
+          `try { ${exprStr} } catch {} `, ctx, getREPLResourceName(), (err, obj) => {
+            if (err) {
+              return callback(false);
+            }
+            return callback(false, obj);
+          });
       });
     });
   }
@@ -770,12 +734,15 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
       return cb(false);
     }
 
-    if (astProp.type === "Literal") {
+    if (astProp.type === 'Literal') {
       // We have something like `obj['foo'].x` where `x` is the literal
       return propHasGetterOrIsProxy(obj, astProp.value, cb);
     }
 
-    if (astProp.type === "Identifier" && exprStr.at(astProp.start - 1) === ".") {
+    if (
+      astProp.type === 'Identifier' &&
+      exprStr.at(astProp.start - 1) === '.'
+    ) {
       // We have something like `obj.foo.x` where `foo` is the identifier
       return propHasGetterOrIsProxy(obj, astProp.name, cb);
     }
@@ -794,7 +761,7 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
           return cb(false);
         }
 
-        if (typeof evaledProp === "string") {
+        if (typeof evaledProp === 'string') {
           return propHasGetterOrIsProxy(obj, evaledProp, cb);
         }
 
@@ -819,8 +786,11 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
  * @returns {void}
  */
 function propHasGetterOrIsProxy(obj, prop, cb) {
-  const propDescriptor = ObjectGetOwnPropertyDescriptor(obj, prop);
-  const propHasGetter = typeof propDescriptor?.get === "function";
+  const propDescriptor = ObjectGetOwnPropertyDescriptor(
+    obj,
+    prop,
+  );
+  const propHasGetter = typeof propDescriptor?.get === 'function';
   if (propHasGetter) {
     return cb(true);
   }

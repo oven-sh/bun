@@ -148,10 +148,10 @@ unsafe fn get_context(ctx: *mut Context) {
         let _ = unsafe { musl::setjmp(ctx) };
     }
     #[cfg(not(any(
-    windows,
-    all(target_os = "linux", target_env = "musl"),
-    target_os = "android"
-)))]
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // The `libc` crate omits the getcontext(3) binding on Darwin and the
         // BSDs; declare it locally (uniform across all unix targets).
@@ -176,10 +176,10 @@ unsafe fn set_context(ctx: *const Context) -> ! {
         unsafe { musl::longjmp(ctx, 1) };
     }
     #[cfg(not(any(
-    windows,
-    all(target_os = "linux", target_env = "musl"),
-    target_os = "android"
-)))]
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
         // this thread; the captured frame is still live (caller contract).

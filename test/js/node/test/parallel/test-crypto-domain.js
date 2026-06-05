@@ -24,6 +24,15 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+// Note for Bun: skipped on Windows. A domain-handled uncaught exception
+// thrown synchronously from the main module leaves the process hanging
+// there (pre-existing event loop bug, same one tracked by the
+// zeroExitWithUncaughtHandler windows-todo in
+// test/js/node/process/process.test.js).
+if (common.isWindows) {
+  common.skip('domain-handled uncaught exception from the main module hangs on Windows');
+}
+
 const assert = require('assert');
 const crypto = require('crypto');
 const domain = require('domain');

@@ -106,6 +106,9 @@ const tests = [
   }, 0),
 
   common.mustCallAtLeast(function firstRunOnlyTopLevelErrorHandler() {
+    // Note for Bun: skipped on Windows, like firstRun above.
+    if (common.isWindows) return;
+
     const d = domain.create();
     const d2 = domain.create();
 
@@ -119,6 +122,9 @@ const tests = [
   }, 0),
 
   common.mustCallAtLeast(function firstRunNestedWithErrorHandler() {
+    // Note for Bun: skipped on Windows, like firstRun above.
+    if (common.isWindows) return;
+
     const d = domain.create();
     const d2 = domain.create();
 

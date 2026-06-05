@@ -55,6 +55,9 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # node:repl vendored suite - remaining divergences (see PR #31827; 82/107 passing)
+[ WINDOWS ] test/js/node/test/parallel/test-repl-mode.js [ FAIL ] # hangs (timeout) on all Windows lanes; needs Windows-side debugging
+[ WINDOWS ] test/js/node/test/parallel/test-repl-load-multiline-no-trailing-newline.js [ FAIL ] # hangs (timeout) on all Windows lanes; needs Windows-side debugging
+[ WINDOWS ] test/js/node/test/parallel/test-repl-tab-complete-require.js [ FAIL ] # hangs (timeout) on all Windows lanes; needs Windows-side debugging
 test/js/node/test/parallel/test-repl-autocomplete.js [ FAIL ] # result previews need inspector side-effect-free eval
 test/js/node/test/parallel/test-repl-cli-eval.js [ FAIL ] # CLI child-process behavior divergence
 test/js/node/test/parallel/test-repl-custom-eval-previews.js [ FAIL ] # result previews need inspector side-effect-free eval

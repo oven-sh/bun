@@ -248,6 +248,17 @@ describe("Bun.Image", () => {
       await expect(new Bun.Image(bad).metadata()).rejects.toThrow(/decode/i);
     });
 
+    test("PNG with an illegal bit-depth/colour-type pair rejects", async () => {
+      // Truecolour only allows depths 8/16; indexed only 1/2/4/8 (spec
+      // §11.2.2 — libspng rejects these at decode too).
+      const rgb4 = Buffer.from(makePngVariant(2, 8));
+      rgb4[24] = 4;
+      await expect(new Bun.Image(rgb4).metadata()).rejects.toThrow(/decode/i);
+      const indexed16 = Buffer.from(makePngVariant(3, 8, [], pal));
+      indexed16[24] = 16;
+      await expect(new Bun.Image(indexed16).metadata()).rejects.toThrow(/decode/i);
+    });
+
     test("JPEG is 3-channel srgb with no alpha", async () => {
       const jpg = await new Bun.Image(cornersPng).jpeg().bytes();
       const meta = await new Bun.Image(jpg).metadata();

@@ -8453,8 +8453,9 @@ declare module "bun" {
     /** Run the pipeline and return base64-encoded output. */
     toBase64(): Promise<string>;
     /**
-     * Read the header only — no pixel decode — and report dimensions,
-     * format, colour space, channel count, and alpha presence.
+     * Report dimensions, format, colour space, channel count, and alpha
+     * presence. Header-only for JPEG/PNG/WebP/BMP/GIF; HEIC/AVIF/TIFF have
+     * no header probe and fall back to a full decode via the system backend.
      */
     metadata(): Promise<Image.Metadata>;
 

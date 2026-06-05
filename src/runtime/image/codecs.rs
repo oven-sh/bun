@@ -426,10 +426,11 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
             let bit_depth = bytes[24];
+            let color_type = bytes[25];
             // PNG colour types: 0 grey, 2 truecolour, 3 indexed, 4
             // grey+alpha, 6 truecolour+alpha. Anything else is a corrupt
             // header the decoder would reject too.
-            let (base_channels, grey): (u8, bool) = match bytes[25] {
+            let (base_channels, grey): (u8, bool) = match color_type {
                 0 => (1, true),
                 2 => (3, false),
                 3 => (3, false), // palette entries are RGB
@@ -437,7 +438,16 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
                 6 => (4, false),
                 _ => return Err(Error::DecodeFailed),
             };
-            let native_alpha = bytes[25] == 4 || bytes[25] == 6;
+            // Legal depths per colour type (PNG spec §11.2.2) — the same
+            // table libspng's check_ihdr enforces at decode, so metadata()
+            // and bytes() keep agreeing on what's corrupt.
+            if !matches!(
+                (color_type, bit_depth),
+                (0, 1 | 2 | 4 | 8 | 16) | (2 | 4 | 6, 8 | 16) | (3, 1 | 2 | 4 | 8)
+            ) {
+                return Err(Error::DecodeFailed);
+            }
+            let native_alpha = color_type == 4 || color_type == 6;
             // Types without a native alpha channel can still carry
             // transparency via a tRNS chunk; libvips expands that to a real
             // channel on load and sharp counts it, so match.

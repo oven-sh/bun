@@ -43,7 +43,7 @@ new Bun.Image(input, {
 
 ## Metadata
 
-Read dimensions, format, and colour layout without decoding pixel data:
+Read dimensions, format, and colour layout without decoding pixel data (HEIC/AVIF/TIFF have no header probe and fall back to a full decode on the system backend):
 
 ```ts
 const { width, height, format, space, channels, hasAlpha } = await new Bun.Image(input).metadata();

@@ -398,6 +398,7 @@ pub mod debug {
             displacement: *mut u32,
             line: *mut ImagehlpLineW64,
         ) -> i32;
+        type SymRefreshModuleListFn = unsafe extern "system" fn(process: HANDLE) -> i32;
 
         struct Api {
             sym_from_addr_w: SymFromAddrWFn,
@@ -490,9 +491,24 @@ pub mod debug {
                 // independent, so concurrent std backtrace captures aren't
                 // serialized against our calls — acceptable for a
                 // best-effort crash path.
-                const ERROR_INVALID_PARAMETER: u16 = 87;
-                if bun_sys::windows::get_last_win32_error().0 != ERROR_INVALID_PARAMETER {
+                if bun_sys::windows::get_last_win32_error()
+                    != bun_sys::windows::Win32Error::INVALID_PARAMETER
+                {
                     return State::Failed;
+                }
+                // The earlier init captured the module list as of that
+                // moment, so DLLs loaded since (e.g. NAPI addons) would
+                // symbolize as `???`. Refresh to the crash-time module list;
+                // best-effort, ignore failure.
+                if let Some(sym_refresh_module_list) = get(bun_core::zstr!("SymRefreshModuleList"))
+                {
+                    // SAFETY: pointer resolved from dbghelp.dll under this
+                    // exported name; signature per dbghelp.h.
+                    unsafe {
+                        core::mem::transmute::<*mut c_void, SymRefreshModuleListFn>(
+                            sym_refresh_module_list,
+                        )(process);
+                    }
                 }
             }
             State::Ready(Api {

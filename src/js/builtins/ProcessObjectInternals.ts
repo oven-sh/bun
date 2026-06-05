@@ -382,8 +382,22 @@ export function initializeNextTickQueue(
       // construction time (before the callback runs).
       const asyncHooksTick = require("internal/async_hooks_tick");
       const asyncId = asyncHooksTick.newAsyncId();
-      for (let i = 0; i < tickInitHooks.length; i++) {
-        tickInitHooks[i](asyncId, "TickObject", 0, tock);
+      // Snapshot: enable()/disable() from inside a hook must not affect the
+      // in-flight dispatch (node stages such mutations in tmp_array until
+      // the emit completes).
+      const hooks = tickInitHooks.slice();
+      for (let i = 0; i < hooks.length; i++) {
+        try {
+          hooks[i](asyncId, "TickObject", 0, tock);
+        } catch (err) {
+          // node: a throwing init hook is fatal (fatalError: print + exit 1),
+          // never surfaced to the process.nextTick() caller. console is a
+          // user-mutable global, so shield the print; exit regardless.
+          try {
+            console.error(typeof err?.stack === "string" ? err.stack : err);
+          } catch {}
+          process.exit(1);
+        }
       }
     }
     queue.push(tock);

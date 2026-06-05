@@ -353,7 +353,10 @@ const IncomingMessagePrototype = {
     this[abortedSymbol] = value;
   },
   get connection() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    // Strict alias of `socket` (node's definition): shares its lazy-init and,
+    // critically, its null sentinel - `??=` here would resurrect a FakeSocket
+    // after the stream destroyer assigned `stream.socket = null`.
+    return this.socket;
   },
   get statusCode() {
     return this[statusCodeSymbol];

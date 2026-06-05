@@ -382,8 +382,12 @@ function createHook(hook) {
       if (init !== undefined && enabledInit === undefined) {
         // init is delivered for TickObject resources (process.nextTick);
         // other resource types are still unimplemented.
-        enabledInit = init;
-        require("internal/async_hooks_tick").tickInitHooks.push(init);
+        // Per-instance wrapper: two hooks registered with the same init
+        // function must stay independently removable (removal is by
+        // identity, and removing the other instance's entry would reorder
+        // its callback relative to unrelated hooks).
+        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
         createHookNotImpl(hook);

@@ -1,4 +1,4 @@
-//! JSC bridges for `sql/postgres/types/Tag.zig`. The `Tag` OID enum and its
+//! JSC bridges for the postgres `Tag` OID enum. The enum and its
 //! pure helpers stay in `sql/`; only the `JSValue`/`JSGlobalObject`-touching
 //! conversion paths live here.
 
@@ -7,12 +7,13 @@ use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::tag::Tag;
 use bun_sql::shared::Data;
 
-// `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a
+// `Tag` is a runtime arg rather than a const generic: it is a
 // `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
-// OID space), so it can't be `ConstParamTy`. Demoted to a runtime arg; the body
+// OID space), so it can't be `ConstParamTy`. The body
 // is a plain match and the only caller (DataCell) computes the tag at runtime
 // anyway.
-// TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
+// `UnsupportedArrayType` is reported via the crate-wide
+// `bun_core::Error`.
 pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),
@@ -23,8 +24,8 @@ pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> 
     }
 }
 
-/// rest may `unreachable!()` (mirroring Zig's per-monomorphization compile
-/// error becoming a runtime impossibility once the `tag` is fixed).
+/// Impls handle only the arms valid for their type; the rest may `unreachable!()`
+/// (a runtime impossibility once the `tag` is fixed).
 pub trait TagToJs: Sized {
     /// `.numeric | .float4 | .float8 | .int4` arms → `JSValue.jsNumber(value)`.
     fn as_js_number(self) -> f64;
@@ -122,5 +123,3 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
 
     Ok(Tag::numeric)
 }
-
-// ported from: src/sql_jsc/postgres/types/tag_jsc.zig

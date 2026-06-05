@@ -309,5 +309,3 @@ pub struct Break {
 pub struct Continue {
     pub label: Option<LocRef>, // = None
 }
-
-// ported from: src/js_parser/ast/S.zig

@@ -14,7 +14,6 @@ bytemuck = "1"
 bun_opaque.workspace = true
 bun_dispatch.workspace = true
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -27,10 +26,7 @@ bumpalo.workspace = true
 typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true
-# TODO(b2-blocked): bun_analytics — adding the dep triggers a fresh build of
-# upstream crates (css/logger/js_parser) with in-progress breakage. Re-add once
-# the tree is green; usages in options.rs are gated or stubbed locally.
-# bun_analytics.workspace = true
+bun_analytics.workspace = true
 bun_resolver.workspace = true
 # `bun_resolve_builtins` only depends on `bun_options_types` + `bun_string`
 # (both already in this graph), so no cycle.

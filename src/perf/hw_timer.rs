@@ -54,5 +54,3 @@ pub fn read_counter() -> u64 {
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     compile_error!("hw_timer::read_counter: unsupported architecture");
 }
-
-// ported from: src/perf/hw_timer.zig

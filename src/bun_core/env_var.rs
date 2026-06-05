@@ -26,14 +26,8 @@
 //!                      everything. This means that we potentially scan through envp a lot of
 //!                      times, even though we could only do it once.
 
-// TODO(port): The Zig original uses comptime type-returning functions (`New`, `PlatformSpecificNew`)
-// that take comptime string keys + option structs and return a unique type per env var with an
-// embedded `static` cache. Rust cannot parameterize a generic type on `&'static str` + a struct
-// value in stable, so this port models `New`/`PlatformSpecificNew` as `macro_rules!` that emit a
-// module per env var. In Zig the declarations come first and the type-generator fns come last;
-// here the macros must be defined (or `#[macro_use]`d) before the declarations. The macro
-// definitions could move into a sibling `env_var_impl.rs` and be `#[macro_use]`d to restore Zig
-// declaration order in this file.
+// `New`/`PlatformSpecificNew` are `macro_rules!` that emit a module per env var; the macros
+// must be defined (or `#[macro_use]`d) before the declarations.
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
@@ -74,13 +68,13 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
-// renaming (`src/js_printer/renamer.zig`). Presence-checked, value ignored.
+// renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.
 new!(pub BUN_DUMP_SYMBOLS: string, "BUN_DUMP_SYMBOLS", {});
 new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
 // Opt-in: when truthy, Bun watches its original parent pid and exits as soon
 // as that process dies (even if the parent was SIGKILLed and couldn't forward
 // a signal), and on its own clean exit recursively SIGKILLs every descendant
-// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+// so nothing it spawned outlives it. See `src/io/ParentDeathWatchdog.rs`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
 // TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
@@ -144,9 +138,9 @@ new!(pub JENKINS_URL: string, "JENKINS_URL", {});
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
-// Set by HostProcess.zig when spawning the WebView host subprocess. The
-// child's cli.zig checks this before anything else and hands off to C++
-// Bun__WebView__hostMain. Never returns — no JSC, no VM.
+// Set by HostProcess.rs when spawning the WebView host subprocess. The
+// child's CLI entrypoint checks this before anything else and hands off to
+// C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
@@ -157,7 +151,6 @@ new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
 // C:\Windows, for example.
-// Note: Do not use this variable directly -- use os.zig's implementation instead.
 platform_specific_new!(pub SYSTEMROOT: string, posix = None, windows = "SYSTEMROOT", {});
 platform_specific_new!(pub TEMP: string, posix = "TEMP", windows = "TEMP", {});
 new!(pub TERM: string, "TERM", {});
@@ -169,7 +162,6 @@ new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
 // The same as system_root.
-// Note: Do not use this variable directly -- use os.zig's implementation instead.
 // TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
 //                      specify both WINDIR and SYSTEMROOT and the loader would check both?
 platform_specific_new!(pub WINDIR: string, posix = None, windows = "WINDIR", {});
@@ -260,7 +252,6 @@ pub(crate) enum CacheOutput<V> {
     Value(V),
 }
 
-// Zig: `fn CacheConfigurationType(comptime CtorOptionsType: type) type`
 pub(crate) struct CacheConfiguration<O> {
     pub var_name: &'static [u8],
     pub opts: O,
@@ -289,18 +280,16 @@ pub(crate) mod kind {
         pub(crate) type ValueType = &'static [u8];
         pub(crate) type Output = CacheOutput<ValueType>;
 
-        // Zig: `fn Cache(comptime ip: Input) type` — `ip` is unused (`_ = ip;`).
-        // Rust: a single Cache struct; per-var uniqueness comes from each var owning its own
+        // A single Cache struct; per-var uniqueness comes from each var owning its own
         // `static CACHE: Cache`.
         pub(crate) struct Cache {
             ptr_value: AtomicPtr<u8>,
             len_value: AtomicUsize,
         }
 
-        type PointerType = *mut u8; // Zig: ?[*]const u8 — AtomicPtr requires *mut
+        type PointerType = *mut u8; // AtomicPtr requires *mut
         type LenType = usize;
 
-        // Zig nested `not_loaded_sentinel` / `not_set_sentinel` constants:
         const NOT_LOADED_PTR: PointerType = core::ptr::null_mut();
         const NOT_LOADED_LEN: LenType = LenType::MAX;
         const NOT_SET_PTR: PointerType = core::ptr::null_mut();
@@ -503,14 +492,10 @@ pub(crate) mod kind {
             }
         }
 
-        // Zig: `fn Cache(comptime ip: Input) type` — Rust: store `ip` (var_name + opts) on the
-        // struct so handle_error can read it. Zig passes it as a comptime param; we pass it at
-        // `const fn new()` time.
+        // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is
+        // passed at `const fn new()` time.
         pub(crate) struct Cache {
             value: AtomicU64,
-            // TODO(port): in Zig `ip` is a comptime param baked into the type; here it lives as
-            // runtime data on the static. The `default_fallback` arm in handle_error was a
-            // `@compileError` when no default was set — that compile-time check is lost.
             ip: Input,
         }
 
@@ -560,8 +545,7 @@ pub(crate) mod kind {
                     }
                 }
 
-                // Zig: `std.fmt.parseInt(u64, raw_env, 10)` — distinguishes Overflow vs
-                // InvalidCharacter. Exact parity incl. '-0'→0, '-N'→Overflow,
+                // Distinguishes Overflow vs InvalidCharacter; '-0'→0, '-N'→Overflow,
                 // leading/trailing-`_` reject.
                 let formatted = match crate::fmt::parse_int::<u64>(raw_env, 10) {
                     Ok(v) => v,
@@ -582,9 +566,6 @@ pub(crate) mod kind {
             }
 
             fn handle_error(&self, raw_env: &[u8], reason: &'static str) -> Option<ValueType> {
-                // Zig built `fmt` at comptime via string concatenation:
-                //   "Environment variable '{s}' has value '{s}' which " ++ reason ++ "."
-                // We pass `reason` as a third argument instead.
                 match self.ip.opts.deser.error_handling {
                     ErrorHandling::DebugWarn => {
                         crate::output::debug_warn(format_args!(
@@ -622,8 +603,6 @@ pub(crate) mod kind {
 /// Technically, none of the operations here are thread-safe, so writing to environment variables
 /// does not guarantee that other threads will see the changes. You should avoid writing to
 /// environment variables.
-// Zig: `fn New(comptime VariantType: type, comptime key: [:0]const u8, comptime opts) type`
-//      → `PlatformSpecificNew(VariantType, key, key, opts)`
 #[macro_export]
 #[doc(hidden)]
 macro_rules! new {
@@ -640,15 +619,12 @@ pub(crate) use new;
 /// If the current platform does not have a key specified, all methods that attempt to read the
 /// environment variable will fail at compile time, except for `platform_get` and `platform_key`,
 /// which will return None instead.
-// Zig: `fn PlatformSpecificNew(comptime VariantType, comptime posix_key: ?[:0]const u8,
-//                              comptime windows_key: ?[:0]const u8, comptime opts) type`
 #[macro_export]
 #[doc(hidden)]
 macro_rules! platform_specific_new {
-    // TODO(port): this macro is a draft of the Zig comptime type-generator. It expands to a
-    // `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call sites read
-    // `env_var::HOME::get()` like Zig's `env_var.HOME.get()`. The opts-parsing arms below cover
-    // exactly the option shapes used in this file; harden / generalize if new shapes appear.
+    // Expands to a `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call
+    // sites read `env_var::HOME::get()`. The opts-parsing arms below cover
+    // exactly the option shapes used in this file; new shapes need new arms.
     (
         $vis:vis $name:ident : $kind:ident,
         posix = $posix:tt, windows = $windows:tt,
@@ -662,17 +638,14 @@ macro_rules! platform_specific_new {
             use $crate::env_var::kind::$kind as K;
             use $crate::env_var::CacheOutput;
 
-            // Zig: `const comptime_key: []const u8 = posix_key orelse windows_key orelse "<unknown>"`
-            // (Compile-error when both null is enforced by having no matching macro arm.)
-            // Zig: `var cache: VariantType.Cache(.{ .var_name = comptime_key, .opts = opts }) = .{};`
+            // (Compile-error when both keys are None is enforced by having no matching macro arm.)
             static CACHE: K::Cache = $crate::env_var::__make_cache!(
                 $kind, $crate::env_var::__first_key!($posix, $windows), { $($opts)* }
             );
 
-            // Zig computed `DefaultType`/`ReturnType` at comptime from whether `opts.default` is
-            // set. We expose the default + a const HAS_DEFAULT and always return Option<ValueType>;
-            // a thin `pub fn get() -> ValueType` wrapper that `.unwrap()`s is added when a default
-            // exists. TODO(port): restore the non-nullable `get()` return type for defaulted vars.
+            // A `macro_rules!` expansion can't vary the return type on an optional opt, so
+            // `get()` always returns `Option<ValueType>` (always `Some` when `DEFAULT` is
+            // `Some`).
             pub(crate) const DEFAULT: Option<K::ValueType> =
                 $crate::env_var::__default_opt!($kind, { $($opts)* });
 
@@ -726,9 +699,8 @@ macro_rules! platform_specific_new {
                 None
             }
 
-            // TODO(port): `getNotEmpty` only makes sense for string-kind vars (it calls `.len`).
-            // In Zig, lazy compilation means it simply isn't instantiated for non-string vars.
-            // Could gate this fn on `$kind == string` via a separate macro arm.
+            // `get_not_empty` only makes sense for string-kind vars (it calls `.len`). The
+            // `HasLen` bound gates this — calls on non-string kinds fail to compile.
             pub fn get_not_empty() -> Option<K::ValueType>
             where
                 K::ValueType: $crate::env_var::HasLen,
@@ -786,11 +758,10 @@ macro_rules! platform_specific_new {
             ///
             /// It is safe to compare the result of .get() to default to test if the variable is set to
             /// its default value.
-            // Zig: `pub const default: DefaultType = if (opts.default) |d| d else {};`
             // Exposed above as `DEFAULT: Option<ValueType>`.
 
-            /// Unit value so call sites read `env_var::FOO.get()` (matching Zig
-            /// `bun.env_var.FOO.get()`). The module-path form `FOO::get()` also works.
+            /// Unit value so call sites read `env_var::FOO.get()`. The module-path form
+            /// `FOO::get()` also works.
             pub struct Accessor;
             impl Accessor {
                 #[inline] pub fn get(&self) -> Option<K::ValueType> { get() }
@@ -802,18 +773,13 @@ macro_rules! platform_specific_new {
             }
 
             fn assert_platform_supported() {
-                // Zig: `@compileError` when the current platform's key is null.
-                // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
-                // without separate macro arms per (posix=None / windows=None) combination. Could
-                // split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
+                // A `compile_error!` here would fire unconditionally on the unsupported
+                // platform even when nothing calls `get()`, so this is a debug assertion.
                 debug_assert!(
                     platform_key().is_some(),
-                    concat!(
-                        "Cannot retrieve the value of ",
-                        // TODO(port): COMPTIME_KEY is &[u8]; concat! wants literals
-                        "<env var>",
-                        " since no key is associated with it on this platform."
-                    )
+                    "Cannot retrieve the value of {} since no key is associated with it on this platform.",
+                    ::core::str::from_utf8($crate::env_var::__first_key!($posix, $windows))
+                        .unwrap_or("<env var>")
                 );
             }
         }
@@ -822,8 +788,6 @@ macro_rules! platform_specific_new {
 pub(crate) use platform_specific_new;
 
 // ─── helper macros for platform_specific_new! ───
-// TODO(port): these are scaffolding for the draft macro; could be replaced with a cleaner
-// trait-based design once the call-site shape is settled.
 
 #[doc(hidden)]
 #[macro_export]
@@ -945,8 +909,6 @@ impl HasLen for u64 {
     }
 }
 
-// Zig: `fn newFeatureFlag(comptime env_var: [:0]const u8, comptime opts: FeatureFlagOpts) type`
-//      → `New(kind.boolean, env_var, .{ .default = opts.default })`
 #[macro_export]
 #[doc(hidden)]
 macro_rules! new_feature_flag {
@@ -962,5 +924,3 @@ macro_rules! new_feature_flag {
     };
 }
 pub(crate) use new_feature_flag;
-
-// ported from: src/bun_core/env_var.zig

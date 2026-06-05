@@ -107,7 +107,6 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`.
-    // TODO(port): narrow error set
     pub fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
@@ -124,7 +123,6 @@ impl us_socket_t {
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    // TODO(port): narrow error set
     pub fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
         unsafe {
@@ -197,7 +195,6 @@ impl us_socket_t {
             &mut *c::us_socket_group(self)
         }
     }
-    // Zig: `pub const rawGroup = group;`
     #[inline]
     pub fn raw_group(&mut self) -> &mut SocketGroup {
         self.group()
@@ -216,7 +213,7 @@ impl us_socket_t {
 
     /// Move this socket to a new group/kind, optionally resizing its ext.
     /// Returns the (possibly relocated) socket; `self` is invalid after.
-    // TODO(port): lifetime — self is consumed/invalidated; returned ptr may be a different allocation
+    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt(
         &mut self,
         g: &mut SocketGroup,
@@ -233,7 +230,7 @@ impl us_socket_t {
     /// caller must repoint `ext` first (so any dispatch lands in the new
     /// owner) and then call `start_tls_handshake`. Replaces
     /// `us_socket_upgrade_to_tls` / `wrapTLS`.
-    // TODO(port): lifetime — self is consumed/invalidated; returned ptr may be a different allocation
+    // TODO: take `self` by value — it is consumed/invalidated; the returned ptr may be a different allocation
     pub fn adopt_tls(
         &mut self,
         g: &mut SocketGroup,
@@ -307,10 +304,9 @@ impl us_socket_t {
     }
     #[cfg(windows)]
     pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // Zig: `if (Environment.isWindows) @compileError(...)` — that fires only
-        // on call (lazy semantics). Rust evaluates `compile_error!` at item
-        // definition, so this would brick the windows build even with no callers.
-        // Mirror Zig intent with a runtime trap; no current Windows call site.
+        // A `compile_error!` here would brick the windows build even with no
+        // callers (it is evaluated at item definition), so use a runtime trap
+        // instead; no current Windows call site.
         unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
@@ -579,5 +575,3 @@ pub(crate) extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_str
     unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
-
-// ported from: src/uws_sys/us_socket_t.zig

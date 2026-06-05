@@ -5,10 +5,7 @@ pub enum OutKind {
     Stderr,
 }
 
-// Spec (util.zig): `pub const Stdio = bun.spawn.Stdio;` — the user-facing
-// stdio union with `isPiped()` from `runtime/api/bun/spawn/stdio.zig`, NOT the
+// The user-facing stdio type from `crate::api::bun_spawn::stdio`, NOT the
 // low-level `PosixStdio`/`WindowsStdio` spawn-option shape that the
 // `bun_spawn` *crate* re-exports under the same name.
 pub use crate::api::bun_spawn::stdio::Stdio;
-
-// ported from: src/shell/util.zig

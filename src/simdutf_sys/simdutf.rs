@@ -13,7 +13,7 @@ impl SIMDUTFResult {
     }
 }
 
-// Zig: `enum(i32) { ..., _ }` — the `_` arm means *any* i32 is a valid bit
+// Any i32 is a valid bit
 // pattern (C++ may return values outside the named set). A `#[repr(i32)] enum`
 // in Rust would be UB on unknown discriminants, so we use a transparent newtype
 // with associated consts instead.
@@ -843,5 +843,3 @@ pub mod base64 {
         }
     }
 }
-
-// ported from: src/simdutf_sys/simdutf.zig

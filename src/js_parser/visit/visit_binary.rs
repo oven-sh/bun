@@ -11,14 +11,6 @@ use bun_ast::{
     expr::{Equality, LooseEql, StrictEql},
 };
 
-// PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
-// returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
-// Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
-// the parser generics directly.
-// Diff readers should map:
-//   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
-//   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
-
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
 fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
@@ -80,7 +72,7 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     ))
 }
 
-// PORT NOTE: `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
+// `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
 // from the `const STRICT: bool` shape used at the four call sites below to the
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
@@ -98,13 +90,13 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
 }
 
 pub struct BinaryExpressionVisitor {
-    /// Arena handle to the in-place `E::Binary` node (Zig: `*E.Binary`).
+    /// Arena handle to the in-place `E::Binary` node.
     /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
     /// encapsulate the AST-store invariant, so call sites need no raw-pointer
     /// round-trip to forge an `'arena` borrow.
     pub e: StoreRef<E::Binary>,
     pub loc: bun_ast::Loc,
-    // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
+    // `in` is a Rust keyword; named `in_`.
     pub in_: ExprIn,
 
     /// Input for visiting the left child
@@ -130,7 +122,6 @@ impl BinaryExpressionVisitor {
 
         let is_call_target =
             matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
-        // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -514,17 +505,12 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        // TODO(port): move to <area>_sys
-                        unsafe extern "C" {
-                            // libc fmod is pure (value-type args, no errno, no pointers) → no caller preconditions.
-                            safe fn fmod(x: f64, y: f64) -> f64;
-                        }
                         return p.new_expr(
-                            // Use libc fmod here to be consistent with what JavaScriptCore does
+                            // Rust `%` on f64 has libc fmod semantics (LLVM frem),
+                            // which matches what JavaScriptCore does:
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
                             E::Number {
-                                value: fmod(vals[0], vals[1]),
+                                value: vals[0] % vals[1],
                             },
                             v.loc,
                         );
@@ -566,7 +552,7 @@ impl BinaryExpressionVisitor {
                     {
                         let left = float_to_int32(vals[0]);
                         let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
-                        // std.math.shr on i32 is arithmetic shift right
+                        // wrapping_shr on i32 is an arithmetic shift right
                         let result: i32 = left.wrapping_shr(right);
                         return p.new_expr(
                             E::Number {
@@ -738,7 +724,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinAssign => {
                 // Optionally preserve the name
                 if let ExprData::EIdentifier(ident) = e_.left.data {
-                    // PORT NOTE: reshaped for borrowck — copy the `StoreStr` out of
+                    // reshaped for borrowck — copy the `StoreStr` out of
                     // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
                     let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
                     e_.right = p.maybe_keep_expr_symbol_name(
@@ -767,7 +753,7 @@ impl BinaryExpressionVisitor {
 
         Expr {
             loc: v.loc,
-            // Same arena slot Zig threads as `*E.Binary` — re-wrap the handle.
+            // Same arena slot — re-wrap the handle.
             data: ExprData::EBinary(e_handle),
         }
     }
@@ -832,5 +818,3 @@ impl BinaryExpressionVisitor {
         None
     }
 }
-
-// ported from: src/js_parser/ast/visitBinaryExpression.zig

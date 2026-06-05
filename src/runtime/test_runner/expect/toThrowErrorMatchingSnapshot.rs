@@ -4,14 +4,13 @@ use bun_core::ZigString;
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw_error_matching_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — guard runs post_match on Drop for every
-    // exit path (early `return Err`, `?`, fall-through), matching Zig semantics.
+    // The guard runs post_match on Drop for every exit path
+    // (early `return Err`, `?`, fall-through).
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();
@@ -40,7 +39,6 @@ pub(crate) fn to_throw_error_matching_snapshot(
             format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
         );
     };
-    // Zig: `defer bunTest_strong.deinit();` — handled by Drop.
     let _ = &bun_test_strong;
 
     let mut hint_string: ZigString = ZigString::EMPTY;
@@ -69,7 +67,6 @@ pub(crate) fn to_throw_error_matching_snapshot(
     }
 
     let hint = hint_string.to_slice();
-    // Zig: `defer hint.deinit();` — handled by Drop.
 
     let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
         global,
@@ -92,5 +89,3 @@ pub(crate) fn to_throw_error_matching_snapshot(
 
     this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
 }
-
-// ported from: src/test_runner/expect/toThrowErrorMatchingSnapshot.zig

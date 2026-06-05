@@ -50,7 +50,7 @@ private:
     bool m_enabled { false };
 };
 
-// C API for Zig to call
+// C API for the Rust side to call
 extern "C" {
 void BunFrontendDevServerAgent__notifyClientConnected(InspectorBunFrontendDevServerAgent* agent, int connectionId);
 void BunFrontendDevServerAgent__notifyClientDisconnected(InspectorBunFrontendDevServerAgent* agent, int connectionId);

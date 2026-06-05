@@ -69,8 +69,7 @@ impl Default for Options {
 }
 
 impl Options {
-    // Private base (all-false) used for struct-update in the presets below,
-    // mirroring Zig's field-default semantics for `.{ .field = ... }`.
+    // Private base (all-false) used for struct-update in the presets below.
     const NONE: Self = Self {
         tables: false,
         strikethrough: false,
@@ -153,8 +152,7 @@ impl Options {
         }
     }
 
-    /// `(snake_case, camelCase, setter)` for every bool field — replaces the
-    /// Zig comptime `@typeInfo(Options).@"struct".fields` reflection loop in
+    /// `(snake_case, camelCase, setter)` for every bool field — used by
     /// `Bun.markdown`'s option parser.
     pub const BOOL_FIELD_SETTERS: &'static [(
         &'static str,
@@ -246,5 +244,3 @@ pub use ansi::Theme as AnsiTheme;
 pub use ansi::detect_kitty_graphics;
 pub use ansi::detect_light_background;
 pub use ansi::render_to_ansi;
-
-// ported from: src/md/root.zig

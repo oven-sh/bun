@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes).
@@ -906,6 +906,55 @@ describe("Bun.Archive", () => {
       // The normalized "escaped_dir" may or may not exist inside extractPath
       // (depending on whether normalization keeps it), but it must NOT be outside
     });
+
+    test.skipIf(isWindows)(
+      "does not write through a pre-existing symlinked directory inside the destination",
+      async () => {
+        using dir = tempDir("archive-preexisting-symlink", {});
+        const extractRoot = join(String(dir), "extract");
+        const outsideDir = join(String(dir), "outside");
+        mkdirSync(extractRoot, { recursive: true });
+        mkdirSync(outsideDir, { recursive: true });
+        symlinkSync(outsideDir, join(extractRoot, "pivot"), "dir");
+
+        const archive = new Bun.Archive({
+          "pivot/file.txt": "escaped",
+          "ok.txt": "ok",
+        });
+        await archive.extract(extractRoot);
+
+        // The entry under the symlinked directory must not be written through the link
+        expect(existsSync(join(outsideDir, "file.txt"))).toBe(false);
+        expect(readdirSync(outsideDir)).toEqual([]);
+        // The pre-existing symlink is left untouched
+        expect(lstatSync(join(extractRoot, "pivot")).isSymbolicLink()).toBe(true);
+        // Other entries still extract normally
+        expect(await Bun.file(join(extractRoot, "ok.txt")).text()).toBe("ok");
+      },
+    );
+
+    test.skipIf(isWindows)(
+      "does not write through a pre-existing symlinked directory inside the destination (glob)",
+      async () => {
+        using dir = tempDir("archive-preexisting-symlink-glob", {});
+        const extractRoot = join(String(dir), "extract");
+        const outsideDir = join(String(dir), "outside");
+        mkdirSync(extractRoot, { recursive: true });
+        mkdirSync(outsideDir, { recursive: true });
+        symlinkSync(outsideDir, join(extractRoot, "pivot"), "dir");
+
+        const archive = new Bun.Archive({
+          "pivot/file.txt": "escaped",
+          "ok.txt": "ok",
+        });
+        await archive.extract(extractRoot, { glob: "**" });
+
+        expect(existsSync(join(outsideDir, "file.txt"))).toBe(false);
+        expect(readdirSync(outsideDir)).toEqual([]);
+        expect(lstatSync(join(extractRoot, "pivot")).isSymbolicLink()).toBe(true);
+        expect(await Bun.file(join(extractRoot, "ok.txt")).text()).toBe("ok");
+      },
+    );
   });
 
   describe("Archive.write()", () => {

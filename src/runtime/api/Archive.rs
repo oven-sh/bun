@@ -841,6 +841,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                nofollow_parents: true,
             },
         ) {
             Ok(c) => c,
@@ -1477,9 +1478,34 @@ fn extract_to_disk_filtered(
         let filetype = entry_ref.filetype();
         let kind = bun_sys::kind_from_mode(filetype);
 
+        #[cfg(unix)]
+        let entry_parent = if matches!(
+            kind,
+            bun_sys::FileKind::Directory | bun_sys::FileKind::File | bun_sys::FileKind::SymLink
+        ) {
+            match libarchive::open_entry_parent(dir_fd, pathname) {
+                Some(parent) => parent,
+                None => continue,
+            }
+        } else {
+            libarchive::EntryParent::at_root()
+        };
+        #[cfg(unix)]
+        let entry_dir = entry_parent.dir(dir_fd);
+        #[cfg(unix)]
+        let entry_name = &pathname[entry_parent.base_offset()..];
+        #[cfg(unix)]
+        let entry_name_z = entry_parent.entry_name(pathname_z);
+        #[cfg(not(unix))]
+        let entry_dir = dir_fd;
+        #[cfg(not(unix))]
+        let entry_name = pathname;
+        #[cfg(not(unix))]
+        let entry_name_z = pathname_z;
+
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                match entry_dir.make_path(entry_name) {
                     // Directory already exists - don't count as extracted
                     Err(e) if e == bun_core::err!("PathAlreadyExists") => continue,
                     Err(_) => continue,
@@ -1498,6 +1524,7 @@ fn extract_to_disk_filtered(
                 };
 
                 // Create parent directories if needed (ignore expected errors)
+                #[cfg(not(unix))]
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
                     match dir_fd.make_path(parent_dir) {
                         // Expected: directory already exists
@@ -1512,8 +1539,8 @@ fn extract_to_disk_filtered(
 
                 // Create and write the file using bun.sys
                 let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
+                    entry_dir,
+                    entry_name_z,
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mode,
                 ) {
@@ -1562,7 +1589,7 @@ fn extract_to_disk_filtered(
                     count += 1;
                 } else {
                     // Remove partial file on failure
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    let _ = bun_sys::unlinkat(entry_dir, entry_name_z);
                 }
             }
             bun_sys::FileKind::SymLink => {
@@ -1575,20 +1602,8 @@ fn extract_to_disk_filtered(
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
-                                }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
+                    if bun_sys::symlinkat(link_target_z, entry_dir, entry_name_z).is_err() {
+                        continue;
                     }
                     count += 1;
                 }

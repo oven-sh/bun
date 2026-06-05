@@ -1398,6 +1398,91 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
     false
 }
 
+#[cfg(unix)]
+pub struct EntryParent {
+    fd: Option<Fd>,
+    base_offset: usize,
+}
+
+#[cfg(unix)]
+impl EntryParent {
+    pub fn at_root() -> EntryParent {
+        EntryParent {
+            fd: None,
+            base_offset: 0,
+        }
+    }
+
+    pub fn dir(&self, root: Fd) -> Fd {
+        self.fd.unwrap_or(root)
+    }
+
+    pub fn base_offset(&self) -> usize {
+        self.base_offset
+    }
+
+    pub fn entry_name<'a>(&self, full_path: &'a ZStr) -> &'a ZStr {
+        ZStr::from_slice_with_nul(&full_path.as_bytes_with_nul()[self.base_offset..])
+    }
+}
+
+#[cfg(unix)]
+impl Drop for EntryParent {
+    fn drop(&mut self) {
+        if let Some(fd) = self.fd.take() {
+            fd.close();
+        }
+    }
+}
+
+#[cfg(unix)]
+pub fn open_entry_parent(root: Fd, path: &[u8]) -> Option<EntryParent> {
+    let trimmed_len = path.len() - path.iter().rev().take_while(|&&c| c == b'/').count();
+    let trimmed = &path[..trimmed_len];
+    let Some(sep_index) = trimmed.iter().rposition(|&c| c == b'/') else {
+        return Some(EntryParent::at_root());
+    };
+
+    let mut parent = EntryParent::at_root();
+    parent.base_offset = sep_index + 1;
+
+    let flags =
+        bun_sys::O::RDONLY | bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW | bun_sys::O::CLOEXEC;
+    let mut component_buf = PathBuffer::default();
+
+    for component in trimmed[..sep_index].split(|&c| c == b'/') {
+        match component {
+            b"" | b"." => continue,
+            b".." => return None,
+            _ => {}
+        }
+        if component.len() >= component_buf.len() {
+            return None;
+        }
+        component_buf[..component.len()].copy_from_slice(component);
+        component_buf[component.len()] = 0;
+        let component_z = ZStr::from_buf(&component_buf[..], component.len());
+
+        let current = parent.dir(root);
+        let next = match bun_sys::openat(current, component_z, flags, 0) {
+            Ok(fd) => fd,
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                let _ = bun_sys::mkdirat(current, component_z, 0o755);
+                match bun_sys::openat(current, component_z, flags, 0) {
+                    Ok(fd) => fd,
+                    Err(_) => return None,
+                }
+            }
+            Err(_) => return None,
+        };
+        if let Some(previous) = parent.fd.replace(next) {
+            previous.close();
+        }
+    }
+
+    Some(parent)
+}
+
 /// Port of `bun.MakePath.makePath(u16, dir, sub_path)` (bun.zig:2481) — the
 /// Windows arm calls `makeOpenPathAccessMaskW`, which component-iterates the
 /// wide path and `NtCreateFile`s each prefix with `FILE_OPEN_IF`, walking back
@@ -1486,6 +1571,7 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        pub nofollow_parents: bool,
     }
 
     impl Default for ExtractOptions {
@@ -1495,6 +1581,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                nofollow_parents: false,
             }
         }
     }
@@ -1875,6 +1962,30 @@ impl Archiver {
                         continue;
                     }
 
+                    #[cfg(unix)]
+                    let entry_parent = if options.nofollow_parents
+                        && matches!(
+                            kind,
+                            bun_sys::FileKind::Directory
+                                | bun_sys::FileKind::File
+                                | bun_sys::FileKind::SymLink
+                        ) {
+                        match open_entry_parent(dir_fd, path_slice) {
+                            Some(parent) => parent,
+                            None => {
+                                if options.log {
+                                    Output::warn(format_args!(
+                                        "Skipping entry whose parent could not be resolved inside the extraction directory: {}\n",
+                                        bun_core::fmt::fmt_os_path(path_slice, Default::default()),
+                                    ));
+                                }
+                                continue;
+                            }
+                        }
+                    } else {
+                        EntryParent::at_root()
+                    };
+
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
@@ -1915,9 +2026,14 @@ impl Archiver {
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
+                                #[cfg(unix)]
+                                let (create_dir, create_name_z) =
+                                    (entry_parent.dir(dir_fd), entry_parent.entry_name(path_z));
+                                #[cfg(not(unix))]
+                                let (create_dir, create_name_z) = (dir_fd, path_z);
                                 match bun_sys::mkdirat_z(
-                                    dir_fd,
-                                    path_z,
+                                    create_dir,
+                                    create_name_z,
                                     bun_sys::Mode::try_from(mode).expect("int cast"),
                                 ) {
                                     Ok(()) => {}
@@ -1935,7 +2051,8 @@ impl Archiver {
                                             return Err(err.into());
                                         }
                                         let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
+                                        let _ =
+                                            bun_sys::mkdirat_z(create_dir, create_name_z, 0o777);
                                     }
                                 }
                             }
@@ -1971,7 +2088,9 @@ impl Archiver {
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::symlinkat(link_target, dir_fd, path_z) {
+                                let (create_dir, create_name_z) =
+                                    (entry_parent.dir(dir_fd), entry_parent.entry_name(path_z));
+                                match bun_sys::symlinkat(link_target, create_dir, create_name_z) {
                                     Ok(()) => {}
                                     // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
                                     Err(err) => match err.get_errno() {
@@ -1981,7 +2100,11 @@ impl Archiver {
                                                 return Err(err.into());
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::symlinkat(link_target, dir_fd, path_z)?;
+                                            bun_sys::symlinkat(
+                                                link_target,
+                                                create_dir,
+                                                create_name_z,
+                                            )?;
                                         }
                                         _ => return Err(err.into()),
                                     },
@@ -2056,7 +2179,12 @@ impl Archiver {
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::openat(dir_fd, path_z, flags, mode) {
+                                #[cfg(unix)]
+                                let (create_dir, create_name_z) =
+                                    (entry_parent.dir(dir_fd), entry_parent.entry_name(path_z));
+                                #[cfg(not(unix))]
+                                let (create_dir, create_name_z) = (dir_fd, path_z);
+                                match bun_sys::openat(create_dir, create_name_z, flags, mode) {
                                     Ok(fd) => fd,
                                     // PORT NOTE: Zig matched error.AccessDenied / error.FileNotFound.
                                     Err(err) => match err.get_errno() {
@@ -2068,7 +2196,7 @@ impl Archiver {
                                                 return Err(err.into());
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::openat(dir_fd, path_z, flags, mode)?
+                                            bun_sys::openat(create_dir, create_name_z, flags, mode)?
                                         }
                                         _ => return Err(err.into()),
                                     },

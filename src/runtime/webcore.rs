@@ -307,12 +307,8 @@ pub use byte_blob_loader::ByteBlobLoader;
 pub use byte_stream::ByteStream;
 
 // TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
-// across realms. The `threadsafe` mode expands to `thread_local!` storage, so
-// the pool is already per-JS-thread (workers don't share it); the remaining
-// sharing surface is multiple realms on one thread. Requires a per-global
-// storage mode in `object_pool!` plus a global handle at the
-// `streams::HTTPServerWritable` call sites, with teardown tied to the global's
-// lifetime — a dedicated change.
+// across realms on one thread (storage is already thread-local via
+// `threadsafe` mode, so workers don't share it).
 // `object_pool!` wires the per-monomorphization
 // thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
 // default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`

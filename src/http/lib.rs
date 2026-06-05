@@ -4617,8 +4617,18 @@ impl<'a> HTTPClient<'a> {
                                     &location[0..i]
                                 };
                                 // RFC 3986 section 3.1: scheme comparison is case-insensitive.
-                                let is_http = strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
-                                if is_http || strings::eql_case_insensitive_ascii(protocol_name, b"https", true) {
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
+                                if is_http
+                                    || strings::eql_case_insensitive_ascii(
+                                        protocol_name,
+                                        b"https",
+                                        true,
+                                    )
+                                {
                                 } else {
                                     return Err(err!(UnsupportedRedirectProtocol));
                                 }
@@ -4694,7 +4704,11 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 // RFC 3986 section 3.1: scheme comparison is case-insensitive.
-                                let is_http = strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+                                let is_http = strings::eql_case_insensitive_ascii(
+                                    protocol_name,
+                                    b"http",
+                                    true,
+                                );
 
                                 if is_http {
                                     string_builder.count(b"http:");

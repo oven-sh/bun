@@ -685,7 +685,8 @@ it("pm hash-string prints the alphabetized lockfile string through the scoped st
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await install.exited).toBe(0);
+  const [, , installExitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+  expect(installExitCode).toBe(0);
 
   await using proc = spawn({
     cmd: [bunExe(), "pm", "hash-string"],

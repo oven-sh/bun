@@ -2593,11 +2593,6 @@ pub(crate) fn install_isolated_packages(
             progress.root.end();
             *progress = Progress::default();
         }
-        // Defensive: clear the stack-local progress-node pointers so the
-        // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
-
         if Environment::CI_ASSERT {
             let mut done = true;
             'next_entry: for (_entry_id, entry_step) in

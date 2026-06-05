@@ -1647,6 +1647,10 @@ impl<'a> PipelineTask<'a> {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
+            // ThumbHash operates on 8-bit RGBA (the hash encoder indexes
+            // the buffer as u8); `apply_pipeline` is also 8-bpc-only, so
+            // a 16-bpc source must narrow first.
+            decoded.downconvert_to_8();
             self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
@@ -1682,12 +1686,24 @@ impl<'a> PipelineTask<'a> {
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
+        // 16-bpc survives only on the PNG-truecolour path — JPEG/WebP/HEIC/
+        // AVIF and indexed-PNG encoders are all u8-only. Narrow here so the
+        // codec arms never see a mismatched buffer. Issue #30462.
+        if enc.format != codecs::Format::Png || enc.palette {
+            decoded.downconvert_to_8();
+        }
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
             enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
         }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            decoded.bit_depth,
+            enc,
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1895,6 +1911,15 @@ impl<'a> PipelineTask<'a> {
     /// the profile survives unchanged.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
+        // The geometry kernels (rotate/flip/resize) and the modulate pass
+        // are u8-only. Narrow 16-bpc RGBA to 8 before any op runs. No-op
+        // when all pipeline slots are empty, which preserves the
+        // 16-bpc PNG→PNG pass-through from issue #30462.
+        let has_op =
+            p.rotate != 0 || p.flip || p.flop || p.resize.is_some() || p.modulate.is_some();
+        if has_op {
+            d.downconvert_to_8();
+        }
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
             // Assignment drops
@@ -1968,7 +1993,7 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.
-    let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)?;
+    let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, 8, -1, None)?;
     let _ = owned; // explicit lifetime hint; drops here.
     Ok(TaskResult::Encoded {
         out,
@@ -2011,6 +2036,13 @@ fn apply_orientation(
     orient: exif::Orientation,
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
+    // Same as apply_pipeline — the kernels are u8-only. Reached only
+    // from the JPEG auto-orient path today, and JPEGs are always
+    // 8-bpc, but narrow unconditionally so a future non-JPEG EXIF
+    // path can't skip it.
+    if t.flip || t.flop || t.rotate != 0 {
+        d.downconvert_to_8();
+    }
     if t.flip {
         let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
         d.rgba = next;

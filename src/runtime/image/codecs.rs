@@ -1,7 +1,14 @@
 //! Thin Rust wrappers over the statically-linked image codecs and the
-//! highway resize/rotate kernels. Everything works on RGBA8 — decoders are
-//! told to emit RGBA, encoders are fed RGBA, so Image.rs never branches on
-//! channel layout.
+//! highway resize/rotate kernels. The pipeline is RGBA8 everywhere except
+//! the 16-bpc carry-through: libspng (PNG 16-bpc), CoreGraphics (HEIC /
+//! AVIF / TIFF with ImageIO depth ≥ 9) and WIC (high-bpc source pixel-
+//! format GUIDs — 48bpp RGB, 64bpp RGBA, packed 10-bit HDR10) all emit
+//! RGBA16 so high-bit-depth → PNG 16 with no ops survives at full
+//! precision (issue #30462). The geometry kernels (resize/rotate/flip/
+//! modulate) and every non-PNG-truecolour encoder are u8-only, so any
+//! pipeline op or non-PNG output path downconverts via `downconvert_to_8`
+//! before touching that code. JPEG/WebP/BMP/GIF decoders always emit
+//! RGBA8, so those paths don't branch on channels.
 //!
 //! Memory ownership: decode returns global-allocator-owned RGBA. Encode
 //! returns `Encoded{bytes, free}` carrying the codec's own deallocator so the
@@ -207,11 +214,22 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
 pub struct Decoded {
     pub rgba: Vec<u8>, // global allocator (mimalloc)
     pub width: u32,
     pub height: u32,
+    /// Bits per channel in `rgba`: 8 (one byte per channel, `width*height*4`
+    /// bytes) or 16 (two host-endian bytes per channel, `width*height*8`
+    /// bytes). Set to 16 by libspng's 16-bpc PNG decode path, by the
+    /// CoreGraphics backend for any HEIC/AVIF/TIFF source whose ImageIO-
+    /// reported depth is ≥ 9, and by the WIC backend when the source's
+    /// native pixel-format GUID carries > 8 bpc (48/64 bpp families plus
+    /// the packed 10-bit HDR10 formats). Every other decoder produces 8.
+    /// Geometry kernels and non-PNG-truecolour encoders are u8-only, so
+    /// the pipeline calls `downconvert_to_8` before any op or non-PNG
+    /// encode — high-bit-depth source → PNG truecolour with no ops is
+    /// the only path that stays at 16. Issue #30462.
+    pub bit_depth: u8,
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
@@ -224,6 +242,44 @@ pub struct Decoded {
     /// would reinterpret the values as sRGB and visibly shift the
     /// colours. See issue #30197.
     pub icc_profile: Option<Vec<u8>>,
+}
+
+impl Default for Decoded {
+    fn default() -> Self {
+        Self {
+            rgba: Vec::new(),
+            width: 0,
+            height: 0,
+            bit_depth: 8,
+            icc_profile: None,
+        }
+    }
+}
+
+impl Decoded {
+    /// Convert `rgba` from 16-bpc host-endian to 8-bpc in place, narrowing
+    /// each u16 channel to the high byte (equivalent to `>> 8`). A no-op
+    /// when `bit_depth` is already 8. Called before any transform (the
+    /// geometry kernels are u8-only) and before non-PNG encode (JPEG/WebP
+    /// are 8-bpc formats). The buffer is truncated so the tail memory is
+    /// released on the next realloc; `shrink_to_fit` keeps peak RSS at
+    /// one frame.
+    pub fn downconvert_to_8(&mut self) {
+        if self.bit_depth != 16 {
+            return;
+        }
+        let samples = (self.width as usize) * (self.height as usize) * 4;
+        // Narrow by keeping the high byte — same convention as every
+        // 16→8 PNG down-converter (libpng `png_set_strip_16`, libvips).
+        // The buffer holds host-endian u16 samples.
+        for i in 0..samples {
+            let v = u16::from_ne_bytes([self.rgba[2 * i], self.rgba[2 * i + 1]]);
+            self.rgba[i] = (v >> 8) as u8;
+        }
+        self.rgba.truncate(samples);
+        self.rgba.shrink_to_fit();
+        self.bit_depth = 8;
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
@@ -252,7 +308,11 @@ bun_core::named_error_set!(Error);
 bun_core::oom_from_alloc!(Error);
 
 /// Sharp's default: 0x3FFF * 0x3FFF ≈ 268 MP. A single RGBA8 frame at this
-/// cap is ~1 GiB, which is already past where you'd want to be.
+/// cap is ~1 GiB, which is already past where you'd want to be. 16-bpc
+/// decode (issue #30462) doubles bytes-per-pixel, so the guards in
+/// `codec_png::decode`, `probe` and the system backends halve the
+/// effective pixel budget for 16-bpc sources to keep the byte cap at
+/// that same ~1 GiB regardless of source depth.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
@@ -349,12 +409,26 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let h: u32;
     match fmt {
         Format::Png => {
-            // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
-            if bytes.len() < 24 {
+            // sig(8) · IHDR{len(4) type(4) w(4) h(4) bit_depth(1) ...}
+            if bytes.len() < 25 {
                 return Err(Error::DecodeFailed);
             }
             w = u32::from_be_bytes(bytes[16..20].try_into().expect("infallible: size matches"));
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
+            // 16-bpc PNG decode allocates 8 bytes/pixel instead of 4, so
+            // the `max_pixels` byte budget (documented ~1 GiB at the cap)
+            // has to halve to stay consistent. Keep probe() in lockstep
+            // with codec_png::decode()'s guard so `.metadata()` and
+            // `.bytes()` agree on what's too big. Issue #30462.
+            //
+            // Divide the budget rather than multiplying the pixel count —
+            // `w` and `h` are unvalidated u32 here (the i32 range reject
+            // runs *after* the match), so `w * h * 2` can overflow u64
+            // on a hostile 25-byte IHDR. Two u32 factors always fit in
+            // u64, and `max_pixels / 2` can't overflow either.
+            if bytes[24] == 16 && (w as u64) * (h as u64) > max_pixels / 2 {
+                return Err(Error::TooManyPixels);
+            }
         }
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
@@ -535,10 +609,16 @@ impl Encoded {
     }
 }
 
+/// `bit_depth` is 8 or 16. Only PNG truecolour encode honours 16; everything
+/// else expects 8-bit RGBA. The pipeline in Image.rs downconverts before
+/// calling in, so a 16 here on a non-PNG path is a programming error — but
+/// the codec arms still assume `rgba.len() == w*h*4` and would miscompute,
+/// so keep the precondition in the caller, not a runtime check here.
 pub(crate) fn encode(
     rgba: &[u8],
     width: u32,
     height: u32,
+    bit_depth: u8,
     opts: EncodeOptions,
 ) -> Result<Encoded, Error> {
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
@@ -550,6 +630,8 @@ pub(crate) fn encode(
         // operates on raw RGB numbers without converting colour spaces, so
         // the palette entries are still in the source space and need the
         // profile to be interpreted correctly (see PNG spec §11.3.3.3).
+        // Indexed PNGs are always 8 bpc (palette entries are u8), so the
+        // caller must have downconverted before choosing the indexed path.
         Format::Png => {
             if opts.palette {
                 png::encode_indexed(
@@ -562,7 +644,7 @@ pub(crate) fn encode(
                     icc,
                 )
             } else {
-                png::encode(rgba, width, height, opts.compression_level, icc)
+                png::encode(rgba, width, height, bit_depth, opts.compression_level, icc)
             }
         }
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
@@ -729,6 +811,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
                     rgba: out,
                     width: dw,
                     height: dh,
+                    bit_depth: 8,
                     icc_profile: None,
                 });
             }
@@ -751,6 +834,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
         rgba: out,
         width: dw,
         height: dh,
+        bit_depth: 8,
         icc_profile: None,
     })
 }

@@ -1210,6 +1210,28 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 };
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+extern "C" bool Bun__isMainThreadVM();
+
+// node only honors --abort-on-uncaught-exception on the main thread: an
+// uncaught exception inside a Worker is forwarded to the parent's 'error'
+// handler instead of aborting the process
+// (test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js).
+static bool shouldAbortOnUncaughtException()
+{
+    return Bun__Node__AbortOnUncaughtException && Bun__isMainThreadVM();
+}
+
+[[noreturn]] static void abortOnUncaughtException()
+{
+#if OS(WINDOWS)
+    // Raising SIGABRT on Windows terminates with an ambiguous exit code, so
+    // node calls _exit(134) in its place — the value the node test harness
+    // (common.nodeProcessAborted) expects.
+    _exit(134);
+#else
+    abort();
+#endif
+}
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
@@ -1249,8 +1271,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             // and otherwise exits with code 7 (internal exception handler
             // run-time failure).
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            if (Bun__Node__AbortOnUncaughtException) {
-                abort();
+            if (shouldAbortOnUncaughtException()) {
+                abortOnUncaughtException();
             }
             Bun__Process__exit(lexicalGlobalObject, 7);
         }
@@ -1267,9 +1289,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // V8/node, where the abort happens at throw time, before
     // 'uncaughtException' listeners are consulted: listeners do not suppress
     // the abort, only a capture callback does.
-    if (Bun__Node__AbortOnUncaughtException && (capture.isEmpty() || capture.isUndefinedOrNull())) {
+    if (shouldAbortOnUncaughtException() && (capture.isEmpty() || capture.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));
-        abort();
+        abortOnUncaughtException();
     }
 
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
@@ -1282,8 +1304,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             // under --abort-on-uncaught-exception, otherwise exit with code
             // 7 like node (internal exception handler run-time failure).
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            if (Bun__Node__AbortOnUncaughtException) {
-                abort();
+            if (shouldAbortOnUncaughtException()) {
+                abortOnUncaughtException();
             }
             Bun__Process__exit(lexicalGlobalObject, 7);
         }

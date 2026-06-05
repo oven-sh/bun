@@ -41,7 +41,12 @@ function isSrcSubdir(src, dest) {
 // verbatim, so resolving here would change what user code observes.
 function getValidatedCpPath(p, name) {
   if (p instanceof URL) return Bun.fileURLToPath(p);
-  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string or URL", p);
+  if (p instanceof Uint8Array) {
+    // node accepts Uint8Array/Buffer paths and treats them as literal byte
+    // paths (no file: URL sniffing).
+    return Buffer.from(p.buffer, p.byteOffset, p.byteLength).toString();
+  }
+  if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE(name, ["string", "Buffer", "URL"], p);
   if (p.startsWith("file:")) return Bun.fileURLToPath(p);
   return p;
 }

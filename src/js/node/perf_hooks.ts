@@ -196,6 +196,10 @@ class NodePerformanceObserver extends PerformanceObserver {
     this.#callback = callback;
   }
 
+  static get supportedEntryTypes() {
+    return [...super.supportedEntryTypes, "function"].sort();
+  }
+
   observe(options) {
     if (!$isObject(options)) {
       throw $ERR_INVALID_ARG_TYPE("options", "object", options);
@@ -212,6 +216,11 @@ class NodePerformanceObserver extends PerformanceObserver {
       const observesFunction = webTypes.length !== entryTypes.length;
       if (webTypes.length !== 0) {
         super.observe({ ...options, entryTypes: webTypes });
+      } else {
+        // Function-only list: replace semantics also drop any previously
+        // observed web entry types (node clears the whole set before
+        // re-adding from the new array).
+        super.disconnect();
       }
       // The entryTypes form replaces the observed set (unlike the additive
       // type form), so clear any prior "function" registration when the new

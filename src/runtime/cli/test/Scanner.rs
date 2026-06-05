@@ -28,15 +28,10 @@ pub struct Scanner<'a> {
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub test_files: Vec<Interned>,
-    /// Pointer to the process-singleton `FileSystem` (the shape
-    /// `Transpiler.fs` uses). Reads outside the directory-iterator callback
-    /// go through the [`Self::fs()`] accessor; reads on the callback path
-    /// (`next` and its callees) use field-precise place projections
-    /// (`Self::top_level_dir`, `Self::filename_store`) so no
-    /// whole-struct `&FileSystem` is formed while the resolver holds `&mut`
-    /// to the singleton's `fs` field. The two mutation sites
-    /// (`read_dir_with_name`, `next`) derive `&mut`/`*mut RealFS` directly
-    /// from this pointer so writes carry genuine write provenance.
+    /// Process-singleton `FileSystem` (same shape as `Transpiler.fs`). On the
+    /// iterator-callback path (`next` and callees) the resolver holds `&mut`
+    /// to the singleton's `fs` field, so use the field-precise projections
+    /// (`Self::top_level_dir`, `Self::filename_store`) there, not `Self::fs()`.
     pub fs: *mut FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,
@@ -98,8 +93,6 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            // `Transpiler.fs` is the process-singleton `*mut FileSystem`;
-            // it outlives the scanner.
             fs: transpiler.fs,
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
@@ -109,58 +102,35 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    /// Shared-read access to the process-singleton [`FileSystem`].
-    ///
-    /// `'static` is sound: the singleton is initialized once at startup and
-    /// never freed. The unbounded lifetime also keeps reads like
-    /// `self.fs().abs_buf(…, &mut self.scan_dir_buf)` borrow-compatible with
-    /// `&mut` borrows of other `Scanner` fields.
-    ///
-    /// Must NOT be called on the directory-iterator callback path (`next`
-    /// and its callees): for the whole body of
-    /// `read_directory_with_iterator` the resolver holds a live `&mut` to
-    /// the singleton's `fs` field, and a whole-struct `&FileSystem` formed
-    /// here would span that field — an aliasing violation even if the
-    /// reference is immediately dropped. The callback path uses the
-    /// field-precise `Self::top_level_dir`/`Self::filename_store`
-    /// projections instead, which never touch the `fs` field's bytes.
+    /// Shared-read access to the process-singleton [`FileSystem`]. Must NOT
+    /// be called on the iterator-callback path (`next` and its callees) — the
+    /// resolver holds `&mut` to the singleton's `fs` field there; use the
+    /// field-precise projections instead.
     #[inline]
     pub(crate) fn fs(&self) -> &'static FileSystem {
-        // SAFETY: `self.fs` points at the process-singleton `FileSystem`
-        // (see `init`), which lives for the whole process. Callers are
-        // outside `read_directory_with_iterator`, so no `&mut` to any part
-        // of the singleton is live (see doc comment).
+        // SAFETY: process-singleton, lives for the whole process; callers are
+        // outside the iterator callback, so no `&mut` to the singleton is live.
         unsafe { &*self.fs }
     }
 
-    /// Field-precise copy of the singleton's `top_level_dir`.
-    ///
-    /// Safe to call on the iterator-callback path (`next` and its callees),
-    /// unlike `Self::fs()`: the raw place projection reads only the
-    /// `top_level_dir` field's bytes, which are disjoint from the `fs:
-    /// Implementation` field mutably borrowed by
-    /// `read_directory_with_iterator` for the duration of the walk.
+    /// `top_level_dir` via a field-precise projection — unlike [`Self::fs()`],
+    /// safe on the iterator-callback path.
     #[inline]
     fn top_level_dir(&self) -> &'static [u8] {
-        // SAFETY: `self.fs` points at the process-singleton `FileSystem`,
-        // live for the whole process; the projection reads only the
-        // `top_level_dir` field, never forming a reference that spans the
+        // SAFETY: process-singleton; the projection never spans the
         // mutably-borrowed `fs` field.
         unsafe { (*self.fs).top_level_dir }
     }
 
-    /// Field-precise copy of the singleton's `filename_store` handle. Same
-    /// callback-path rationale as `Self::top_level_dir`.
+    /// `filename_store` via a field-precise projection; see `top_level_dir`.
     #[inline]
     fn filename_store(&self) -> &'static fs::FilenameStore {
-        // SAFETY: same as `top_level_dir`; reads only the `filename_store`
-        // field, disjoint from the mutably-borrowed `fs` field.
+        // SAFETY: same as `top_level_dir`.
         unsafe { (*self.fs).filename_store }
     }
 
-    /// Joins `parts` against the singleton's `top_level_dir` into `buf` —
-    /// `FileSystem::abs_buf` minus the whole-struct `&FileSystem` receiver,
-    /// for use on the iterator-callback path (see `Self::top_level_dir`).
+    /// `FileSystem::abs_buf` without the whole-struct receiver, for the
+    /// iterator-callback path.
     #[inline]
     fn abs_buf_projected<'b>(
         top_level_dir: &'static [u8],
@@ -281,9 +251,8 @@ impl<'a> Scanner<'a> {
             }
             #[cfg(windows)]
             {
-                // Grab the `&'static FileSystem` up front so `path2`'s
-                // borrow of `open_dir_buf` doesn't conflict with a second
-                // `self.fs()` call below.
+                // One fs() call up front: a second would conflict with
+                // path2's borrow of open_dir_buf.
                 let fs = self.fs();
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
                 let path2 = fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
@@ -317,18 +286,10 @@ impl<'a> Scanner<'a> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
-        // SAFETY: `fs_ptr` points at the process-singleton `FileSystem`, so
-        // the `&mut RealFS` below carries genuine write provenance and
-        // borrows only the `fs: Implementation` field (reads of other
-        // singleton fields on the callback path use disjoint place
-        // projections — see `top_level_dir`/`filename_store`). One aliasing
-        // caveat remains: the callee re-enters `Scanner::next` through the
-        // iterator while this `&mut` is live, and `next` passes
-        // `Entry::kind` a sibling `&raw mut (*self.fs).fs` to the same
-        // field. That reentrant `*mut`-mediated access is `Entry::kind`'s
-        // documented contract (every resolver caller does the same, with
-        // mutation serialised by `RealFS.entries_mutex`) — accepted,
-        // pre-existing debt rather than an exclusivity guarantee.
+        // SAFETY: process-singleton; this `&mut` borrows only the `fs` field.
+        // The callee re-enters `next`, which stat()s through a sibling `*mut`
+        // to the same field — `Entry::kind`'s documented contract, serialised
+        // by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
 
@@ -384,8 +345,7 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        // Field-precise read: this runs on the iterator-callback path (via
-        // `next`), where `fs()` must not be used.
+        // Runs on the iterator-callback path, where `fs()` must not be used.
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
@@ -429,18 +389,10 @@ impl<'a> Scanner<'a> {
     pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        // `Entry::kind` takes `*mut RealFS`; derive it from the singleton
-        // pointer so it carries write provenance — `kind()` only stat()s
-        // through it.
-        // SAFETY: `self.fs` points at the process-singleton `FileSystem`.
+        // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: `real_fs` points at the process-global `RealFS`. On the
-        // iterator-callback path the caller (`read_directory_with_iterator`)
-        // holds `entries_mutex`, serialising the reentrant access (see
-        // `read_dir_with_name`). On the cached-cwd path (`scan` calling
-        // `next` directly) the mutex is NOT held; that path is
-        // single-threaded — the scan runs to completion on one thread before
-        // any test executes.
+        // SAFETY: on the iterator-callback path the caller holds
+        // `entries_mutex`; the direct `scan` -> `next` path is single-threaded.
         match unsafe { entry.kind(real_fs, true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {

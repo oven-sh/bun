@@ -880,8 +880,12 @@ function cp(src, dest, options, callback) {
 
   ensureCallback(callback);
 
-  // Validate synchronously so invalid options throw rather than reject.
-  options = require("internal/fs/cp-sync").validateCpOptions(options);
+  // Validate synchronously so invalid options/paths throw rather than
+  // reject, matching node's callback form.
+  const cpSyncImpl = require("internal/fs/cp-sync");
+  options = cpSyncImpl.validateCpOptions(options);
+  src = cpSyncImpl.getValidatedCpPath(src, "src");
+  dest = cpSyncImpl.getValidatedCpPath(dest, "dest");
 
   promises.cp(src, dest, options).then(() => callback(null), callback);
 }

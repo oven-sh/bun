@@ -708,7 +708,16 @@ function getEmulatorBinary(platform) {
 }
 
 const SDE_VERSION = "9.58.0-2025-06-16";
-const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
+// Mirror the Intel SDE tarball on our own CI asset host instead of fetching it
+// from Intel's download center directly. The downloadmirror.intel.com path
+// embeds a numeric file id that Intel rotates per release; once rotated, the
+// old id returns 403 Forbidden and every verify-baseline run fails. Intel's
+// license forbids public redistribution, but bun-ci-assets.bun.sh is an
+// access-controlled CI asset host (same one used for the Windows code-signing
+// tooling), so it is an internal mirror rather than a public redistribution.
+// To bump SDE: download sde-external-<version>-win.tar.xz from Intel, upload it
+// to the bucket under the same filename, then update SDE_VERSION here.
+const SDE_URL = `https://bun-ci-assets.bun.sh/sde-external-${SDE_VERSION}-win.tar.xz`;
 
 /**
  * @param {Platform} platform
@@ -742,16 +751,22 @@ function getVerifyBaselineStep(platform, options) {
   const setupCommands =
     os === "windows"
       ? [
+          // Buildkite runs this array as one cmd.exe batch file, and batch does
+          // not stop on error: without explicit `|| exit /b 1`, a failed line is
+          // ignored and only the last line's exit code becomes the step result.
+          // A failed download then left a 0-byte sde.tar.xz for 7z to choke on,
+          // surfacing as a confusing "Cannot open the file as archive" instead of
+          // the real HTTP error. Propagate every fallible step's exit code.
           `echo Downloading build artifacts...`,
-          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
           `echo Extracting ${profileDir}.zip...`,
-          `tar -xf ${profileDir}.zip`,
-          `echo Downloading Intel SDE...`,
-          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
+          `tar -xf ${profileDir}.zip || exit /b 1`,
+          `echo Downloading Intel SDE from ${SDE_URL}...`,
+          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}" || (echo Failed to download Intel SDE from ${SDE_URL} & exit /b 1)`,
           `echo Extracting Intel SDE...`,
-          `7z x -y sde.tar.xz`,
-          `7z x -y sde.tar`,
-          `ren sde-external-${SDE_VERSION}-win sde-external`,
+          `7z x -y sde.tar.xz || exit /b 1`,
+          `7z x -y sde.tar || exit /b 1`,
+          `ren sde-external-${SDE_VERSION}-win sde-external || exit /b 1`,
         ]
       : [
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,

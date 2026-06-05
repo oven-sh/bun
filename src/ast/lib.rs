@@ -1825,7 +1825,9 @@ impl Log {
         if recycled && !self.msgs.is_empty() {
             // `self`'s messages may borrow recycled source storage: pack every
             // string into one buffer anchored in `other.owned_strings` so the
-            // cloned messages' borrowed views stay valid for the life of `other`.
+            // cloned messages' borrowed views stay valid until `other` is
+            // `reset()`/`clear_and_free()`'d (which clear `msgs` before
+            // releasing `owned_strings`) or dropped.
             let mut string_builder = StringBuilder::default();
             for msg in &self.msgs {
                 msg.count(&mut string_builder);

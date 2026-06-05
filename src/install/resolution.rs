@@ -932,6 +932,15 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
+    /// Tarballs whose cache folder is keyed by their URL/path hash rather than
+    /// by content (`cached_tarball_folder_name`). The bytes behind a URL or a
+    /// local path can change while the key stays the same, so `--force` must be
+    /// able to re-fetch and re-extract them. Npm/git/github resolutions are
+    /// content-addressed by version/commit and never need this.
+    pub fn is_tarball_cache_keyed_by_url(self) -> bool {
+        self == Tag::RemoteTarball || self == Tag::LocalTarball
+    }
+
     pub fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

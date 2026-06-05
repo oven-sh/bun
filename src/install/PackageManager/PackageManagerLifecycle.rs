@@ -22,10 +22,12 @@ use crate::lifecycle_script_runner::{
 };
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
+use crate::package_manager_task as PmTask;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{self, Lockfile, Package};
 use bun_install::{
-    PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
+    DependencyID, PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash,
+    invalid_package_id,
 };
 
 #[derive(Default)]
@@ -532,6 +534,39 @@ impl PackageManager {
         }
 
         set
+    }
+
+    /// Whether `dependency_id` was explicitly named on the command line
+    /// (`bun add <pkg>` / `bun install <pkg-or-url>` / `bun update <pkg>`).
+    /// URL/path arguments produce unnamed requests that match on the
+    /// dependency's version literal.
+    pub fn dependency_is_update_request(&self, dependency_id: DependencyID) -> bool {
+        if self.update_requests.is_empty() {
+            return false;
+        }
+        // `dependency_id` can be `invalid_dependency_id` (e.g. a root entry).
+        let Some(dep) = self
+            .lockfile
+            .buffers
+            .dependencies
+            .get(dependency_id as usize)
+        else {
+            return false;
+        };
+        let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+        self.update_requests
+            .iter()
+            .any(|request| request.matches(dep, string_buf))
+    }
+
+    /// Whether a fetch/read task for this tarball URL/path was already
+    /// enqueued during this run (e.g. the resolve phase re-downloaded it
+    /// because `bun update` invalidated the resolution). The extract success
+    /// path drains the task's callback list but leaves the key in
+    /// `task_queue`, so the key's presence means the bytes were already
+    /// refreshed; re-enqueueing would push a callback nothing ever drains.
+    pub fn tarball_task_enqueued_this_run(&self, url: &[u8]) -> bool {
+        self.task_queue.contains(&PmTask::Id::for_tarball(url))
     }
 }
 

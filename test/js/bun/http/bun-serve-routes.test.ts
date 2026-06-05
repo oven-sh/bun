@@ -717,3 +717,104 @@ it("route precedence for mix of method-specific routes and any routes", async ()
     "POST /test/ANY/POST",
   );
 });
+
+it("routes absolute-form request targets by path and derives request.url from the Host header", async () => {
+  const seen: { matched: string; url: string }[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/admin/secret": req => {
+        seen.push({ matched: "route", url: req.url });
+        return new Response("named route");
+      },
+    },
+    fetch(req) {
+      seen.push({ matched: "fallback", url: req.url });
+      return new Response("fallback");
+    },
+  });
+
+  const hostHeader = `127.0.0.1:${server.port}`;
+
+  // Send an absolute-form request-target (RFC 9112 §3.2.2) over a raw socket;
+  // fetch() always uses origin-form so we have to write the request line ourselves.
+  const responseText = await new Promise<string>((resolve, reject) => {
+    let received = "";
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.write(
+            `GET https://spoofed.example/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
+          );
+        },
+        data(socket, chunk) {
+          received += chunk.toString();
+        },
+        close() {
+          resolve(received);
+        },
+        error(socket, err) {
+          reject(err);
+        },
+      },
+    }).catch(reject);
+  });
+
+  // The named route handles the request, not the catch-all fetch handler.
+  expect(responseText).toContain("named route");
+  expect(responseText).toContain("200");
+  expect(seen).toHaveLength(1);
+  expect(seen[0].matched).toBe("route");
+
+  // request.url is derived from the Host header, not from the authority in the request line.
+  expect(seen[0].url).not.toContain("spoofed.example");
+  const url = new URL(seen[0].url);
+  expect(url.protocol).toBe("http:");
+  expect(url.host).toBe(hostHeader);
+  expect(url.pathname).toBe("/admin/secret");
+
+  // A normal origin-form request still hits the same named route.
+  seen.length = 0;
+  const res = await fetch(new URL("/admin/secret", server.url));
+  expect(await res.text()).toBe("named route");
+  expect(seen).toHaveLength(1);
+  expect(seen[0].matched).toBe("route");
+  expect(new URL(seen[0].url).pathname).toBe("/admin/secret");
+
+  for (const target of ["http://spoofed.example?a=b", "http://spoofed.example?redirect=/elsewhere"]) {
+    seen.length = 0;
+    const rawResponse = await new Promise<string>((resolve, reject) => {
+      let received = "";
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: {
+          open(socket) {
+            socket.write(`GET ${target} HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+          },
+          close() {
+            resolve(received);
+          },
+          error(socket, err) {
+            reject(err);
+          },
+        },
+      }).catch(reject);
+    });
+
+    expect(rawResponse).toContain("fallback");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].matched).toBe("fallback");
+    expect(seen[0].url).not.toContain("spoofed.example");
+    const rawUrl = new URL(seen[0].url);
+    expect(rawUrl.host).toBe(hostHeader);
+    expect(rawUrl.pathname).toBe("/");
+    expect(rawUrl.search).toBe(new URL(target).search);
+  }
+});

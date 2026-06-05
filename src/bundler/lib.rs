@@ -1,23 +1,70 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
-#![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
+#![allow(incomplete_features)] // inherent_associated_types — used only for the ThreadPool::Worker path
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
-// Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
-// `ParseTask` modules.
-pub mod ungate_support;
-pub use ungate_support::*;
+pub use bun_resolver::fs as bun_fs;
+pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
+
+pub mod perf {
+    pub use bun_perf::{Ctx, PerfEvent};
+
+    #[inline]
+    pub(crate) fn trace(_name: &'static str) -> Ctx {
+        bun_perf::trace(PerfEvent::_Stub)
+    }
+}
+
+pub mod bun_css {
+    pub use ::bun_css::css_modules::Config as CssModuleConfig;
+    pub use ::bun_css::css_parser::LayerName;
+    pub use ::bun_css::*;
+}
+
+pub use crate::HTMLScanner as html_scanner;
+
+pub(crate) mod index {
+    pub(crate) use bun_ast::IndexInt as Int;
+}
+pub(crate) mod part {
+    pub(crate) use bun_ast::PartList as List;
+}
+pub(crate) mod import_record {
+    pub(crate) use bun_ast::import_record::List;
+}
+
+pub(crate) type JSAst<'a> = crate::BundledAst<'a>;
+pub(crate) use bun_ast::UseDirective;
+pub(crate) use bun_ast::{Part, Ref};
+pub use bun_js_printer::MangledProps;
+pub use options_impl::PathTemplate;
+
+pub use HTMLImportManifest::html_import_manifest;
+pub use bun_core::cheap_prefix_normalizer;
+pub use bundle_v2::{
+    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
+    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
+    target_from_hashbang,
+};
+pub use chunk::{
+    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
+    cross_chunk_import,
+};
+pub use linker_graph::{
+    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
+    entry_point, js_meta,
+};
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single
 /// `use crate::mal_prelude::*;` brings every `items_<field>()` set into scope.
 pub mod mal_prelude {
     pub use crate::Graph::InputFileColumns as _;
+    pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
-    pub use crate::ungate_support::CompileResultForSourceMapColumns as _;
-    pub use crate::ungate_support::entry_point::EntryPointColumns as _;
-    pub use crate::ungate_support::js_meta::JSMetaColumns as _;
+    pub use crate::linker_graph::entry_point::EntryPointColumns as _;
+    pub use crate::linker_graph::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
 
@@ -63,13 +110,10 @@ pub mod options_impl;
 pub mod parse_task;
 pub mod transpiler;
 
-/// `linker_context/` submodule directory. Declared inline (no `mod.rs`) so
-/// paths stay 1:1 with the Zig directory.
+/// `linker_context/` submodule directory. Declared inline (no `mod.rs`).
 pub mod linker_context {
     #[path = "scanImportsAndExports.rs"]
     pub mod scan_imports_and_exports;
-
-    // Each module maps 1:1 to a `.zig` of the same basename.
 
     #[path = "computeChunks.rs"]
     pub mod compute_chunks;
@@ -141,7 +185,7 @@ pub mod linker_context {
     pub mod static_route_visitor;
 
     // ── Re-exports so `crate::linker_context::{debug, LinkerContext, …}`
-    //    resolves at every submodule call-site (mirrors Zig's `@import("./LinkerContext.zig")`).
+    //    resolves at every submodule call-site.
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
@@ -167,6 +211,9 @@ pub use linker::Linker;
 pub use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
+/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
+/// sibling module — that would collide with this re-export).
+pub use linker_graph::entry_point::EntryPoint;
 /// See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
@@ -176,17 +223,12 @@ pub use parse_task::ParseTask;
 pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
-/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
-/// sibling module — that would collide with this re-export).
-pub use ungate_support::entry_point::EntryPoint;
-/// `bundle_v2.zig:AdditionalFile`.
 pub enum AdditionalFile {
     SourceIndex(u32),
     OutputFile(u32),
 }
 
-/// `bun.ast.Index` — source-index newtype. Re-exported here because every
-/// `*.zig` in this crate aliases it as `pub const Index = bun.ast.Index`.
+/// `bun_ast::Index` — source-index newtype, re-exported for crate-wide use.
 pub(crate) use bun_ast::{Index, IndexInt};
 
 // Re-export the `options` module. `Loader`/`Target` live in
@@ -199,7 +241,7 @@ pub mod options {
     pub use super::options_impl::*;
     pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
-    /// `OutputFile.init` argument struct (`options.zig:OutputFile.Options`).
+    /// `OutputFile.init` argument struct.
     pub use super::output_file::Options as OutputFileInit;
     pub use super::output_file::OptionsData as OutputFileData;
     pub use super::output_file::Value as OutputValue;
@@ -209,8 +251,7 @@ pub mod options {
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
     pub type Options<'a> = super::BundleOptions<'a>;
 
-    /// `jsc.API.BuildArtifact.OutputKind` (JSBundler.zig:1799). Re-exported by
-    /// `options.zig` callers via `OutputFile.output_kind`.
+    /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
     /// `IntoStaticStr` provides the JS-facing tag (`"entry-point"` etc.) so
     /// `bun_runtime::api::BuildArtifact` can spell `<&str>::from(kind)` without
@@ -238,7 +279,6 @@ pub mod options {
     }
 
     impl OutputKind {
-        /// JSBundler.zig:1809.
         pub fn is_file_in_standalone_mode(self) -> bool {
             !matches!(
                 self,
@@ -251,16 +291,12 @@ pub mod options {
         }
     }
 
-    /// `bun.bake.Side` (bake.zig:874) — which graph an output belongs to.
+    /// Which graph an output belongs to.
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
-    /// Name used by `resolver/package_json.rs::load_define_defaults` —
-    /// alias of the canonical `options_impl::EnvEntry` brought in via the glob.
-    pub type EnvDefault = EnvEntry;
-
-    /// Legacy `options::Framework` (referenced by `resolver/package_json.zig`'s
-    /// `FrameworkRouterPair`). The full struct is `bun.bake.Framework` which
+    /// Legacy `options::Framework` (referenced by the resolver's
+    /// `FrameworkRouterPair`). The full struct is `bake::Framework` which
     /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
     pub use crate::bake_types::Framework;
 
@@ -270,7 +306,7 @@ pub mod options {
     // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
     // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
     // heap allocation from `member_list_to_components_if_different`
-    // (options.zig:1296) without `Box::leak` (PORTING.md §Forbidden patterns).
+    // without `Box::leak`.
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
@@ -297,9 +333,8 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. PORT NOTE: Zig takes
-// `*const DevServerOutput` but mutates through the `chunks: []Chunk` slice it
-// holds; in Rust the struct stores `&'a mut [Chunk]`, hence `*mut`.
+// Erased handle to `bake::DevServer`. The struct stores a `&'a mut [Chunk]`
+// it mutates through, hence `*mut`.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
@@ -344,8 +379,7 @@ bun_dispatch::link_interface! {
     }
 }
 
-// `OutputFile.Options` defaults (`options.zig:OutputFile.Options` field
-// default-initializers). Kept here rather than in `OutputFile.rs` so the
+// `OutputFile.Options` field defaults. Kept here rather than in `OutputFile.rs` so the
 // derive-free struct stays codegen-friendly while every `init(..)` call site
 // can use struct-update syntax.
 impl Default for output_file::OptionsData {

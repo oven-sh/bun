@@ -11,7 +11,6 @@ use crate::test_runner::bun_test::{
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
 
 pub struct Collection {
@@ -43,7 +42,7 @@ pub struct QueuedDescribe {
     /// `Collection.active_scope` and mutated through).
     new_scope: NonNull<DescribeScope>,
 }
-// Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
+// `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
     /// # Safety
@@ -88,8 +87,7 @@ impl Collection {
         }
     }
 
-    // Zig `deinit` freed root_scope, drained both queues calling item.deinit(), and freed
-    // filter_buffer. All of that is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
+    // Cleanup is covered by field Drop (Box, Vec<QueuedDescribe>, Vec<u8>).
     // No explicit `impl Drop for Collection` needed.
 
     /// Immutable view of the currently-active describe scope.
@@ -128,7 +126,6 @@ impl Collection {
         let _g = group::begin();
 
         debug_assert!(!self.locked);
-        // PORT NOTE: Zig used `bunTest().gpa` for Strong.init; allocator param dropped.
 
         if let Some(cb) = callback {
             group::log(format_args!(
@@ -197,24 +194,23 @@ impl Collection {
         let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
-        // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
         for item in this.current_scope_callback_queue.drain(..).rev() {
             // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
             if unsafe { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                drop(item); // Zig: item.deinit() — Strong released here
+                drop(item); // Strong released here
             } else {
                 this.describe_callback_queue.push(item);
             }
         }
-        // PERF(port): was clearRetainingCapacity — drain(..) retains capacity.
+        // `drain(..)` retains the queue's capacity.
 
         while !this.describe_callback_queue.is_empty() {
             group::log(format_args!("runOne -> call next"));
             let first = this.describe_callback_queue.pop().unwrap();
-            // `defer first.deinit()` — handled by Drop at end of loop body / continue.
+            // `first` cleanup handled by Drop at end of loop body / continue.
 
             // SAFETY: `active_scope` points into `root_scope`'s Box-allocated tree, which outlives
             // every queued item; short-lived read, no aliasing `&mut` is live here.
@@ -267,5 +263,3 @@ impl Collection {
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1
     }
 }
-
-// ported from: src/test_runner/Collection.zig

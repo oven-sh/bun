@@ -5,14 +5,12 @@
 // were translated against the crate's public surface and refer to it by name.
 extern crate self as bun_css;
 
-/// Case-insensitive ASCII byte-slice dispatch — the fix for Zig's
-/// `css.todo_stuff.match_ignore_ascii_case` sentinel and a drop-in port of
+/// Case-insensitive ASCII byte-slice dispatch — equivalent to
 /// rust-cssparser's `match_ignore_ascii_case!`.
 ///
 /// Expands to an `if / else if / else` chain over
 /// [`bun_core::strings::eql_case_insensitive_ascii_check_length`] (length-checked,
-/// ASCII-fold only, byte-wise — identical to Zig's
-/// `bun.strings.eqlCaseInsensitiveASCIIICheckLength`). The whole macro is an
+/// ASCII-fold only, byte-wise). The whole macro is an
 /// expression; arms may `return`, `break 'label`, or yield a value.
 ///
 /// Supports `|`-alternation and Rust-style `if` guards on arms; the trailing
@@ -26,7 +24,6 @@ extern crate self as bun_css;
 ///     _                            => Err(location.new_unexpected_token_error(token)),
 /// }}
 /// ```
-// TODO(port): swap body to phf when CI hasher lands.
 #[macro_export]
 macro_rules! match_ignore_ascii_case {
     ($name:expr, { $( $($lit:literal)|+ $(if $guard:expr)? => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
@@ -78,9 +75,9 @@ pub mod declaration;
 pub use context::{DeclarationContext, PropertyHandlerContext, SupportsEntry};
 pub use declaration::{DeclarationBlock, DeclarationHandler, DeclarationList};
 
-// Path aliases the ported submodules expect at crate root (Zig's `css.*`
-// namespace was flat; the Rust port re-nests under `values/`/`properties/`
-// but most callers still spell `bun_css::css_values::...`).
+// Path aliases the submodules expect at crate root (the crate re-nests under
+// `values/`/`properties/` but most callers still spell
+// `bun_css::css_values::...`).
 pub use properties as css_properties;
 pub use rules as css_rules;
 pub use selectors::selector;
@@ -94,11 +91,11 @@ pub use css_parser::{
 };
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
-// The selector grammar references these via `bun_css::*` (Zig's flat `css.*`
-// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; here
-// it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
-// becomes `&'bump [u8]` once the arena lifetime is plumbed.
-pub type Str = *const [u8];
+// The selector grammar references these via `bun_css::*`. `Str` is the
+// arena-borrowed byte-slice alias; here it's `*const [u8]` (matches
+// `error.rs` / `values::ident` field shape) and becomes `&'bump [u8]` once
+// the arena lifetime is plumbed.
+pub(crate) type Str = *const [u8];
 
 /// Dereference an arena-owned [`Str`] into a slice borrow.
 ///
@@ -113,30 +110,29 @@ pub type Str = *const [u8];
 /// `p` must be a non-null fat pointer into the parser's source text or bump
 /// arena, and that backing storage must outlive the returned reference.
 #[inline(always)]
-pub unsafe fn arena_str(p: Str) -> &'static [u8] {
+pub(crate) unsafe fn arena_str(p: Str) -> &'static [u8] {
     // SAFETY: caller contract (documented above) guarantees `p` is a non-null,
     // well-aligned fat pointer into the parser's immutable source/bump arena,
     // whose backing storage outlives the returned reference.
     unsafe { &*p }
 }
 pub use compat::Feature;
-/// `css::ParseErrorKind` — Zig spelling. Alias of `error::ParserErrorKind`.
+/// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
 pub use error::ParserErrorKind as ErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
 pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 
-// `css::generic::*` is the Zig-spelled namespace for the protocol traits +
-// reflection helpers. The Rust module is `generics`; alias both spellings so
-// value/property modules can use `crate::generic::partial_cmp_f32` etc.
+// `css::generic::*` is an alternate spelling of the protocol traits +
+// reflection helpers in `generics`; alias both spellings so value/property
+// modules can use `crate::generic::partial_cmp_f32` etc.
 pub use generics as generic;
 pub use generics::{implement_deep_clone, implement_eql, implement_hash};
 // Same-name trait + derive macro re-export so `#[derive(bun_css::DeepClone)]`
 // (and `use bun_css::DeepClone;` at leaf sites) brings both into scope.
 pub use generics::{CssEql, DeepClone};
-// Keyword-enum / `union(enum)` derive macros (port of Zig's `DefineEnumProperty`
-// / `DeriveParse` / `DeriveToCss` comptime fns). The `EnumProperty` *trait* is
+// Keyword-enum / tagged-union derive macros. The `EnumProperty` *trait* is
 // re-exported above from `css_parser`; the *derive* of the same name lives in
 // the proc-macro crate.
 pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
@@ -165,8 +161,6 @@ pub mod values_stub {
     pub mod color {
         pub use crate::values::color::*;
 
-        /// `Result(CssColor)` — Zig: `pub const ParseResult = Result(CssColor);`
-        /// where `Result(T) = Maybe(T, ParseError(ParserError))` (css_parser.zig:278).
         /// `Maybe` is now un-gated as `core::result::Result`, so this is a
         /// straight type alias to the real `values::color::ParseResult`.
         pub type CssColorParseResult = crate::values::color::ParseResult;
@@ -188,8 +182,6 @@ pub mod values_stub {
 }
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
-// TODO(port): replace stub with `rules::custom_media::CustomMediaRule`.
-pub type CustomMedia = ();
 
 /// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
 /// every `to_css` path; the *kind* lives in `Printer.error_kind` (PrinterError)
@@ -211,11 +203,11 @@ impl core::fmt::Display for PrintErr {
 }
 impl core::error::Error for PrintErr {}
 
-/// `PrintErr!T` return shape (Zig: `PrintErr!void`) used by every `to_css`
+/// Return shape used by every `to_css`
 /// path. Distinct from `css_parser::PrintResult<T> = Maybe<T, PrinterError>`,
 /// which carries the rich `Err<PrinterErrorKind>` — this is just the bubbled
 /// signal (the *kind* lives in `Printer.error_kind`).
-pub type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
+pub(crate) type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
 pub use dependencies::Dependency;
 
@@ -226,8 +218,7 @@ pub use css_parser::{
     ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
 };
 pub use printer::{ImportInfo, Printer, PrinterOptions, PseudoClasses};
-/// Dependent crates name this `ImportRecordHandler` (Zig had a now-removed
-/// union of the same name in css_parser.zig:3783); the surviving type is
+/// Dependent crates name this `ImportRecordHandler`; the surviving type is
 /// `printer::ImportInfo`, exposed under both names.
 pub type ImportRecordHandler<'a> = printer::ImportInfo<'a>;
 pub use values::color::{CssColor, FloatColor, LABColor, LabColor, PredefinedColor, RGBA};
@@ -283,7 +274,7 @@ impl VendorPrefix {
     ];
 
     // NOTE: bitflags 2.x already generates `from_name(&str) -> Option<Self>`;
-    // the Zig `fromName` (panicking) is exposed as `from_name_str`.
+    // the panicking variant is exposed as `from_name_str`.
     #[inline]
     pub fn from_name_str(name: &str) -> VendorPrefix {
         match name {
@@ -309,7 +300,7 @@ impl VendorPrefix {
     }
 
     pub fn difference_(left: Self, right: Self) -> Self {
-        // Zig used arithmetic subtraction on bits; preserve that.
+        // Arithmetic subtraction on bits, not set difference; callers depend on it.
         Self::from_bits_retain(left.bits().wrapping_sub(right.bits()))
     }
 
@@ -389,15 +380,16 @@ pub struct Num {
 pub struct Dimension {
     pub num: Num,
     /// e.g. "px"
-    // TODO(port): arena lifetime — &'static placeholder per PORTING.md §AST crates.
+    // Borrows the parser arena/source; `&'static` placeholder per PORTING.md §AST crates.
     pub unit: &'static [u8],
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
 /// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
 /// depend on `serializer::*` and `generics`.
-// TODO(port): every &'static [u8] payload borrows the parser arena/source;
-// thread `<'a>` once the bumpalo arena lifetime is plumbed.
+// Every `&'static [u8]` payload actually borrows the parser arena/source text and
+// must not outlive the arena; `&'static` is the crate-wide placeholder until the
+// bumpalo arena lifetime is plumbed through.
 #[derive(Clone, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
@@ -443,8 +435,8 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Minimal rendering for error messages. The full Zig `Token.format`
-        // (CSS serialization) lives in `css_parser.rs` via `serializer::*`.
+        // Minimal rendering for error messages. Full CSS serialization
+        // lives in `css_parser.rs` via `serializer::*`.
         use bstr::BStr;
         match self {
             Token::Ident(v)

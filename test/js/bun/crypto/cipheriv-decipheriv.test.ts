@@ -222,3 +222,21 @@ it("should not accept negative authTagLength, or other coercable values", () => 
     }).toThrow(`The property 'options.authTagLength' is invalid. Received `);
   }
 });
+
+it("should ignore authTagLength for non-authenticated cipher modes", () => {
+  // aes-128-cbc is not an authenticated mode. Node only retains
+  // options.authTagLength for authenticated modes, so getAuthTag() must report
+  // an invalid state here rather than returning a buffer of the requested size.
+  const cipher = createCipheriv("aes-128-cbc", randomBytes(16), randomBytes(16), {
+    authTagLength: 4096,
+  } as any) as CipherGCM;
+  cipher.update("hi");
+  cipher.final();
+  expect(() => cipher.getAuthTag()).toThrow();
+
+  // Authenticated modes still honor a valid authTagLength.
+  const gcm = createCipheriv("aes-128-gcm", randomBytes(16), randomBytes(12), { authTagLength: 12 });
+  gcm.update("hi");
+  gcm.final();
+  expect(gcm.getAuthTag().length).toBe(12);
+});

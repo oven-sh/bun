@@ -1,5 +1,4 @@
-//! bun_collections — crate root.
-//! Thin re-export hub mirroring `src/collections/collections.zig`.
+//! bun_collections — crate root. Thin re-export hub.
 
 #![feature(
     type_info,
@@ -11,9 +10,7 @@
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
-#![warn(unused_must_use, unreachable_pub)]
-
-extern crate self as bun_collections;
+#![warn(unused_must_use)]
 
 pub mod hive_array;
 pub mod multi_array_list;
@@ -26,14 +23,9 @@ pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
 
-// TODO(b2-large): heavy nightly-feature usage (adt_const_params for enum-typed
-// const generics, generic_const_exprs, inherent assoc types). Rewrite to
-// stable: enum const params → const usize/bool, inherent assoc → free aliases.
 pub mod bit_set;
 pub mod pool;
 pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
-pub mod comptime_string_map;
-pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 #[path = "StaticHashMap.rs"]
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
@@ -57,16 +49,15 @@ pub use bit_set::{
 // from here); canonical impl lives in `bun_core::strings`.
 pub use bun_core::strings::{const_bytes_eq, const_str_eq};
 
-/// `bun.bit_set` namespace alias (Zig: `bun.bit_set.List`).
+/// Namespace alias for the bit-set types.
 pub mod dynamic_bit_set {
     pub use super::bit_set::DynamicBitSet;
     pub use super::bit_set::DynamicBitSetList as List;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `PriorityQueue` — port of `std.PriorityQueue(T, Context, lessThan)`.
-// Min-heap backed by a `Vec<T>`; the comparator context is held by value so
-// callers can rebind it (Zig stores `context: Context` directly on the queue).
+// `PriorityQueue` — min-heap backed by a `Vec<T>`; the comparator context is
+// held by value so callers can rebind it.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait PriorityCompare<T> {
     fn compare(&self, a: &T, b: &T) -> core::cmp::Ordering;
@@ -103,7 +94,7 @@ impl<T, C> PriorityQueue<T, C> {
     }
 }
 impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
-    /// Zig: `add(elem) !void` — push and sift-up.
+    /// Push and sift-up.
     pub fn add(&mut self, elem: T) -> Result<(), bun_alloc::AllocError> {
         self.items.push(elem);
         let mut child = self.items.len() - 1;
@@ -122,7 +113,7 @@ impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
         }
         Ok(())
     }
-    /// Zig: `removeOrNull()` — pop min, sift-down; `None` when empty.
+    /// Pop min, sift-down; `None` when empty.
     pub fn remove_or_null(&mut self) -> Option<T> {
         if self.items.is_empty() {
             return None;
@@ -178,9 +169,6 @@ pub use array_hash_map::{
 /// `.values()` / `.entry()` returns a distinct hashbrown type — re-exporting
 /// the crate is the smaller surface.)
 pub use hashbrown;
-/// Explicit-context alias; `ArrayHashMap<K, V>` already has `C = AutoContext`
-/// as a default, this just gives the three-param spelling a distinct name.
-pub type ArrayHashMapWithContext<K, V, C> = ArrayHashMap<K, V, C>;
 
 pub mod string_map;
 pub use string_map::StringMap;
@@ -195,10 +183,10 @@ pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
 pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
 
 // ──────────────────────────────────────────────────────────────────────────
-// SmallList — `bun.SmallList(T, N)` (Zig: src/css/small_list.zig).
+// SmallList
 //
 // Thin `#[repr(transparent)]` newtype over `smallvec::SmallVec<[T; N]>` that
-// preserves the Zig-named API surface (`append`, `slice`, `at`, `len()->u32`,
+// preserves the existing API surface (`append`, `slice`, `at`, `len()->u32`,
 // `init_capacity`, …) so the ~300 CSS-parser call sites stay untouched.
 // Replaces the bespoke ~800-line `Data`/`HeapData` union + raw-ptr container
 // that previously lived in `bun_css::small_list` (which was itself a port of
@@ -342,27 +330,15 @@ impl<T, const N: usize> SmallList<T, N> {
         // invariant of `from_raw_parts` is never exercised.
         Self(unsafe { smallvec::SmallVec::from_raw_parts(slab.as_mut_ptr(), len, len) })
     }
-    /// Zig `fromList` / `fromBabyList` — adopt a `Vec<T>` as the heap buffer
+    /// Adopt a `Vec<T>` as the heap buffer
     /// (O(1) header transfer; no element copy).
     #[inline]
     pub fn from_list(list: Vec<T>) -> Self {
         Self(smallvec::SmallVec::from_vec(list))
     }
-    #[inline]
-    pub fn from_list_no_deinit(list: Vec<T>) -> Self {
-        Self::from_list(list)
-    }
-    #[inline]
-    pub fn from_baby_list(list: Vec<T>) -> Self {
-        Self::from_list(list)
-    }
-    #[inline]
-    pub fn from_baby_list_no_deinit(list: Vec<T>) -> Self {
-        Self::from_list(list)
-    }
 
     // ── access ─────────────────────────────────────────────────────────────
-    /// Zig `len()` returns `u32` (not `usize`); preserved so the ~300 call-site
+    /// Returns `u32` (not `usize`); preserved so the ~300 call-site
     /// integer arithmetic in `bun_css` stays unchanged. Inherent shadows the
     /// `[T]::len()->usize` reachable via `Deref`.
     #[inline]
@@ -477,13 +453,17 @@ impl<T, const N: usize> SmallList<T, N> {
             self.0.reserve_exact(new_capacity as usize - cur);
         }
     }
-    /// Zig `setLen` — exposed as safe for API parity with the previous port
-    /// (whose only external caller shrinks to 0). Growing past the initialised
-    /// region is the caller's responsibility, same as before.
+    /// Exposed as safe: every current external caller only shrinks
+    /// (`new_len <= len`). Growing past the initialised region is the
+    /// caller's responsibility.
     #[inline]
     pub fn set_len(&mut self, new_len: u32) {
-        // SAFETY: matches the previous bun_css::SmallList::set_len contract
-        // (Zig callers treat this as a raw length store).
+        // SAFETY: a raw length store. All current external callers only
+        // shrink (`new_len <= self.len()`), so `[0..new_len]` stays
+        // initialised and `new_len <= capacity`, satisfying
+        // `SmallVec::set_len`'s preconditions (the truncated tail merely
+        // leaks). Any caller that grows takes responsibility for
+        // initialising the exposed region.
         unsafe { self.0.set_len(new_len as usize) }
     }
 
@@ -504,7 +484,7 @@ impl<T, const N: usize> SmallList<T, N> {
         Self(self.0.clone())
     }
 
-    // ── iteration helpers (Zig-named) ──────────────────────────────────────
+    // ── iteration helpers ───────────────────────────────────────────────────
     #[inline]
     pub fn any(&self, predicate: impl Fn(&T) -> bool) -> bool {
         self.0.iter().any(predicate)
@@ -518,12 +498,12 @@ impl<T, const N: usize> SmallList<T, N> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// HashMap — `std.AutoHashMap(K, V)` / `std.HashMap(K, V, Ctx, max_load)`.
+// HashMap
 //
-// Ported linear-probe layout (open-addressing, tombstones, power-of-two cap,
-// 80% load) so iteration order matches Zig exactly — required by callers that
+// Linear-probe layout (open-addressing, tombstones, power-of-two cap,
+// 80% load) with deterministic iteration order — required by callers that
 // snapshot the iteration sequence (lockfile debug stringify, etc.). The `Ctx`
-// type parameter is now load-bearing: `AutoHashContext` wyhashes the key,
+// type parameter is load-bearing: `AutoHashContext` wyhashes the key,
 // `IdentityContext<K>` uses `k as u64` so pre-hashed keys aren't re-hashed.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -543,21 +523,17 @@ pub mod hash_map {
         pub value_ptr: &'a mut V,
     }
 
-    /// Zig `std.HashMap.KV` — owned `{key, value}` pair returned from
-    /// `fetchRemove` / `fetchPut`. Identical to `std.ArrayHashMap.KV`; re-exported
-    /// from `array_hash_map` rather than duplicated.
+    /// Owned `{key, value}` pair returned from `fetchRemove` / `fetchPut`;
+    /// re-exported from `array_hash_map` rather than duplicated.
     pub use crate::array_hash_map::KV;
 }
 
 pub mod array_list;
-// TODO(port): per PORTING.md the managed/unmanaged ArrayList split collapses to
-// `Vec<T>` (global mimalloc) outside AST crates; Phase B may drop most of these
-// aliases once callers are migrated.
-pub use array_list::ArrayList; // any `std.mem.Allocator`
+// All of these aliases collapse to `Vec<T>` (global mimalloc); they exist for
+// back-compat at existing call sites.
+pub use array_list::ArrayList;
 pub use array_list::ArrayListAligned;
 pub use array_list::ArrayListAlignedDefault;
 pub use array_list::ArrayListAlignedIn;
-pub use array_list::ArrayListDefault; // always default allocator (no overhead)
-pub use array_list::ArrayListIn; // specific type of generic allocator
-
-// ported from: src/collections/collections.zig
+pub use array_list::ArrayListDefault;
+pub use array_list::ArrayListIn;

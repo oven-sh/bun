@@ -2,16 +2,17 @@ use bun_collections::{BoundedArray, VecExt};
 use bun_core::ZStr;
 use bun_ptr::RawSlice;
 
-pub type InlineStorage = BoundedArray<u8, 15>;
+pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
 #[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
-    // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
-    // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
-    // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). TODO(refactor): revisit whether a `<'a>` lifetime on `Data` is acceptable.
+    // `Temporary` borrows external bytes (see `substring`, which returns a
+    // `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
+    // pointer; safe `.slice()` projection). Invariant: the borrowed backing
+    // bytes must outlive the holder — `Data` carries no lifetime, so this is
+    // enforced by callers, not the compiler.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
     #[default]
@@ -54,7 +55,7 @@ impl Data {
     pub fn zdeinit(&mut self) {
         match self {
             Data::Owned(owned) => {
-                // Zero bytes before deinit — Zig `bun.freeSensitive`.
+                // Zero bytes before freeing.
                 let s = owned.slice_mut();
                 // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
                 unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
@@ -103,8 +104,6 @@ impl Data {
     }
 }
 
-// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
-// already frees on drop, so an explicit `impl Drop for Data` is redundant (and
-// would prevent moving fields out in `to_owned`). The other variants own no heap.
-
-// ported from: src/sql/shared/Data.zig
+// `Vec<T>: Drop` already frees on drop, so an explicit `impl Drop for Data` is
+// redundant (and would prevent moving fields out in `to_owned`). The other
+// variants own no heap.

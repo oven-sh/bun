@@ -16,10 +16,9 @@ use crate::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
-/// Zig: `comptime MessageType: @Type(.enum_literal)` — the set of backend
-/// message tags `PostgresSQLConnection.on()` dispatches over. Defined here
+/// The set of backend message tags `PostgresSQLConnection.on()` dispatches over. Defined here
 /// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
-/// it is purely a compile-time switch tag in Zig with no wire encoding.
+/// it is purely a dispatch tag with no wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 pub enum MessageType {
     DataRow,
@@ -43,6 +42,7 @@ pub enum MessageType {
     CopyOutResponse,
     CopyDone,
     CopyBothResponse,
+    NotificationResponse,
 }
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
@@ -61,8 +61,7 @@ pub fn write_bind<Context: WriterContext>(
     writer.write(b"B")?;
     let length = writer.length()?;
 
-    // Zig `.String` (bun.String) vs `.string` ([]const u8) both snake_case to
-    // `string`; the bun.String overload is `bun_string` on NewWriter.
+    // The bun.String overload is `bun_string` on NewWriter.
     writer.bun_string(&cursor_name)?;
     writer.string(name)?;
 
@@ -285,7 +284,7 @@ pub fn write_query<Context: WriterContext>(
     Ok(())
 }
 
-pub fn prepare_and_query_with_signature<Context: WriterContext>(
+pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
@@ -321,7 +320,7 @@ pub fn prepare_and_query_with_signature<Context: WriterContext>(
     Ok(())
 }
 
-pub fn bind_and_execute<Context: WriterContext>(
+pub(crate) fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     array_value: JSValue,
@@ -420,7 +419,7 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
     Ok(())
 }
 
-pub fn execute_query<Context: WriterContext>(
+pub(crate) fn execute_query<Context: WriterContext>(
     query: &[u8],
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
@@ -430,7 +429,7 @@ pub fn execute_query<Context: WriterContext>(
     Ok(())
 }
 
-pub fn on_data<Context: ReaderContext>(
+pub(crate) fn on_data<Context: ReaderContext>(
     connection: &PostgresSQLConnection,
     mut reader: protocol::NewReader<Context>,
 ) -> Result<(), AnyPostgresError> {
@@ -439,6 +438,12 @@ pub fn on_data<Context: ReaderContext>(
         reader.mark_message_start();
         let c = reader.int::<u8>()?;
         bun_core::scoped_log!(Postgres, "read: {}", c as char);
+        if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_))
+            && c != b'S'
+            && c != b'N'
+        {
+            return Err(AnyPostgresError::UnexpectedMessage);
+        }
         match c {
             b'D' => connection.on(M::DataRow, reader.reborrow())?,
             b'd' => connection.on(M::CopyData, reader.reborrow())?,
@@ -488,10 +493,15 @@ pub fn on_data<Context: ReaderContext>(
             b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
             b'c' => connection.on(M::CopyDone, reader.reborrow())?,
             b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
+            b'A' => connection.on(M::NotificationResponse, reader.reborrow())?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                let to_skip = reader.length()?.saturating_sub(1);
+                let length = reader.length()?;
+                if length < 4 {
+                    return Err(AnyPostgresError::InvalidMessageLength);
+                }
+                let to_skip = length.saturating_sub(4);
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }
@@ -501,11 +511,9 @@ pub fn on_data<Context: ReaderContext>(
 
 // `bun.LinearFifo(*PostgresSQLQuery, .Dynamic)` — element is a raw pointer
 // (queries are JS-wrapper-owned, not Box-owned by the queue).
-pub type Queue = bun_collections::linear_fifo::LinearFifo<
+pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
     *mut PostgresSQLQuery,
     bun_collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
-
-// ported from: src/sql_jsc/postgres/PostgresRequest.zig

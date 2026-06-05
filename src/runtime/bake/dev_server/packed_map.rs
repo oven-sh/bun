@@ -1,11 +1,11 @@
 //! `DevServer.PackedMap` — compact source-map slice (VLQ mappings + escaped
 //! source contents) shared between `IncrementalGraph` files and
-//! `SourceMapStore` entries. Spec: src/runtime/bake/DevServer/PackedMap.zig.
+//! `SourceMapStore` entries.
 
 use std::rc::Rc;
 
-/// Line count newtype (Zig: `bun.GenericIndex(u32, u8)`).
-pub type LineCount = bun_core::GenericIndex<u32, u8>;
+/// Line count newtype.
+pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread
 /// between chunks (generated_column is always 0 because minification is off,
@@ -62,9 +62,8 @@ impl PackedMap {
 /// should never allocate an object. There is still relevant state for these
 /// files to encode, so a tagged union is used.
 ///
-/// PORT NOTE: Zig `bun.MultiArrayList(Shared)` SoA split buys nothing for a
-/// 2-word payload and `MultiArrayElement` cannot be derived for an enum, so
-/// callers store `Vec<Shared>`.
+/// An SoA split buys nothing for a 2-word payload (and `MultiArrayElement`
+/// cannot be derived for an enum), so callers store `Vec<Shared>`.
 #[derive(Default)]
 pub enum Shared {
     Some(Rc<PackedMap>),
@@ -75,19 +74,19 @@ pub enum Shared {
 
 impl Shared {
     #[inline]
-    pub fn get(&self) -> Option<&PackedMap> {
+    pub(crate) fn get(&self) -> Option<&PackedMap> {
         match self {
             Shared::Some(p) => Some(p.as_ref()),
             _ => None,
         }
     }
 
-    pub fn take(&mut self) -> Option<Rc<PackedMap>> {
+    pub(crate) fn take(&mut self) -> Option<Rc<PackedMap>> {
         match core::mem::replace(self, Shared::None) {
             Shared::Some(p) => Some(p),
             other => {
-                // PORT NOTE: reshaped for borrowck — Zig only writes `.none`
-                // on the `.some` arm, so restore the original on miss.
+                // Only the `Some` arm consumes the value, so restore the
+                // original on miss.
                 *self = other;
                 None
             }
@@ -95,7 +94,7 @@ impl Shared {
     }
 
     #[inline]
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Shared::Some(p) => p.memory_cost(),
             _ => 0,

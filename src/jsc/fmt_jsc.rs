@@ -1,5 +1,5 @@
 //! Bindgen target for `fmt_jsc.bind.ts`. The actual formatters live in
-//! `src/bun_core/fmt.zig`; only the JS-facing wrapper that takes a
+//! `src/bun_core/fmt.rs`; only the JS-facing wrapper that takes a
 //! `&JSGlobalObject` lives here so `bun_core/` stays JSC-free.
 
 use std::io::Write as _;
@@ -21,6 +21,7 @@ pub mod js_bindings {
     pub enum Formatter {
         EscapePowershell = 0,
         HighlightJavascript = 1,
+        HighlightJavascriptRedacted = 2,
     }
 
     /// Internal function for testing in highlighter.test.ts
@@ -44,6 +45,17 @@ pub mod js_bindings {
                 );
                 write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
             }
+            Formatter::HighlightJavascriptRedacted => {
+                let formatter = fmt::fmt_javascript(
+                    code,
+                    fmt::HighlighterOptions {
+                        enable_colors: true,
+                        check_for_unhighlighted_write: false,
+                        redact_sensitive_information: true,
+                    },
+                );
+                write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
+            }
             Formatter::EscapePowershell => {
                 write!(writer, "{}", fmt::escape_powershell(code))
                     .map_err(|_| global.throw_out_of_memory())?;
@@ -53,5 +65,3 @@ pub mod js_bindings {
         Ok(String::clone_utf8(buffer.list.as_slice()))
     }
 }
-
-// ported from: src/jsc/fmt_jsc.zig

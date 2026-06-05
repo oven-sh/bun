@@ -7,14 +7,12 @@ use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyCon
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::{PrintErr, Printer, VendorPrefix};
-// Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
 use css::prefixes::is_flex_2009;
+use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-// TODO(port): css::DefineEnumProperty derive provides parse/to_css/eql/hash/deep_clone over kebab-case variant names
 pub enum FlexDirection {
     /// Flex items are laid out in a row.
     #[default]
@@ -28,7 +26,7 @@ pub enum FlexDirection {
 }
 
 impl FlexDirection {
-    pub fn to_2009(self) -> (BoxOrient, BoxDirection) {
+    pub(crate) fn to_2009(self) -> (BoxOrient, BoxDirection) {
         match self {
             FlexDirection::Row => (BoxOrient::Horizontal, BoxDirection::Normal),
             FlexDirection::Column => (BoxOrient::Vertical, BoxDirection::Normal),
@@ -51,12 +49,6 @@ pub enum FlexWrap {
     WrapReverse,
 }
 
-impl FlexWrap {
-    pub fn from_standard(self) -> Option<FlexWrap> {
-        Some(self)
-    }
-}
-
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {
@@ -66,14 +58,12 @@ pub struct FlexFlow {
     pub wrap: FlexWrap,
 }
 
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap are comptime shorthand metadata consumed by
-// css::DefineShorthand reflection. Port as part of the shorthand derive.
+// Shorthand metadata recorded here for a future shorthand derive:
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
 impl FlexFlow {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut direction: Option<FlexDirection> = None;
         let mut wrap: Option<FlexWrap> = None;
 
@@ -99,7 +89,7 @@ impl FlexFlow {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let mut needs_space = false;
         if self.direction != FlexDirection::default() || self.wrap == FlexWrap::default() {
             self.direction.to_css(dest)?;
@@ -129,13 +119,12 @@ pub struct Flex {
     pub basis: LengthPercentageOrAuto,
 }
 
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.flex, PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap shorthand metadata — see FlexFlow note.
+// Shorthand metadata recorded here for a future shorthand derive (see FlexFlow note):
 //   PropertyFieldMap = { grow: PropertyIdTag::FlexGrow, shrink: PropertyIdTag::FlexShrink, basis: PropertyIdTag::FlexBasis }
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
 impl Flex {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -179,7 +168,7 @@ impl Flex {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.grow == 0.0
             && self.shrink == 0.0
             && matches!(self.basis, LengthPercentageOrAuto::Auto)
@@ -259,7 +248,7 @@ pub enum BoxDirection {
     Reverse,
 }
 
-pub type FlexAlign = BoxAlign;
+pub(crate) type FlexAlign = BoxAlign;
 
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
 /// Equivalent to the `align-items` property in the standard syntax.
@@ -280,7 +269,7 @@ pub enum BoxAlign {
 }
 
 impl BoxAlign {
-    pub fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
+    pub(crate) fn from_standard(align: &AlignItems) -> Option<BoxAlign> {
         use css::css_properties::align::SelfPosition;
         match align {
             AlignItems::SelfPosition(sp) => {
@@ -318,7 +307,7 @@ pub enum BoxPack {
 }
 
 impl BoxPack {
-    pub fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
+    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<BoxPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -354,7 +343,7 @@ pub enum BoxLines {
 }
 
 impl BoxLines {
-    pub fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
+    pub(crate) fn from_standard(wrap: FlexWrap) -> Option<BoxLines> {
         match wrap {
             FlexWrap::Nowrap => Some(BoxLines::Single),
             FlexWrap::Wrap => Some(BoxLines::Multiple),
@@ -383,7 +372,7 @@ pub enum FlexPack {
 }
 
 impl FlexPack {
-    pub fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
+    pub(crate) fn from_standard(justify: &JustifyContent) -> Option<FlexPack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             JustifyContent::ContentDistribution(cd) => match cd {
@@ -430,7 +419,7 @@ pub enum FlexItemAlign {
 }
 
 impl FlexItemAlign {
-    pub fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
+    pub(crate) fn from_standard(justify: &AlignSelf) -> Option<FlexItemAlign> {
         use css::css_properties::align::SelfPosition;
         match justify {
             AlignSelf::Auto => Some(FlexItemAlign::Auto),
@@ -473,7 +462,7 @@ pub enum FlexLinePack {
 }
 
 impl FlexLinePack {
-    pub fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
+    pub(crate) fn from_standard(justify: &AlignContent) -> Option<FlexLinePack> {
         use css::css_properties::align::{ContentDistribution, ContentPosition};
         match justify {
             AlignContent::ContentDistribution(cd) => match cd {
@@ -500,7 +489,7 @@ impl FlexLinePack {
     }
 }
 
-pub type BoxOrdinalGroup = CSSInteger;
+pub(crate) type BoxOrdinalGroup = CSSInteger;
 
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
@@ -540,14 +529,12 @@ pub struct FlexHandler {
 }
 
 impl FlexHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // TODO(port): Zig used local closures with `@field(self, prop)` comptime reflection.
-        // Ported as macro_rules! token-pasting on field idents.
         macro_rules! maybe_flush {
             ($prop:ident, $val:expr, $vp:expr) => {{
                 // If two vendor prefixes for the same property have different
@@ -565,9 +552,8 @@ impl FlexHandler {
                 maybe_flush!($prop, $val, $vp);
 
                 // Otherwise, update the value and add the prefix
-                // PORT NOTE: Zig threaded `context.arena` into `css.generic.deepClone`;
-                // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
-                // so `.clone()` is the faithful equivalent.
+                // Every payload here is `Clone` (Copy enums / f32 / i32 /
+                // LengthPercentageOrAuto), so `.clone()` suffices.
                 if let Some(field) = &mut self.$prop {
                     field.0 = ($val).clone();
                     field.1.insert(*$vp);
@@ -652,8 +638,7 @@ impl FlexHandler {
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
-                    // has no blanket `deep_clone` yet; reconstruct from the matched payload.
+                    // `Property` has no blanket `deep_clone` yet; reconstruct from the matched payload.
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
                 } else {
@@ -666,7 +651,7 @@ impl FlexHandler {
         true
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
@@ -701,8 +686,6 @@ impl FlexHandler {
         let mut order = self.order.take();
         let mut flex_order = self.flex_order.take();
 
-        // TODO(port): Zig `legacyProperty` / `singleProperty` use `@unionInit(Property, name, ...)`
-        // (comptime token-pasting). Ported as macro_rules! taking the Property variant ident.
         macro_rules! legacy_property {
             ($variant:ident, $key:expr) => {{
                 if let Some(value) = $key {
@@ -711,8 +694,7 @@ impl FlexHandler {
                     if !prefix.is_empty() {
                         dest.push(Property::$variant((val, prefix)));
                     } else {
-                        // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
-                        // css.generic.deinit(@TypeOf(val), &val, ctx.arena);
+                        // No prefix: the value is dropped here.
                     }
                 }
             }};
@@ -751,7 +733,6 @@ impl FlexHandler {
         }
 
         if let (Some(dir_val), Some(wrap_val)) = (&mut direction, &mut wrap) {
-            // PORT NOTE: reshaped for borrowck — Zig took simultaneous &mut into both Options.
             let dir: &FlexDirection = &dir_val.0;
             let dir_prefix: &mut VendorPrefix = &mut dir_val.1;
             let wrapinner: &FlexWrap = &wrap_val.0;
@@ -806,7 +787,6 @@ impl FlexHandler {
             // prop_2012 = Some, prop_2009 = BoxOrdinalGroup special case
             ($variant:ident, $key:expr, prop_2012 = $p2012:ident, prop_2009 = (BoxOrdinalGroup, $v2009:ident), feature = $feature:ident) => {{
                 single_property!(@inner $variant, $key, $feature, |val, _prefix, prefixes_2009: VendorPrefix| {
-                    // Zig: if T == BoxOrdinalGroup -> Some(val as i32)
                     let s: Option<i32> = Some(val);
                     if let Some(v) = s {
                         dest.push(Property::$v2009((v, prefixes_2009)));
@@ -857,10 +837,10 @@ impl FlexHandler {
                 }
             }};
         }
-        // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
-        // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
-        // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
-        // still runs but has no effect. Verify this matches behavior exactly.
+        // The `prop_2009 = None` arms pass a no-op closure for the 2009 block.
+        // That block has no side effects other than invoking the body (it only
+        // reads `prefix`/`targets` into locals), so running it with a no-op
+        // body is behaviorally identical to skipping it.
 
         single_property!(
             FlexDirection,
@@ -897,7 +877,7 @@ impl FlexHandler {
         }
 
         if let (Some(g_val), Some(s_val), Some(b_val)) = (&mut grow, &mut shrink, &mut basis) {
-            // PORT NOTE: reshaped for borrowck
+            // reshaped for borrowck
             let g = g_val.0;
             let g_prefix: &mut VendorPrefix = &mut g_val.1;
             let s = s_val.0;
@@ -977,5 +957,3 @@ impl FlexHandler {
         )
     }
 }
-
-// ported from: src/css/properties/flex.zig

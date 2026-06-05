@@ -19,8 +19,6 @@ impl ContainerName {
 impl ContainerName {
     #[inline]
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk — `CustomIdent`
-        // identity-copy (arena-owned slice pointer).
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -47,7 +45,7 @@ impl ContainerName {
 }
 
 pub use ContainerName as ContainerNameFns;
-pub type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
+pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
 pub enum ContainerSizeFeatureId {
@@ -67,11 +65,9 @@ pub enum ContainerSizeFeatureId {
 
 // `QueryFeature<FeatureId>` requires `FeatureId: FeatureIdTrait` at the type
 // level, so this impl must be present for `ContainerSizeFeature` to resolve.
-// `value_type` inlines the Zig `DeriveValueType` reflection; `to_css`/`from_str`
-// delegate to `enum_property_util` (driven by the `EnumProperty` derive).
+// `to_css`/`from_str` delegate to `enum_property_util` (driven by the
+// `EnumProperty` derive).
 impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
-    // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
-    // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.
     fn value_type(&self) -> MediaFeatureType {
         match self {
             Self::Width => MediaFeatureType::Length,
@@ -92,17 +88,6 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     }
 }
 
-impl ContainerSizeFeatureId {
-    pub fn to_css_with_prefix(
-        self,
-        prefix: &[u8],
-        dest: &mut Printer,
-    ) -> core::result::Result<(), PrintErr> {
-        dest.write_str(prefix)?;
-        self.to_css(dest)
-    }
-}
-
 /// Represents a style query within a container condition.
 pub enum StyleQuery {
     /// A style feature, implicitly parenthesized.
@@ -116,8 +101,7 @@ pub enum StyleQuery {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -164,8 +148,8 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // PORT NOTE: Zig threaded `(input.arena(), null)` here; re-thread
-        // `&Bump` once `ParserOptions` carries the arena.
+        // The arena gets re-threaded as part of the crate-wide `'bump`
+        // lifetime work (see css_parser.rs).
         let opts = css::ParserOptions::default(None);
         let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
@@ -181,23 +165,21 @@ impl QueryCondition for StyleQuery {
         }
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
-        // Zig: `return .{ .err = input.newErrorForNextToken() }`
         Err(input.new_error_for_next_token())
     }
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
         match self {
             StyleQuery::Not(_) => true,
-            StyleQuery::Operation { operator, .. } => Some(*operator) == parent_operator,
+            StyleQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
             StyleQuery::Feature(_) => true,
         }
     }
 }
 
 impl StyleQuery {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `Operator` is `Copy`;
-        // `Property` routes through `dc::property` until the per-variant
-        // `DeepClone` derives land in `properties_generated.rs`.
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // `Operator` is `Copy`; `Property` routes through `dc::property` until
+        // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
             Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
@@ -222,8 +204,7 @@ pub enum ContainerCondition {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.
@@ -294,7 +275,6 @@ impl QueryCondition for ContainerCondition {
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
         use crate::media_query::QueryConditionFlags;
-        // Zig defined a local `Fns` struct with two callbacks; in Rust pass closures.
         input.parse_nested_block(|i| {
             if let Ok(res) = i.try_parse(|i2| {
                 media_query::parse_query_condition::<StyleQuery>(i2, QueryConditionFlags::ALLOW_OR)
@@ -307,7 +287,7 @@ impl QueryCondition for ContainerCondition {
     fn needs_parens(&self, parent_operator: Option<Operator>, targets: &css::Targets) -> bool {
         match self {
             ContainerCondition::Not(_) => true,
-            ContainerCondition::Operation { operator, .. } => Some(*operator) == parent_operator,
+            ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
             ContainerCondition::Style(_) => false,
         }
@@ -316,9 +296,8 @@ impl QueryCondition for ContainerCondition {
 
 impl ContainerCondition {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `QueryFeature<F>`
-        // routes through `dc::query_feature` (Clone is faithful — see note
-        // there); `Operator` is `Copy`.
+        // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
+        // faithful — see note there); `Operator` is `Copy`.
         match self {
             Self::Feature(f) => Self::Feature(Box::new(super::dc::query_feature(f, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
@@ -358,7 +337,7 @@ pub struct ContainerRule<R> {
 }
 
 impl<R> ContainerRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -370,7 +349,6 @@ impl<R> ContainerRule<R> {
 
         // Don't downlevel range syntax in container queries.
         let exclude = dest.targets.exclude;
-        // Zig: bun.bits.insert(css.targets.Features, &dest.targets.exclude, .media_queries);
         dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
         self.condition.to_css(dest)?;
         dest.targets.exclude = exclude;
@@ -383,11 +361,10 @@ impl<R> ContainerRule<R> {
 }
 
 impl<R> ContainerRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
             condition: self.condition.deep_clone(bump),
@@ -396,5 +373,3 @@ impl<R> ContainerRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/container.zig

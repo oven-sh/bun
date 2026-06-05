@@ -12,7 +12,6 @@ pub use crate::tsconfig_json::options::jsx;
 pub(crate) use bun_ast::{Loader, Target};
 pub use bun_options_types::bundle_enums::ModuleType;
 
-/// Port of `bundler/options.zig` `Packages`.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Packages {
     #[default]
@@ -20,7 +19,6 @@ pub enum Packages {
     External,
 }
 
-/// Port of `bundler/options.zig` `ExternalModules`.
 #[derive(Default)]
 pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
@@ -49,7 +47,6 @@ pub struct WildcardPattern {
 /// silently ignored every `--external` absolute path / package name.
 pub use bun_collections::StringSet;
 
-/// Port of `bundler/options.zig` `Conditions`.
 #[derive(Default)]
 pub struct Conditions {
     pub import: crate::package_json::ConditionsMap,
@@ -60,12 +57,11 @@ pub struct Conditions {
 /// `Copy` tag selecting one of the extension-order lists owned by
 /// [`BundleOptions`]. Replaces the previous `*const [Box<[u8]>]`
 /// self-reference (`Resolver.extension_order` pointing into
-/// `Resolver.opts`) with a value type — the Zig save/restore pattern
-/// (`resolver.zig:691-696` etc.) survives unchanged because the tag is
+/// `Resolver.opts`) with a value type. The tag is
 /// `Copy`, and the actual slice is resolved on demand via
 /// [`BundleOptions::ext_order_slice`] / [`Resolver::extension_order`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum ExtOrder {
+pub(crate) enum ExtOrder {
     /// `opts.extension_order.default.default`
     #[default]
     DefaultDefault,
@@ -75,10 +71,10 @@ pub enum ExtOrder {
     NodeModulesDefault,
     /// `opts.extension_order.node_modules.esm`
     NodeModulesEsm,
-    /// `opts.extension_order.css` (Zig reads `Defaults.CssExtensionOrder` directly)
+    /// `opts.extension_order.css`
     Css,
     /// `opts.main_field_extension_order` — used when resolving the `"main"`
-    /// package.json field (`resolver.zig:3703,3715,3721`).
+    /// package.json field.
     MainField,
 }
 
@@ -88,7 +84,6 @@ pub fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
     s.iter().map(|s| Box::<[u8]>::from(*s)).collect()
 }
 
-/// Port of `bundler/options.zig` `ResolveFileExtensions`.
 pub struct ExtensionOrder {
     pub default: ExtensionOrderGroup,
     pub node_modules: ExtensionOrderGroup,
@@ -124,7 +119,7 @@ impl Default for ExtensionOrder {
     }
 }
 impl ExtensionOrder {
-    /// Port of `options.zig` `ResolveFileExtensions.kind`. Returns the
+    /// Returns the
     /// [`ExtOrder`] tag; resolve to a slice via
     /// [`BundleOptions::ext_order_slice`].
     pub fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
@@ -174,18 +169,18 @@ pub mod bundle_options {
         // Mirrors `bun_bundler::options::bundle_options_defaults::EXTENSION_ORDER`
         // / `MODULE_EXTENSION_ORDER` — duplicated so `Default for BundleOptions`
         // below is self-contained (resolver sits below bundler in the dep graph).
-        pub const EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
             b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
         ];
-        pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
         ];
         /// Mirrors `bun_bundler::options::bundle_options_defaults::node_modules`.
         pub mod node_modules {
-            pub const EXTENSION_ORDER: &[&[u8]] = &[
+            pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
                 b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
             ];
-            pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+            pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
                 b".mjs", b".jsx", b".js", b".mts", b".tsx", b".ts", b".cjs", b".cts", b".json",
             ];
         }
@@ -198,7 +193,7 @@ pub mod bundle_options {
 // field on the local `BundleOptions` subset stay source-compatible.
 pub use ::bun_options_types::ForceNodeEnv;
 
-/// Port of `bundler/options.zig` `Framework` (Bake) — only the
+/// Bake `Framework` — only the
 /// `built_in_modules` field, which is the sole resolver-read member.
 pub struct Framework {
     pub built_in_modules: bun_collections::StringArrayHashMap<bun_options_types::BuiltInModule>,
@@ -220,8 +215,7 @@ pub struct BundleOptions {
     pub extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub framework: Option<Framework>,
     pub global_cache: bun_options_types::global_cache::GlobalCache,
-    // Zig: `?*api.BunInstall` (options.zig:1753). Spec consumer
-    // `PackageManagerOptions.zig:load` only reads through it; the bundler
+    // The bundler
     // projects this from its own `Option<NonNull<api::BunInstall>>` field
     // (CLI-owned `Box<BunInstall>`, process-lifetime).
     pub install: Option<core::ptr::NonNull<bun_options_types::schema::api::BunInstall>>,
@@ -229,7 +223,7 @@ pub struct BundleOptions {
     pub load_tsconfig_json: bool,
     pub main_field_extension_order: Box<[Box<[u8]>]>,
     pub main_fields: Box<[Box<[u8]>]>,
-    /// Spec resolver.zig `auto_main` compares the *pointer* of
+    /// `auto_main` compares the *pointer* of
     /// `opts.main_fields` against `Target.DefaultMainFields.get(target)` to
     /// detect "user did not pass --main-fields". The bundler stores an owned
     /// `Box<[Box<[u8]>]>` whose pointer can never match a static, so the
@@ -244,8 +238,7 @@ pub struct BundleOptions {
     pub production: bool,
     pub force_node_env: ForceNodeEnv,
     // Bundler-only fields read via `c.resolver.opts` in
-    // `linker_context/*` (Zig stores the full `BundleOptions` on the
-    // resolver). Projected by `bun_bundler` at link time.
+    // `linker_context/*`. Projected by `bun_bundler` at link time.
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
     pub public_path: Box<[u8]>,
@@ -256,7 +249,7 @@ pub struct BundleOptions {
 }
 
 impl Default for BundleOptions {
-    /// Spec: `options.zig` field-init defaults. Only the fields the resolver
+    /// Only the fields the resolver
     /// reads — `bun_bundler::Transpiler::init` overlays the per-field
     /// projections it can map (target/packages/jsx/bools/global_cache/…)
     /// before handing this to `Resolver::init1`.
@@ -299,7 +292,6 @@ impl Default for BundleOptions {
 }
 
 impl BundleOptions {
-    /// Port of `options.zig:1825 BundleOptions.setProduction`.
     pub fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
@@ -308,15 +300,13 @@ impl BundleOptions {
     }
 }
 
-// Port of `bundler/options.zig` `Target.DefaultMainFields`.
-//
 // These are the per-target default `--main-fields` orderings. `BundleOptions.main_fields`
-// is initialised to alias one of these slices (see options.zig:1712 / 2022), and the
+// is initialised to alias one of these slices, and the
 // resolver's `auto_main` heuristic at `load_as_main_field` compares the *pointer* of
 // `opts.main_fields` against `DEFAULT_MAIN_FIELDS.get(opts.target)` to detect whether the
 // user explicitly set a main-fields list. The previous `&[]` stub made that check always
 // false, silently disabling the module-vs-main dual-resolution path.
-pub struct TargetMainFields;
+pub(crate) struct TargetMainFields;
 
 // Note that this means if a package specifies "module" and "main", the ES6
 // module will not be selected. This means tree shaking will not work when
@@ -344,7 +334,7 @@ static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext
 static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
 
 impl TargetMainFields {
-    pub fn get(&self, t: Target) -> &'static [&'static [u8]] {
+    pub(crate) fn get(&self, t: Target) -> &'static [&'static [u8]] {
         match t {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
@@ -354,4 +344,4 @@ impl TargetMainFields {
         }
     }
 }
-pub const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;
+pub(crate) const DEFAULT_MAIN_FIELDS: TargetMainFields = TargetMainFields;

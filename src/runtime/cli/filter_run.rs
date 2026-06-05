@@ -18,15 +18,14 @@ use bun_io::{BufferedReader, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
-// TODO(port): several `[]const u8` fields below are leaked in Zig (program exits). In Zig,
-// `script_content` and `combined` alias the same `copy_script` buffer; here they are split
-// into separate owned boxes. Revisit ownership.
+// The string fields below are owned boxes, except `combined` which is interned
+// in the process-lifetime CLI arena.
 struct ScriptConfig {
     package_json_path: Box<[u8]>,
     package_name: Box<[u8]>,
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
-    combined: &'static ZStr, // TODO(port): lifetime — points into leaked copy_script buffer
+    combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
     // Owned dep names; `DependencyMap.source_buf` would dangle once the
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
@@ -41,18 +40,17 @@ struct ScriptConfig {
     elide_count: Option<usize>,
 }
 
-// Anonymous struct in Zig: `process: ?struct { ptr, status }`
 struct ProcessInfo {
     // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers (Zig: `*Process`).
+    // `to_process()` and `set_exit_handler` callers.
     ptr: *mut Process,
     status: Status,
 }
 
-// PORT NOTE: `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
-// and `dependents` holds raw pointers into that same `handles` slice. This is self-referential in
-// Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
-pub struct ProcessHandle<'a> {
+// `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
+// and `dependents` holds raw pointers into that same `handles` slice. This is
+// self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
+pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>>,
 
@@ -74,8 +72,7 @@ pub struct ProcessHandle<'a> {
 
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), bun_core::Error> {
-        // Copy the BackRef out so the `&mut State` borrow is detached from `self`
-        // (matches Zig's free aliasing of `*State` alongside `*ProcessHandle`).
+        // Copy the BackRef out so the `&mut State` borrow is detached from `self`.
         let mut state_ref = self.state;
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
         let state = unsafe { state_ref.get_mut() };
@@ -92,24 +89,21 @@ impl<'a> ProcessHandle<'a> {
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
-        // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
-
         handle.start_time = Some(Instant::now());
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
-            // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
-            // PORT NOTE: copy to owned — `original_path` borrows env.map which is
-            // mutated by put() below (Zig aliased freely).
+            // Copy to owned — `original_path` borrows env.map which is
+            // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
             let _ = env.map.put(b"PATH", &handle.config.PATH);
-            // Zig: `defer { ... env.map.put("PATH", original_path); }` — restores PATH
-            // unconditionally at block exit (success OR error). Keep the guard armed for the
-            // whole block so `?` early-returns also restore.
+            // Restores PATH unconditionally at block exit (success OR error).
+            // Keep the guard armed for the whole block so `?` early-returns also
+            // restore.
             scopeguard::defer! {
                 // SAFETY: env_ptr valid for the run loop lifetime (see above).
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
@@ -125,7 +119,7 @@ impl<'a> ProcessHandle<'a> {
                     envp.as_ptr().cast::<*const c_char>(),
                 )
             }??;
-            // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
+            // `_guard` drops here (or on `?` above), restoring PATH.
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -201,7 +195,7 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
@@ -210,9 +204,9 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    pub fn on_reader_done(&mut self) {}
+    pub(crate) fn on_reader_done(&mut self) {}
 
-    pub fn on_reader_error(&mut self, err: &sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
     }
 }
@@ -225,7 +219,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    pub fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
         self.process.as_mut().unwrap().status = status;
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
@@ -236,11 +230,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub fn event_loop(&self) -> *mut MiniEventLoop<'static> {
-        self.state.event_loop
-    }
-
-    pub fn loop_(&self) -> *mut bun_io::Loop {
+    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
@@ -259,9 +249,7 @@ bun_io::impl_buffered_reader_parent! {
     event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
 }
 
-/// `Output.prettyFmt(str, true)` — comptime ANSI-tag expansion in Zig.
-// TODO(port): `pretty_fmt` is comptime string processing in Zig; needs a `const fn` or macro
-// in `bun_core::Output`. Using a thin wrapper macro for now.
+/// Compile-time ANSI-tag expansion.
 macro_rules! fmt {
     ($s:literal) => {
         bun_core::Output::pretty_fmt!($s, true)
@@ -270,7 +258,7 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    // Raw `*mut` (Zig: `*MiniEventLoop`) — `init_global` returns the
+    // Raw `*mut` — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
@@ -281,9 +269,9 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
+    shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
-    // Raw `*mut` (Zig: `*bun.DotEnv.Loader`) — process-lifetime singleton owned
+    // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
@@ -296,7 +284,7 @@ struct ElideResult<'b> {
 }
 
 impl<'a> State<'a> {
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -305,7 +293,6 @@ impl<'a> State<'a> {
         handle: &mut ProcessHandle<'a>,
         chunk: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
             let _ = self.redraw(false);
@@ -351,7 +338,6 @@ impl<'a> State<'a> {
     }
 
     fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.remaining_scripts -= 1;
         if !self.aborted {
             for &dependent in &handle.dependents {
@@ -360,7 +346,7 @@ impl<'a> State<'a> {
                 dependent.remaining_dependencies -= 1;
                 if dependent.remaining_dependencies == 0 {
                     if dependent.start().is_err() {
-                        Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                        bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                         Global::exit(1);
                     }
                 }
@@ -456,7 +442,6 @@ impl<'a> State<'a> {
     }
 
     fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if !self.pretty_output {
             return Ok(());
         }
@@ -471,7 +456,7 @@ impl<'a> State<'a> {
                 self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
             }
         }
-        // PORT NOTE: reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
+        // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
@@ -586,11 +571,10 @@ impl<'a> State<'a> {
     }
 
     fn flush_draw_buf(&self) {
-        // TODO(port): std::fs::File::stdout() banned — use bun_sys stdout write.
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    pub fn abort(&mut self) {
+    pub(crate) fn abort(&mut self) {
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
         for handle in self.handles.iter_mut() {
@@ -603,7 +587,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn finalize(&mut self) -> u8 {
+    pub(crate) fn finalize(&mut self) -> u8 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -629,8 +613,7 @@ impl<'a> State<'a> {
 struct AbortHandler;
 
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-// PORT NOTE: Zig used a non-atomic `var should_abort = false` set from a signal handler;
-// Rust requires atomics for signal-handler-safe access.
+// Atomic because it is set from a signal handler.
 
 impl AbortHandler {
     #[cfg(unix)]
@@ -655,7 +638,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub fn install() {
+    pub(crate) fn install() {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -670,20 +653,19 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
-            // TODO(port): move to <area>_sys
             let res = bun_sys::c::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
             );
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n");
+                    bun_core::warn!("Failed to set abort handler\n");
                 }
             }
         }
     }
 
-    pub fn uninstall() {
+    pub(crate) fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
@@ -699,18 +681,18 @@ fn windows_is_terminal() -> bool {
     res == bun_sys::windows::FILE_TYPE_CHAR
 }
 
-pub fn run_scripts_with_filter(
+pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> Result<core::convert::Infallible, bun_core::Error> {
-    // TODO(port): Zig return type is `!noreturn`; using Result<Infallible, _> for `?` support.
-    // PORT NOTE: own the slice — `ctx` is reborrowed `&mut` for
+    // Never returns normally; Result<Infallible, _> keeps `?` support.
+    // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
         ctx.positionals[1].clone()
     } else if ctx.positionals.len() > 0 {
         ctx.positionals[0].clone()
     } else {
-        Output::pretty_errorln("<r><red>error<r>: No script name provided");
+        bun_core::pretty_errorln!("<r><red>error<r>: No script name provided");
         Global::exit(1);
     };
     let script_name: &[u8] = &script_name_owned;
@@ -728,7 +710,7 @@ pub fn run_scripts_with_filter(
     // these things are leaked because we are going to exit
     // When --workspaces is set, we want to match all workspace packages
     // Otherwise use the provided filters
-    // PORT NOTE: `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
+    // `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
     // `Vec<Box<[u8]>>` so build a borrowed-slice view.
     let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
         // Use "*" as filter to match all packages in the workspace
@@ -751,8 +733,8 @@ pub fn run_scripts_with_filter(
         &mut root_buf,
     )?;
 
-    // TODO(refactor): out-param init — Zig used `var this_transpiler: Transpiler = undefined` and
-    // `configureEnvForRun` writes through it. Per PORTING.md this should be reshaped to
+    // TODO(refactor): out-param init — `configureEnvForRun` writes through the
+    // out-param. Per PORTING.md this should be reshaped to
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
@@ -783,11 +765,9 @@ pub fn run_scripts_with_filter(
             None,
             IncludeScripts::IncludeScripts,
         ) else {
-            Output::warn("Failed to read package.json\n");
+            bun_core::warn!("Failed to read package.json\n");
             continue;
         };
-        // TODO(port): PackageJSON::parse signature — enum args are placeholders.
-
         let Some(pkgscripts) = &pkgjson.scripts else {
             continue;
         };
@@ -841,8 +821,7 @@ pub fn run_scripts_with_filter(
             }
             copy_script.push(0);
 
-            // PORT NOTE: in Zig, `script_content` and `combined` both alias
-            // `copy_script.items`. Route through the process-lifetime CLI arena
+            // Route through the process-lifetime CLI arena
             // and derive the `ZStr` from the arena slice.
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
             let combined_len = interned.len() - 1;
@@ -918,10 +897,7 @@ pub fn run_scripts_with_filter(
         }
     };
 
-    let handles: Box<[ProcessHandle]> =
-        // TODO(port): Box::new_uninit_slice — handles initialized in loop below.
-        Vec::with_capacity(scripts.len()).into();
-    // PORT NOTE: reshaped for borrowck — Zig allocates uninit slice then writes each element.
+    let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
     // pointers stored in `map`. This is self-referential; raw pointers used below.
 
@@ -948,7 +924,7 @@ pub fn run_scripts_with_filter(
     };
 
     // initialize the handles
-    // PORT NOTE: self-referential — each `state.handles[i].state` points back at
+    // Self-referential — each `state.handles[i].state` points back at
     // `state`, and `map` stores `*mut ProcessHandle` into `state.handles`. Derive
     // the backref with mutable provenance (`addr_of_mut!`) so writes through it
     // in `ProcessHandle::start` / `State::process_exit` are sound under Stacked
@@ -990,7 +966,7 @@ pub fn run_scripts_with_filter(
                     ..Default::default()
                 },
                 stream: true,
-                ..Default::default() // TODO(port): SpawnOptions remaining fields
+                ..Default::default()
             },
             start_time: None,
             end_time: None,
@@ -1060,7 +1036,7 @@ pub fn run_scripts_with_filter(
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
                 // todo this should probably happen in "start"
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }
@@ -1102,5 +1078,3 @@ fn has_cycle(current: &mut ProcessHandle) -> bool {
     current.visiting = false;
     false
 }
-
-// ported from: src/cli/filter_run.zig

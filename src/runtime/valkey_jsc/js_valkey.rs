@@ -23,7 +23,7 @@ use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
-// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs`; narrow once
+// Widened to `JsResult<T>` to match `valkey.rs`; can be narrowed once
 // `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
 // `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
@@ -32,8 +32,8 @@ type JsTerminatedResult<T> = jsc::JsResult<T>;
 /// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
 /// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
 /// / `resolve`); the other variants are unreachable on this path.
-// PORT NOTE: while `JsTerminatedResult` is widened to `JsResult` (see above),
-// this is effectively identity-with-OOM-crash. Once both aliases tighten to
+// While `JsTerminatedResult` is widened to `JsResult` (see above), this is
+// effectively identity-with-OOM-crash. Once both aliases tighten to
 // `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
 #[inline]
 fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
@@ -58,7 +58,6 @@ fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
 
 /// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
 /// `scopeguard`-captures-`&self` borrowck conflict that pervades this file.
-/// Mirrors Zig's `defer this.deref()` which had no aliasing restriction.
 // R-2: takes `*const` now that every `JSValkeyClient` method is `&self`;
 // `deref()` (and `ref_()`) already only need a shared receiver.
 #[inline]
@@ -88,10 +87,9 @@ pub struct SubscriptionCtx {
     pub original_enable_auto_pipelining: bool,
 }
 
-/// `jsc.Codegen.JSRedisClient` — the generate-classes.ts output now emits a
+/// The generate-classes.ts output emits a
 /// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
-/// free-fns plus `to_js`/`from_js`. Re-exported here as `Js` (mirrors Zig's
-/// `pub const js = jsc.Codegen.JSRedisClient`).
+/// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
 // SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
@@ -185,8 +183,6 @@ impl SubscriptionCtx {
         }
 
         // Existing is guaranteed to be an array of callbacks.
-        // This check is necessary because crossing between Zig and C++ is necessary because Zig
-        // doesn't know that C++ is side-effect-free.
         if cfg!(debug_assertions) {
             debug_assert!(existing.is_array());
         }
@@ -230,7 +226,6 @@ impl SubscriptionCtx {
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
-        // PORT NOTE: Zig `defer` ≡ scopeguard-on-drop here.
         let map = self.subscription_callback_map();
 
         let handlers_array: JSValue;
@@ -335,7 +330,7 @@ impl SubscriptionCtx {
         Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
     }
 
-    // PORT NOTE: cannot be Drop — takes global_object param. Exposed as explicit
+    // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
     // `close` per PORTING.md (never expose `pub fn deinit`).
     pub fn close(&self, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
@@ -358,7 +353,7 @@ impl SubscriptionCtx {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Valkey client wrapper for JavaScript
-// PORT NOTE: `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
+// `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
 // macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
@@ -367,7 +362,7 @@ impl SubscriptionCtx {
 // `#[repr(transparent)]`, so `from_field_ptr!`/`owner!` recovery (dispatch.rs,
 // `ValkeyClient::parent`) sees identical offsets.
 //
-// `#[repr(C)]`: declared layout must match the Zig original — `client` MUST be
+// `#[repr(C)]`: `client` MUST be
 // at offset 0. `ValkeyClient::parent()` recovers the outer pointer via
 // `from_field_ptr!`, but belt-and-suspenders against any path that assumes
 // `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
@@ -463,7 +458,7 @@ impl JSValkeyClient {
     }
 
     // Factory function to create a new Valkey client from JS
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
+    // No `#[bun_jsc::host_fn]` here — the free-fn shim it emits
     // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
     // wires the constructor via `RedisClientImpl::constructor` (see
     // generated_classes.rs), which passes the freshly-allocated wrapper cell
@@ -501,7 +496,7 @@ impl JSValkeyClient {
         // `defer url_str.deref();` — bun_core::String drops on scope exit.
         let mut fallback_url_buf = [0u8; 2048];
 
-        // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
+        // Parse and validate the URL using `URL::from_string`, which returns null for invalid URLs
         // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
         // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
         // the case right now and I do not understand why. It will take some work in JSC to
@@ -531,8 +526,7 @@ impl JSValkeyClient {
                 use std::io::Write;
                 let mut cursor = &mut fallback_url_buf[..];
                 let start_len = cursor.len();
-                // PORT NOTE: bufPrintZ NUL-terminates; we don't need the NUL here since we
-                // immediately re-parse via fromUTF8.
+                // No NUL terminator needed here — we immediately re-parse via fromUTF8.
                 if write!(&mut cursor, "valkey://").is_err()
                     || cursor.write_all(url_byte_slice).is_err()
                 {
@@ -553,7 +547,7 @@ impl JSValkeyClient {
                 }
             }
         };
-        // SAFETY: `from_utf8` heap-allocates; release on scope exit (Zig: `defer parsed_url.deinit()`).
+        // SAFETY: `from_utf8` heap-allocates; release on scope exit.
         let _parsed_url_drop =
             scopeguard::guard(parsed_url, |p| unsafe { URL::destroy(p.as_ptr()) });
         // `_parsed_url_drop` keeps the heap `URL` live for this scope, so the
@@ -666,9 +660,8 @@ impl JSValkeyClient {
             let pass_sp = b.append_count(password_utf8.slice());
             let host_sp = b.append_count(hostname_slice);
             connection_strings = b.move_to_slice();
-            // PORT NOTE: in Zig these were `&[u8]` slices into
-            // `connection_strings` (self-referential). The Rust `ValkeyClient`
-            // owns each field as `Box<[u8]>`, so re-slice from the pointers.
+            // `ValkeyClient` owns each field as an independent
+            // `Box<[u8]>`, so re-slice from the pointers.
             username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
             password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
             hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
@@ -683,7 +676,7 @@ impl JSValkeyClient {
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        // PORT NOTE: Zig used `undefined` for _subscription_ctx; initialized later by `create()`.
+        // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
@@ -727,6 +720,7 @@ impl JSValkeyClient {
                 idle_timeout_interval_ms: options.idle_timeout_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
+                reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
@@ -777,12 +771,11 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
-        // into the single `connection_strings` allocation, so the spec dupes
-        // `connection_strings` once and `rebaseSlice`s the sub-slices into the copy.
-        // The Rust `ValkeyClient` (see valkey.rs:290-299) instead owns each field
-        // as an independent `Box<[u8]>`, so the rebase arithmetic would compute a
-        // garbage offset and read OOB. Clone each owned buffer directly.
+        // `ValkeyClient` (see valkey.rs:290-299) owns `username`/`password`/
+        // `address.hostname` as independent `Box<[u8]>`s rather than sub-slices
+        // of the single `connection_strings` allocation, so rebase arithmetic
+        // against `connection_strings` would compute a garbage offset and read
+        // OOB. Clone each owned buffer directly.
         let connection_strings_copy: Box<[u8]> = Box::<[u8]>::from(&client.connection_strings[..]);
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
@@ -851,6 +844,7 @@ impl JSValkeyClient {
                 idle_timeout_interval_ms: client.idle_timeout_interval_ms,
                 write_buffer: Default::default(),
                 read_buffer: Default::default(),
+                reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
             }),
@@ -929,17 +923,12 @@ impl JSValkeyClient {
     }
 
     pub fn get_or_create_subscription_ctx(&self) -> JsResult<&SubscriptionCtx> {
-        // PORT NOTE: Zig treats _subscription_ctx as Optional here but the field is not
-        // optional in the struct definition above. Original:
-        //   `if (this._subscription_ctx) |*ctx| { return ctx; }`
-        // Preserve the return-existing intent so we don't unconditionally reinit.
+        // Return the existing ctx so we don't unconditionally reinit.
         if self._subscription_ctx.get().is_subscriber {
             return Ok(self._subscription_ctx.get());
         }
 
         // Save the original flag values and create a new subscription context
-        // (Zig passed extra args to SubscriptionCtx.init that don't exist on the fn — preserved
-        // as-is via the standard init.)
         self._subscription_ctx.set(SubscriptionCtx::init(self)?);
 
         // We need to make sure we disable the offline queue, but we actually want to make sure
@@ -1055,7 +1044,7 @@ impl JSValkeyClient {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: `onconnect`/`onclose` are declared with `this: true` in
+    // `onconnect`/`onclose` are declared with `this: true` in
     // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
     // `this_value` (between `&self` and `global`). No `host_fn` attribute —
     // the extern "C" shim lives in generated_classes.rs. Setter now returns
@@ -1089,7 +1078,7 @@ impl JSValkeyClient {
             bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
-        // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
+        // `bun_event_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until they are unified.
         timer.with_mut(|t| {
             t.next = Timer::Timespec {
@@ -1507,8 +1496,7 @@ impl JSValkeyClient {
         struct Holder {
             // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
             // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop, exactly as the Zig does.
-            // PORT NOTE: LIFETIMES.tsv lists this as SHARED; update to BACKREF.
+            // in run() keep it alive across the task hop.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1583,7 +1571,7 @@ impl JSValkeyClient {
         let _d = deref_guard(self);
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // PORT NOTE: `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
+        // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
         // is `&'static`. Cast through raw — the per-thread VM is single-owner
         // on the JS thread, and `valkey_group` only touches the embedded
         // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
@@ -1600,8 +1588,6 @@ impl JSValkeyClient {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — the Zig matched on `self.client.tls`
-        // and called `self.client_fail`/`on_valkey_close` from inside the arm.
         // Populate `_secure` first, then handle the failure branch outside the
         // borrow of `self.client.tls`.
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
@@ -1661,7 +1647,7 @@ impl JSValkeyClient {
                 (*p).update_poll_ref();
             }
         });
-        // PORT NOTE: the socket ext slot is typed `ExtSlot<JSValkeyClient>`
+        // The socket ext slot is typed `ExtSlot<JSValkeyClient>`
         // (uws_handlers.rs `Valkey<SSL> = NsHandler<JSValkeyClient, …>`); store
         // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
         // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
@@ -1842,8 +1828,7 @@ impl JSValkeyClient {
     }
 }
 
-// PORT NOTE: Zig's `pub const X = fns.X;` × ~160 binds each command host-fn
-// into the JSValkeyClient namespace. In Rust those are already inherent
+// The ~160 command host-fns are inherent
 // methods on `JSValkeyClient` via the `impl JSValkeyClient` block in
 // `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
 // methods is not legal Rust). Keep `fns` referenced so the sibling module is
@@ -1853,17 +1838,16 @@ impl JSValkeyClient {
 // SocketHandler
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
+/// uWS socket-event handler for the Valkey client (kind = `.valkey[_tls]`).
 pub struct SocketHandler<const SSL: bool>;
 
-// PORT NOTE: Zig `const SocketType = uws.NewSocketHandler(ssl)` is an inherent
-// associated type, which is unstable in Rust. Use a module-level alias instead
+// Inherent associated types are unstable in Rust, so use a module-level alias
 // and refer to it as `SocketType<SSL>` inside the impl.
 type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: SocketType<SSL>) -> Socket {
-        // PORT NOTE: `NewSocketHandler<SSL>` only differs by const generic; the
+        // `NewSocketHandler<SSL>` only differs by const generic; the
         // `socket` field is identical. Re-wrap the inner `InternalSocket` into
         // the right `AnySocket` variant.
         if SSL {
@@ -1948,7 +1932,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 }
                 if !hostname.is_empty()
                     // SAFETY: in the TLS handshake-success path the socket's native
-                    // handle is a live `SSL*`; Zig calls `@ptrCast` on it directly.
+                    // handle is a live `SSL*`.
                     && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                 {
                     let err = this
@@ -2116,7 +2100,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         options_obj: JSValue,
     ) -> JsResult<valkey::Options> {
@@ -2192,5 +2176,3 @@ impl Options {
         Ok(this)
     }
 }
-
-// ported from: src/runtime/valkey_jsc/js_valkey.zig

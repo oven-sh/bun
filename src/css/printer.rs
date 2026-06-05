@@ -15,8 +15,7 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-// TODO(port): move to <area>_sys / clarify which Write trait. Zig used *std.Io.Writer
-// (byte-oriented: writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.
+// Byte-oriented writer (writeAll/writeByte/print equivalents).
 use bun_io::Write;
 
 /// Options that control how CSS is serialized to a string.
@@ -133,6 +132,13 @@ pub struct Printer<'a> {
     pub minify: bool,
     pub targets: Targets,
     pub vendor_prefix: css::VendorPrefix,
+    /// True while nested rules are being re-serialized for a non-final vendor
+    /// prefix pass of an ancestor style rule (when nesting is compiled away).
+    /// Nested style rules that carry their own vendor prefixes override
+    /// `vendor_prefix`, so their output is identical in every ancestor pass;
+    /// they are skipped while this is set and emitted once in the final pass,
+    /// keeping the output linear in nesting depth instead of exponential.
+    pub skip_prefixed_nested_rules: bool,
     pub in_calc: bool,
     pub css_module: Option<css::CssModule<'a>>,
     pub dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -141,9 +147,34 @@ pub struct Printer<'a> {
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
     pub indentation_buf: BumpVec<'a, u8>,
-    // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
-    // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
+    // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
+    // unsafe variance cast — see the SAFETY note there) and always restores the parent
+    // before that frame returns; never stash `ctx` beyond the `with_context` call.
     pub ctx: Option<&'a css::StyleContext<'a>>,
+    /// Number of parent-selector substitutions performed for `&` while
+    /// serializing the current rule prelude with compiled nesting (targets
+    /// without CSS nesting support). Reset per prelude (in
+    /// `StyleRule::to_css_base` and `ScopeRule::to_css`) and bounded in
+    /// `serialize::serialize_nesting` so deeply nested rules with multiple
+    /// `&` references per level cannot expand exponentially.
+    pub nesting_expansions: u32,
+    /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
+    /// whose selector list carries more than one vendor prefix (e.g. a list
+    /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
+    /// pseudo downleveled to several prefixes) is serialized once per prefix,
+    /// and every pass after the first re-serializes the rule's whole body —
+    /// declarations, nested rules, and everything under them. Nesting such
+    /// rules repeats that body once per prefix at every level, so the output
+    /// grows by (prefix count)^depth. The bytes written by each such duplicate
+    /// pass are measured and accumulated here (across the whole stylesheet,
+    /// never reset) and bounded in `StyleRule::to_css`, so a few kilobytes of
+    /// deeply nested input cannot expand into gigabytes — regardless of whether
+    /// the duplicated payload is nested rules or a large declaration block. The
+    /// original (first) pass of each rule, and any single-prefix output (which
+    /// has no passes after the first), emit nothing here. A flat multi-prefix
+    /// rule's later passes do count, but without nesting to compound them that
+    /// stays linear in the input.
+    pub prefix_expansion_bytes: usize,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -152,12 +183,11 @@ pub struct Printer<'a> {
     pub local_names: Option<&'a css::LocalsResultsMap>,
     /// NOTE This should be the same mimalloc heap arena arena
     pub arena: &'a Bump,
-    // TODO: finish the fields
 }
 
 #[cfg(debug_assertions)]
 thread_local! {
-    pub static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
 }
 
 impl<'a> Printer<'a> {
@@ -190,13 +220,19 @@ impl<'a> Printer<'a> {
         self.lookup_symbol(ident.as_ref().unwrap())
     }
 
-    // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
-    // backing buffer length via `container_of`; in Rust the trait exposes `written_len()`
-    // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
-    // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
+    // The `Write` trait exposes `written_len()` directly
+    // (Vec<u8> / MutableString / counting sinks override it, others panic).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
         writer.written_len()
+    }
+
+    /// Total number of bytes written to the destination so far. Used to measure
+    /// how much output a duplicate vendor-prefix pass emits (see
+    /// `prefix_expansion_bytes`).
+    #[inline]
+    pub(crate) fn bytes_written(&self) -> usize {
+        Self::get_written_amt(self.dest)
     }
 
     /// Returns the current source filename that is being printed.
@@ -261,7 +297,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // PORT NOTE: deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
@@ -302,22 +338,23 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            // defaults for fields not set by Zig's `.{}` initializer
             indent_amt: 0,
             line: 0,
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
+            skip_prefixed_nested_rules: false,
             in_calc: false,
             css_module: None,
             ctx: None,
+            nesting_expansions: 0,
+            prefix_expansion_bytes: 0,
             error_kind: None,
         }
     }
 
     /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
-    /// using default `PrinterOptions`. Mirrors the Zig pattern of pairing
-    /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
-    /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
+    /// using default `PrinterOptions`. Used for sub-serialization
+    /// (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
     pub fn new_buffered(
         arena: &'a Bump,
         dest: &'a mut Vec<u8>,
@@ -349,10 +386,10 @@ impl<'a> Printer<'a> {
             let import_record = &info.import_records[import_record_idx as usize];
             let [a, b] =
                 bun_core::cheap_prefix_normalizer(self.public_path, import_record.path.text);
-            // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
+            // Reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
-            // PERF(port): two small heap copies above; Zig borrowed directly. Profile if it shows up on a hot path.
+            // PERF: two small heap copies above; profile if it shows up on a hot path.
             self.write_str(&a)?;
             self.write_str(&b)?;
             return Ok(());
@@ -476,13 +513,22 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    /// Alias of `write_str` for callers that want to be explicit about
-    /// possibly-newline-containing byte content (Zig: `writeBytes`).
+    /// Like `write_str`, but newline-containing byte content is permitted:
+    /// `line`/`col` are tracked across newlines (matching `write_char` applied
+    /// byte-by-byte), whereas `write_str` debug-asserts that no newlines are
+    /// present. Used for raw token round-trip content (whitespace tokens,
+    /// comments, unparsed contents).
     #[inline]
     pub fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
-        // TODO(port): Zig writeBytes did not assert no-newline; tracked
-        // line/col separately. For now route through write_str.
-        self.col += u32::try_from(s.len()).expect("int cast");
+        // Unlike `write_str`, newlines are allowed here; track line/col across them
+        // (matching `write_char` applied byte-by-byte) so source maps stay correct.
+        if let Some(last_newline) = s.iter().rposition(|&b| b == b'\n') {
+            let new_lines = s.iter().filter(|&&b| b == b'\n').count();
+            self.line += u32::try_from(new_lines).expect("int cast");
+            self.col = u32::try_from(s.len() - last_newline - 1).expect("int cast");
+        } else {
+            self.col += u32::try_from(s.len()).expect("int cast");
+        }
         if self.dest.write_all(s).is_err() {
             return Err(self.add_fmt_error());
         }
@@ -527,7 +573,7 @@ impl<'a> Printer<'a> {
                 let Some(symbol) = self.symbols.get_const(ref_) else {
                     return Err(self.add_fmt_error());
                 };
-                // PORT NOTE: copy out the arena slice before re-borrowing &mut self.
+                // Copy out the arena slice before re-borrowing &mut self.
                 let name = symbol.original_name.slice();
                 return self.serialize_identifier(name);
             }
@@ -546,10 +592,8 @@ impl<'a> Printer<'a> {
     pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
-                // PORT NOTE: borrowck reshape — Zig captured `&mut self` inside the closure
-                // while `css_module` (a field of self) was simultaneously borrowed. We instead
-                // copy the `'a`-lifetime references out of `css_module` up front so the
-                // closure can hold the sole `&mut self`.
+                // Copy the `'a`-lifetime references out of `css_module` up front so
+                // the closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
                 let arena = self.arena;
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
@@ -620,7 +664,7 @@ impl<'a> Printer<'a> {
             None => false,
         };
         if dashed_idents {
-            // PORT NOTE: same borrowck reshape as `write_ident`.
+            // Same borrowck reshape as `write_ident`.
             let source_index = self.loc.source_index as usize;
             let arena = self.arena;
             let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
@@ -794,9 +838,8 @@ impl<'a> Printer<'a> {
 
         let ctx = css::StyleContext { selectors, parent };
 
-        // TODO(port): lifetime — `&ctx` is stack-local but field type is `&'a StyleContext<'a>`.
-        // Zig relied on restoring `parent` before return. Consider changing the field to raw
-        // `*const StyleContext` or restructuring StyleContext as an explicit stack.
+        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
+        // soundness relies on restoring `parent` before this frame returns.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
         // `StyleContext<'a>` share layout; only the borrow-checker tag differs).
@@ -850,5 +893,3 @@ impl<'a> Printer<'a> {
 
 // bun.ast.Symbol.Map — lives in bun_logger.
 type SymbolMap = bun_ast::symbol::Map;
-
-// ported from: src/css/printer.zig

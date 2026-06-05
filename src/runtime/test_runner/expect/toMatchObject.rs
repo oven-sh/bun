@@ -2,8 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
 use super::{get_signature, Expect};
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_match_object(
+pub(crate) fn to_match_object(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -65,5 +64,3 @@ pub fn to_match_object(
     let signature: &str = get_signature("toMatchObject", "<green>expected<r>", false);
     this.throw(global, signature, format_args!("\n\n{}\n", diff_formatter))
 }
-
-// ported from: src/test_runner/expect/toMatchObject.zig

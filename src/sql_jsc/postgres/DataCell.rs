@@ -1,5 +1,3 @@
-//! Port of src/sql_jsc/postgres/DataCell.zig
-
 use core::mem::size_of;
 
 use crate::jsc::{JSGlobalObject, JSValue};
@@ -14,14 +12,12 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub use crate::shared::sql_data_cell::SQLDataCell;
-// Zig nested-type style (`SQLDataCell.Tag.Bytea`) → flat re-exports; see sed
-// rewrite below replacing `SQLDataCell::X` with bare `X`.
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
-// TODO(port): narrow error set — Zig used inferred error sets that flow into
-// AnyPostgresError. Confirm AnyPostgresError covers all variants referenced
-// via `err!(...)` here.
+// Errors here collapse into
+// `AnyPostgresError` (names not in that enum — e.g. `err!("BufferTooSmall")` —
+// fall back to `JSError` via the name-based `From<bun_core::Error>` impl).
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -106,8 +102,7 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 
-// PERF(port): `array_type` and `is_json_sub_array` were `comptime` in Zig (per-variant
-// monomorphization). Demoted to runtime here because they are only used in value
+// PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
 fn parse_array(
     bytes: &[u8],
@@ -254,7 +249,6 @@ fn parse_array(
                         value: Value {
                             json: if !unescaped.is_empty() {
                                 BunString::clone_utf8(unescaped).leak_wtf_impl()
-                                // TODO(port): .value.WTFStringImpl accessor name
                             } else {
                                 core::ptr::null_mut()
                             },
@@ -447,6 +441,7 @@ fn parse_array(
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -472,6 +467,7 @@ fn parse_array(
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -521,7 +517,7 @@ fn parse_array(
                             let mut has_exponent = false;
                             let mut has_negative_sign = false;
                             let mut has_positive_sign = false;
-                            // PORT NOTE: reshaped for borrowck — Zig mutates `slice` mid-loop while
+                            // reshaped for borrowck — cannot mutate `slice` mid-loop while
                             // iterating it (the Infinity arm). We capture the advance amount and
                             // apply after the loop.
                             let mut advance_after: Option<usize> = None;
@@ -676,7 +672,6 @@ fn parse_array(
                                     array.push(SQLDataCell {
                                         tag: Tag::Int4,
                                         value: Value {
-                                            // @intCast(value) — i32 → i32, identity here
                                             int4: value,
                                         },
                                         ..Default::default()
@@ -738,9 +733,7 @@ fn parse_array(
 }
 
 // Helper: typed-array binary path shared by .int4_array / .float4_array.
-// PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
-// `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
-// position. Those return types, so we monomorphize over the element type here.
+// Monomorphized over the element type.
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     tag: types::Tag,
     bytes: &[u8],
@@ -804,9 +797,9 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         return Err(AnyPostgresError::InvalidBinaryData);
     }
 
-    // Zig: `tag.pgArrayType().init(bytes).slice()` byte-swaps the wire
-    // header and elements in place inside the recv buffer. The Rust port
-    // cannot soundly mutate through a pointer derived from `bytes: &[u8]`
+    // In-place byte-swapping of the wire header and elements inside the
+    // recv buffer is unsound here: we
+    // cannot mutate through a pointer derived from `bytes: &[u8]`
     // — the `readonly` LLVM parameter attribute lets the optimizer elide
     // those writes, which in the release-asan build left the header `len`
     // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
@@ -822,7 +815,6 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         for i in 0..array_len {
             // Wire layout per element for the 4-byte types this path
             // supports (int4/float4): [elem_size length prefix][elem_size value]
-            // — same stride `slice()` walks in the Zig spec.
             let src_off = 20 + i * element_stride + (element_stride - elem_size);
             // `bytes.len() >= 20 + array_len*element_stride` was validated
             // above; `out` has `array_len*elem_size` bytes. The trait's
@@ -852,7 +844,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
-pub fn from_bytes(
+pub(crate) fn from_bytes(
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -980,7 +972,6 @@ pub fn from_bytes(
         T::numeric => {
             if binary {
                 // this is probrably good enough for most cases
-                // PERF(port): was stack-fallback (1024-byte stackFallback allocator)
                 let mut numeric_buffer: Vec<u8> = Vec::new();
 
                 // if is binary format lets display as a string because JS cant handle it in a safe way
@@ -1067,10 +1058,25 @@ pub fn from_bytes(
                         ..Default::default()
                     });
                 }
-                let mut str = BunString::init(bytes);
+                // `timestamp` (without time zone) text carries no offset, so
+                // decode its components as UTC to match the binary path. `date`
+                // (UTC midnight) and `timestamptz` (explicit offset) already
+                // parse correctly via Date.parse, so only redirect `timestamp`.
+                let date = match tag {
+                    T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
+                    _ => None,
+                };
+                let date = match date {
+                    Some(d) => d,
+                    None => {
+                        let mut str = BunString::init(bytes);
+                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                            .map_err(crate::jsc::js_error_to_postgres)?
+                    }
+                };
                 Ok(SQLDataCell {
                     tag: Tag::Date,
-                    value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
+                    value: Value { date },
                     ..Default::default()
                 })
             }
@@ -1152,8 +1158,7 @@ pub fn from_bytes(
             }
         }
         // text array types
-        // PERF(port): was `inline` switch — each tag was a comptime arg to parseArray.
-        // Demoted to runtime; see parse_array note.
+        // The tag is passed to parse_array at runtime; see parse_array note.
         tag @ (T::bpchar_array
         | T::varchar_array
         | T::char_array
@@ -1223,9 +1228,7 @@ pub fn from_bytes(
 // #define pg_ntoh32(x)        (x)
 // #define pg_ntoh64(x)        (x)
 
-// PORT NOTE: Zig's pg_ntoT used @typeInfo to accept either an array or an int and
-// recurse through @bitCast. All call sites pass a uN already, so we drop the
-// reflection and provide direct byte-swap helpers.
+// Direct byte-swap helpers.
 #[inline]
 fn pg_ntoh16(x: u16) -> u16 {
     x.swap_bytes()
@@ -1242,7 +1245,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,
@@ -1258,7 +1261,7 @@ fn parse_binary_numeric<'a>(
     if input.len() < 8 {
         return Err(err!("InvalidBuffer"));
     }
-    // PORT NOTE: std.io.fixedBufferStream → manual cursor over &[u8]
+    // Manual cursor over &[u8].
     let mut cursor = input;
     macro_rules! read_be {
         ($ty:ty) => {{
@@ -1309,19 +1312,17 @@ fn parse_binary_numeric<'a>(
     if decimal_pos <= 0 {
         decimal_pos = 1;
     }
-    let _ = decimal_pos; // matches Zig: computed but unused below
+    let _ = decimal_pos; // computed but unused below
     // Output all digits before the decimal point
 
-    let mut scale_start: i32 = 0;
     if weight < 0 {
         result.push(b'0');
-        scale_start = weight as i32 + 1;
     } else {
         let mut idx: usize = 0;
         let mut first_non_zero = false;
 
         while idx <= weight as usize {
-            // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
+            // Compare in i32 to avoid usize→i16 truncation.
             let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) {
                 read_be!(u16)
             } else {
@@ -1350,45 +1351,41 @@ fn parse_binary_numeric<'a>(
         }
     }
     // If requested, output a decimal point and all the digits that follow it.
-    // We initially put out a multiple of 4 digits, then truncate if needed.
+    // We initially put out a multiple of DEC_DIGITS (4) digits, then truncate.
+    //
+    // This mirrors Postgres' get_str_from_var: two independent counters —
+    // `d` walks base-10000 digits (advances by 1), `i` counts decimal places
+    // emitted (advances by DEC_DIGITS). Conflating them drops leading-zero
+    // groups when weight <= -3 and shifts significant digits left.
     if dscale > 0 {
         result.push(b'.');
-        // negative scale means we need to add zeros before the decimal point
-        // greater than ndigits means we need to add zeros after the decimal point
-        let mut idx: isize = scale_start as isize;
         let end: usize = result.len() + usize::try_from(dscale).expect("int cast");
-        while idx < dscale as isize {
-            if idx >= 0 && idx < dscale as isize {
-                let digit: u16 = if cursor.len() >= 2 {
-                    let v = u16::from_be_bytes(
-                        cursor[..2].try_into().expect("infallible: size matches"),
-                    );
-                    cursor = &cursor[2..];
-                    v
-                } else {
-                    0
-                };
-                bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
-                let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
-                let digit_len = 4usize;
-                result.extend_from_slice(&digit_str[0..digit_len]);
+        let mut d: i32 = weight as i32 + 1;
+        let mut i: i32 = 0;
+        while i < dscale as i32 {
+            let digit: u16 = if d >= 0 && d < ndigits as i32 && cursor.len() >= 2 {
+                let v =
+                    u16::from_be_bytes(cursor[..2].try_into().expect("infallible: size matches"));
+                cursor = &cursor[2..];
+                v
             } else {
-                bun_core::scoped_log!(PostgresDataCell, "dscale digit: 0000");
-                result.extend_from_slice(b"0000");
-            }
-            idx += 4;
+                0
+            };
+            bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+            let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
+            result.extend_from_slice(&digit_str);
+            d += 1;
+            i += 4;
         }
         if result.len() > end {
             result.truncate(end);
         }
     }
-    // PORT NOTE: reshaped for borrowck — return borrowed slice of `result`
+    // reshaped for borrowck — return borrowed slice of `result`
     Ok(PGNummericString::Dynamic(result.as_slice()))
 }
 
-// PORT NOTE: Zig's `parseBinary(comptime tag, comptime ReturnType, bytes)` returns a
-// type that varies per arm. Rust cannot express that as a single fn without an output
-// trait, so it is split per-tag. Call sites in this file are updated.
+// The binary-parse return type varies per tag, so it is split into per-tag fns.
 pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
     Ok(f64::from_bits(parse_binary_int8(bytes)? as u64))
 }
@@ -1449,7 +1446,7 @@ pub fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
     Ok(f32::from_bits(parse_binary_int4(bytes)? as u32))
 }
 
-pub struct Putter<'a> {
+pub(crate) struct Putter<'a> {
     pub list: &'a mut [SQLDataCell],
     pub fields: &'a [protocol::FieldDescription],
     pub binary: bool,
@@ -1459,24 +1456,7 @@ pub struct Putter<'a> {
 }
 
 impl<'a> Putter<'a> {
-    /// Mirrors Zig field defaults: `binary = false`, `bigint = false`, `count = 0`.
-    /// (Cannot `impl Default` — `list`/`fields`/`global_object` are borrows with no default.)
-    pub fn new(
-        list: &'a mut [SQLDataCell],
-        fields: &'a [protocol::FieldDescription],
-        global_object: &'a JSGlobalObject,
-    ) -> Self {
-        Self {
-            list,
-            fields,
-            binary: false,
-            bigint: false,
-            count: 0,
-            global_object,
-        }
-    }
-
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
         array: JSValue,
@@ -1485,7 +1465,6 @@ impl<'a> Putter<'a> {
         result_mode: PostgresSQLQueryResultMode,
         cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
-        // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
         let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {
@@ -1582,17 +1561,20 @@ impl<'a> Putter<'a> {
         Ok(true)
     }
 
-    pub fn put_raw(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put_raw(
+        &mut self,
+        index: u32,
+        optional_bytes: Option<&mut Data>,
+    ) -> Result<bool> {
         self.put_impl::<true>(index, optional_bytes)
     }
 
-    pub fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
+    pub(crate) fn put(&mut self, index: u32, optional_bytes: Option<&mut Data>) -> Result<bool> {
         self.put_impl::<false>(index, optional_bytes)
     }
 }
 
 // External C++ formatting functions
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `&mut [u8; N]` is ABI-identical to `*mut u8` (thin pointer to a `Sized`
     // array == pointer to its first element); the reference type discharges the
@@ -1611,5 +1593,3 @@ unsafe extern "C" {
         buffer_size: usize,
     ) -> usize;
 }
-
-// ported from: src/sql_jsc/postgres/DataCell.zig

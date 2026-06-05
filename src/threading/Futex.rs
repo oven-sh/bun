@@ -1,6 +1,3 @@
-//! This is a copy-pasta of std.Thread.Futex, except without `unreachable`
-//! Synchronized with std as of Zig 0.14.1
-//!
 //! A mechanism used to block (`wait`) and unblock (`wake`) threads using a
 //! 32bit memory address as hints.
 //!
@@ -76,8 +73,8 @@ pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
 use darwin_impl as imp;
 #[cfg(target_os = "freebsd")]
 use freebsd_impl as imp;
-// PORT NOTE: Zig's `builtin.os.tag == .linux` covers Android (Android uses the .linux OS tag with
-// the android ABI). Rust splits these into distinct target_os values, so we must list both.
+// Android is the same Linux kernel; Rust splits it into a distinct target_os
+// value, so we must list both.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use linux_impl as imp;
 #[cfg(not(any(
@@ -120,8 +117,8 @@ mod unsupported_impl {
     }
 
     fn unsupported() -> ! {
-        // PORT NOTE: Zig used @compileError here; Rust cfg already gates this module,
-        // so reaching this at runtime means the cfg ladder above is incomplete.
+        // The cfg ladder above already gates this module, so reaching this at
+        // runtime means the ladder is incomplete.
         unreachable!("Unsupported operating system for Futex");
     }
 }
@@ -205,9 +202,7 @@ mod darwin_impl {
         //
         // ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
         // ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
-        // TODO(port): builtin.target.os.version_range.semver.min.major >= 11 — Rust has no
-        // direct compile-time min-OS-version query. Bun's deployment target is macOS 13+, so
-        // assume true; revisit if a runtime check is needed.
+        // Bun's deployment target is macOS 13+, so ulock_wait2 is always available.
         let supports_ulock_wait2: bool = true;
 
         let mut timeout_ns: u64 = 0;
@@ -348,7 +343,6 @@ mod linux_impl {
             linux::E::INVAL => Ok(()), // possibly timeout overflow
             linux::E::FAULT => panic!("futex_wait() returned EFAULT unexpectedly"), // ptr was invalid
             err => {
-                // TODO(port): bun.Output.panic — using core panic! for now.
                 panic!(
                     "Unexpected futex_wait() return code: {} - {}",
                     rc,
@@ -393,7 +387,11 @@ mod freebsd_impl {
     use bun_sys::E;
     use core::ffi::{c_int, c_ulong, c_void};
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
         // SAFETY: all-zero is a valid `_umtx_time` (POD).
         let mut tm: libc::_umtx_time = bun_core::ffi::zeroed();
@@ -435,7 +433,7 @@ mod freebsd_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
         // The kernel reads n_wake as `int`; passing maxInt(u32) truncates to
         // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
         // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."
@@ -464,7 +462,11 @@ mod freebsd_impl {
 mod wasm_impl {
     use super::*;
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(crate) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         #[cfg(not(target_feature = "atomics"))]
         compile_error!("WASI target missing cpu feature 'atomics'");
 
@@ -504,7 +506,7 @@ mod wasm_impl {
 ///
 /// Deadline instead converts the relative timeout to an absolute one so that multiple calls
 /// to Futex timedWait() can block for and report more accurate error.Timeouts.
-pub struct Deadline {
+pub(crate) struct Deadline {
     timeout: Option<u64>,
     started: std::time::Instant,
 }
@@ -512,10 +514,9 @@ pub struct Deadline {
 impl Deadline {
     /// Create the deadline to expire after the given amount of time in nanoseconds passes.
     /// Pass in `null` to have the deadline call `Futex.wait()` and never expire.
-    pub fn init(expires_in_ns: Option<u64>) -> Deadline {
-        // std.time.Timer is required to be supported for somewhat accurate reportings of error.Timeout.
-        // PORT NOTE: Zig only initialized `started` when timeout != null; Instant::now() is
-        // infallible and cheap, so we always initialize it to avoid MaybeUninit gymnastics.
+    pub(crate) fn init(expires_in_ns: Option<u64>) -> Deadline {
+        // `Instant::now()` is infallible and cheap, so always initialize
+        // `started` (even when timeout is None) to avoid MaybeUninit gymnastics.
         Deadline {
             timeout: expires_in_ns,
             started: std::time::Instant::now(),
@@ -528,7 +529,7 @@ impl Deadline {
     /// - A spurious wake occurs.
     /// - The deadline expires; In which case `error.Timeout` is returned.
     #[cold]
-    pub fn wait(&mut self, ptr: &AtomicU32, expect: u32) -> Result<(), TimeoutError> {
+    pub(crate) fn wait(&mut self, ptr: &AtomicU32, expect: u32) -> Result<(), TimeoutError> {
         // Check if we actually have a timeout to wait until.
         // If not just wait "forever".
         let Some(timeout_ns) = self.timeout else {
@@ -544,5 +545,3 @@ impl Deadline {
         wait(ptr, expect, Some(until_timeout_ns))
     }
 }
-
-// ported from: src/threading/Futex.zig

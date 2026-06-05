@@ -11,8 +11,7 @@ use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
 use crate::bun_json::{self, Expr};
-// PORT NOTE: Zig used `comptime Builder: type` duck-typing for the builder
-// param. The only concrete instantiation in install is `*Lockfile.StringBuilder`,
+// The only concrete builder instantiation in install is the lockfile's,
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
 use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
 
@@ -33,8 +32,8 @@ pub struct Scripts {
 }
 
 impl Scripts {
-    /// (name, getter) table mirroring Zig `inline for (std.meta.fieldNames(Lockfile.Scripts))`.
-    /// Used by debug JSON serialization in place of comptime field reflection.
+    /// (name, getter) table used by debug JSON serialization in place of
+    /// field reflection.
     pub const FIELD_NAMES: &'static [(&'static str, fn(&Scripts) -> &SemverString)] = &[
         (LockfileScripts::NAMES[0], |s| &s.preinstall),
         (LockfileScripts::NAMES[1], |s| &s.install),
@@ -45,8 +44,7 @@ impl Scripts {
     ];
 
     /// Helper: indexed access matching `Lockfile.Scripts.names` order.
-    /// Zig used `@field(this, hook)` over `Lockfile.Scripts.names`; Rust has no
-    /// field-by-name reflection, so we tabulate the 6 hooks explicitly.
+    /// The 6 hooks are tabulated explicitly (no field-by-name reflection).
     #[inline]
     pub fn hooks(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
         [
@@ -59,7 +57,7 @@ impl Scripts {
         ]
     }
 
-    /// Alias of [`hooks`] for callers porting Zig `inline for (Scripts.names)`.
+    /// Alias of [`hooks`].
     #[inline]
     pub fn iter_all(&self) -> [&SemverString; SCRIPT_NAMES_LEN] {
         self.hooks()
@@ -87,7 +85,6 @@ impl Scripts {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone`.
-    /// Mirrors Zig `Scripts.clone(buf, Builder, builder)`.
     pub fn clone_into(&self, buf: &[u8], builder: &mut LockfileStringBuilder<'_>) -> Scripts {
         if !self.filled {
             return Scripts::default();
@@ -99,7 +96,6 @@ impl Scripts {
         for (dst, src) in scripts.hooks_mut().into_iter().zip(self.hooks()) {
             *dst = builder.append::<SemverString>(src.slice(buf));
         }
-        // PERF(port): was `inline for` over comptime name list — profile if hot.
         scripts
     }
 
@@ -107,7 +103,6 @@ impl Scripts {
         for hook in self.hooks() {
             builder.count(hook.slice(buf));
         }
-        // PERF(port): was `inline for` over comptime name list — profile if hot.
     }
 
     pub fn has_any(&self) -> bool {
@@ -120,10 +115,8 @@ impl Scripts {
     }
 
     /// return: (first_index, total, entries)
-    /// PORT NOTE: Zig also passed `*const Lockfile` (for `allocator`); the
-    /// allocator is gone in Rust and the parameter was already unused — drop
-    /// it so callers can split-borrow `lockfile.{packages, scripts}` while
-    /// this only reads `lockfile_buf`.
+    /// Takes only `lockfile_buf` (not the whole `Lockfile`) so callers can
+    /// split-borrow `lockfile.{packages, scripts}`.
     pub fn get_script_entries(
         &self,
         lockfile_buf: &[u8],
@@ -171,7 +164,6 @@ impl Scripts {
                 }
                 script_index += 1;
             }
-            // PERF(port): was `inline for` over tuple — profile if hot.
         }
 
         match resolution_tag {
@@ -189,7 +181,6 @@ impl Scripts {
                     }
                     script_index += 1;
                 }
-                // PERF(port): was `inline for` over tuple — profile if hot.
             }
             ResolutionTag::Workspace => {
                 script_index += 1;
@@ -235,10 +226,9 @@ impl Scripts {
                     break 'brk cwd_.slice();
                 };
                 // Resolve the canonical path, then close the directory HANDLE.
-                // (Zig spec at Scripts.zig:209-210 leaks `cwd_handle`; we fix
-                // that here rather than faithfully porting the leak — `Fd` is
-                // `Copy` with no `Drop`, so without this explicit close one
-                // kernel directory HANDLE leaks per script-bearing package.)
+                // (`Fd` is `Copy` with no `Drop`, so without this explicit
+                // close one kernel directory HANDLE leaks per script-bearing
+                // package.)
                 let path = bun_sys::get_fd_path(cwd_handle, &mut cwd_buf);
                 let _ = bun_sys::close(cwd_handle);
                 match path {
@@ -251,7 +241,7 @@ impl Scripts {
                 items: scripts,
                 first_index: u8::try_from(first_index).expect("int cast"),
                 total,
-                // Zig `allocator.dupeZ(u8, cwd)` — owned NUL-terminated copy.
+                // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
             });
@@ -260,17 +250,15 @@ impl Scripts {
         None
     }
 
-    // Zig: `comptime Builder: type, builder: Builder` — duck-typed over any
-    // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
+    // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    // PORT NOTE: `json` is `Copy` (matches Zig by-value `Expr`).
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
                     if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
-                        // PORT NOTE: Zig `script.asString(allocator)` — JSON parser
+                        // The JSON parser
                         // produces UTF-8 `EString`s, so the alloc-free literal accessor
                         // is sufficient here.
                         if let Some(input) = script.as_utf8_string_literal() {
@@ -278,7 +266,6 @@ impl Scripts {
                         }
                     }
                 }
-                // PERF(port): was `inline for` over comptime name list — profile if hot.
             }
         }
     }
@@ -294,7 +281,6 @@ impl Scripts {
                         }
                     }
                 }
-                // PERF(port): was `inline for` + `@field` — profile if hot.
             }
         }
     }
@@ -307,22 +293,21 @@ impl Scripts {
         folder_name: &[u8],
         resolution: &Resolution,
     ) -> Result<Option<List>, bun_core::Error> {
-        // TODO(port): narrow error set
         if self.has_any() {
-            let add_node_gyp_rebuild_script = if lockfile
-                .has_trusted_dependency(folder_name, resolution)
-                && self.install.is_empty()
-                && self.preinstall.is_empty()
-            {
-                // `defer save.restore()` — `save()` returns an RAII guard that
-                // restores the path length on Drop and derefs to the path.
-                let mut save = folder_path.save();
-                let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let add_node_gyp_rebuild_script =
+                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
+                    && self.install.is_empty()
+                    && self.preinstall.is_empty()
+                {
+                    // `defer save.restore()` — `save()` returns an RAII guard that
+                    // restores the path length on Drop and derefs to the path.
+                    let mut save = folder_path.save();
+                    let _ = save.append(b"binding.gyp");
 
-                bun_sys::exists(save.slice())
-            } else {
-                false
-            };
+                    bun_sys::exists(save.slice())
+                } else {
+                    false
+                };
 
             return Ok(self.create_list(
                 lockfile,
@@ -351,8 +336,7 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
+        // The JSON
         // parser uses a bump arena. Scoped here since the AST is consumed
         // immediately into the string builder. `json_buf` is hoisted so the
         // source bytes outlive the parsed `Expr` (which may borrow them).
@@ -362,7 +346,7 @@ impl Scripts {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
-            let _ = save.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = save.append(b"package.json");
 
             json_buf = bun_sys::File::read_from(Fd::cwd(), save.slice_z())?;
             let json_src = bun_ast::Source::init_path_string(save.slice(), json_buf.as_slice());
@@ -386,8 +370,6 @@ impl Scripts {
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, bun_core::Error> {
-        // TODO(port): narrow error set
-        // Zig: `var tmp: Lockfile = undefined; tmp.initEmpty(allocator)`.
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
         // auto-drop suffices; Lockfile has no `impl Drop`.
@@ -398,7 +380,7 @@ impl Scripts {
             // `defer save.restore()` — `save()` returns an RAII guard that
             // restores the path length on Drop and derefs to the path.
             let mut save = folder_path.save();
-            let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let _ = save.append(b"binding.gyp");
 
             bun_sys::exists(save.slice())
         } else {
@@ -425,8 +407,7 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-// PORT NOTE: `Clone` — Zig had borrowed slices so `list.*` was a shallow
-// pointer copy. The Rust port owns `cwd`/`package_name`/`items`, but
+// `Clone` — `List` owns `cwd`/`package_name`/`items`, but
 // `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
 // by-value copy while the original allocation in `Store.entries.scripts`
 // must stay live for the post-install pass, so a deep clone is required.
@@ -435,8 +416,7 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub first_index: u8,
     pub total: u8,
-    // Zig `stringZ` ([:0]const u8) owned via `allocator.dupeZ`; (commented-out)
-    // deinit frees it → owned NUL-terminated heap string, not a borrow.
+    // Owned NUL-terminated heap string, not a borrow.
     pub cwd: ZBox,
     pub package_name: Box<[u8]>,
 }
@@ -448,7 +428,6 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        // PERF(port): was comptime enum param — profile if hot.
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
@@ -498,16 +477,7 @@ impl List {
         self.items[self.first_index as usize].as_ref().unwrap()
     }
 
-    // pub fn deinit(this: Package.Scripts.List, std.mem.Allocator param) void {
-    //     for (this.items) |maybe_item| {
-    //         if (maybe_item) |item| {
-    //             allocator.free(item);
-    //         }
-    //     }
-    //
-    //     allocator.free(this.cwd);
-    // }
-    // (Commented out in Zig too; Box<[u8]> fields drop automatically.)
+    // No manual deinit: `Box<[u8]>` fields drop automatically.
 
     pub fn append_to_lockfile(&self, lockfile: &mut Lockfile) {
         for (i, maybe_script) in self.items.iter().enumerate() {
@@ -519,15 +489,11 @@ impl List {
                     BStr::new(&self.package_name),
                     BStr::new(self.cwd.as_bytes()),
                 );
-                // Zig: `@field(lockfile.scripts, Lockfile.Scripts.names[i]).append(...)`
                 lockfile
                     .scripts
                     .hook_mut(i)
                     .push(script.to_vec().into_boxed_slice());
-                // PERF(port): was `inline for` + appendAssumeCapacity-style — profile if hot.
             }
         }
     }
 }
-
-// ported from: src/install/lockfile/Package/Scripts.zig

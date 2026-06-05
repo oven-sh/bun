@@ -11,13 +11,13 @@ pub struct Overflow {
 }
 
 impl Overflow {
-    pub fn parse(input: &mut Parser) -> css::Result<Overflow> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Overflow> {
         let x = OverflowKeyword::parse(input)?;
         let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
         Ok(Overflow { x, y })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
             dest.write_char(b' ')?;
@@ -29,8 +29,6 @@ impl Overflow {
 
 /// An [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) keyword
 /// as used in the `overflow-x`, `overflow-y`, and `overflow` properties.
-// PORT NOTE: css.DefineEnumProperty(@This()) — comptime mixin providing
-// eql/hash/parse/to_css/deep_clone from @tagName.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum OverflowKeyword {
     /// Overflowing content is visible.
@@ -53,5 +51,3 @@ pub enum TextOverflow {
     /// Overflowing text is truncated with an ellipsis.
     Ellipsis,
 }
-
-// ported from: src/css/properties/overflow.zig

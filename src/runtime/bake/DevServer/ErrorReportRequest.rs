@@ -37,13 +37,12 @@ use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use bun_core::fmt::parse_hex_to_int;
 
-pub struct ErrorReportRequest {
+pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
     dev: bun_ptr::BackRef<DevServer>,
-    // PORT NOTE: BodyReaderMixin is a Zig comptime mixin parameterized by
-    // (Self, "body", run_with_body, finalize). Modeled as a generic helper that
-    // stores the buffered body and dispatches to the two callbacks below.
+    // BodyReaderMixin is a generic helper that stores the buffered body and
+    // dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
 }
 
@@ -67,7 +66,7 @@ impl BodyReaderHandler for ErrorReportRequest {
 }
 
 impl ErrorReportRequest {
-    pub fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
+    pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
         // Use the caller's `&mut DevServer` directly (matches
         // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
         // freshly-allocated ctx's `BackRef` under `unsafe`.
@@ -84,7 +83,7 @@ impl ErrorReportRequest {
 
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
-    pub fn finalize(ctx: *mut ErrorReportRequest) {
+    pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
@@ -105,28 +104,18 @@ impl ErrorReportRequest {
     /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
     /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
     /// retains ownership and will call `on_error`.
-    pub unsafe fn run_with_body(
+    pub(crate) unsafe fn run_with_body(
         ctx: *mut ErrorReportRequest,
         body: &[u8],
         r: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-
         // .finalize has to be called last, but only in the non-error path.
-        // PORT NOTE: Zig used `defer if (should_finalize_self) ctx.finalize()`
-        // with `should_finalize_self` flipped to true only at the very end.
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
 
         let mut reader = bun_io::FixedBufferStream::new(body);
 
-        // PERF(port): was stack-fallback (65536) + ArenaAllocator — profile if it shows up on a hot path.
         let arena = Arena::new();
-        // The Zig used a separate per-source-map arena that was reset between
-        // parses; the Rust `source_map_store::get_parsed_source_map` (the
-        // canonical impl on `DevServer.source_maps`) takes `&self` and
-        // allocates VLQ scratch + result mappings into the global mimalloc
-        // heap, so no per-map reset arena is threaded here.
 
         // BackRef::get() is safe under the back-reference invariant (DevServer
         // outlives this request). No `&mut *ctx` is formed for the body of this
@@ -135,16 +124,16 @@ impl ErrorReportRequest {
         let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
-        let name = read_string32(&mut reader)?;
-        let message = read_string32(&mut reader)?;
-        let browser_url = read_string32(&mut reader)?;
+        let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
         let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
-            let function_name = read_string32(&mut reader)?;
-            let file_name = read_string32(&mut reader)?;
+            let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+            let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
                 function_name: BunString::init(function_name),
                 source_url: BunString::init(file_name),
@@ -184,7 +173,7 @@ impl ErrorReportRequest {
         let mut parsed_source_maps: ArrayHashMap<SourceMapKey, Option<GetResult<'_>>> =
             ArrayHashMap::new();
         bun_core::handle_oom(parsed_source_maps.ensure_total_capacity(4));
-        // PORT NOTE: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
+        // Note: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
         // `GetResult` drops its owned `mappings` automatically.
 
         let mut runtime_lines: Option<[&[u8]; 5]> = None;
@@ -192,9 +181,8 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // PORT NOTE: Zig read `frame.source_url.value.ZigString.slice()` —
-            // every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])`), so `byte_slice()` is the equivalent view.
+            // Every `source_url` here is `Tag::ZigString` (built via
+            // `String::init(&[u8])`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
@@ -205,15 +193,13 @@ impl ErrorReportRequest {
             // Get and cache the parsed source map
             let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id));
             if !gop.found_existing {
-                // PERF(port): Zig reset a per-map arena here; the Rust port
-                // allocates VLQ/result into the global heap and frees on Drop.
                 match dev.source_maps.get_parsed_source_map(id) {
                     None => {
-                        Output::debug_warn(format_args!(
+                        bun_core::debug_warn!(
                             "Failed to find mapping for {}, {}",
                             bstr::BStr::new(source_url),
                             id.get()
-                        ));
+                        );
                         *gop.value_ptr = None;
                         continue;
                     }
@@ -298,8 +284,7 @@ impl ErrorReportRequest {
             // Ensure that trimming will not remove ALL frames.
             let mut all_runtime = true;
             for frame in frames.iter() {
-                // PORT NOTE: Zig compared `slice().ptr == runtime_name` —
-                // pointer-identity on the borrowed RUNTIME_NAME slice.
+                // Pointer-identity check on the borrowed RUNTIME_NAME slice.
                 let is_runtime = frame.position.is_invalid()
                     && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
                 if !is_runtime {
@@ -311,10 +296,7 @@ impl ErrorReportRequest {
                 break 'trim_runtime_frames;
             }
 
-            // Move all frames up
-            // PORT NOTE: reshaped — Zig copied items down then truncated; Rust
-            // `Vec::retain` does the same in-place compaction with the same
-            // relative order.
+            // Move all frames up.
             frames.retain(|frame| {
                 !(frame.position.is_invalid()
                     && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr())
@@ -340,8 +322,8 @@ impl ErrorReportRequest {
         {
             let stderr = Output::error_writer_buffered();
             let _flush = Output::flush_guard();
-            // PERF(port): was comptime bool dispatch — `print_externally_remapped_zig_exception`
-            // takes runtime `allow_ansi_color`, so no `inline else` split needed.
+            // `print_externally_remapped_zig_exception` takes a runtime
+            // `allow_ansi_color` flag.
             let ansi_colors = Output::enable_ansi_colors_stderr();
             // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
             // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
@@ -416,7 +398,7 @@ impl ErrorReportRequest {
                 ..Default::default()
             },
         );
-        // `should_finalize_self = true;` — see PORT NOTE at fn top.
+        // `should_finalize_self = true;` — see Note at fn top.
         // `ctx` is the original heap-allocated pointer (caller contract); the
         // only borrow derived from it (`dev`) points into a separate DevServer
         // allocation, so freeing `*ctx` does not invalidate any live reference.
@@ -425,12 +407,11 @@ impl ErrorReportRequest {
     }
 }
 
-pub fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
+pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::Key> {
     if !source_url.starts_with(browser_url) {
         return None;
     }
     let after_host = &source_url[strings::without_trailing_slash(browser_url).len()..];
-    // PORT NOTE: `client_prefix ++ "/"` is comptime string concat in Zig.
     if !(after_host.starts_with(CLIENT_PREFIX.as_bytes())
         && after_host.get(CLIENT_PREFIX.len()) == Some(&b'/'))
     {
@@ -455,7 +436,6 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     target_line: u32,
     arena: &'a Arena,
 ) -> Result<Option<[&'a [u8]; N]>, bun_core::Error> {
-    // TODO(port): narrow error set
     let mut line: usize = 0;
     let mut prev: usize = 0;
     let index_of_first_line: usize = if target_line == 0 {
@@ -491,7 +471,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     // This function expects but does not assume the escape sequences
     // given are valid, and does not bubble errors up.
     //
-    // PORT NOTE: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
+    // Note: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
     // both from the caller's arena so their lifetime matches the decoded
     // `ArenaVec<'a, u8>` slices we hand back in `result`.
     let log: &'a mut Log = arena.alloc(Log::init());
@@ -577,4 +557,44 @@ fn read_string32<'a>(
     Ok(s)
 }
 
-// ported from: src/bake/DevServer/ErrorReportRequest.zig
+/// The report body is attacker-controlled: `/_bun/report_error` accepts a
+/// CORS "simple request" POST from any origin, and these strings are printed
+/// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
+/// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
+/// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
+/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
+/// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
+pub(crate) fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    fn is_disallowed(prev: u8, b: u8) -> bool {
+        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
+        // multi-byte characters and must not be blanked; only the encoded C1
+        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
+        // terminal as a control.
+        (b < 0x20 && b != b'\t' && b != b'\n')
+            || b == 0x7f
+            || (prev == 0xc2 && (0x80..=0x9f).contains(&b))
+    }
+    let mut prev = 0u8;
+    if !s.iter().any(|&b| {
+        let bad = is_disallowed(prev, b);
+        prev = b;
+        bad
+    }) {
+        return s;
+    }
+    let copy = arena.alloc_slice_copy(s);
+    let mut prev = 0u8;
+    for i in 0..copy.len() {
+        let cur = copy[i];
+        if is_disallowed(prev, cur) {
+            copy[i] = b' ';
+            // For an encoded C1 control, blank the 0xC2 lead byte too so the
+            // output stays valid UTF-8 instead of leaving a dangling lead byte.
+            if prev == 0xc2 && i > 0 {
+                copy[i - 1] = b' ';
+            }
+        }
+        prev = cur;
+    }
+    copy
+}

@@ -6,11 +6,7 @@ use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use bun_collections::VecExt;
 
-// PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
-// take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
-// `P<'a, TS, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
-
-#[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SideEffects {
     #[default]
@@ -38,7 +34,7 @@ impl Default for Result {
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: *const E::Binary,
+    pub bin: StoreRef<E::Binary>,
 }
 
 impl SideEffects {
@@ -111,7 +107,7 @@ impl SideEffects {
         }
     }
 
-    // Re-exports of ExprData methods (Zig: `pub const toNumber = Expr.Data.toNumber;`)
+    // Re-exports of ExprData methods.
     #[inline(always)]
     pub fn to_number(data: &ExprData) -> Option<f64> {
         data.to_number()
@@ -147,7 +143,11 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
-        // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
+        if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
+            p.report_stack_overflow(expr.loc);
+            return Some(expr);
+        }
+        // `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
         // `expr.data` *by value* so `expr` itself is never borrowed across a
         // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
         // payloads write through `StoreRef::DerefMut` into the arena, so they
@@ -238,7 +238,6 @@ impl SideEffects {
                 }
             }
 
-            // Zig: `inline .e_call, .e_new => |call|` — written out per variant.
             ExprData::ECall(call) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -249,7 +248,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -272,7 +270,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -304,8 +301,12 @@ impl SideEffects {
                     | Op::Code::BinGt
                     | Op::Code::BinLe
                     | Op::Code::BinGe => {
-                        if Self::is_primitive_with_side_effects(&bin.left.data)
-                            && Self::is_primitive_with_side_effects(&bin.right.data)
+                        if Self::is_primitive_with_side_effects(p, bin.left.loc, &bin.left.data)
+                            && Self::is_primitive_with_side_effects(
+                                p,
+                                bin.right.loc,
+                                &bin.right.data,
+                            )
                         {
                             let left = bin.left;
                             let right = bin.right;
@@ -395,9 +396,8 @@ impl SideEffects {
                             }
                         }
 
-                        // PORT NOTE: G::Property is not Copy (Vec ts_decorators
-                        // field). The Zig spec does an in-place struct copy; here we
-                        // swap so the kept property lands at `end` without cloning.
+                        // G::Property is not Copy (Vec ts_decorators field), so swap
+                        // so the kept property lands at `end` without cloning.
                         e_object.properties.slice_mut().swap(end, j);
                         end += 1;
                     }
@@ -528,20 +528,19 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // PORT NOTE: Zig threads `p.binary_expression_simplify_stack` (a reusable
-        // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
-        // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
-        // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
-        // local Vec. Same iteration order; only the arena differs.
-        let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
-        stack.push(root_bin);
+        // This function recurses through `simplify_unused_expr`, so each frame
+        // only touches elements above its watermark and truncates back on exit.
+        let stack_bottom = p.binary_expression_simplify_stack.len();
+        p.binary_expression_simplify_stack
+            .push(BinaryExpressionSimplifyVisitor { bin: root_bin });
 
         // Build stack up of expressions
         let mut left: Expr = root_bin.left;
         while let ExprData::EBinary(left_bin) = left.data {
             match left_bin.op {
                 Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma => {
-                    stack.push(left_bin);
+                    p.binary_expression_simplify_stack
+                        .push(BinaryExpressionSimplifyVisitor { bin: left_bin });
                     left = left_bin.left;
                 }
                 _ => break,
@@ -549,15 +548,16 @@ impl SideEffects {
         }
 
         // Ride the stack downwards
-        let mut i = stack.len();
+        let mut i = p.binary_expression_simplify_stack.len();
         let mut result = Self::simplify_unused_expr(p, left).unwrap_or(Expr::EMPTY);
-        while i > 0 {
+        while i > stack_bottom {
             i -= 1;
-            let top = stack[i];
-            let right = top.right;
+            let top = p.binary_expression_simplify_stack[i];
+            let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);
             result = Expr::join_with_comma(result, visited_right);
         }
+        p.binary_expression_simplify_stack.truncate(stack_bottom);
 
         if result.is_missing() {
             None
@@ -728,7 +728,15 @@ impl SideEffects {
         }
     }
 
-    pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {
+    pub fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
+        loc: bun_ast::Loc,
+        data: &ExprData,
+    ) -> bool {
+        if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(loc);
+            return false;
+        }
         match data {
             ExprData::ENull(_)
             | ExprData::EUndefined(_)
@@ -773,17 +781,17 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(&e.left.data)
-                        && Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data)
+                        && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 Op::Code::BinComma => {
-                    Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 _ => false,
             },
             ExprData::EIf(e) => {
-                Self::is_primitive_with_side_effects(&e.yes.data)
-                    && Self::is_primitive_with_side_effects(&e.no.data)
+                Self::is_primitive_with_side_effects(p, e.yes.loc, &e.yes.data)
+                    && Self::is_primitive_with_side_effects(p, e.no.loc, &e.no.data)
             }
             _ => false,
         }
@@ -883,6 +891,10 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Result::default();
         }
+        if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(bun_ast::Loc::EMPTY);
+            return Result::default();
+        }
         match exp {
             ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
                 value: false,
@@ -908,8 +920,8 @@ impl SideEffects {
                 }
             }
             ExprData::EString(e) => Result {
-                // Zig: `e.isPresent()` — open-coded to dodge an ambiguous inherent
-                // `len()` while E.rs's duplicate `impl EString` blocks are being merged.
+                // Open-coded `isPresent` to dodge an ambiguous inherent `len()`
+                // while E.rs's duplicate `impl EString` blocks are being merged.
                 value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
                 ok: true,
@@ -1061,5 +1073,3 @@ impl SideEffects {
         }
     }
 }
-
-// ported from: src/js_parser/ast/SideEffects.zig

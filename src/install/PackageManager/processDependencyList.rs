@@ -30,7 +30,7 @@ pub struct GitResolver<'a> {
     pub resolved: &'a [u8],
     pub resolution: &'a Resolution,
     pub dep_id: DependencyID,
-    /// Zig: `new_name: []u8 = ""` — owned scratch buffer that
+    /// Owned scratch buffer that
     /// `Package::parse_with_json` may assign when the package.json `name`
     /// field is missing (see `ResolverContext::set_new_name`).
     pub new_name: Vec<u8>,
@@ -52,8 +52,6 @@ impl<'a> ResolverContext for GitResolver<'a> {
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: `var resolution = this.resolution.*;
-        //       resolution.value.github.resolved = builder.append(String, this.resolved);`
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
@@ -200,7 +198,6 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&new_name);
-                        // Zig passed `undefined` for the unused `JSAst.Expr` arg.
                         resolver.count(&mut builder, &Expr::default());
 
                         bun_core::handle_oom(builder.allocate());
@@ -261,11 +258,11 @@ impl PackageManager {
                 } {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
                             resolution.fmt_url(string_buf),
                             err.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -303,7 +300,7 @@ impl PackageManager {
                         &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
-                    // never null while tasks run (mirrors Zig's non-optional `*logger.Log`).
+                    // never null while tasks run.
                     let log = self.log_mut();
                     let bump = bun_alloc::Arena::new();
                     let json_root = match json::parse_package_json_utf8(
@@ -315,24 +312,22 @@ impl PackageManager {
                         Err(err) => {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
                                     resolution.fmt_url(string_buf),
                                     err.name(),
-                                ));
+                                );
                             }
                             Global::crash();
                         }
                     };
-                    // PORT NOTE (spec parity): Zig writes
-                    //   var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
-                    // which COPIES the `Scripts` struct into a local; the
-                    // subsequent `parseAlloc` / `.filled = true` mutate the
-                    // local and are never stored back, so
-                    // `lockfile.packages[id].scripts` is not updated. This is
-                    // a latent dead-store bug in processDependencyList.zig,
-                    // but we match it exactly so .rs/.zig observable behavior
-                    // agree. The `builder` appends still land in
+                    // Intentional dead store: `scripts` is a local copy of
+                    // `lockfile.packages[id].scripts`, and the `parse_alloc` /
+                    // `.filled = true` mutations are never stored back, so
+                    // `lockfile.packages[id].scripts` is not updated. The
+                    // original implementation had this same latent dead-store
+                    // bug, and we match it exactly so observable behavior
+                    // agrees. The `builder` appends still land in
                     // `lockfile.buffers.string_bytes`, preserving that side
                     // effect. (Hoisted above `string_builder()` for borrowck —
                     // `parse_count`/`allocate` don't touch `packages`.)
@@ -360,8 +355,8 @@ impl PackageManager {
     ) -> Result<(), bun_core::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
-                // PORT NOTE: reshaped for borrowck — clone the dependency row
-                // out of the buffer before re-borrowing `self` for enqueue.
+                // Clone the dependency row out of the buffer before
+                // re-borrowing `self` for enqueue.
                 let dependency = Clone::clone(
                     &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
                 );
@@ -408,8 +403,8 @@ impl PackageManager {
 
     pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            // PORT NOTE: reshaped for borrowck — clone the dependency row out
-            // of the buffer before re-borrowing `self` for enqueue.
+            // Clone the dependency row out of the buffer before re-borrowing
+            // `self` for enqueue.
             let dependency = Clone::clone(
                 &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
             );
@@ -427,10 +422,6 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Zig: `callbacks` was `comptime anytype` with a
-    /// `@TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void`
-    /// check. Modeled as `Option<impl FnOnce(C)>` — only `onResolve` is ever
-    /// read, and the void path is `None`.
     pub fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
@@ -459,8 +450,7 @@ impl PackageManager {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
+// Free-function re-export surface — thin shims over the
 // `impl PackageManager` bodies above so `pub use process_dependency_list::{…}`
 // in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,7 +1,5 @@
-// Port of src/glob/glob.zig
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
 pub mod matcher;
@@ -11,9 +9,8 @@ pub use crate::glob_walker as walk;
 pub use crate::matcher::{MatchResult, r#match};
 pub use walk::GlobWalker;
 
-// PORT NOTE: Zig passes `null` as the first comptime arg to `GlobWalker_(null, Accessor, sentinel)`.
-// In the port, `ignore_filter_fn` is a runtime fn-pointer field (const-generic fn ptrs are
-// unstable), so the first param is dropped from the type and supplied at `init()`.
+// `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
+// parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
@@ -30,7 +27,6 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // In descending order of how popular the token is
     const SPECIAL_SYNTAX: [u8; 4] = *b"*{[?";
 
-    // PERF(port): was `inline for` (unrolled at comptime).
     for &token in SPECIAL_SYNTAX.iter() {
         let mut slice = potential_pattern;
         while !slice.is_empty() {
@@ -57,5 +53,3 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
 
     false
 }
-
-// ported from: src/glob/glob.zig

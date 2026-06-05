@@ -1,4 +1,4 @@
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 use bstr::BStr;
 #[cfg(windows)]
 use bun_core::{WStr, w};
@@ -59,7 +59,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         let result = which_win(&mut *convert_buf, path, cwd, bin)?;
         let result_converted =
             bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut buf[..], result);
-        // PORT NOTE: reshaped for borrowck — capture len/ptr before re-borrowing buf
+        // Capture len/ptr before re-borrowing buf (borrowck).
         let result_converted_len = result_converted.len();
         let result_converted_ptr = result_converted.as_ptr();
         buf[result_converted_len] = 0;
@@ -89,7 +89,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         if strings::index_of_char(bin, b'/').is_some() {
             if !cwd.is_empty() {
-                // PORT NOTE: std.mem.trimRight(u8, cwd, sep_str) — strip trailing SEP bytes.
+                // Strip trailing SEP bytes from cwd.
                 let mut cwd_trimmed = cwd;
                 while cwd_trimmed.last() == Some(&SEP) {
                     cwd_trimmed = &cwd_trimmed[..cwd_trimmed.len() - 1];
@@ -131,12 +131,49 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
     }
     let file_ext = &str[str.len() - 3..];
     for ext in WIN_EXTENSIONS {
-        // comptime assert ext.len == 3 — all literals above are 3 bytes
+        // all WIN_EXTENSIONS literals are 3 bytes
         if strings::eql_case_insensitive_asciii_check_length(file_ext, ext) {
             return true;
         }
     }
     false
+}
+
+/// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
+///
+/// `CreateProcessW` runs these through `cmd.exe`, which re-tokenizes the
+/// command line with shell metacharacter rules ("BatBadBut",
+/// CVE-2024-24576 / CVE-2024-27980). Spawn paths must not pass untrusted
+/// arguments to one without checking [`batch_arg_has_cmd_metachars`].
+pub fn is_batch_file(path: &[u8]) -> bool {
+    // Windows strips trailing ASCII spaces and periods from the final path
+    // component, so `foo.cmd.` / `foo.cmd ` still run `foo.cmd` through
+    // cmd.exe (CVE-2024-43402). Trim them before checking the extension.
+    let mut end = path.len();
+    while end > 0 && matches!(path[end - 1], b' ' | b'.') {
+        end -= 1;
+    }
+    if end < 4 || path[end - 4] != b'.' {
+        return false;
+    }
+    let file_ext = &path[end - 3..end];
+    strings::eql_case_insensitive_asciii_check_length(file_ext, b"cmd")
+        || strings::eql_case_insensitive_asciii_check_length(file_ext, b"bat")
+}
+
+/// Returns true when `arg` contains a byte `cmd.exe` would reinterpret while
+/// re-tokenizing the command line of a `.bat`/`.cmd` invocation: `"` breaks
+/// out of libuv's MSVCRT-style quoting, `%` expands environment variables
+/// even inside quotes, and the rest are command separators / redirection /
+/// escape characters in unquoted positions. None of these can be escaped for
+/// `cmd.exe`, so callers must reject the spawn instead.
+pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
+    arg.iter().any(|&c| {
+        matches!(
+            c,
+            b'"' | b'%' | b'&' | b'|' | b'<' | b'>' | b'^' | b'\r' | b'\n'
+        )
+    })
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
@@ -145,10 +182,8 @@ fn search_bin(
     path_size: usize,
     check_windows_extensions: bool,
 ) -> Option<&mut [u16]> {
-    // PORT NOTE: Zig `existsOSPath` takes `bun.OSPathSliceZ`, which is `[:0]const u16`
-    // on Windows and `[:0]const u8` on POSIX. `searchBin` only ever runs on Windows
-    // (whichWin is dead-by-lazy-eval elsewhere); the POSIX arm here is just to keep
-    // the public `which_win` symbol type-checking on all targets.
+    // `search_bin` only ever runs on Windows; the POSIX arm here exists solely
+    // so the public `which_win` symbol type-checks on all targets.
     #[cfg(windows)]
     {
         if !check_windows_extensions {
@@ -203,18 +238,28 @@ fn search_bin_in_path<'a>(
     } else {
         path
     };
-    // PORT NOTE: PosixToWinNormalizer is a no-op on posix; resolve_cwd_with_external_buf
-    // takes `&mut ()` there, so just pass through (matches Zig lazy-eval behaviour).
+    // PosixToWinNormalizer is a no-op on posix; resolve_cwd_with_external_buf
+    // takes `&mut ()` there, so just pass through.
     #[cfg(not(windows))]
     let segment: &[u8] = {
         let _ = path_buf;
         path
     };
+    let tail_units = if check_windows_extensions { 5 } else { 1 };
+    if segment.len() + 1 + bin.len() + tail_units > buf.len()
+        && bun_core::strings::element_length_utf8_into_utf16(segment)
+            + 1
+            + bun_core::strings::element_length_utf8_into_utf16(bin)
+            + tail_units
+            > buf.len()
+    {
+        return None;
+    }
     let segment_utf16 = bun_core::strings::convert_utf8_to_utf16_in_buffer(
         &mut buf[..],
         bun_core::strings::without_trailing_slash(segment),
     );
-    // PORT NOTE: reshaped for borrowck — capture len before re-borrowing buf
+    // Capture len before re-borrowing buf (borrowck).
     let segment_utf16_len = segment_utf16.len();
 
     buf[segment_utf16_len] = SEP as u16;
@@ -255,7 +300,7 @@ pub fn which_win<'a>(
         let normalized_bin = bin;
         let bin_utf16 =
             bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf[..], normalized_bin);
-        // PORT NOTE: reshaped for borrowck — capture len before re-borrowing buf
+        // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
         buf[bin_utf16_len] = 0;
         return search_bin(buf, bin_utf16_len, check_windows_extensions).map(|w| &*w);
@@ -263,8 +308,8 @@ pub fn which_win<'a>(
 
     // check if bin is in cwd
     if strings::index_of_char(bin, b'/').is_some() || strings::index_of_char(bin, b'\\').is_some() {
-        // PORT NOTE: NLL Polonius limitation — raw-ptr reborrow so the None
-        // branch can fall through without `buf` appearing borrowed.
+        // NLL/Polonius limitation — raw-ptr reborrow so the None branch can
+        // fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
         let buf_reborrow: &'a mut WPathBuffer =
             unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
@@ -284,8 +329,8 @@ pub fn which_win<'a>(
 
     // iterate over system path delimiter
     for segment_part in path.split(|b| *b == b';').filter(|s| !s.is_empty()) {
-        // PORT NOTE: NLL Polonius limitation — re-borrowing `buf` across loop
-        // iterations when returning a reference tied to its lifetime.
+        // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
+        // when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.
         let buf_reborrow: &'a mut WPathBuffer =
             unsafe { &mut *std::ptr::from_mut::<WPathBuffer>(buf) };
@@ -302,5 +347,3 @@ pub fn which_win<'a>(
 
     None
 }
-
-// ported from: src/which/which.zig

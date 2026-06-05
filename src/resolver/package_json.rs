@@ -15,7 +15,6 @@ use bun_sys::Fd;
 use crate as resolver;
 use crate::fs;
 use bun_alloc::Arena as Bump;
-use bun_wyhash::Wyhash;
 
 // ── bun_install types (MOVE_DOWN: bun_install_types) ──────────────────────
 // Note: bun_resolver cannot depend on bun_install (would loop). The
@@ -41,11 +40,8 @@ pub mod install_stubs {
         pub use ::bun_install_types::resolver_hooks::DependencyVersionTag as Tag;
     }
 }
-// TODO(port): bun_bundler::options::{Framework, RouteConfig} — local opaque
-// FORWARD_DECL: legacy `options::Framework` and friends. The Zig
-// `package_json.zig:loadFramework*` block references `options.Framework`, which
-// no longer exists in `options.zig` (removed upstream); the loaders have no
-// callers. Port the field-shape locally so the bodies compile as-written —
+// FORWARD_DECL: legacy `options::Framework` and friends. The loaders have no
+// callers. Keep the field-shape locally so the bodies compile as-written —
 // MOVE_DOWN to `bun_options_types` if/when `bun_bundler` revives these.
 pub mod options {
     use bun_options_types::schema::api;
@@ -68,7 +64,9 @@ pub mod options {
         pub fn init() -> Env {
             Env::default()
         }
-        /// `options.zig` Env::setBehaviorFromPrefix.
+        /// Maps an env-var prefix to a behavior: `"*"` loads all vars, a
+        /// non-empty prefix loads only matching vars, and an empty prefix
+        /// disables env loading.
         pub fn set_behavior_from_prefix(&mut self, prefix: Box<[u8]>) {
             self.behavior = EnvBehavior::disable;
             self.prefix = Box::default();
@@ -136,7 +134,9 @@ pub mod options {
     }
 }
 use bun_options_types::schema::api;
-// TODO(port): bun_collections::StringMap (array-backed string→string map)
+// Deliberately a bare alias rather than `bun_collections::StringMap` (which
+// wraps the same `StringArrayHashMap<Box<[u8]>>` with a `dupe_keys` flag the
+// resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_collections::StringHashMapUnownedKey;
 use bun_glob as glob;
@@ -144,29 +144,28 @@ use bun_glob as glob;
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
 pub type BrowserMap = StringMap;
-/// Values are owned (Zig: `[]const u8` borrowing the package.json source
-/// buffer). Owned `Box<[u8]>` here so callers (CLI bunfig → bundler options)
+/// Values are owned `Box<[u8]>` so callers (CLI bunfig → bundler options)
 /// can populate without `unsafe` lifetime-extension casts.
 pub type MacroImportReplacementMap = StringArrayHashMap<Box<[u8]>>;
 pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 
-type ScriptsMap = StringArrayHashMap<&'static [u8]>; // TODO(port): lifetime — values borrow source buffer
+// Values borrow the package.json source buffer; `'static` is a lifetime-erased
+// borrow kept alive by `PackageJSON::source_contents` (the owning field).
+type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 pub type MainFieldMap = StringMap;
 
 #[derive(Default)]
 pub struct DependencyMap {
     pub map: DependencyHashMap,
-    // TODO(port): lifetime — borrows the package.json source contents
+    // Borrows the package.json source contents; lifetime-erased to 'static,
+    // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
 }
 
 impl Clone for DependencyMap {
-    /// Zig copies `DependencyMap` by value (the inner `ArrayHashMap` is a
-    /// pointer + len, so the copy aliases the same backing storage). Rust
-    /// owns the storage, so we deep-clone the small key/value vecs instead —
-    /// `SemverString`/`Dependency` are POD over `source_buf`, so semantics
-    /// match the Zig shallow copy.
+    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
+    /// POD over `source_buf`.
     fn clone(&self) -> Self {
         Self {
             map: self.map.clone().expect("OOM"),
@@ -175,29 +174,27 @@ impl Clone for DependencyMap {
     }
 }
 
-// PORT NOTE: Zig had `DependencyMap.HashMap` as a nested decl; Rust inherent impls cannot carry associated type aliases (stable), so use a free alias.
+// Inherent impls cannot carry associated type aliases (stable), so use a free alias.
 pub type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
-// TODO(port): ArrayHashMap context param — Zig used String.ArrayHashContext with store_hash=false
 
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: bun_ast::Source,
-    /// PORT NOTE: owns the file bytes that `source.contents` (and the
+    /// Owns the file bytes that `source.contents` (and the
     /// `&'static [u8]` map values below) borrow. Replaces the prior
     /// `mem::forget` leak — forbidden per docs/PORTING.md §Forbidden patterns.
-    /// Zig (`package_json.zig:615`) used `bun.default_allocator` and never
-    /// freed on success because the DirInfo cache is process-lifetime; here the
-    /// `PackageJSON` itself is the owner so the bytes free if it ever drops.
-    // TODO(port): lifetime — once `bun_ast::Source::contents` becomes
-    // `Cow<'static, [u8]>`, fold this into `source` and drop the re-borrow.
+    /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
+    /// (`bun_ast::Source::contents` is `&'static [u8]`, so this separate owner
+    /// field is what keeps that borrow — and the map values above — alive.)
     pub source_contents: Box<[u8]>,
     pub main_fields: MainFieldMap,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
 
     pub scripts: Option<Box<ScriptsMap>>,
-    pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>, // TODO(port): value lifetime
+    // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
+    pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
     pub arch: Architecture,
     pub os: OperatingSystem,
@@ -238,12 +235,11 @@ pub struct PackageJSON {
     pub imports: Option<ExportsMap>,
 }
 
-// PORT NOTE: hand-rolled `Default` because `#[derive(Default)]` would zero
+// hand-rolled `Default` because `#[derive(Default)]` would zero
 // `package_manager_package_id` (a valid lockfile id — typically the root
-// package). Spec `package_json.zig:68` declares the field default as
-// `Install.invalid_package_id` (= `u32::MAX`); `node_fallbacks.rs` relies on
-// `..Default::default()` matching that. Likewise `arch`/`os` default to
-// `*::all()` (zig:65-66).
+// package). The field defaults to `Install.invalid_package_id` (= `u32::MAX`);
+// `node_fallbacks.rs` relies on `..Default::default()` matching that. Likewise
+// `arch`/`os` default to `*::all()`.
 impl Default for PackageJSON {
     fn default() -> Self {
         PackageJSON {
@@ -326,12 +322,7 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
 }
 
 impl PackageJSON {
-    // pub const new = bun.TrivialNew(@This());
-    // pub const deinit = bun.TrivialDeinit(@This());
-    // TODO(port): TrivialNew/TrivialDeinit — use Box::new / Drop
-
     pub fn name_for_import(&self) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(port): narrow error set
         if strings::index_of(self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
             Ok(Box::from(&*self.name))
         } else {
@@ -375,7 +366,6 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-// TODO(port): std.HashMapUnmanaged with StringHashMapUnowned.Key/Adapter and 80% load factor
 pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
 pub type GlobList = Vec<Box<[u8]>>;
@@ -431,13 +421,12 @@ impl SideEffects {
 // ── Local extension shims so `parse` can call shapes that live in higher-tier
 //    crates (full FileSystem). Bodies forward to bun_paths. ────────────────
 //
-// PORT NOTE: the former `JsonCachePackageJsonExt` shim trait is removed —
+// the former `JsonCachePackageJsonExt` shim trait is removed —
 // `JsonCacheVTable` now has a real `parse_package_json` slot and `JsonCache`
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// The Zig body calls the threadlocal-buffer `abs`/`join`/`normalize` and
-/// immediately dupes the result. Thin extension trait that delegates to
+/// Thin extension trait that delegates to
 /// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
 /// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
 /// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
@@ -451,9 +440,8 @@ pub trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn abs_owned(&self, parts: &[&[u8]]) -> Box<[u8]> {
-        // PORT NOTE: Zig `FileSystem.abs` joins against `top_level_dir` into a
-        // threadlocal buffer; caller immediately dupes. Return owned to avoid
-        // laundering the threadlocal borrow into `'static`.
+        // Joins against `top_level_dir`; return owned so no scratch-buffer
+        // borrow is laundered into `'static`.
         let out = resolve_path::resolve_path::join_abs_string::<
             resolve_path::resolve_path::platform::Loose,
         >(self.top_level_dir, parts);
@@ -463,11 +451,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
     }
     fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // PORT NOTE: Zig `FileSystem.normalize` (fs.zig) is
-        // `path_handler.normalizeString(str, true, .auto)` — collapses `.`/`..`/dup-separators
-        // only; it does NOT join against cwd. Writes into a threadlocal buffer;
-        // caller immediately dupes. Return owned to avoid laundering the
-        // threadlocal borrow into `'static`.
+        // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
         let out = resolve_path::resolve_path::normalize_string::<
             true,
             resolve_path::resolve_path::platform::Auto,
@@ -476,8 +460,8 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     }
 }
 
-// TODO(port): bun_bundler::options + bun_ast::Expr full API + bun_install + bun_schema
-// — framework/define loaders stay gated until bun_bundler::options lands.
+// Legacy framework/define loaders: no callers today; bodies kept compiling
+// against the local `options` shim.
 
 impl PackageJSON {
     fn load_define_defaults(
@@ -485,7 +469,6 @@ impl PackageJSON {
         json: &js_ast::E::Object,
         bump: &Bump,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut valid_count: usize = 0;
         for prop in json.properties.slice() {
             if !matches!(
@@ -513,7 +496,6 @@ impl PackageJSON {
             ) {
                 continue;
             }
-            // PERF(port): was appendAssumeCapacity
             env.defaults.push(options::EnvDefault {
                 key: Box::from(
                     prop.key
@@ -555,11 +537,8 @@ impl PackageJSON {
             valid_count += 1;
         }
 
-        let buffer: Vec<Box<[u8]>> = vec![Box::default(); valid_count * 2];
-        // TODO(port): Zig used a single allocation split into keys/values; Rust uses two Vecs
         let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
-        let _ = buffer; // unused after reshaping
         for prop in json.properties.slice() {
             if !matches!(
                 prop.value
@@ -735,9 +714,6 @@ impl PackageJSON {
             || framework.fallback.is_enabled()
     }
 
-    // PORT NOTE: Zig `comptime load_framework: LoadFramework` lowered to a runtime
-    // arg — `LoadFramework` is a plain enum (no `ConstParamTy`), and the only
-    // use is the trailing `match`. PERF(port): was comptime — irrelevant (dead).
     pub fn load_framework_with_preference<const READ_DEFINES: bool>(
         package_json: &PackageJSON,
         pair: &mut FrameworkRouterPair<'_>,
@@ -872,7 +848,7 @@ impl PackageJSON {
                                 }
                                 extensions.push(e_str.data.slice());
                             }
-                            // TODO(port): `extensions` is computed but never assigned anywhere (matches Zig)
+                            // `extensions` is computed but never assigned anywhere.
                             let _ = extensions;
                         }
                     }
@@ -1025,7 +1001,6 @@ impl PackageJSON {
                     None => continue,
                 };
 
-                // PERF(port): was putAssumeCapacityNoClobber
                 map.insert(import_name, Box::<[u8]>::from(remap_value_str));
             }
 
@@ -1044,7 +1019,6 @@ impl PackageJSON {
         package_id: Option<PackageID>,
         include_scripts_: IncludeScripts,
     ) -> Option<PackageJSON> {
-        // PERF(port): include_scripts_ was a comptime enum param — profile if hot
         let include_scripts = include_scripts_ == IncludeScripts::IncludeScripts;
 
         // SAFETY: PORT (Stacked Borrows) — `r.fs()`/`r.log()` return RAW `*mut`
@@ -1052,8 +1026,7 @@ impl PackageJSON {
         // singletons so the two `&mut` projections below do not alias each other,
         // and no other `&mut *r.fs` / `&mut *r.log` retag occurs while they are
         // live in this function. Caller upholds the single-thread `Resolver`
-        // aliasing contract (Zig had no borrow split here either — `r.fs`/`r.log`
-        // are accessed freely throughout `parse`).
+        // aliasing contract.
         let r_fs: &mut fs::FileSystem = unsafe { &mut *r.fs() };
         // SAFETY: see above — `r.log()` points to a distinct singleton from `r.fs()`.
         let r_log: &mut bun_ast::Log = unsafe { &mut *r.log() };
@@ -1095,7 +1068,7 @@ impl PackageJSON {
                 return None;
             }
         };
-        // PORT NOTE: reshaped for borrowck — `mem::take` the contents (leaving
+        // Reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         // Immediately convert to owned `Box<[u8]>`: `use_shared_buffer = false`
         // above guarantees `Contents::Owned`/`Empty`, so the match is exhaustive
@@ -1116,21 +1089,18 @@ impl PackageJSON {
             ));
         }
 
-        // PORT NOTE: `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
+        // `bun_ast::Source.path` is the lightweight `bun_paths::fs::Path<'static>` (no
         // `pretty`/`is_node_module`); `key_path` is only used for `text`, so init the
         // source directly from the interned path.
         //
-        // TODO(port): lifetime — `bun_ast::Source::contents` is `&'static [u8]`; once
-        // it becomes `Cow<'static, [u8]>` move `entry_contents` straight into
-        // `json_source` and delete this re-borrow.
+        // `bun_ast::Source::contents` is `&'static [u8]`, so `json_source`
+        // re-borrows `entry_contents` (lifetime-erased) instead of owning it.
         //
         // SAFETY: `entry_contents: Box<[u8]>` is the unique owner of these bytes.
         // On the success path it is *moved* (not leaked) into
         // `package_json.source_contents` at the bottom of this fn, so the heap
-        // allocation lives for the life of the returned `PackageJSON` (Zig:
-        // `bun.default_allocator`, never freed — "DirInfo cache is reused
-        // globally"). On every early `return None` below `entry_contents` drops
-        // and frees normally (Zig: `allocator.free(entry.contents)`), after
+        // allocation lives for the life of the returned `PackageJSON`. On every
+        // early `return None` below `entry_contents` drops and frees normally, after
         // `json_source` is already dead. `Box<[u8]>` heap address is stable
         // across the move.
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
@@ -1161,7 +1131,7 @@ impl PackageJSON {
         let mut package_json = PackageJSON {
             name: Box::default(),
             version: Box::default(),
-            // PORT NOTE: reshaped for borrowck — `json_source` stays a local until the
+            // Reshaped for borrowck — `json_source` stays a local until the
             // end so we can borrow it while mutating other `package_json` fields.
             source: bun_ast::Source::default(),
             // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
@@ -1179,8 +1149,8 @@ impl PackageJSON {
             exports: None,
             imports: None,
         };
-        // PORT NOTE: shadow as `&Source` so the body matches the Zig shape; the
-        // owned value is reconstructed at the bottom (Source isn't `Clone`).
+        // shadow as `&Source`; the owned value is reconstructed at the bottom
+        // (Source isn't `Clone`).
         let json_source = &json_source;
 
         // Note: we tried rewriting this to be fewer loops over all the properties (asProperty loops over each)
@@ -1296,7 +1266,7 @@ impl PackageJSON {
                             // import of "foo", but that's actually not a bug. Or arguably it's a
                             // bug in Browserify but we have to replicate this bug because packages
                             // do this in the wild.
-                            // PORT NOTE: inherent `FileSystem::normalize` (fs.rs)
+                            // inherent `FileSystem::normalize` (fs.rs)
                             // returns a threadlocal-backed `&[u8]` and shadows the
                             // owned-returning trait method; UFCS to get the `Box`.
                             let key: Box<[u8]> =
@@ -1320,7 +1290,7 @@ impl PackageJSON {
                                 }
                                 _ => {
                                     // Only print this warning if its not inside node_modules, since node_modules/ is not actionable.
-                                    // PORT NOTE: `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
+                                    // `bun_paths::fs::Path<'static>` has no `is_node_module`; inline the check.
                                     if !strings::contains(
                                         json_source.path.text,
                                         NODE_MODULES_PATH.as_bytes(),
@@ -1363,7 +1333,7 @@ impl PackageJSON {
                 }
             } else if let js_ast::ExprData::EArray(e_array) = &side_effects_field.data {
                 // Handle arrays, including empty arrays
-                // PORT NOTE: reshaped — `ArrayIterator` is not `Clone`; iterate the
+                // Reshaped — `ArrayIterator` is not `Clone`; iterate the
                 // underlying `Vec<Expr>` slice directly for both passes.
                 let items = e_array.items.slice();
                 let mut map = SideEffectsMap::default();
@@ -1415,10 +1385,8 @@ impl PackageJSON {
                                 // Normalize pattern to use forward slashes for cross-platform compatibility
                                 let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                     .unwrap_or_else(|_| pattern.to_vec());
-                                // PERF(port): was appendAssumeCapacity
                                 glob_list.push(normalized_pattern.into_boxed_slice());
                             } else {
-                                // PERF(port): was getOrPutAssumeCapacity
                                 let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                             }
                         }
@@ -1445,7 +1413,6 @@ impl PackageJSON {
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
-                            // PERF(port): was appendAssumeCapacity
                             glob_list.push(normalized_pattern.into_boxed_slice());
                         }
                     }
@@ -1458,7 +1425,6 @@ impl PackageJSON {
                             let joined: [&[u8]; 2] =
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
-                            // PERF(port): was getOrPutAssumeCapacity
                             let _ =
                                 map.insert(StringHashMapUnownedKey::init(r_fs.join(&joined)), ());
                         }
@@ -1467,10 +1433,6 @@ impl PackageJSON {
                 }
             }
         }
-
-        // TODO(port): bun_install::{Dependency, Architecture, OperatingSystem,
-        // lockfile::Package::DependencyGroup, PackageManager}. The whole
-        // dependencies/os/cpu block is install-tier.
 
         if INCLUDE_DEPENDENCIES == IncludeDependencies::Main
             || INCLUDE_DEPENDENCIES == IncludeDependencies::Local
@@ -1542,7 +1504,6 @@ impl PackageJSON {
                 }
 
                 type DependencyGroup = install_stubs::DependencyGroup;
-                // TODO(port): comptime feature flags + comptime brk block — expanded inline below
                 let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
                 let dependency_groups: &[DependencyGroup] = if dev_deps {
                     &[
@@ -1553,7 +1514,6 @@ impl PackageJSON {
                 } else {
                     &[DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL]
                 };
-                // PERF(port): was comptime monomorphization (inline for over comptime array) — profile if hot
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
@@ -1566,10 +1526,10 @@ impl PackageJSON {
 
                 if total_dependency_count > 0 {
                     package_json.dependencies.map = DependencyHashMap::default();
-                    // TODO(port): lifetime — source_buf borrows json_source.contents
+                    // source_buf borrows json_source.contents (lifetime-erased;
+                    // owned by `package_json.source_contents` on the success path).
                     package_json.dependencies.source_buf = contents_static;
-                    // PORT NOTE: Zig used `SemverString.ArrayHashContext` (compares against
-                    // `source_buf`); ArrayHashMap has no `*_context` variant yet — the
+                    // ArrayHashMap has no `*_context` variant yet — the
                     // generic `put_assume_capacity` path is sufficient because keys are
                     // `SemverString` (offset+len into `source_buf`, hashed by content).
                     package_json
@@ -1604,8 +1564,7 @@ impl PackageJSON {
                                     let sliced_str =
                                         Semver::SlicedString::init(version_str, version_str);
 
-                                    // Zig's `Dependency.parse` accepts `?*PackageManager`;
-                                    // the parser body lives in install-tier so route through
+                                    // The parser body lives in install-tier so route through
                                     // the AutoInstaller vtable when one is wired. When it
                                     // isn't, still record the dependency name (with an
                                     // uninitialized-tag version) — `bun run --filter` reads
@@ -1627,8 +1586,6 @@ impl PackageJSON {
                                             name_hash,
                                             behavior: group.behavior,
                                         };
-                                        // Zig: `putAssumeCapacityContext(name, dep, ctx)` where
-                                        // `ctx = SemverString.ArrayHashContext{arg_buf, existing_buf}`.
                                         let buf = package_json.dependencies.source_buf;
                                         let ctx = Semver::semver_string::ArrayHashContext {
                                             arg_buf: buf,
@@ -1650,7 +1607,7 @@ impl PackageJSON {
         }
 
         // used by `bun run`
-        // PORT NOTE: `Expr::as_property_string_map` returns
+        // `Expr::as_property_string_map` returns
         // `ArrayHashMap<&'bump [u8], &'bump [u8]>` (bump-tied lifetimes), but
         // `ScriptsMap` stores `&'static [u8]` borrowing the package.json source
         // bytes (`contents_static`, see SAFETY note above). Inline the
@@ -1666,9 +1623,6 @@ impl PackageJSON {
                     let js_ast::ExprData::EObject(obj) = &prop.expr.data else {
                         return None;
                     };
-                    if obj.properties.len_u32() == 0 {
-                        return None;
-                    }
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
                     map.ensure_total_capacity(obj.properties.len_u32() as usize)
                         .ok()?;
@@ -1681,13 +1635,24 @@ impl PackageJSON {
                         else {
                             continue;
                         };
-                        if key.is_empty() {
+                        // Drop entries where the key OR the value is empty.
+                        // An empty-valued script (`{"scripts":{"build":""}}`)
+                        // must NOT become a real (empty) script — report
+                        // "Script not found".
+                        // (npm actually runs empty scripts and exits 0; we
+                        // intentionally diverge here to match released Bun.)
+                        if key.is_empty() || value.is_empty() {
                             continue;
                         }
                         // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                         // on `contents_static` above (owned by the returned PackageJSON).
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
+                    }
+                    // Return None when the FILTERED map is empty, not just when
+                    // the raw object had no properties.
+                    if map.is_empty() {
+                        return None;
                     }
                     Some(Box::new(map))
                 };
@@ -1700,7 +1665,7 @@ impl PackageJSON {
         }
         let _ = (include_scripts, package_id);
 
-        // PORT NOTE: reshaped for borrowck — assign source last (see struct init above).
+        // Reshaped for borrowck — assign source last (see struct init above).
         // `bun_ast::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
         package_json.source = bun_ast::Source {
             path: json_source.path,
@@ -1716,22 +1681,6 @@ impl PackageJSON {
         Some(package_json)
     }
 }
-
-// TODO(port): `self.hash` field referenced in Zig but not declared on
-// PackageJSON; gate until the field lands.
-
-impl PackageJSON {
-    pub fn hash_module(&self, module: &[u8]) -> u32 {
-        let mut hasher = Wyhash::init(0);
-        // PORT NOTE: Zig referenced `this.hash`, which is not a declared field on
-        // `PackageJSON` in either tree (dead body). Hash the package name as the
-        // stable per-package seed instead so `hash_module` is deterministic.
-        hasher.update(&self.name);
-        hasher.update(module);
-
-        hasher.final_() as u32
-    }
-} // end  impl PackageJSON
 
 pub struct ExportsMap {
     pub root: Entry,
@@ -1779,7 +1728,7 @@ impl<'a> Visitor<'a> {
                 };
             }
             js_ast::ExprData::EString(str) => {
-                // PORT NOTE: JSON-parsed strings are always UTF-8 (latin1 source bytes);
+                // JSON-parsed strings are always UTF-8 (latin1 source bytes);
                 // `str.data` is the raw slice, no bump-arena transcode needed.
                 debug_assert!(!str.is_utf16);
                 return Entry {
@@ -1802,11 +1751,7 @@ impl<'a> Visitor<'a> {
             }
             js_ast::ExprData::EObject(e_obj) => {
                 let prop_len = e_obj.properties.len_u32() as usize;
-                // PORT NOTE: reshaped for borrowck — Zig used MultiArrayList column slices;
-                // EntryDataMapList is a Vec<MapEntry> placeholder until
-                // bun_collections::MultiArrayList lands. Push whole entries instead of
-                // writing through three parallel column slices.
-                // TODO(port): bun_collections::MultiArrayList column accessors
+                // `EntryDataMapList` is a `Vec<MapEntry>`, so push whole entries.
                 let mut map_data: EntryDataMapList = Vec::with_capacity(prop_len);
                 let mut expansion_keys: Vec<MapEntry> = Vec::with_capacity(prop_len);
                 let mut is_conditional_sugar = false;
@@ -1918,7 +1863,7 @@ pub enum EntryData {
     Invalid,
     Null,
     Boolean(bool),
-    String(Box<[u8]>), // TODO(port): lifetime — borrows source contents in Zig
+    String(Box<[u8]>), // owned copy
     Array(Box<[Entry]>),
     Map(EntryDataMap),
 }
@@ -1940,34 +1885,23 @@ pub struct EntryDataMap {
     pub list: EntryDataMapList,
 }
 
-// TODO(port): bun_collections::MultiArrayList<MapEntry> — needs MultiArrayElement derive +
-// per-field column accessors. Using Vec<MapEntry> as a placeholder shape.
 pub type EntryDataMapList = Vec<MapEntry>;
 
 #[derive(Clone)]
 pub struct MapEntry {
-    pub key: Box<[u8]>, // TODO(port): lifetime — borrows source contents in Zig
+    pub key: Box<[u8]>, // owned copy
     pub key_range: bun_ast::Range,
     pub value: Entry,
 }
 
-// TODO(port): MultiArrayList field selector enum
-pub enum MapEntryField {
-    Key,
-    KeyRange,
-    Value,
-}
-
 impl Entry {
     pub fn keys_start_with_dot(&self) -> bool {
-        // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }
 
     pub fn value_for_key(&self, key_: &[u8]) -> Option<&Entry> {
         match &self.data {
             EntryData::Map(m) => {
-                // TODO(port): bun_collections::MultiArrayList column accessor; Vec placeholder.
                 for entry in m.list.iter() {
                     if strings::eql(&entry.key, key_) {
                         return Some(&entry.value);
@@ -1993,10 +1927,8 @@ pub struct ESModule<'a> {
 #[derive(Clone)]
 pub struct Resolution {
     pub status: Status,
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. In Rust the source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
+    // The source-buffer case (`EntryData::String(Box<[u8]>)`) is owned by a
     // possibly-temporary `Entry`, so borrowing would dangle. Copy out into an owned buffer.
-    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
     pub path: Box<[u8]>,
     pub debug: ResolutionDebug,
 }
@@ -2122,7 +2054,7 @@ impl<'a> Package<'a> {
     /// Allocate a fresh string buffer and clone `name`/`version`/`subpath`
     /// into it as offset-encoded `Semver::String`s. Mirrors the inline
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
-    /// auto-install pending sites (resolver.zig), exposed as the `esm.copy`
+    /// auto-install pending sites, exposed as the `esm.copy`
     /// helper that `PendingResolution::init` expects.
     pub fn copy(self) -> Result<(PackageExternal, Vec<u8>), bun_core::Error> {
         let mut builder = Semver::semver_string::Builder::default();
@@ -2190,7 +2122,6 @@ impl<'a> Package<'a> {
     }
 
     pub fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
-        // TODO(port): lifetime — &'static is a placeholder; should be <'a>
         if specifier.is_empty() {
             return None;
         }
@@ -2256,65 +2187,7 @@ impl<'a> Package<'a> {
     }
 }
 
-// ── Local string helpers (TODO(port): bun_core::{replacement_size, replace}) ──
-// Minimal local impls so the ESModule resolution algorithm compiles; replace with the
-// canonical bun_core versions once they land. Recorded in blocked_on.
-
-/// Port of `std.mem.replacementSize` — total bytes after replacing every `needle` in
-/// `input` with `replacement`.
-#[inline]
-fn replacement_size(input: &[u8], needle: &[u8], replacement: &[u8]) -> usize {
-    if needle.is_empty() {
-        return input.len();
-    }
-    let mut size = 0usize;
-    let mut i = 0usize;
-    while i < input.len() {
-        if input[i..].starts_with(needle) {
-            size += replacement.len();
-            i += needle.len();
-        } else {
-            size += 1;
-            i += 1;
-        }
-    }
-    size
-}
-
-/// Port of `std.mem.replace` — replace every `needle` in `input` with `replacement`,
-/// writing into `output`. Returns number of replacements.
-#[inline]
-fn replace(input: &[u8], needle: &[u8], replacement: &[u8], output: &mut [u8]) -> usize {
-    if needle.is_empty() {
-        output[..input.len()].copy_from_slice(input);
-        return 0;
-    }
-    let mut i = 0usize;
-    let mut o = 0usize;
-    let mut count = 0usize;
-    while i < input.len() {
-        if input[i..].starts_with(needle) {
-            output[o..o + replacement.len()].copy_from_slice(replacement);
-            o += replacement.len();
-            i += needle.len();
-            count += 1;
-        } else {
-            output[o] = input[i];
-            o += 1;
-            i += 1;
-        }
-    }
-    count
-}
-
-#[derive(Clone, Default)]
-pub struct ReverseResolution {
-    // PORT NOTE: Zig returned slices into threadlocal PathBuffers / the package.json source
-    // buffer. Copy out into an owned buffer (see `Resolution.path` note above).
-    // TODO(perf): thread a real `'a` lifetime once `EntryData::String` is `&'a [u8]`.
-    pub subpath: Box<[u8]>,
-    pub token: bun_ast::Range,
-}
+use bun_core::strings::{replace, replacement_size};
 
 const INVALID_PERCENT_CHARS: [&[u8]; 4] = [b"%2f", b"%2F", b"%5c", b"%5C"];
 
@@ -2325,8 +2198,8 @@ struct ModuleBufs {
 }
 
 thread_local! {
-    // PORT NOTE: bun.ThreadlocalBuffers — Zig heap-allocates the buffer struct on first use and
-    // stores only a pointer in TLS so the static-TLS template stays small (PE/COFF has no
+    // Heap-allocate the buffer struct on first use and store only a pointer
+    // in TLS so the static-TLS template stays small (PE/COFF has no
     // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
     // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
@@ -2352,9 +2225,8 @@ fn module_bufs() -> *mut ModuleBufs {
     })
 }
 
-// PORT NOTE: Zig used `r: *const ESModule` (const ptr) but mutated `r.module_type.*`
-// and `r.debug_logs.?.*` through interior pointers. In Rust those fields are `&'a mut T`,
-// so reading/writing them requires `&mut self`. All resolution methods take `&mut self`.
+// `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
+// requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub fn resolve(&mut self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         let r = self.resolve_exports(package_url, subpath, exports);
@@ -2415,7 +2287,6 @@ impl<'a> ESModule<'a> {
         // live `&mut` to resolved_path_buf_percent on this thread.
         let resolved_path_buf_percent: &mut PathBuffer =
             unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
-        // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
         let len = match bun_url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
             &result.path,
@@ -2441,8 +2312,7 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        // PORT NOTE: Zig returned a slice into the threadlocal resolved_path_buf_percent.
-        // Copy out — see `Resolution.path` note. PERF(port): avoid the alloc if hot.
+        // Copy out — see `Resolution.path` note. PERF: avoid the alloc if hot.
         result.path = Box::<[u8]>::from(resolved_path);
         result
     }
@@ -2662,10 +2532,9 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                // PORT NOTE: Zig had `defer log.decrease_indent()` capturing the unwrapped
-                // `*DebugLogs`. Rust scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; manual decrease at each return below.
-                // TODO(port): errdefer — verify all return paths decrease_indent.
+                // A scopeguard cannot hold the &mut across the recursive
+                // `&mut self` calls below; every return path in this arm invokes
+                // `dedent!()` manually instead (audited: all 10 returns in this arm dedent).
                 macro_rules! dedent {
                     () => {
                         if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -2688,6 +2557,33 @@ impl<'a> ESModule<'a> {
 
                         return Resolution {
                             path: Box::<[u8]>::from(str),
+                            status: Status::InvalidModuleSpecifier,
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
+                        };
+                    }
+                }
+
+                // If the wildcard match (or trailing-slash remainder) taken from
+                // the import specifier contains any ".", ".." or "node_modules"
+                // segments, throw an Invalid Module Specifier error. Node's
+                // PACKAGE_TARGET_RESOLVE applies the same validation to
+                // patternMatch; without it the specifier can substitute "../"
+                // segments into the target and escape the package directory.
+                if !subpath.is_empty() {
+                    if let Some(invalid) = find_invalid_subpath_segment(subpath) {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.add_note_fmt(format_args!(
+                                "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
+                                bstr::BStr::new(subpath),
+                                bstr::BStr::new(invalid)
+                            ));
+                        }
+                        dedent!();
+                        return Resolution {
+                            path: Box::<[u8]>::from(subpath),
                             status: Status::InvalidModuleSpecifier,
                             debug: ResolutionDebug {
                                 token: target.first_token,
@@ -2733,8 +2629,7 @@ impl<'a> ESModule<'a> {
                                 },
                             };
                         } else {
-                            // PORT NOTE: Zig used `.auto` here, carried over as a
-                            // latent Windows bug (#30839): this branch runs when an
+                            // Latent Windows bug (#30839): this branch runs when an
                             // `imports` target is itself a package specifier
                             // (e.g. `@myproject/resolver`) that we hand back to
                             // package-resolve. Per the Node.js packages spec these
@@ -2839,6 +2734,25 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
+                    if let Some(invalid) = find_invalid_segment(result) {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.add_note_fmt(format_args!(
+                                "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
+                                bstr::BStr::new(result),
+                                bstr::BStr::new(invalid)
+                            ));
+                        }
+                        dedent!();
+                        return Resolution {
+                            path: Box::<[u8]>::from(result),
+                            status: Status::InvalidModuleSpecifier,
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
+                        };
+                    }
+
                     let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
                         && strings::index_of_char(result, b'*').unwrap() as usize
                             == result.len() - 1
@@ -2885,8 +2799,6 @@ impl<'a> ESModule<'a> {
                 let mut did_find_map_entry = false;
                 let mut last_map_entry_i: usize = 0;
 
-                // PORT NOTE: Zig used MultiArrayList column slices; `EntryDataMapList`
-                // is `Vec<MapEntry>` so iterate AoS directly.
                 for (i, entry) in object.list.iter().enumerate() {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
@@ -2967,7 +2879,7 @@ impl<'a> ESModule<'a> {
                         //     |              ^
                         //
                         // More information: https://github.com/evanw/esbuild/issues/1484
-                        // PORT NOTE: reshaped for borrowck — return_target points into slice; clone keys below
+                        // Reshaped for borrowck — return_target points into slice; clone keys below
                         return_target = last_map_entry_value;
                     }
 
@@ -3116,6 +3028,29 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
     None
 }
 
+// Like `find_invalid_segment`, but for the wildcard match (`patternMatch`)
+// extracted from the import specifier rather than for a target string from
+// package.json: every segment is validated, including the first, and a
+// separator-less single-segment path is allowed.
+fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
+    let mut path = path_;
+    while !path.is_empty() {
+        let mut segment = path;
+        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+            segment = &path[0..new_slash];
+            path = &path[new_slash + 1..];
+        } else {
+            path = b"";
+        }
+
+        if is_invalid_segment(segment) {
+            return Some(segment);
+        }
+    }
+
+    None
+}
+
 // Node's PACKAGE_TARGET_RESOLVE rejects ".", "..", and "node_modules" segments
 // case-insensitively and including percent-encoded variants. Decode the segment
 // before comparing so spellings like "%2e%2e" or ".%2E" cannot survive the check
@@ -3153,5 +3088,3 @@ fn is_invalid_segment(segment: &[u8]) -> bool {
     let d = &decoded[..len];
     d == b"." || d == b".." || d == b"node_modules"
 }
-
-// ported from: src/resolver/package_json.zig

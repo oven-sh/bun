@@ -140,6 +140,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
 #include "JavaScriptCore/JSPromiseReaction.h"
 #include "JavaScriptCore/FunctionExecutable.h"
@@ -177,7 +178,7 @@ using namespace WebCore;
 
 typedef uint8_t ExpectFlags;
 
-// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+// Note: keep this in sync with Flags in src/runtime/test_runner/expect.rs
 // clang disable unused warning
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
@@ -2243,7 +2244,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
-// native code at the top of the event loop (e.g. runFromJSThread in node_fs.zig)
+// native code at the top of the event loop (e.g. run_from_js_thread in node_fs.rs)
 // where there's no JS call stack, but the promise being rejected has an await
 // chain that tells us where the user's code is.
 //
@@ -2264,11 +2265,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSGenerator* {
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
         JSC::InternalFieldTuple* tuple = nullptr;
         if (dynamicCastValue(context, &tuple))
             context = tuple->getInternalField(0);
-        JSC::JSGenerator* generator = nullptr;
+        JSC::JSAsyncFunctionGenerator* generator = nullptr;
         dynamicCastValue(context, &generator);
         return generator;
     };
@@ -2285,7 +2286,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSGenerator* {
+    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
@@ -2293,6 +2294,16 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
                 if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
                     return generator;
+                // No generator in the context. For the resolve-with-promise fast
+                // path (`return promise` without await inside an async function),
+                // the reaction's cell payload is the outer promise being resolved —
+                // follow it to the next promise in the chain. Combinator reactions
+                // store a JSPromiseCombinatorsGlobalContext there, so the downcast
+                // fails and we stop, as before.
+                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                    p = next;
+                    continue;
+                }
                 return nullptr;
             }
             case JSC::JSPromise::InlineReactionKind::FulfillHandler:
@@ -2316,9 +2327,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSGenerator* generator) -> JSC::BytecodeIndex {
+    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
         JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSGenerator::Field::State).get();
+        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
         if (stateValue.isInt32()) {
             int32_t state = stateValue.asInt32();
             size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
@@ -2333,7 +2344,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return bytecodeIndex;
     };
 
-    auto appendFrame = [&](JSC::JSGenerator* generator) {
+    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
         JSC::JSFunction* asyncFunction = nullptr;
         if (!dynamicCastValue(generator->next(), &asyncFunction))
             return;
@@ -2350,7 +2361,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         }
     };
 
-    JSC::JSGenerator* gen = getAwaitingGenerator(promise);
+    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
         appendFrame(gen);
         JSC::JSPromise* returnPromise = nullptr;
@@ -2600,7 +2611,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 
         if (auto* object = dynamicDowncast<JSObject>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            scope.release(); // zig binding handles exceptions
+            scope.release(); // the extern-C caller checks for the pending exception
             JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
             RETURN_IF_EXCEPTION(scope, 0);
             if (lengthValue) {
@@ -2843,7 +2854,11 @@ JSC::EncodedJSValue JSC__JSGlobalObject__putCachedObject(JSC::JSGlobalObject* gl
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global, ZigString* arg1)
 {
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
-    global->moduleLoader()->removeEntry(identifier);
+    auto* moduleLoader = global->moduleLoader();
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { moduleLoader->cellLock() };
+    moduleLoader->removeEntry(identifier);
 }
 
 void JSC__VM__collectAsync(JSC::VM* vm)
@@ -3334,8 +3349,9 @@ bool JSC__JSValue__asArrayBuffer(
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
 // transfer()/detach() throw while a native borrower holds a slice into it.
-// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
-// false if `value` has no ArrayBuffer impl.
+// SharedArrayBuffer is never detachable and never moves, so it is left
+// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
+// impl.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
@@ -3347,15 +3363,18 @@ static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         return true;
     }
     return false;
 }
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
-        buf->unpin();
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
+        if (!buf->isShared())
+            buf->unpin();
+    }
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
@@ -3395,7 +3414,8 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         // contract allows it).
         auto* buf = view->possiblySharedBuffer();
         if (!buf) return 0;
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
         return 2;
@@ -3403,7 +3423,8 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
         if (!buf || buf->isDetached()) return 0;
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
         return 2;
@@ -3522,7 +3543,7 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
     }
 }
 
-VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0)
+__attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JSC::JSGlobalObject* arg0)
 {
     return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
@@ -3958,7 +3979,10 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     return result;
 }
 
-JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
+// One load. always_inline so ThinLTO importers and the inliner never leave
+// this as an out-of-line cross-language call (it is the single most-called
+// Rust -> C++ boundary function).
+__attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGlobalObject* arg0) { return &arg0->vm(); };
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
@@ -4164,7 +4188,7 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
-JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
+__attribute__((__always_inline__)) JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
@@ -4577,9 +4601,9 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
 
     JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
 
-    auto result = symbol->description();
-    if (!result.isEmpty()) {
-        *arg2 = Zig::toZigString(result);
+    auto& uid = symbol->uid();
+    if (!uid.isNullSymbol() && !uid.isEmpty()) {
+        *arg2 = Zig::toZigString(static_cast<WTF::StringImpl&>(uid));
     } else {
         *arg2 = ZigStringEmpty;
     }
@@ -4922,7 +4946,7 @@ void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0)
 }
 
 // The following two functions are copied 1:1 from JSLockHolder to provide a
-// new, more ergonomic binding for interacting with the lock from Zig
+// new, more ergonomic binding for interacting with the lock from native code
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
 
 extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
@@ -4949,7 +4973,11 @@ void JSC__VM__deleteAllCode(JSC::VM* arg1, JSC::JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    globalObject->moduleLoader()->clearAll();
+    {
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Locker cellLocker { moduleLoader->cellLock() };
+        moduleLoader->clearAll();
+    }
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);
     arg1->heap.reportAbandonedObjectGraph();
 }
@@ -5080,7 +5108,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
-// This enum must match the zig enum in src/jsc/bindings/JSValue.zig JSValue.BuiltinName
+// This enum must match BuiltinName in src/jsc/lib.rs
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -5229,7 +5257,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__fastGetOwn(JSC::EncodedJSValue JSVa
     return {};
 }
 
-bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
+__attribute__((__always_inline__)) bool JSC__JSValue__toBoolean(JSC::EncodedJSValue JSValue0)
 {
     // We count masquerades as undefined as true.
     return JSValue::decode(JSValue0).pureToBoolean() != TriState::False;
@@ -6320,7 +6348,7 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) bool Bun__RETURN_IF_EXCEPTION(JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     RETURN_IF_EXCEPTION(scope, true);
@@ -6439,8 +6467,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
-    // the REPL transform wrapper. We don't set it here anymore.
+    // Note: _ is now set in src/runtime/cli/repl.rs after extracting the value
+    // from the REPL transform wrapper. We don't set it here anymore.
 
     return JSC::JSValue::encode(result);
 }
@@ -6551,6 +6579,68 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
     return JSC::JSValue::encode(result);
+}
+
+// Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
+// of each. Two passes, mirroring Buffer.concat: the first reads every element
+// into a MarkedArgumentBuffer, so any user code an indexed read can run
+// (getters, proxy traps) finishes before the second pass takes raw pointers.
+// A backing store detached during the first pass reads back as a zero-length
+// span.
+//
+// When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
+// and pinned before its data pointer is read, so the span stays valid after
+// control returns to JS (an in-flight async I/O). The caller must balance
+// every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
+// is never detachable and never moves, so it is left unpinned.
+//
+// Returns 0 on success, 1 if the value is not a JSArray or an element is not
+// an ArrayBufferView, 2 on allocation failure, -1 if an exception is pending.
+extern "C" int32_t Bun__JSArray__collectBufferSpans(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedValue,
+    bool pinBuffers,
+    void* ctx,
+    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell() || !JSC::isJSArray(value.asCell()))
+        return 1;
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
+
+    JSC::MarkedArgumentBuffer values;
+    values.ensureCapacity(array->length());
+    if (values.hasOverflowed()) [[unlikely]]
+        return 2;
+
+    JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue element) -> bool {
+        values.append(element);
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (values.hasOverflowed()) [[unlikely]]
+        return 2;
+
+    for (unsigned i = 0; i < unsigned(values.size()); i++) {
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
+        if (!view)
+            return 1;
+        if (pinBuffers) {
+            // possiblySharedBuffer() converts a FastTypedArray (GC-movable
+            // storage, no ArrayBuffer yet) into a malloc-backed one and can
+            // repoint m_vector, so it must run before vector() is read.
+            auto* buf = view->possiblySharedBuffer();
+            if (!buf) [[unlikely]]
+                return 2;
+            if (!buf->isShared())
+                buf->pin();
+        }
+        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
+    }
+    return 0;
 }
 
 extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(

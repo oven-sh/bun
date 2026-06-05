@@ -1,6 +1,5 @@
-//! Extracted from `install/PackageManager/PackageManagerOptions.zig` so
-//! `options_types/schema.zig`, `cli/bunfig.zig`, and `ini/` can name the
-//! linker mode without depending on the full package manager.
+//! Lets `options_types`, `cli/bunfig`, and `ini/` name the linker mode
+//! without depending on the full package manager.
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -27,11 +26,9 @@ impl NodeLinker {
     }
 }
 
-// ported from: src/install_types/NodeLinker.zig
-
 // ══════════════════════════════════════════════════════════════════════════
 // npm::Registry constants
-// Ground truth: src/install/npm.zig — Registry.default_url / default_url_hash
+// Ground truth: src/install/npm.rs — Registry::DEFAULT_URL / default_url_hash
 // `ini` (T3) and `options_types` need the default registry URL without
 // pulling in the full `bun_install` package manager.
 // ══════════════════════════════════════════════════════════════════════════
@@ -47,8 +44,9 @@ pub mod npm {
 
         /// `bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url))`
         /// — i.e. hash of `b"https://registry.npmjs.org"` (no trailing `/`).
-        // TODO(port): once bun_wyhash::Wyhash11::hash is `const fn`, fold this
-        // back to a `pub const`. For now compute on first use.
+        // Computed on use because `bun_wyhash::Wyhash11::hash` is not a
+        // `const fn` (only `Wyhash::hash_const` — a different algorithm —
+        // exists). Cheap and cold; not worth a cached static.
         #[inline]
         pub fn default_url_hash() -> u64 {
             use bun_wyhash::Wyhash11;
@@ -63,16 +61,16 @@ pub mod npm {
 
 // ══════════════════════════════════════════════════════════════════════════
 // PnpmMatcher
-// Ground truth: src/install/PnpmMatcher.zig
+// Ground truth:
 // https://github.com/pnpm/pnpm/blob/3abd3946237aa6ba7831552310ec371ddd3616c2/config/matcher/src/index.ts
 //
 // `ini` (T3) constructs PnpmMatcher from .npmrc `public-hoist-pattern` /
 // `hoist-pattern`. Moved down from `bun_install` so the npmrc loader does not
 // depend on the full package manager.
 //
-// The Zig source calls `jsc.RegularExpression` (tier-6) directly. That edge is
-// broken with link-time `extern "Rust"` (`__bun_regex_*`) defined `#[no_mangle]`
-// in `bun_jsc::regular_expression`.
+// Calling `bun_jsc::RegularExpression` (tier-6) directly would invert the
+// layering; that edge is broken with link-time `extern "Rust"`
+// (`__bun_regex_*`) defined `#[no_mangle]` in `bun_jsc::regular_expression`.
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::ptr::NonNull;
@@ -83,7 +81,7 @@ use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, strings};
 
 // LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
-// Zig called it inline. The bodies are defined `#[no_mangle]` in
+// The bodies are defined `#[no_mangle]` in
 // `bun_jsc::regular_expression`; declared here as `extern "Rust"` and
 // resolved at link time.
 unsafe extern "Rust" {
@@ -102,7 +100,7 @@ pub struct RegularExpression(NonNull<()>);
 
 impl RegularExpression {
     #[inline]
-    pub fn matches(&self, input: &BunString) -> bool {
+    pub(crate) fn matches(&self, input: &BunString) -> bool {
         // SAFETY: self.0 was produced by `__bun_regex_compile`.
         unsafe { __bun_regex_matches(self.0, input) }
     }
@@ -120,7 +118,7 @@ impl Drop for RegularExpression {
 /// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
 /// per PORTING.md §extern-Rust-ban).
 #[inline]
-pub fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
+pub(crate) fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
     // SAFETY: link-time extern; pattern ownership transfers.
     unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
 }
@@ -170,19 +168,18 @@ bun_core::named_error_set!(FromExprError);
 
 impl PnpmMatcher {
     // `bun_ast::ExprData` exposes the real value-shaped enum
-    // (`EString`/`EArray` via `StoreRef<E::*>`). `match` arms reconciled
-    // against the arena-taking `E::String::slice` / `Expr::as_string_cloned`
-    // signatures — Zig's `allocator` param maps to a local `bun_alloc::Arena`
-    // (PORTING.md §Allocators: AST=bumpalo) used only for transient UTF-16→UTF-8
-    // transcoding inside `slice`/`string_cloned`.
+    // (`EString`/`EArray` via `StoreRef<E::*>`). The arena-taking
+    // `E::String::slice` / `Expr::as_string_cloned` signatures get a local
+    // `bun_alloc::Arena` (PORTING.md §Allocators: AST=bumpalo) used only for
+    // transient UTF-16→UTF-8 transcoding inside `slice`/`string_cloned`.
     pub fn from_expr(
         expr: &ast::Expr,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<PnpmMatcher, FromExprError> {
         let mut buf: Vec<u8> = Vec::new();
-        // Scratch arena for `E::String::slice` / `as_string_cloned` (Zig passed
-        // `allocator`). Freed on return; the patterns are consumed by
+        // Scratch arena for `E::String::slice` / `as_string_cloned`.
+        // Freed on return; the patterns are consumed by
         // `create_matcher` before then.
         let arena = Arena::new();
 
@@ -287,9 +284,8 @@ impl PnpmMatcher {
             return false;
         }
 
-        // PORT NOTE: Zig `bun.String.fromBytes(name)`. `from_bytes` not yet on
-        // bun_string surface; package names are ASCII so `borrow_utf8` is an
-        // equivalent zero-copy borrow for the regex match call.
+        // Package names are ASCII, so
+        // `borrow_utf8` is a zero-copy borrow for the regex match.
         let name_str = BunString::borrow_utf8(name);
 
         match self.behavior {
@@ -368,18 +364,16 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
         });
     }
 
-    // Writer.Allocating can only fail with OutOfMemory; Vec::push aborts on
-    // OOM under the global mimalloc allocator, so the explicit error mapping
-    // from the Zig source collapses. `escape_reg_exp_*` writes through
+    // Vec::push aborts on
+    // OOM under the global mimalloc allocator, so no error mapping is needed.
+    // `escape_reg_exp_*` writes through
     // `io::Write` for `Vec<u8>`, which is infallible.
     buf.push(b'^');
     let _ = escape_reg_exp_for_package_name_matching(trimmed, buf);
     buf.push(b'$');
 
-    // PERF(port): was inline `jsc::RegularExpression.init(.cloneUTF8(buf), .none)`
-    // — now link-time `__bun_regex_compile` (cold path). The Zig source
-    // unconditionally calls `bun.jsc.initialize(false)` before compiling; the
-    // extern impl does the same.
+    // `__bun_regex_compile` is a link-time extern (cold path) and performs
+    // `jsc::initialize(false)` before compiling.
     let regex = compile_regex(BunString::clone_utf8(buf.as_slice()))
         .ok_or(CreateMatcherError::InvalidRegExp)?;
 
@@ -388,5 +382,3 @@ pub fn create_matcher(raw: &[u8], buf: &mut Vec<u8>) -> Result<Matcher, CreateMa
         is_exclude,
     })
 }
-
-// ported from: src/install/PnpmMatcher.zig

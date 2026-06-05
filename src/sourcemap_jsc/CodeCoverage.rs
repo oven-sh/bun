@@ -114,15 +114,14 @@ impl Report {
     }
 }
 
-// Report::deinit only freed owned containers; Rust drops Bitset/Vec/Vec fields automatically.
-// Note: source_url is NOT freed, matching the Zig deinit (caller owns it).
+// Bitset/Vec/Vec fields drop automatically.
+// Note: source_url is NOT freed (caller owns it).
 
 pub mod text {
     use super::*;
-    // PORT NOTE: Zig `Output.prettyFmt(fmt, comptime bool)` is a comptime string
-    // rewrite. The `pretty_fmt!` macro only accepts literal `true`/`false` today,
+    // The `pretty_fmt!` macro only accepts literal `true`/`false` today,
     // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
-    // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — if hot,
+    // PERF: runtime `pretty_fmt` allocates a small Vec per call — if hot,
     // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
 
@@ -235,7 +234,7 @@ pub mod text {
         let mut prev_line: usize = 0;
         let mut is_first = true;
 
-        // PORT NOTE: `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
+        // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
         // route through the runtime rewriter.
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
@@ -331,8 +330,7 @@ pub mod lcov {
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
-        // PORT NOTE: Zig cloned the bitset before iterating; `DynamicBitSet::iterator`
-        // borrows `&self` so the clone is unnecessary.
+        // `DynamicBitSet::iterator` borrows `&self`, so no clone is needed.
         let mut iter = report.executable_lines.iterator::<true, true>();
 
         // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
@@ -356,7 +354,6 @@ pub mod lcov {
     }
 }
 
-// TODO(port): move to sourcemap_jsc_sys
 unsafe extern "C" {
     fn CodeCoverage__withBlocksAndFunctions(
         vm: *mut VM,
@@ -385,8 +382,7 @@ impl<'a> Generator<'a> {
         let this = unsafe { &mut *this };
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
-        // pointer even for zero-length slices, so we must bail before constructing the slice
-        // (matches the Zig spec, which early-returns on `blocks.len == 0`).
+        // pointer even for zero-length slices, so we must bail before constructing the slice.
         if blocks_len == 0 {
             return;
         }
@@ -403,7 +399,7 @@ impl<'a> Generator<'a> {
             return;
         }
 
-        // PORT NOTE: Zig assigns the slice by value with no ownership transfer here.
+        // No ownership transfer here:
         // `from_utf8_never_free` already detaches the lifetime by design, and
         // `generate_report_from_blocks` only borrows `&self`, so no &/&mut overlap.
         let source_url =
@@ -430,8 +426,11 @@ pub struct ByteRangeMapping {
     pub source_url: ZigStringSlice,
 }
 
-// TODO(port): IdentityContext(u64) hasher — key is already a wyhash, hash fn should be identity
-pub type ByteRangeMappingHashMap = bun_collections::HashMap<u64, ByteRangeMapping>;
+// Keys are already wyhashes (`bun_wyhash::hash` of the source URL — see
+// `ByteRangeMapping__find`), so use the identity context instead of
+// re-hashing them.
+pub type ByteRangeMappingHashMap =
+    bun_collections::HashMap<u64, ByteRangeMapping, bun_collections::IdentityContext<u64>>;
 
 thread_local! {
     // Lazily-initialized per-thread map. Stored behind `Box` so the address of the
@@ -469,7 +468,7 @@ fn thread_map_opt() -> Option<NonNull<ByteRangeMappingHashMap>> {
 }
 
 impl ByteRangeMapping {
-    /// Zig: `pub threadlocal var map: ?*HashMap = null;` — read-only accessor
+    /// Read-only accessor
     /// for the per-thread `ByteRangeMappingHashMap`. Returns `None` if no
     /// coverage data was recorded on this thread.
     ///
@@ -496,11 +495,9 @@ impl ByteRangeMapping {
 
         let mut executable_lines: Bitset;
         let mut lines_which_have_executed: Bitset;
-        // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
-        // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
-        // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
-        // automatically when `parsed_mappings_` drops at scope exit — no explicit guard
-        // is required.
+        // `SavedSourceMap::get` returns an `Option<Arc<ParsedSourceMap>>`, so the
+        // +1 ref is released automatically when `parsed_mappings_` drops at scope
+        // exit — no explicit guard is required.
         let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
@@ -833,7 +830,6 @@ impl ByteRangeMapping {
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
-            // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             source_id,
@@ -842,11 +838,11 @@ impl ByteRangeMapping {
     }
 }
 
-// ByteRangeMapping::deinit only freed line_offset_table; Rust drops it automatically.
-// source_url is NOT freed, matching Zig deinit.
+// line_offset_table drops automatically.
+// source_url is NOT freed (caller owns it).
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__generate(
+pub(crate) extern "C" fn ByteRangeMapping__generate(
     str_: bun_core::String,
     source_contents_str: bun_core::String,
     source_id: i32,
@@ -858,7 +854,6 @@ pub extern "C" fn ByteRangeMapping__generate(
 
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
-    // TODO(port): getOrPut → entry API; verify ByteRangeMapping is properly dropped on overwrite
     let source_contents = source_contents_str.to_utf8();
 
     let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);
@@ -868,12 +863,12 @@ pub extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
+pub(crate) extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
     this.source_id
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__find(
+pub(crate) extern "C" fn ByteRangeMapping__find(
     path: bun_core::String,
 ) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
@@ -887,7 +882,7 @@ pub extern "C" fn ByteRangeMapping__find(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ByteRangeMapping__findExecutedLines(
+pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
     blocks_ptr: NonNull<BasicBlockRange>,
@@ -921,7 +916,7 @@ pub extern "C" fn ByteRangeMapping__findExecutedLines(
 
     let mut coverage_fraction = Fraction::default();
 
-    // PORT NOTE: std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
+    // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
     if text::write_format::<false>(
@@ -955,5 +950,3 @@ pub struct Block {
     pub start_line: u32,
     pub end_line: u32,
 }
-
-// ported from: src/sourcemap_jsc/CodeCoverage.zig

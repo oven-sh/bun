@@ -550,7 +550,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     // Materialize host/path as WTF::String so the BunString wrappers hold a
     // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
     // ZigString wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
-    // tag and corrupt the HTTP upgrade request build in Zig.
+    // tag and corrupt the HTTP upgrade request build on the native side.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);
     String unixSocketPathString;
@@ -603,7 +603,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         port = userPort.value();
     }
 
-    // Hold WTF::Strings so the BunString wrappers stay valid for the Zig call.
+    // Hold WTF::Strings so the BunString wrappers stay valid for the native call.
     Vector<String, 8> headerNameStrings;
     Vector<String, 8> headerValueStrings;
     Vector<BunString, 8> headerNames;
@@ -694,7 +694,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     }
     BunString targetAuth = Bun::toString(targetAuthorization);
 
-    // Pass SSLConfig pointer to Zig (ownership transferred - Zig will deinit when connection closes)
+    // Pass SSLConfig pointer to the upgrade client (ownership transferred - it is freed when the connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig.release();
 
@@ -917,7 +917,7 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 
 // Called from close()/terminate() while m_state == CONNECTING.
 //
-// The Zig-side upgrade client's cancel() clears its back-pointer to us
+// The native upgrade client's cancel() clears its back-pointer to us
 // without calling didAbruptClose, so none of didConnect /
 // didFailWithErrorCode / didClose will ever fire for this socket. We
 // must therefore finish the close ourselves: cancel the upgrade, queue
@@ -1893,6 +1893,12 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
     WTF::String wtf_reason = reason->transferToWTFString();
+    // The Rust client only calls this after a completed close handshake
+    // (received Close → echoed Close, or sent Close on ws.close()). For a
+    // server-initiated close m_state is still OPEN here; transition to
+    // CLOSING so didClose() reports wasClean = true. Abnormal closes go
+    // through WebSocket__didAbruptClose instead.
+    webSocket->didStartClosingHandshake();
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 

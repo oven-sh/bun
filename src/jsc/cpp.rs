@@ -2,10 +2,7 @@
 //!
 //! `src/codegen/cppbind.ts` parses every `.cpp` under `src/` for the
 //! `[[ZIG_EXPORT(nothrow|zero_is_throw|false_is_throw|null_is_throw|check_slow)]]`
-//! attribute and emits two siblings into `${BUN_CODEGEN_DIR}`:
-//!
-//!   - `cpp.zig`  — the Zig `bun.cpp.*` namespace (typed wrappers + raw externs)
-//!   - `cpp.rs`   — this module's body
+//! attribute and emits `cpp.rs` (this module's body) into `${BUN_CODEGEN_DIR}`.
 //!
 //! Each throwing function gets a `pub fn` that opens a
 //! [`TopExceptionScope`](crate::TopExceptionScope) /
@@ -39,11 +36,5 @@
     clippy::not_unsafe_ptr_arg_deref,
     clippy::too_many_arguments
 )]
-
-use crate::{JSGlobalObject, JSValue, JsError, JsResult};
-// Generated `cpp.rs` may spell the string types as `bun_core::…` or
-// `bun_core::…` depending on which side of the `bun_string → bun_core` merge
-// the codegen ran on; alias here so both resolve.
-use bun_core as bun_string;
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"));

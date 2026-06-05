@@ -11,9 +11,9 @@ use crate::{ConnectingSocket, Loop, SocketGroup, Timer, udp, us_socket_t};
 /// This crate never locks/unlocks it — C calls `Bun__lock`/`Bun__unlock`
 /// (exported from `bun_threading`) on the raw field address.
 #[cfg(windows)]
-pub type LoopDataMutex = *mut c_void;
+pub(crate) type LoopDataMutex = *mut c_void;
 #[cfg(not(windows))]
-pub type LoopDataMutex = u32;
+pub(crate) type LoopDataMutex = u32;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C handle from `us_internal_create_async`.
@@ -91,5 +91,3 @@ impl InternalLoopData {
         (self.parent_tag, self.parent_ptr)
     }
 }
-
-// ported from: src/uws_sys/InternalLoopData.zig

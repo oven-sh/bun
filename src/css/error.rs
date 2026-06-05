@@ -5,7 +5,6 @@ use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
-// TODO(port): arena slice lifetime — thread `<'bump>` or switch to StoreRef.
 use crate::Str;
 
 #[inline(always)]
@@ -34,13 +33,11 @@ pub struct Err<T> {
 
 impl<T: fmt::Display> fmt::Display for Err<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Zig: `if (@hasDecl(T, "format"))` → trait bound `T: Display` IS that check.
         self.kind.fmt(f)
     }
 }
 
-// Zig: `pub const toErrorInstance = @import("../css_jsc/error_jsc.zig").toErrorInstance;`
-// Deleted per PORTING.md — `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
+// `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
     pub fn from_parse_error(err: ParseError<ParserError>, filename: &[u8]) -> Err<ParserError> {
@@ -194,7 +191,6 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // TODO(port): narrow error set (Zig narrowed to alloc-only).
         // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once
@@ -234,6 +230,14 @@ pub enum PrinterErrorKind {
     invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
+    /// Substituting parent selectors for `&` while compiling CSS nesting for
+    /// the configured targets exceeded the expansion limit.
+    maximum_nesting_expansion,
+    /// Serializing a style rule once per vendor prefix re-serializes its whole
+    /// body in every pass, so nesting vendor-prefixed multi-selector rules
+    /// expands the output multiplicatively with depth. The total bytes emitted
+    /// by those duplicate passes exceeded the expansion limit.
+    maximum_vendor_prefix_expansion,
     no_import_records,
 }
 
@@ -255,6 +259,12 @@ impl fmt::Display for PrinterErrorKind {
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
+            Self::maximum_nesting_expansion => f.write_str(
+                "Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
+            ),
+            Self::maximum_vendor_prefix_expansion => f.write_str(
+                "Maximum vendor-prefix expansion exceeded when serializing deeply nested vendor-prefixed selectors",
+            ),
             Self::no_import_records => f.write_str("No import records found"),
         }
     }
@@ -502,6 +512,13 @@ pub enum MinifyErrorKind {
         /// The source location of the `@custom-media` rule with unsupported boolean logic.
         custom_media_loc: Location,
     },
+    /// Compiling nested rules for the configured browser targets would expand to
+    /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
+    selector_expansion_limit_exceeded,
+    /// Rule minification failed without recording a more specific diagnostic on
+    /// `MinifyContext::err`. Defensive fallback — every failing path is expected
+    /// to record one before returning an error.
+    unknown,
 }
 
 impl fmt::Display for MinifyErrorKind {
@@ -518,8 +535,12 @@ impl fmt::Display for MinifyErrorKind {
                 "Unsupported boolean logic in custom media rule at line {}, column {}",
                 custom_media_loc.line, custom_media_loc.column,
             ),
+            Self::selector_expansion_limit_exceeded => write!(
+                f,
+                "Nested CSS rules expand to more than {} selectors when compiled for the configured browser targets. Reduce the nesting depth or the number of selectors per rule, or target browsers that support CSS nesting.",
+                crate::css_rules::MAX_SELECTOR_EXPANSION,
+            ),
+            Self::unknown => write!(f, "CSS minification failed"),
         }
     }
 }
-
-// ported from: src/css/error.zig

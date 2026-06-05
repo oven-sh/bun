@@ -27,8 +27,7 @@ use uv::{UvHandle as _, UvStream as _};
 #[cfg(unix)]
 use bun_spawn_sys::posix_spawn::posix_spawn;
 /// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
-/// is `u32` there (Zig `c_int` reinterpreted via the `W*` macros);
-/// `Status::from` casts before matching.
+/// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
 pub use posix_spawn::WaitPidResult;
 #[cfg(windows)]
@@ -135,9 +134,8 @@ pub struct Process {
 }
 
 impl Drop for Process {
-    /// Zig `Process.deinit`: `this.poller.deinit(); bun.destroy(this)`. The
-    /// `bun.destroy` half is the `heap::take` in `destructor` above; this
-    /// `Drop` body covers the `poller.deinit()` call.
+    /// The allocation itself is freed by the `heap::take` in `destructor`
+    /// above; this `Drop` body covers the `poller.deinit()` call.
     fn drop(&mut self) {
         self.poller.deinit();
     }
@@ -171,7 +169,7 @@ impl Process {
         self.status.signal_code()
     }
 
-    /// Intrusive ref-count helpers (Zig: `ref_count.ref()/deref()`). Kept on
+    /// Intrusive ref-count helpers. Kept on
     /// `&mut self` to match call-site shape; the actual op is atomic on the
     /// embedded `ThreadSafeRefCount` so the mutable borrow is conservative.
     #[inline]
@@ -195,9 +193,7 @@ impl Process {
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
-    /// for FilePoll/KeepAlive calls. Zig used `anytype` and dispatched at
-    /// comptime; the Rust port split this into two erased layers, so we
-    /// reconstitute the aio-level ctx here.
+    /// for FilePoll/KeepAlive calls; reconstitutes the aio-level ctx here.
     #[inline]
     fn event_loop_ctx(&self) -> bun_io::EventLoopCtx {
         event_loop_handle_to_ctx(self.event_loop)
@@ -223,10 +219,9 @@ impl Process {
     /// runs the exit logic, and `on_exit_uv` re-derives `&mut Process` from
     /// the heap-root `data` pointer. A `&mut self` argument carries a
     /// Stacked-Borrows protector for the call's full duration, so that
-    /// re-derivation would pop the protected tag → instant UB. Zig used
-    /// `@fieldParentPtr` (no aliasing model), so this was sound there.
+    /// re-derivation would pop the protected tag → instant UB.
     pub unsafe fn update_status_on_windows(this: *mut Process) {
-        // Zig: `onExitUV(&this.poller.uv, 0, 0)`. Inlined here with
+        // Run the exit logic inline with
         // exit_status=0 / term_signal=0 (→ `Exited{0,0}`) instead of
         // round-tripping through `on_exit_uv`'s `data`-ptr lookup, which
         // would create a second `&mut Process` aliasing the one below.
@@ -427,8 +422,7 @@ impl Process {
             let watchfd = self.pid;
 
             let poll: *mut FilePoll = if matches!(self.poller, Poller::Fd(_)) {
-                // already have a poll
-                // PORT NOTE: reshaped for borrowck — take existing pointer out
+                // already have a poll; take the existing pointer out
                 core::mem::replace(&mut self.poller, Poller::Detached)
                     .into_fd()
                     .unwrap()
@@ -499,8 +493,7 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
-        // Zig recovers `*Process` via `@fieldParentPtr("uv", process)` →
-        // `@fieldParentPtr("poller", ..)`. A Rust default-repr `enum` has no
+        // A Rust default-repr `enum` has no
         // stable variant-payload offset, so the back-pointer is stored in
         // `uv_process_t.data` (set in `spawn_process_windows` immediately
         // after the handle is zeroed).
@@ -525,8 +518,6 @@ impl Process {
         } else {
             0
         };
-        // Zig: `if (term_signal > 0 and term_signal < @intFromEnum(SignalCode.SIGSYS))
-        //   @enumFromInt(term_signal) else null` — upper-bound exclusive of SIGSYS.
         let signal_code: Option<u8> =
             if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
                 Some(term_signal as u8)
@@ -545,9 +536,8 @@ impl Process {
             this.close();
             this.on_exit(Status::Signaled(sig), &rusage);
         } else if exit_status >= 0 {
-            // Zig spec compares `exit_code >= 0` (a `u8` tautology) here; the
-            // intended check — per the `else` arm's comment — is on the signed
-            // libuv `exit_status`, so a negative `-UV_E*` reaches the Err arm.
+            // The check is on the signed libuv `exit_status`, so a negative
+            // `-UV_E*` reaches the Err arm.
             this.close();
             this.on_exit(
                 Status::Exited(Exited {
@@ -662,11 +652,10 @@ impl Process {
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
-            // Spec process.zig:550 — `.waiter_thread, .fd => kill(); else => {}`.
             // Detached is a deliberate no-op: spawnSync's `read_all()` runs
-            // before `watch_or_reap()` installs the poller, but Zig relies on
-            // the first `recv_non_block` returning EAGAIN (yes hasn't written
-            // yet) so the maxBuffer overflow fires from the event-loop poll
+            // before `watch_or_reap()` installs the poller; the first
+            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
+            // maxBuffer overflow fires from the event-loop poll
             // tick *after* the Fd poller is armed. Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
             // different root cause (poller is already Fd when `on_max_buffer`
@@ -716,17 +705,15 @@ impl Process {
     }
 }
 
-// PORT NOTE: not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The
-// Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
-// Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
+// Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest.
+// Callers use `.clone()`.
 #[derive(Clone, Default)]
 pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte. Zig: `.signaled: bun.SignalCode` where `SignalCode` is a
-    /// *non-exhaustive* `enum(u8) { …, _ }`, so any `u8` (incl. Linux RT signals
-    /// 32..=64) is a valid payload. `bun_core::SignalCode` is exhaustive 1..=31,
+    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
+    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
     /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
     /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
     /// byte and range-check in `signal_code()` instead.
@@ -737,8 +724,8 @@ pub enum Status {
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
     pub code: u8,
-    /// Raw signal number. `0` means "no signal" (Zig: `enum(u8) { @"0" = 0, … }`
-    /// open enum). `SignalCode` discriminants are 1..=31; storing it as the
+    /// Raw signal number. `0` means "no signal".
+    /// `SignalCode` discriminants are 1..=31; storing it as the
     /// enum and transmuting `0` would be UB. Convert via `Status::signal_code`.
     pub signal: u8,
 }
@@ -761,7 +748,7 @@ impl Status {
                 if result.pid != pid {
                     return None;
                 }
-                // `posix_spawn::WaitPidResult.status` is `u32` (Zig bitcasts);
+                // `posix_spawn::WaitPidResult.status` is `u32`;
                 // libc's W* helpers want `c_int`.
                 let status = result.status as c_int;
 
@@ -790,8 +777,7 @@ impl Status {
                 signal: signal.unwrap_or(0),
             }));
         } else if let Some(sig) = signal {
-            // Zig: `.{ .signaled = @enumFromInt(signal.?) }` — non-exhaustive enum,
-            // any byte is valid. Carry the raw byte; `signal_code()` range-checks.
+            // Any byte is valid. Carry the raw byte; `signal_code()` range-checks.
             return Some(Status::Signaled(sig));
         }
 
@@ -808,8 +794,7 @@ impl Status {
     }
 }
 
-/// Local shim for `bun.SignalCode.toExitCode` (lives in `src/sys/SignalCode.zig`).
-/// Upstream `bun_core::SignalCode` does not yet expose this — see SignalCode.zig:53.
+/// Local shim — `bun_core::SignalCode` does not yet expose this.
 /// Shell-convention: 128 + signal number for signals 1..=31, else `None`.
 pub trait SignalCodeExt {
     fn to_exit_code(self) -> Option<u8>;
@@ -846,7 +831,7 @@ impl core::fmt::Display for Status {
 #[cfg(unix)]
 pub enum PollerPosix {
     /// Hive-allocated `bun_io::FilePoll` slot. Pointer (not `Box`) because the
-    /// poll lives in `Store` (Zig: `*FilePoll`); freed via `FilePoll::deinit`,
+    /// poll lives in `Store`; freed via `FilePoll::deinit`,
     /// never via Rust `drop`.
     Fd(core::ptr::NonNull<FilePoll>),
     WaiterThread(KeepAlive),
@@ -855,11 +840,11 @@ pub enum PollerPosix {
 
 #[cfg(unix)]
 impl PollerPosix {
-    /// Zig `PollerPosix.deinit` (process.zig:689-695). NOT `impl Drop`: Zig
-    /// reassigns this union freely (`this.poller = .detached`, `.waiter_thread`,
-    /// etc.) without running cleanup at each assignment, and `close()` already
-    /// performs the same teardown explicitly. A `Drop` impl would double-free
-    /// the hive slot on those reassignments. Called only from `Process` drop.
+    /// NOT `impl Drop`: this enum is reassigned freely (`self.poller =
+    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.) and `close()`
+    /// already performs the same teardown explicitly before reassigning. A
+    /// `Drop` impl would double-free the hive slot on those reassignments.
+    /// Called only from `Process` drop.
     pub fn deinit(&mut self) {
         // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
         // instead of open-coding the `NonNull` deref here.
@@ -948,8 +933,7 @@ pub enum PollerWindows {
 
 #[cfg(windows)]
 impl PollerWindows {
-    /// Zig `PollerWindows.deinit` (process.zig:736). Not `Drop` — see
-    /// `PollerPosix::deinit`.
+    /// Not `Drop` — see `PollerPosix::deinit`.
     pub fn deinit(&mut self) {
         if let PollerWindows::Uv(p) = self {
             debug_assert!(p.is_closed());
@@ -1011,10 +995,9 @@ pub mod waiter_thread_posix {
 
     pub type ProcessQueue = NewQueue<Process>;
 
-    /// Zig: `fn NewQueue(comptime T: type) type` → generic struct.
     pub struct NewQueue<T: 'static> {
         pub queue: ConcurrentQueue<T>,
-        // PORT NOTE: Zig active list holds raw `*T` whose strong ref was taken
+        // The active list holds raw `*T` whose strong ref was taken
         // by the caller before `append()` (Process::watch does `self.ref_()`).
         // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
         //
@@ -1042,7 +1025,7 @@ pub mod waiter_thread_posix {
     }
 
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
-    /// drained on the waiter thread (`TrivialNew`/`TrivialDeinit` in Zig).
+    /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: 'static> {
         pub process: *mut T,
         pub next: bun_threading::Link<TaskQueueEntry<T>>,
@@ -1123,11 +1106,9 @@ pub mod waiter_thread_posix {
 
     /// Trait abstracting `process.pid` / `process.event_loop` /
     /// `process.onWaitPidFromWaiterThread` for generic `T` (only `Process`
-    /// today). The Zig `comptime @TypeOf` switch in `append` is the moral
-    /// equivalent.
+    /// today).
     pub trait ProcessLike: 'static {
-        /// `jsc::Task` tag for this `T`'s `ResultTask` — Zig derived this at
-        /// comptime via `TaggedPointerUnion`; Rust callers supply it.
+        /// `jsc::Task` tag for this `T`'s `ResultTask`; callers supply it.
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
         fn event_loop(&self) -> EventLoopHandle;
@@ -1190,7 +1171,6 @@ pub mod waiter_thread_posix {
                     }
                     // SAFETY: task was heap-allocated in append().
                     let task = unsafe { bun_core::heap::take(task) };
-                    // PERF(port): was assume_capacity
                     active.push(task.process);
                 }
             }
@@ -1251,7 +1231,7 @@ pub mod waiter_thread_posix {
                                         )),
                                     );
                                 }
-                                // PORT NOTE: `out` is now owned by the mini queue;
+                                // `out` is now owned by the mini queue;
                                 // freed in `run_from_main_thread_mini`.
                             }
                         }
@@ -1269,7 +1249,7 @@ pub mod waiter_thread_posix {
 
     const STACK_SIZE: usize = 512 * 1024;
 
-    // Singleton — Zig `pub var instance: WaiterThread = .{};`. The waiter
+    // Singleton. The waiter
     // thread is the sole mutator of `js_process.active`; producers only touch
     // the lock-free `queue`. Wrapped so the address is stable for the SIGCHLD
     // handler / waiter loop without taking `&mut` to a `static mut`.
@@ -1411,6 +1391,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
+        #[allow(unused_labels)]
         'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
@@ -1441,9 +1422,9 @@ pub mod waiter_thread_posix {
                 // SAFETY: sigwait with a valid (empty) mask.
                 unsafe {
                     let mut mask: libc::sigset_t = bun_core::ffi::zeroed();
-                    libc::sigemptyset(&mut mask);
+                    libc::sigemptyset(&raw mut mask);
                     let mut signal: c_int = libc::SIGCHLD;
-                    let _rc = libc::sigwait(&mask, &mut signal);
+                    let _rc = libc::sigwait(&raw const mask, &raw mut signal);
                 }
             }
         }
@@ -1472,7 +1453,7 @@ impl WaiterThread {
 
 #[cfg(windows)]
 pub struct WindowsSpawnResult {
-    // Raw intrusive pointer (mirrors Zig `?*Process`). `Process` is intrusively
+    // Raw intrusive pointer. `Process` is intrusively
     // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
     // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
     // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
@@ -1532,9 +1513,7 @@ impl Drop for WindowsSpawnResult {
         // Any `Buffer(Box<uv::Pipe>)` still held here was `uv_pipe_init`'d in
         // `spawn_process_windows` and is linked into the loop's handle queue;
         // auto-dropping the Box would deallocate a live handle and the next
-        // `uv_run` would walk freed memory. Zig's `StdioResult.buffer` is a
-        // raw `*uv.Pipe` (drop is a no-op leak), so the Rust port's `Box`
-        // tightened a leak into UB. Route un-consumed pipes through
+        // `uv_run` would walk freed memory. Route un-consumed pipes through
         // `uv_close` (free in the close callback). Slots already consumed via
         // `.take()` are `Unavailable` and skip this.
         //
@@ -1611,9 +1590,9 @@ pub struct WindowsSpawnOptions {
 impl Default for WindowsSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: WindowsStdio::Ignore,
-            stdout: WindowsStdio::Ignore,
-            stderr: WindowsStdio::Ignore,
+            stdin: WindowsStdio::Inherit,
+            stdout: WindowsStdio::Inherit,
+            stderr: WindowsStdio::Inherit,
             ipc: None,
             extra_fds: Box::new([]),
             cwd: Box::new([]),
@@ -1645,9 +1624,8 @@ impl Default for WindowsOptions {
         Self {
             verbatim_arguments: false,
             hide_window: true,
-            // Zig spec (process.zig:1172): `loop: jsc.EventLoopHandle = undefined`
-            // — every `bun.spawnSync` call site sets it explicitly. Mirroring
-            // that with a zeroed handle here keeps `..Default::default()` usable
+            // Every `bun.spawnSync` call site sets `loop_` explicitly. A
+            // zeroed handle here keeps `..Default::default()` usable
             // for the other fields. `spawn_process_windows` (the sole consumer)
             // asserts non-null at the read site so a forgotten `loop_` panics
             // with a pointed message instead of segfaulting at the `.uv_loop`
@@ -1678,14 +1656,14 @@ pub enum WindowsStdio {
 
 #[cfg(windows)]
 impl WindowsStdio {
-    /// Explicit destructor — matches Zig `WindowsSpawnOptions.Stdio.deinit`.
+    /// Explicit destructor.
     ///
     /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
     /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
     /// pipe into `WindowsStdioResult::Buffer` via `heap::take`. An auto-Drop
     /// here would then double-free the same `*mut uv::Pipe` when the borrowed
     /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
-    /// scope. Zig has no auto-destructor on this union; callers invoke
+    /// scope. Callers invoke
     /// `deinit()` only on the *error* path where ownership was never taken.
     pub fn deinit(&mut self) {
         match self {
@@ -1703,11 +1681,10 @@ impl WindowsStdio {
 
 // WindowsSpawnOptions: no Drop. `WindowsStdio` holds FFI-owned `*mut uv::Pipe`
 // whose ownership is transferred to `WindowsStdioResult` on success; callers
-// must invoke `WindowsSpawnOptions::deinit` explicitly on the error path (Zig spec).
+// must invoke `WindowsSpawnOptions::deinit` explicitly on the error path.
 #[cfg(windows)]
 impl WindowsSpawnOptions {
-    /// Explicit destructor — matches Zig `WindowsSpawnOptions.deinit`
-    /// (process.zig:1193). Closes and frees the heap-allocated `uv::Pipe`
+    /// Explicit destructor. Closes and frees the heap-allocated `uv::Pipe`
     /// handles for `Buffer`/`Ipc` stdio.
     ///
     /// **Not** `Drop`: on the *success* path `spawn_process_windows` transfers
@@ -1834,9 +1811,8 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // PERF(port): was stack-fallback allocator (8192)
-        // `WindowsOptions::default()` leaves `loop_` zeroed (Zig: `= undefined`;
-        // every `bun.spawnSync` call site sets it explicitly). A zeroed
+        // `WindowsOptions::default()` leaves `loop_` zeroed (every
+        // `bun.spawnSync` call site sets it explicitly). A zeroed
         // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
         // so `platform_event_loop()` returns null and the deref below segfaults
         // at the `.uv_loop` field offset. Catch that with a clear panic instead
@@ -1859,14 +1835,11 @@ mod spawn_process_body {
         // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
         let cwd = bun_core::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
 
-        // PORT NOTE: Zig spec passes `cwd.ptr` unconditionally, but every Zig
-        // `bun.spawnSync` Windows caller sets `.cwd` explicitly so the latent
-        // empty-cwd path is never hit there. The Rust port routes
-        // `git_diff_internal` (originally `std.process.Child`, which inherits cwd)
-        // through here with `Options::default()` → `cwd = ""`. libuv treats a
+        // `git_diff_internal` reaches here
+        // with `Options::default()` → `cwd = ""`. libuv treats a
         // non-NULL `cwd` as explicit and hands `L""` to `CreateProcessW`, which
         // fails with `ERROR_DIRECTORY` → `UV_ENOENT`. Map empty to NULL so libuv
-        // inherits the parent cwd, matching `std.process.Child` semantics.
+        // inherits the parent cwd.
         uv_process_options.cwd = if options.cwd.is_empty() {
             core::ptr::null()
         } else {
@@ -1875,9 +1848,8 @@ mod spawn_process_body {
 
         let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
 
-        // defer: close uv_files_to_close — handled at each return site below.
-        // PORT NOTE: Zig's `errdefer failed = true` + `defer { if (failed) ... }`
-        // pair is flattened to explicit cleanup calls at each error return; no
+        // defer: close uv_files_to_close — handled at each return site below
+        // via explicit cleanup calls at each error return; no
         // `failed` flag is needed.
 
         if let Some(hpcon) = options.pseudoconsole {
@@ -1914,8 +1886,6 @@ mod spawn_process_body {
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
 
-        // PORT NOTE: Zig uses `inline for (0..3)` for comptime fd_i; we use a runtime loop.
-        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
@@ -1954,9 +1924,7 @@ mod spawn_process_body {
                     }
                     WindowsStdio::Path(path) => {
                         let mut req = uv::fs_t::uninitialized();
-                        // Zig: `defer { for (uv_files_to_close) |fd| Closer.close(fd) }`
-                        // covers EVERY exit path including `try toPosixPath`. Rust
-                        // replaced the defer with manual cleanup calls, so `?` here
+                        // Cleanup is via manual calls at each exit path, so `?` here
                         // would leak any fds opened by earlier loop iterations.
                         let path_z = match bun_sys::to_posix_path(path) {
                             Ok(p) => p,
@@ -2127,9 +2095,8 @@ mod spawn_process_body {
         unsafe {
             // SAFETY: all-zero is valid uv::Process
             (*process).poller = Poller::Uv(bun_core::ffi::zeroed_unchecked());
-            // Back-pointer for `on_exit_uv` / `on_close_uv` (replaces Zig
-            // `@fieldParentPtr`, which has no sound Rust equivalent for default-repr
-            // enum variant payloads). Every libuv handle starts with `data: *mut c_void`.
+            // Back-pointer for `on_exit_uv` / `on_close_uv`.
+            // Every libuv handle starts with `data: *mut c_void`.
             let Poller::Uv(ref mut uv_proc) = (*process).poller else {
                 unreachable!()
             };
@@ -2222,7 +2189,7 @@ mod spawn_process_body {
                         // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
                         // produced by `heap::alloc` in create_zeroed_pipe and
                         // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
-                        // has no `Drop` (deinit is explicit, Zig spec), so
+                        // has no `Drop` (deinit is explicit), so
                         // reconstructing the Box here is the *sole* ownership
                         // transfer — the borrowed `options` dropping later is a
                         // no-op on the raw pointer.
@@ -2240,7 +2207,6 @@ mod spawn_process_body {
         for (i, input) in options.extra_fds.iter().enumerate() {
             match input {
                 WindowsStdio::Ipc(_) | WindowsStdio::Buffer(_) => {
-                    // PERF(port): was assume_capacity
                     // SAFETY: sole ownership transfer of the heap-allocated
                     // uv::Pipe; `WindowsStdio` has no Drop (explicit `deinit`).
                     result.extra_pipes.push(WindowsStdioResult::Buffer(unsafe {
@@ -2268,7 +2234,7 @@ mod spawn_process_body {
     pub mod sync {
         use super::*;
         // `Options.windows` is `WindowsOptions` on Windows; surface it under the
-        // `…::process::sync` path (the Zig namespace shape). A `pub use super::…`
+        // `…::process::sync` path. A `pub use super::…`
         // re-export trips E0365 here because the `use super::*` glob has already
         // bound the name privately and rustc treats the explicit re-export as
         // re-exporting that private binding; a type alias sidesteps the conflict.
@@ -2404,7 +2370,7 @@ mod spawn_process_body {
             pub chunks: Vec<Box<[u8]>>,
             /// Buffer handed to libuv by `on_alloc`; reclaimed (truncated) by
             /// `on_read`. Prevents the per-read leak that copying `data` into a
-            /// fresh Box would cause (Zig pushes the *same* allocation).
+            /// fresh Box would cause.
             pending_alloc: Option<Box<[u8]>>,
             pub pipe: Box<uv::Pipe>,
             pub err: bun_sys::E,
@@ -2430,7 +2396,7 @@ mod spawn_process_body {
             }
 
             fn on_read(this: &mut SyncWindowsPipeReader, data: &[u8]) {
-                // Zig: `chunks.append(@constCast(data))` — `data` *is* the buffer
+                // `data` *is* the buffer
                 // `on_alloc` returned, sliced to `nread`. Reclaim that allocation
                 // (debug-assert it's the same pointer), truncate to the read
                 // length, and push — no copy, no leak.
@@ -2451,13 +2417,10 @@ mod spawn_process_body {
             }
 
             // ── libuv C trampolines ──────────────────────────────────────────
-            // PORT NOTE: Zig's `StreamMixin.readStart` (libuv.zig:3067) takes
-            // `comptime alloc_cb / error_cb / read_cb` and emits one monomorphised
-            // `extern "C"` wrapper pair per (Context, callback-triple). Stable Rust
-            // can't take fn-pointers as const generics, but here there is exactly
+            // There is exactly
             // one call site, so we hand-write the wrapper pair against
             // `SyncWindowsPipeReader` and call `on_alloc` / `on_read` / `on_error`
-            // *directly* — no runtime fn-ptr stash, matching the Zig codegen.
+            // *directly* — no runtime fn-ptr stash.
             unsafe extern "C" fn uv_alloc_cb(
                 req: *mut uv::uv_handle_t,
                 suggested_size: usize,
@@ -2524,9 +2487,8 @@ mod spawn_process_body {
                 let context = this_ref.context;
                 // Move ownership of the chunk allocations out *before* dropping
                 // `this`, otherwise the callback would observe freed buffers.
-                // Mirrors Zig process.zig:2009-2011, where `destroy(this)` only
-                // frees the struct bytes and the ArrayList items survive to be
-                // freed later by `flattenOwnedChunks`.
+                // The chunk allocations survive to be freed later by
+                // `flatten_owned_chunks`.
                 let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this_ref.chunks);
                 let err = if this_ref.err == bun_sys::E::CANCELED {
                     bun_sys::E::SUCCESS
@@ -2557,8 +2519,7 @@ mod spawn_process_body {
                         .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
                         .to_error(bun_sys::Tag::listen)
                     {
-                        // Intentionally leak `this` (matches Zig process.zig, which has
-                        // no cleanup on this branch). The boxed `uv::Pipe` was already
+                        // Intentionally leak `this`. The boxed `uv::Pipe` was already
                         // `uv_pipe_init`'d by the spawn path and is linked into the
                         // loop's handle queue; freeing it here without `uv_close()`
                         // would leave a dangling `uv_handle_t`. The sole caller
@@ -2594,7 +2555,7 @@ mod spawn_process_body {
             pub stdout: Vec<Box<[u8]>>,
             pub err: bun_sys::E,
             pub waiting_count: u8,
-            /// Intrusive-refcounted (Zig: `*Process`). Allocated via
+            /// Intrusive-refcounted. Allocated via
             /// `heap::alloc` in `to_process`; freed when the embedded
             /// `ThreadSafeRefCount` hits zero. Stored raw — `Arc<Process>` would
             /// give only `*const` provenance and make `&mut *` writes UB.
@@ -2613,8 +2574,7 @@ mod spawn_process_body {
             /// (which holds a protector-guarded `&mut Process` in its frame).
             /// Re-deriving a `&mut Process` from the independent `self.process`
             /// root would pop that protected tag under Stacked Borrows, so we
-            /// take the already-live pointer instead. Mirrors Zig
-            /// `this.process.detach(); this.process.deref();` (process.zig:2037).
+            /// take the already-live pointer instead.
             pub fn on_process_exit(
                 this: *mut SyncWindowsProcess,
                 process: *mut Process,
@@ -2685,8 +2645,7 @@ mod spawn_process_body {
             let process: *mut Process = spawned.to_process((), true);
             let _detach_guard = scopeguard::guard(process, |process| {
                 // SAFETY: sole owner during sync spawn; loop has drained, so no
-                // uv callback holds a competing `&mut Process`. Mirrors Zig defer
-                // `{ process.detach(); process.deref(); }`.
+                // uv callback holds a competing `&mut Process`.
                 unsafe {
                     (*process).detach();
                     Process::deref(process);
@@ -2725,7 +2684,7 @@ mod spawn_process_body {
                     Err(err) => return Ok(Err(err)),
                     Ok(process) => process,
                 };
-            // Single-pointer ownership (mirrors Zig `bun.TrivialNew`): the
+            // Single-pointer ownership: the
             // `heap::alloc` result is the *only* root for this allocation. Every
             // field access below — including those inside uv callbacks fired from
             // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
@@ -2741,9 +2700,7 @@ mod spawn_process_body {
                     status: None,
                 }));
             // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
-            // owner, mutable provenance from heap::alloc). Mirrors Zig:
-            // `this.process.ref(); this.process.setExitHandler(this);
-            //  this.process.enableKeepingEventLoopAlive();`
+            // owner, mutable provenance from heap::alloc).
             unsafe {
                 let p = &mut *(*this_ptr).process;
                 p.ref_();
@@ -2816,7 +2773,7 @@ mod spawn_process_body {
                 }
             };
             // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
-            // allocation. Mirrors Zig `this.process.deref(); destroy(this);`.
+            // allocation.
             unsafe {
                 Process::deref((*this_ptr).process);
                 drop(bun_core::heap::take(this_ptr));
@@ -2845,8 +2802,8 @@ mod spawn_process_body {
         }
 
         pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
-            // [*:null]?[*:0]const u8
-            // SAFETY: std.c.environ is the C environ array
+            // SAFETY: `bun_sys::environ_ptr` returns the live, NULL-terminated C
+            // `environ` array when no envp override is provided.
             let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
             let argv = &options.argv;
             let mut string_builder = bun_core::StringBuilder::default();
@@ -2901,8 +2858,7 @@ mod spawn_process_body {
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters and restores the crash-handler signal
-        /// disposition on drop. Replaces the Zig
-        /// `defer { Bun__unregisterSignalsForForwarding(); crash_handler.resetOnPosix(); }`.
+        /// disposition on drop.
         #[cfg(unix)]
         struct SignalForwarding;
         #[cfg(unix)]
@@ -2941,7 +2897,6 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         unsafe extern "C" {
-            // TODO(port): move to runtime_sys
             // All by-value c_int/pid_t args; the kernel validates fd/pid/signal —
             // no memory-safety preconditions, so `safe fn` (Rust 2024) discharges
             // the link-time proof here and callers need no unsafe block.
@@ -3068,7 +3023,7 @@ mod spawn_process_body {
             // Snapshot pre-existing direct children so the disarm defer can tell
             // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
             // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
-            // but spawnSync can run inside a live VM (ffi.zig xcrun probe).
+            // but spawnSync can run inside a live VM (the FFI xcrun probe).
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut siblings_buf = [0 as libc::pid_t; 64];
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3187,7 +3142,7 @@ mod spawn_process_body {
                     jc.restore();
                     // pgroup → tracked uniqueids (macOS). Do NOT call the
                     // getpid()-rooted `killDescendants()` here — `spawnSync` can be
-                    // reached from inside a live VM (ffi.zig xcrun probe, etc.) and
+                    // reached from inside a live VM (the FFI xcrun probe, etc.) and
                     // that would SIGKILL the user's unrelated `Bun.spawn` children.
                     // The full-tree walk runs from `onProcessExit` when the whole
                     // process is actually exiting.
@@ -3212,10 +3167,6 @@ mod spawn_process_body {
                     }
                 }
             });
-            // TODO(refactor): errdefer — the above scopeguards capture `jc`/`no_orphans_kq`/
-            // `siblings` by reference while still mutated below. Restructure into a single
-            // RAII state struct (or run cleanup inline at each return).
-
             Bun__sendPendingSignalIfNecessary();
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
@@ -3224,8 +3175,8 @@ mod spawn_process_body {
                 process.stderr.unwrap_or(Fd::INVALID),
             ];
             let mut success = false;
-            // defer cleanup — handled at end / via guards below
-            // TODO(port): errdefer — manual cleanup at each error return below
+            // defer cleanup — handled at end / via guards below; error returns
+            // run their cleanup manually
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),
@@ -3685,9 +3636,6 @@ mod spawn_process_body {
                 let restore = scopeguard::guard(old_mask, |old| {
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 });
-                // TODO(port): kernel sigset_t vs libc sigset_t — Zig uses
-                // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Could
-                // use the raw syscall with a u64 mask instead.
                 let fd = {
                     // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                     let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();
@@ -3942,5 +3890,3 @@ pub use spawn_process_body::spawn_process_posix;
 pub use spawn_process_body::spawn_process_windows;
 
 pub use spawn_process_body::sync;
-
-// ported from: src/runtime/api/bun/process.zig

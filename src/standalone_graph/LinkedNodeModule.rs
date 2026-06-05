@@ -309,7 +309,11 @@ fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
         return Err(BindError::BadVersion);
     }
     let count = r.u32_()?;
-    table.entries.reserve(count as usize);
+    // No up-front reserve: `count` comes straight from the blob, and a
+    // bit-rotted value like 0xFFFF_FFFF would make `Vec::reserve` request
+    // hundreds of GB and abort on allocation failure instead of falling
+    // back to the tempfile path via `Truncated` below. The list is a
+    // handful of entries; incremental growth is fine.
     for _ in 0..count {
         let name = r.str_()?;
         let rva_base = r.u32_()?;

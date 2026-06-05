@@ -385,8 +385,8 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
   // via the PTY, but a signal sent from a parent process bypasses that —
   // without a signal handler the process dies with the cursor still
   // hidden. The signal handler installed by `prompt_signal::install()`
-  // writes the restore sequence and calls `uv_tty_reset_mode` before
-  // exiting, matching the guarantee the keyboard-Ctrl+C path already
+  // writes the restore sequence and calls `bun_restore_stdio` before
+  // re-raising, matching the guarantee the keyboard-Ctrl+C path already
   // gives. This is the Linux-observable half of #30890; on Windows the
   // same handler catches CTRL_BREAK_EVENT / CTRL_CLOSE_EVENT which
   // ENABLE_PROCESSED_INPUT clearing does not cover.

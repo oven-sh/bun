@@ -36,9 +36,9 @@ describe.if(isPosix)("IOReader/IOWriter teardown under callback frames", () => {
   });
 
   test("cat into early-exiting consumer, repeated", async () => {
-    const big = "x".repeat(64 * 1024) + "\n";
+    const big = Buffer.alloc(64 * 1024, "x").toString() + "\n";
     const dir = tempDirWithFiles("shell-ioreader-teardown", {
-      "big.txt": big.repeat(8),
+      "big.txt": Buffer.alloc(big.length * 8, big).toString(),
     });
     for (let i = 0; i < 25; i++) {
       const out = await Bun.$`cat ${dir}/big.txt | head -n 1`.text();

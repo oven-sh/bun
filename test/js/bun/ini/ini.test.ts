@@ -613,13 +613,14 @@ x = 1
   });
 
   test("large input spanning many arena chunks parses correctly", () => {
+    const filler = Buffer.alloc(64, "v").toString();
     const lines = [];
     for (let i = 0; i < 2000; i++) {
-      lines.push(`key${i} = value-${"v".repeat(64)}-${i}`);
+      lines.push(`key${i} = value-${filler}-${i}`);
     }
     const out = parse(lines.join("\n"));
-    expect(out.key0).toBe(`value-${"v".repeat(64)}-0`);
-    expect(out.key1999).toBe(`value-${"v".repeat(64)}-1999`);
+    expect(out.key0).toBe(`value-${filler}-0`);
+    expect(out.key1999).toBe(`value-${filler}-1999`);
     expect(Object.keys(out).length).toBe(2000);
   });
 });

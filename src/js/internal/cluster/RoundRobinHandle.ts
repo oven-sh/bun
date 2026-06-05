@@ -94,10 +94,12 @@ export default class RoundRobinHandle {
     this.server.once("error", err => {
       // Bun's listen errors carry positive platform errnos; the cluster
       // protocol (checkBindError, getSystemErrorName) expects negative
-      // uv-style values. Windows errors may have no numeric errno at all;
-      // forward the code string so the worker can still build a real error.
+      // uv-style values. That negation is only correct on POSIX (Windows
+      // platform errnos are not uv codes, and pipe errors may carry no
+      // number at all), so also forward the code string - it is the ground
+      // truth the worker rebuilds the error from.
       const errno = typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1;
-      send(errno, errno === -1 && typeof err.code === "string" ? { errcode: err.code } : null, null);
+      send(errno, typeof err.code === "string" ? { errcode: err.code } : null, null);
     });
   }
 

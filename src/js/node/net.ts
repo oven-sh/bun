@@ -2572,9 +2572,10 @@ function listenInCluster(
     err = checkBindError(err, port, handle);
     if (err) {
       let ex;
-      if (err === -1 && typeof reply?.errcode === "string") {
-        // The primary's bind error carried no numeric errno (Windows); use
-        // the forwarded code string instead of "Unknown system error -1".
+      if (typeof reply?.errcode === "string") {
+        // Prefer the code string the primary forwarded: the numeric errno is
+        // only meaningful on POSIX (negated platform errno == uv code) and
+        // would render as "Unknown system error" on Windows.
         ex = new Error(`bind ${reply.errcode} ${address}:${port}`);
         ex.code = reply.errcode;
         ex.errno = err;

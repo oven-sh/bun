@@ -392,7 +392,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    *error = ENOTSUP;
+    /* EINVAL matches both the pre-fd-adoption behavior ("Bun does not support
+     * listening on a file descriptor", EINVAL) and node's listen({fd}) error
+     * class on Windows (test-net-listen-fd0 accepts EINVAL/ENOTSOCK). */
+    *error = EINVAL;
     return 0;
 #else
     apple_no_sigpipe(fd);

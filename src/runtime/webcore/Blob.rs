@@ -5423,18 +5423,10 @@ pub fn write_file_internal(
                     "ReadableStream has already been used"
                 )));
             }
-            // Reject locked streams before the pipe truncates the destination
-            // — the pipe's `getReader()` would fail anyway, but only after the
+            // Reject locked streams before the pipe truncates the destination;
+            // the pipe's `getReader()` would fail anyway, but only after the
             // destination file had been opened with `O_TRUNC`.
-            // `ReadableStream__isLocked` only reports native locks (`$reader`
-            // === true); a reader created from JS stores the reader object, so
-            // also consult the web-standard `locked` getter.
-            let locked = stream.is_locked(global_this)
-                || stream
-                    .value
-                    .get(global_this, "locked")?
-                    .is_some_and(|v| v.to_boolean());
-            if locked {
+            if stream.is_locked(global_this) {
                 destination_blob.detach();
                 return Err(
                     global_this.throw_invalid_arguments(format_args!("ReadableStream is locked"))

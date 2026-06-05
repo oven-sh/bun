@@ -4766,9 +4766,18 @@ impl<'a> HTTPClient<'a> {
                                 }
 
                                 let new_url = new_url_.to_owned_slice();
+                                let parsed_url = URL::parse(&new_url);
+                                // https://fetch.spec.whatwg.org/#http-redirect-fetch step 7:
+                                // "If locationURL's scheme is not an HTTP(S) scheme, then
+                                // return a network error." A scheme-bearing Location without
+                                // "://" (javascript:, data:, mailto:) resolves to an opaque
+                                // absolute URL here instead of being joined onto the base.
+                                if !parsed_url.is_http() && !parsed_url.is_https() {
+                                    return Err(err!(UnsupportedRedirectProtocol));
+                                }
                                 // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                                 // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
+                                self.url = unsafe { parsed_url.erase_lifetime() };
                                 is_same_origin = strings::eql_case_insensitive_ascii(
                                     strings::without_trailing_slash(self.url.origin),
                                     strings::without_trailing_slash(original_url.origin),

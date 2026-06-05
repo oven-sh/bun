@@ -196,4 +196,29 @@ describe("fetch() follows relative redirect whose Location contains '://'", () =
     expect(res.status).toBe(200);
     expect(res.url).toBe(done.href);
   });
+
+  // https://fetch.spec.whatwg.org/#http-redirect-fetch step 7: a Location
+  // that resolves to a non-HTTP(S) scheme is a network error. These carry a
+  // scheme but no "://", so they resolve as opaque absolute URLs instead of
+  // being joined onto the base.
+  it.each([
+    ["javascript:", "javascript:alert(1)"],
+    ["data: with embedded ://", 'data:text/html,<a href="http://x">'],
+    ["mailto:", "mailto:user@example.com"],
+  ])("rejects redirect to non-HTTP(S) scheme (%s)", async (_name, location) => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/start") {
+          return new Response(null, { status: 302, headers: { Location: location } });
+        }
+        return new Response("ok", { status: 200 });
+      },
+    });
+
+    await expect(fetch(new URL("/start", server.url))).rejects.toMatchObject({
+      code: "UnsupportedRedirectProtocol",
+    });
+  });
 });

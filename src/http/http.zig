@@ -3138,7 +3138,17 @@ pub fn handleResponseMetadata(
                             const new_url = new_url_.toOwnedSlice(bun.default_allocator) catch {
                                 return error.RedirectURLTooLong;
                             };
-                            this.url = URL.parse(new_url);
+                            const parsed_url = URL.parse(new_url);
+                            // https://fetch.spec.whatwg.org/#http-redirect-fetch step 7:
+                            // "If locationURL's scheme is not an HTTP(S) scheme, then
+                            // return a network error." A scheme-bearing Location without
+                            // "://" (javascript:, data:, mailto:) resolves to an opaque
+                            // absolute URL here instead of being joined onto the base.
+                            if (!parsed_url.isHTTP() and !parsed_url.isHTTPS()) {
+                                bun.default_allocator.free(new_url);
+                                return error.UnsupportedRedirectProtocol;
+                            }
+                            this.url = parsed_url;
                             is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
                             bun.debugAssert(this.prev_redirect.len == 0);
                             this.prev_redirect = this.redirect;

@@ -88,13 +88,18 @@ pub struct Blob {
 }
 
 // SAFETY: `Blob` holds raw pointers (`content_type`, `global_this`) which
-// default to `!Send`/`!Sync`. The Zig original moves `Blob` across threads
-// under `ObjectURLRegistry`'s mutex and via the work-pool read/write tasks;
-// the pointee data is either `'static`/heap-owned (`content_type`) or an
-// opaque JSC handle only ever dereferenced on its owning JS thread.
+// default to `!Send`/`!Sync`. A `Blob` only crosses threads as an owned value:
+// the work-pool read/write tasks adopt their own dupe, and `ObjectURLRegistry`
+// only stores/hands out copies whose `content_type` is `'static` or heap-owned
+// by that copy, whose `name` is a thread-safe (isolated) string, and whose
+// store comes from `Store::deep_dupe` — so no other thread holds a reference
+// to its mutable state. `global_this` is an opaque JSC handle only ever
+// dereferenced on its owning JS thread.
 unsafe impl Send for Blob {}
-// SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex or on the single owning JS thread; the `Cell` fields are never raced.
+// SAFETY: concurrent `&Blob` access only occurs on the registry's `Entry`
+// blob, which is exclusively accessed under `ObjectURLRegistry`'s mutex; every
+// other `Blob` is confined to its single owning thread, so the `Cell` fields
+// are never raced.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {
@@ -912,6 +917,51 @@ pub mod store {
             }))
         }
 
+        /// Allocate a fresh `Store` with the same observable contents as
+        /// `self` that shares no mutable state with it: `Bytes` payloads and
+        /// `stored_name` are copied, `File` paths are re-owned (lazily-derived
+        /// stat fields reset), and `S3` keys and credentials are re-owned.
+        /// Returns a +1-ref heap `Store`.
+        pub fn deep_dupe(&self) -> StoreRef {
+            let data = match &self.data {
+                Data::Bytes(bytes) => {
+                    let mut copy = Bytes::init(bytes.slice().to_vec());
+                    let stored_name = bytes.stored_name.slice();
+                    if !stored_name.is_empty() {
+                        copy.stored_name = PathString::init_owned(stored_name.to_vec());
+                    }
+                    Data::Bytes(copy)
+                }
+                Data::File(file) => {
+                    let pathlike = match &file.pathlike {
+                        PathOrFileDescriptor::Fd(fd) => PathOrFileDescriptor::Fd(*fd),
+                        PathOrFileDescriptor::Path(path) => PathOrFileDescriptor::Path(
+                            PathLike::String(PathString::init_owned(path.slice().to_vec())),
+                        ),
+                    };
+                    Data::File(File::init(pathlike, Some(file.mime_type.clone())))
+                }
+                Data::S3(s3) => Data::S3(S3 {
+                    pathlike: PathLike::ThreadsafeString(bun_core::SliceWithUnderlyingString {
+                        utf8: bun_core::ZigStringSlice::init_owned(s3.pathlike.slice().to_vec()),
+                        ..Default::default()
+                    }),
+                    mime_type: s3.mime_type.clone(),
+                    credentials: s3.credentials.as_deref().map(|c| Rc::new(c.clone())),
+                    options: s3.options,
+                    acl: s3.acl,
+                    storage_class: s3.storage_class,
+                    request_payer: s3.request_payer,
+                }),
+            };
+            StoreRef::from(Store::new(Store {
+                data,
+                mime_type: self.mime_type.clone(),
+                ref_count: bun_ptr::ThreadSafeRefCount::init(),
+                is_all_ascii: self.is_all_ascii,
+            }))
+        }
+
         pub fn get_path(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
@@ -1136,12 +1186,17 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers; matches Zig's cross-thread
-    // `*Store` usage.
+    // SAFETY: `Store::ref_count` is atomic, so handing the handle to another
+    // thread cannot tear the count. The non-atomic payload (`data`,
+    // `is_all_ascii`) is only mutated by the thread that owns the blobs
+    // referencing the store: `ObjectURLRegistry` entries hold `Store::deep_dupe`
+    // copies that no thread mutates (resolvers only read them to take their own
+    // `deep_dupe` snapshot), and work-pool tasks adopt their own +1 handed off
+    // by the owning JS thread.
     unsafe impl Send for StoreRef {}
-    // SAFETY: `Store::ref_count` is atomic and `&StoreRef` only derefs to
-    // `&Store`; matches Zig's cross-thread shared `*Store` reads.
+    // SAFETY: see `Send` — `&StoreRef` only derefs to `&Store`, and any
+    // cross-thread `&Store` reads go through stores whose owning thread is not
+    // concurrently mutating them (registry copies / awaited work-pool handoffs).
     unsafe impl Sync for StoreRef {}
 }
 pub use store::{Store, StoreRef};

@@ -22,6 +22,14 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 /// wiki links are enabled, e.g. via `Bun.markdown.ansi`).
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
+/// Maximum depth of link/image-label recursion. Rendering a label re-parses
+/// the label slice from scratch (`process_inline_content` rebuilds the
+/// bracket map and emphasis state per call), so each nesting level costs
+/// O(label). Unbounded nesting is quadratic on inputs like
+/// `"![".repeat(n) + "](u)".repeat(n)`; past the cap a label is emitted as
+/// plain text instead of recursing.
+const MAX_LABEL_NESTING_DEPTH: u32 = 32;
+
 /// Result of `try_match_bracket_link`.
 pub struct BracketLinkMatch {
     pub is_link: bool,
@@ -281,6 +289,19 @@ impl Parser<'_> {
         })
     }
 
+    /// Render the inline content of a link/image/wikilink label. All label
+    /// recursion funnels through here so the depth cap cannot be bypassed by
+    /// one of the call sites.
+    fn process_label_content(&mut self, label: &[u8]) -> Result<(), parser::Error> {
+        if self.label_nesting_level >= MAX_LABEL_NESTING_DEPTH {
+            return self.emit_text(TextType::Normal, label);
+        }
+        self.label_nesting_level += 1;
+        let ret = self.process_inline_content(label, 0);
+        self.label_nesting_level -= 1;
+        ret
+    }
+
     pub fn process_link(
         &mut self,
         content: &[u8],
@@ -441,7 +462,7 @@ impl Parser<'_> {
 
                 if self.image_nesting_level > 0 {
                     // Inside image alt text — emit only text, no HTML tags
-                    self.process_inline_content(label, 0)?;
+                    self.process_label_content(label)?;
                 } else if is_image {
                     self.renderer.enter_span(
                         Span::Img,
@@ -452,7 +473,7 @@ impl Parser<'_> {
                         },
                     )?;
                     self.image_nesting_level += 1;
-                    self.process_inline_content(label, 0)?;
+                    self.process_label_content(label)?;
                     self.image_nesting_level -= 1;
                     self.renderer.leave_span(Span::Img)?;
                 } else {
@@ -465,7 +486,7 @@ impl Parser<'_> {
                         },
                     )?;
                     self.link_nesting_level += 1;
-                    self.process_inline_content(label, 0)?;
+                    self.process_label_content(label)?;
                     self.link_nesting_level -= 1;
                     self.renderer.leave_span(Span::A)?;
                 }
@@ -853,7 +874,7 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
-        self.process_inline_content(label, 0)?;
+        self.process_label_content(label)?;
         self.renderer.leave_span(Span::Wikilink)?;
 
         Ok(Some(pos + 2)) // skip both ']'
@@ -869,7 +890,7 @@ impl Parser<'_> {
     ) -> Result<(), parser::Error> {
         if self.image_nesting_level > 0 {
             // Inside image alt text — emit only text, no HTML tags
-            self.process_inline_content(label_content, 0)?;
+            self.process_label_content(label_content)?;
         } else if is_image {
             self.renderer.enter_span(
                 Span::Img,
@@ -880,7 +901,7 @@ impl Parser<'_> {
                 },
             )?;
             self.image_nesting_level += 1;
-            self.process_inline_content(label_content, 0)?;
+            self.process_label_content(label_content)?;
             self.image_nesting_level -= 1;
             self.renderer.leave_span(Span::Img)?;
         } else {
@@ -893,7 +914,7 @@ impl Parser<'_> {
                 },
             )?;
             self.link_nesting_level += 1;
-            self.process_inline_content(label_content, 0)?;
+            self.process_label_content(label_content)?;
             self.link_nesting_level -= 1;
             self.renderer.leave_span(Span::A)?;
         }

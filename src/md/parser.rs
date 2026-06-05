@@ -39,6 +39,9 @@ pub struct Parser<'a> {
     pub renderer: Renderer<'a>,
     pub image_nesting_level: u32,
     pub link_nesting_level: u32,
+    // Depth of link/image-label recursion, capped in process_label_content
+    // (links.rs) to keep nested-label rendering linear.
+    pub label_nesting_level: u32,
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
     pub code_indent_offset: u32,
@@ -180,6 +183,7 @@ impl<'a> Parser<'a> {
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,
+            label_nesting_level: 0,
             code_indent_offset: if flags.no_indented_code_blocks {
                 u32::MAX
             } else {

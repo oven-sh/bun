@@ -12,4 +12,5 @@ if (approach in crash_handler) {
   crash_handler[approach]();
 } else {
   console.error("usage: bun fixture-crash.js <segfault|panic|rootError|outOfMemory|infallibleOutOfMemory|raiseIgnoringPanicHandler>");
+  process.exit(1);
 }

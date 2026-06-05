@@ -25,6 +25,9 @@ export { globalShortcut } from "./global-shortcut";
 export { Tray } from "./tray";
 export { Notification } from "./notification";
 export type { NotificationConstructorOptions } from "./notification";
+export { net, ClientRequest } from "./net";
+export { MessageChannelMain, MessagePortMain } from "./message-channel";
+export { powerMonitor } from "./power-monitor";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -41,6 +44,9 @@ import { safeStorage } from "./safe-storage";
 import { globalShortcut } from "./global-shortcut";
 import { Tray } from "./tray";
 import { Notification } from "./notification";
+import { net } from "./net";
+import { MessageChannelMain, MessagePortMain } from "./message-channel";
+import { powerMonitor } from "./power-monitor";
 
 export default {
   app,
@@ -52,7 +58,11 @@ export default {
   Menu,
   MenuItem,
   nativeImage,
+  MessageChannelMain,
+  MessagePortMain,
+  net,
   Notification,
+  powerMonitor,
   protocol,
   safeStorage,
   screen,

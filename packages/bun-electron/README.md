@@ -193,6 +193,13 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
   accelerator parsing and `CommandOrControl` resolution (registry only; no OS
   key capture).
 - **`Tray`**, **`Notification`**: data models with events (no OS rendering).
+- **`net`**: `net.fetch` and `net.request` (a Node `http.ClientRequest`-shaped
+  client over the runtime's fetch) with `response`/`data`/`end`/`error`
+  events.
+- **`MessageChannelMain`/`MessagePortMain`**: real in-process entangled ports
+  with `postMessage`/`start`/`close`, buffering, and port transfer.
+- **`powerMonitor`**: `getSystemIdleState`/`getSystemIdleTime`/
+  `isOnBatteryPower`/`getCurrentThermalState` and power-event listeners.
 
 Implemented as data models / process-local (no OS surface wired up): `Menu`
 rendering, `Tray` icon, `Notification` display, `clipboard` (no system
@@ -200,7 +207,8 @@ clipboard), `globalShortcut` key capture.
 
 Not implemented: context isolation (preload and page share one context),
 `nodeIntegration`, partitioned sessions, `webRequest` interception, image
-resize/crop in `nativeImage`, `powerMonitor`, `desktopCapturer`.
+resize/crop in `nativeImage`, `desktopCapturer`, real OS power-event
+delivery.
 
 ## Testing
 
@@ -213,8 +221,9 @@ xvfb-run -a bun test test/     # linux headless; on macOS just: bun test test/
 Tests are ported from Electron's spec suite (names preserved where behavior
 carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`,
-`window-icon`, `safe-storage`, `clipboard`, `global-shortcut`, and
-`tray-notification` test files (146 tests total). App-lifecycle scenarios spawn fresh
+`window-icon`, `safe-storage`, `clipboard`, `global-shortcut`,
+`tray-notification`, `net`, `message-channel`, and `power-monitor` test
+files (164 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

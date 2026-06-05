@@ -919,23 +919,27 @@ impl PackageJSON {
 } // end  impl PackageJSON (framework loaders)
 
 impl PackageJSON {
-    pub fn parse_macros_json(
-        macros: js_ast::Expr,
+    /// Macro-remap parsing shared between `package.json`'s `"macros"` field
+    /// and bunfig's `[macros]` section. Returns the
+    /// `bun_options_types::context::MacroMap` shape so bunfig can slot the
+    /// result directly into `ctx.debug.macros`; `parse_macros_json` re-keys
+    /// it into the resolver-side [`MacroMap`].
+    pub fn parse_macros_map(
+        macros: &js_ast::Expr,
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,
-    ) -> MacroMap {
-        let mut macro_map = MacroMap::default();
+        bump: &Bump,
+    ) -> bun_options_types::context::MacroMap {
+        let mut macro_map = bun_options_types::context::MacroMap::default();
         let js_ast::ExprData::EObject(obj) = &macros.data else {
             return macro_map;
         };
 
-        let properties = obj.properties.slice();
-
-        for property in properties {
+        for property in obj.properties.slice() {
             let Some(key_expr) = property.key.as_ref() else {
                 continue;
             };
-            let Some(key) = key_expr.as_utf8_string_literal() else {
+            let Some(key) = key_expr.as_string(bump) else {
                 continue;
             };
             if !resolver::is_package_path(key) {
@@ -970,45 +974,63 @@ impl PackageJSON {
                 continue;
             }
 
-            let mut map = MacroImportReplacementMap::default();
+            let mut map = bun_options_types::context::MacroImportReplacementMap::default();
             map.reserve(remap_properties.len());
             for remap in remap_properties {
                 let Some(remap_key) = remap.key.as_ref() else {
                     continue;
                 };
-                let Some(import_name) = remap_key.as_utf8_string_literal() else {
+                let Some(import_name) = remap_key.as_string(bump) else {
                     continue;
                 };
                 let Some(remap_value) = remap.value.as_ref() else {
                     continue;
                 };
-                let valid =
-                    matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
-                if !valid {
-                    log.add_warning_fmt(
-                        Some(json_source),
-                        remap_value.loc,
-                        format_args!(
-                            "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
-                            bstr::BStr::new(import_name)
-                        ),
-                    );
-                    continue;
-                }
-
-                let remap_value_str: &[u8] = match remap_value.data.e_string() {
-                    Some(s) => s.data.slice(),
-                    None => continue,
+                let remap_value_str = match &remap_value.data {
+                    js_ast::ExprData::EString(s) if s.len() > 0 => {
+                        Box::<[u8]>::from(s.string(bump).expect("OOM"))
+                    }
+                    _ => {
+                        log.add_warning_fmt(
+                            Some(json_source),
+                            remap_value.loc,
+                            format_args!(
+                                "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
+                                bstr::BStr::new(import_name)
+                            ),
+                        );
+                        continue;
+                    }
                 };
-
-                map.insert(import_name, Box::<[u8]>::from(remap_value_str));
+                map.insert(Box::<[u8]>::from(import_name), remap_value_str);
             }
 
             if map.len() > 0 {
-                macro_map.insert(key, map);
+                macro_map.insert(Box::<[u8]>::from(key), map);
             }
         }
 
+        macro_map
+    }
+
+    pub fn parse_macros_json(
+        macros: js_ast::Expr,
+        log: &mut bun_ast::Log,
+        json_source: &bun_ast::Source,
+    ) -> MacroMap {
+        // Scratch arena for UTF-16 → UTF-8 transcoding inside
+        // `parse_macros_map`; everything kept past this call is boxed.
+        let bump = Bump::new();
+        let parsed = Self::parse_macros_map(&macros, log, json_source, &bump);
+        let mut macro_map = MacroMap::default();
+        for (key, imports) in parsed.iter() {
+            let mut map = MacroImportReplacementMap::default();
+            map.reserve(imports.len());
+            for (import_name, remap) in imports.iter() {
+                map.insert(import_name, Box::<[u8]>::from(remap.as_ref()));
+            }
+            macro_map.insert(key, map);
+        }
         macro_map
     }
 

@@ -200,12 +200,11 @@ impl Framework {
         )
     }
 
-    /// Sets up a per-graph
-    /// `Transpiler` in place. The full body lives in
-    /// `bake_body::Framework::init_transpiler_with_options`; this keystone
-    /// version operates on the keystone `BuildConfigSubset` (which omits
-    /// `conditions`/`env`/`define`/`drop` until the schema types are
-    /// const-constructible — those paths default).
+    /// Sets up a per-graph `Transpiler` in place via `init_transpiler_impl`,
+    /// with the DevServer defaults: source maps follow `mode` and the three
+    /// minify overrides always default to `mode != Development` regardless of
+    /// `BuildConfigSubset`. User-supplied source-map/minify flags are only
+    /// honored by `init_transpiler_with_options` (bake_body).
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
@@ -216,79 +215,7 @@ impl Framework {
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
-        use bun_options_types::schema as bun_schema;
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
-        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
-            arena,
-            log,
-            bun_schema::api::TransformOptions::default(),
-            None,
-        )?);
-
-        out.options.target = match renderer {
-            Graph::Client => bun_ast::Target::Browser,
-            Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
-        };
-        out.options.public_path = match renderer {
-            Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
-            Graph::Server | Graph::Ssr => Box::default(),
-        };
-        out.options.entry_points = Box::default();
-        out.options.log = log;
-        out.options.output_format = match mode {
-            Mode::Development => bun_bundler::options::Format::InternalBakeDev,
-            Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
-        };
-        out.options.out_extensions = bun_collections::StringHashMap::new();
-        out.options.hot_module_reloading = mode == Mode::Development;
-        out.options.code_splitting = mode != Mode::Development;
-        out.options.output_dir = Box::default();
-
-        out.options.react_fast_refresh = mode == Mode::Development
-            && renderer == Graph::Client
-            && self.react_fast_refresh.is_some();
-        out.options.server_components = self.server_components.is_some();
-
-        out.options.conditions = bun_bundler::options::ESMConditions::init(
-            out.options.target.default_conditions(),
-            out.options.target.is_server_side(),
-            bundler_options.conditions.keys(),
-        )?;
-        if renderer == Graph::Server && self.server_components.is_some() {
-            out.options.conditions.append_slice(&[b"react-server"])?;
-        }
-        if mode == Mode::Development {
-            out.options.conditions.append_slice(&[b"development"])?;
-        }
-        if matches!(renderer, Graph::Server | Graph::Ssr) {
-            out.options.conditions.append_slice(&[b"node"])?;
-        }
-
-        out.options.production = mode != Mode::Development;
-        out.options.tree_shaking = mode != Mode::Development;
-        // The three minify overrides always default to `mode != Development`
-        // here regardless of `BuildConfigSubset`. User-supplied minify flags
-        // are only honored by `init_transpiler_with_options` (bake_body).
-        out.options.minify_syntax = mode != Mode::Development;
-        out.options.minify_identifiers = mode != Mode::Development;
-        out.options.minify_whitespace = mode != Mode::Development;
-        out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
-        out.options.inline_entrypoint_import_meta_main = true;
-        if let Some(ignore) = bundler_options.ignore_dce_annotations {
-            out.options.ignore_dce_annotations = ignore;
-        }
-        out.options.source_map = match mode {
+        let source_map = match mode {
             // Source maps must always be external, as DevServer special cases
             // the linking and part of the generation of these. It also relies
             // on source maps always being enabled.
@@ -298,65 +225,23 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::None
             }
         };
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
-            out.options.env.behavior = bundler_options.env;
-            out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
-        }
-        // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
-        // re-project via the dedicated helper rather than `Clone`.
-        out.sync_resolver_opts();
-
-        out.configure_linker();
-        out.configure_defines()?;
-        out.options.jsx.development = mode == Mode::Development;
-
-        bake_body::add_import_meta_defines(
-            &mut out.options.define,
+        init_transpiler_impl(
+            arena,
+            log,
             mode,
-            match renderer {
-                Graph::Client => Side::Client,
-                Graph::Server | Graph::Ssr => Side::Server,
+            renderer,
+            out,
+            bundler_options,
+            InitTranspilerOptions {
+                source_map,
+                minify_whitespace: None,
+                minify_syntax: None,
+                minify_identifiers: None,
+                has_react_fast_refresh: self.react_fast_refresh.is_some(),
+                has_server_components: self.server_components.is_some(),
+                framework_view: self.as_bundler_view(),
             },
-        )?;
-
-        if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
-            debug_assert_eq!(
-                bundler_options.define.keys.len(),
-                bundler_options.define.values.len()
-            );
-            use bun_bundler::DefineDataExt;
-            for (k, v) in bundler_options
-                .define
-                .keys
-                .iter()
-                .zip(bundler_options.define.values.iter())
-            {
-                let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
-                out.options.define.insert(k, parsed)?;
-            }
-
-            for drop_item in bundler_options.drop.keys() {
-                if !drop_item.is_empty() {
-                    let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
-                    )?;
-                    out.options.define.insert(drop_item, parsed)?;
-                }
-            }
-        }
-
-        if mode != Mode::Development {
-            // Hide information about the source repository, at the cost of debugging quality.
-            out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
-            out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
-            out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
-        }
-
-        // Re-sync after define/naming mutations so the
-        // resolver sees the final option set.
-        out.sync_resolver_opts();
-        Ok(framework_view)
+        )
     }
 
     /// Resolves built-in module
@@ -475,6 +360,181 @@ impl Framework {
     }
 }
 
+/// Caller-specific inputs to `init_transpiler_impl`: the two `Framework`
+/// representations contribute their feature flags and `bake_types::Framework`
+/// projection here. A `None` minify override defaults to
+/// `mode != Development`.
+pub(crate) struct InitTranspilerOptions {
+    pub source_map: bun_bundler::options::SourceMapOption,
+    pub minify_whitespace: Option<bool>,
+    pub minify_syntax: Option<bool>,
+    pub minify_identifiers: Option<bool>,
+    pub has_react_fast_refresh: bool,
+    pub has_server_components: bool,
+    pub framework_view: bun_bundler::bake_types::Framework,
+}
+
+/// Shared body of `Framework::init_transpiler` (keystone, DevServer) and
+/// `bake_body::Framework::init_transpiler_with_options` (production): wires
+/// the per-graph transpiler options (target/conditions/minify/source
+/// map/define/drop) that are identical between the two `Framework`
+/// representations, which only contribute the `InitTranspilerOptions` here.
+///
+/// Returns the arena slot for the projection; the caller must `drop_in_place`
+/// it — interior `Box<[u8]>` are not dropped by bumpalo. (The production path
+/// deliberately leaks it: bounded per-session, revisit when
+/// `bake_types::BuiltInModule` is reshaped to `&'a [u8]`.)
+pub(crate) fn init_transpiler_impl<'a>(
+    arena: &'a bun_alloc::Arena,
+    log: &mut bun_ast::Log,
+    mode: Mode,
+    renderer: Graph,
+    out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+    bundler_options: &BuildConfigSubset,
+    opts: InitTranspilerOptions,
+) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
+    use bun_options_types::schema as bun_schema;
+
+    // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop` runs
+    // `exit()` at end-of-fn.
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+
+    // The caller hands us an uninitialized slot, so use `MaybeUninit::write`
+    // (no drop of prior bytes) then reborrow as `&mut Transpiler` for the
+    // field assignments below.
+    let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
+        arena,
+        log,
+        bun_schema::api::TransformOptions::default(),
+        None,
+    )?);
+
+    out.options.target = match renderer {
+        Graph::Client => bun_ast::Target::Browser,
+        Graph::Server | Graph::Ssr => bun_ast::Target::Bun,
+    };
+    out.options.public_path = match renderer {
+        Graph::Client => dev_server::CLIENT_PREFIX.as_bytes().into(),
+        Graph::Server | Graph::Ssr => Box::default(),
+    };
+    out.options.entry_points = Box::default();
+    out.options.log = log;
+    out.options.output_format = match mode {
+        Mode::Development => bun_bundler::options::Format::InternalBakeDev,
+        Mode::ProductionDynamic | Mode::ProductionStatic => bun_bundler::options::Format::Esm,
+    };
+    out.options.out_extensions = bun_collections::StringHashMap::new();
+    out.options.hot_module_reloading = mode == Mode::Development;
+    out.options.code_splitting = mode != Mode::Development;
+
+    // force disable filesystem output, even though bundle_v2
+    // is special cased to return before that code is reached.
+    out.options.output_dir = Box::default();
+
+    // framework configuration
+    out.options.react_fast_refresh =
+        mode == Mode::Development && renderer == Graph::Client && opts.has_react_fast_refresh;
+    out.options.server_components = opts.has_server_components;
+
+    out.options.conditions = bun_bundler::options::ESMConditions::init(
+        out.options.target.default_conditions(),
+        out.options.target.is_server_side(),
+        bundler_options.conditions.keys(),
+    )?;
+    if renderer == Graph::Server && opts.has_server_components {
+        out.options.conditions.append_slice(&[b"react-server"])?;
+    }
+    if mode == Mode::Development {
+        // Support `esm-env` package using this condition.
+        out.options.conditions.append_slice(&[b"development"])?;
+    }
+    // Ensure "node" condition is included for server-side rendering
+    // This helps with package.json imports field resolution
+    if matches!(renderer, Graph::Server | Graph::Ssr) {
+        out.options.conditions.append_slice(&[b"node"])?;
+    }
+
+    out.options.production = mode != Mode::Development;
+    out.options.tree_shaking = mode != Mode::Development;
+    out.options.minify_syntax = opts.minify_syntax.unwrap_or(mode != Mode::Development);
+    out.options.minify_identifiers = opts.minify_identifiers.unwrap_or(mode != Mode::Development);
+    out.options.minify_whitespace = opts.minify_whitespace.unwrap_or(mode != Mode::Development);
+    out.options.css_chunking = true;
+    // The bundler crate (lower tier) carries a TYPE_ONLY projection
+    // (`bake_types::Framework`); arena-allocate it here so `BundleOptions<'a>`
+    // can borrow it for the bundle pass.
+    let framework_view: *mut bun_bundler::bake_types::Framework = arena.alloc(opts.framework_view);
+    // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
+    // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
+    out.options.framework = Some(unsafe { &*framework_view });
+    out.options.inline_entrypoint_import_meta_main = true;
+    if let Some(ignore) = bundler_options.ignore_dce_annotations {
+        out.options.ignore_dce_annotations = ignore;
+    }
+
+    out.options.source_map = opts.source_map;
+    if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
+        out.options.env.behavior = bundler_options.env;
+        out.options.env.prefix = bundler_options.env_prefix.unwrap_or(b"").into();
+    }
+    // The resolver crate carries a FORWARD_DECL subset of `BundleOptions`, so
+    // re-project via the dedicated helper rather than `Clone`.
+    out.sync_resolver_opts();
+
+    out.configure_linker();
+    out.configure_defines()?;
+
+    out.options.jsx.development = mode == Mode::Development;
+
+    bake_body::add_import_meta_defines(
+        &mut out.options.define,
+        mode,
+        match renderer {
+            Graph::Client => Side::Client,
+            Graph::Server | Graph::Ssr => Side::Server,
+        },
+    )?;
+
+    if (bundler_options.define.keys.len() + bundler_options.drop.count()) > 0 {
+        debug_assert_eq!(
+            bundler_options.define.keys.len(),
+            bundler_options.define.values.len()
+        );
+        use bun_bundler::DefineDataExt;
+        for (k, v) in bundler_options
+            .define
+            .keys
+            .iter()
+            .zip(bundler_options.define.values.iter())
+        {
+            let parsed = bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+            out.options.define.insert(k, parsed)?;
+        }
+
+        for drop_item in bundler_options.drop.keys() {
+            if !drop_item.is_empty() {
+                let parsed = bun_bundler::defines::DefineData::parse(
+                    drop_item, b"", true, true, log, arena,
+                )?;
+                out.options.define.insert(drop_item, parsed)?;
+            }
+        }
+    }
+
+    if mode != Mode::Development {
+        // Hide information about the source repository, at the cost of debugging quality.
+        out.options.entry_naming = b"_bun/[hash].[ext]".as_slice().into();
+        out.options.chunk_naming = b"_bun/[hash].[ext]".as_slice().into();
+        out.options.asset_naming = b"_bun/[hash].[ext]".as_slice().into();
+    }
+
+    // Re-sync after define/naming mutations so the resolver sees the
+    // final option set.
+    out.sync_resolver_opts();
+    Ok(framework_view)
+}
+
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
 pub struct SplitBundlerOptions {
@@ -555,56 +615,24 @@ impl From<bake_body::Framework> for Framework {
         }
     }
 }
-impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
-    fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `loader` /
-        // `source_map`, which only `init_transpiler_with_options` honours).
-        Self {
-            ignore_dce_annotations: src.ignore_dce_annotations,
-            conditions: src.conditions,
-            drop: src.drop,
-            env: src.env,
-            env_prefix: src.env_prefix,
-            define: src.define,
-            minify_syntax: src.minify_syntax,
-            minify_identifiers: src.minify_identifiers,
-            minify_whitespace: src.minify_whitespace,
-        }
-    }
-}
 impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
     fn from(src: bake_body::SplitBundlerOptions) -> Self {
         Self {
             // `bake_body::Plugin` and keystone `jsc::Plugin` both alias
             // `crate::api::js_bundler::Plugin` — same nominal type, no cast.
             plugin: src.plugin,
-            client: src.client.into(),
-            server: src.server.into(),
-            ssr: src.ssr.into(),
+            client: src.client,
+            server: src.server,
+            ssr: src.ssr,
         }
     }
 }
 
 /// `bake.SplitBundlerOptions.BuildConfigSubset`. Full body (with `from_js`)
-/// lives in `bake_body.rs`; this keystone mirror carries every field that
-/// `Framework::init_transpiler` reads so DevServer's
-/// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
-#[derive(Default)]
-pub struct BuildConfigSubset {
-    pub ignore_dce_annotations: Option<bool>,
-    pub conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_options_types::schema::api::DotEnvBehavior,
-    pub env_prefix: Option<&'static [u8]>,
-    pub define: bun_options_types::schema::api::StringMap,
-    pub minify_syntax: Option<bool>,
-    pub minify_identifiers: Option<bool>,
-    pub minify_whitespace: Option<bool>,
-    // `loader`/`source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
-    // never calls that path.
-}
+/// lives in `bake_body.rs`; DevServer's `init_transpiler` reads everything
+/// except `loader`/`source_map`, which only `init_transpiler_with_options`
+/// honours.
+pub use bake_body::BuildConfigSubset;
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
 /// Canonical definition; `bake_body::HmrRuntime` re-exports this

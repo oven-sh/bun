@@ -11,6 +11,8 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{YAML, YamlParseError};
 
+use super::stringify_space::Space;
+
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global_this,
@@ -70,39 +72,6 @@ pub(crate) struct Stringifier {
     prop_names: StringHashMap<usize>,
 
     space: Space,
-}
-
-pub(crate) enum Space {
-    Minified,
-    Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
-    Str(OwnedString),
-}
-
-impl Space {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
-        let space = space_value.unwrap_boxed_primitive(global)?;
-        if space.is_number() {
-            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
-            // toInt32() wraps large values and Infinity to 0, which is wrong.
-            let num_f = space.as_number();
-            if num_f.is_nan() || num_f < 1.0 {
-                // handles NaN, -Infinity, 0, negatives
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
-        }
-
-        if space.is_string() {
-            let str = OwnedString::new(space.to_bun_string(global)?);
-            if str.length() == 0 {
-                return Ok(Space::Minified);
-            }
-            return Ok(Space::Str(str));
-        }
-
-        Ok(Space::Minified)
-    }
 }
 
 pub(crate) struct AnchorAlias {
@@ -566,35 +535,8 @@ impl Stringifier {
     }
 
     fn newline(&mut self) {
-        let indent_count = self.indent;
-
-        match &self.space {
-            Space::Minified => {}
-            Space::Number(space_num) => {
-                let space_num = *space_num as usize;
-                self.builder.append_lchar(b'\n');
-                self.builder
-                    .ensure_unused_capacity(indent_count * space_num);
-                for _ in 0..indent_count * space_num {
-                    self.builder.append_lchar(b' ');
-                }
-            }
-            Space::Str(space_str) => {
-                self.builder.append_lchar(b'\n');
-
-                let clamped: BunString = if space_str.length() > 10 {
-                    space_str.substring_with_len(0, 10)
-                } else {
-                    **space_str
-                };
-
-                self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
-                for _ in 0..indent_count {
-                    self.builder.append_string(clamped);
-                }
-            }
-        }
+        self.space
+            .append_newline_indent(&mut self.builder, self.indent);
     }
 
     fn append_double_quoted_string(&mut self, str: &BunString) {

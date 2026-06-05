@@ -13,20 +13,21 @@ pub use self::windows::{NTSTATUS, Win32Error, Win32ErrorExt};
 use bun_libuv_sys as uv;
 
 // ──────────────────────────────────────────────────────────────────────────
-// UV_* errno X-macro
+// errno X-macros
 //
-// Single source of truth for the 86 UV_* variants that form the tail of BOTH
-// `enum E` and `enum SystemErrno`. Both enum tails are
-// driven from this one list so they cannot drift. (The UV_*→E* fold-down
-// lives in `bun_libuv_sys::uv_err_to_e_discriminant`.)
+// BOTH `enum E` and `enum SystemErrno` are generated from the same two lists
+// so they cannot drift:
+//   • `for_each_linux_errno!` — the dense Linux-numbered `0..=137` head
+//   • `for_each_uv_errno!`    — the 86 UV_* variants forming the tail
+//     (the UV_*→E* fold-down lives in `bun_libuv_sys::uv_err_to_e_discriminant`)
 //
-// Entry shape:
+// UV entry shape:
 //   [UV_X => EX]   — UV_X has a non-UV_ counterpart `SystemErrno::EX`
 //   [UV_X]         — no counterpart (EAI_* resolver codes, UNKNOWN, ERRNO_MAX)
 //
 // ORDER IS LOAD-BEARING: `enum_map::Enum` derives ordinals from declaration
 // order, and `SystemErrno::to_e` transmutes by discriminant, so the two enums
-// MUST stay in lockstep. Editing this list updates both atomically.
+// MUST stay in lockstep. Editing these lists updates both atomically.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// X-macro: invokes `$cb! { $($pre)* @uv [UV_X => EX] [UV_Y] … }`.
@@ -65,17 +66,117 @@ macro_rules! for_each_uv_errno {
     };
 }
 
-/// Callback: emit `$pre` enum decl with the UV_* tail appended verbatim.
-macro_rules! __errno_enum_with_uv_tail {
-    (
-        $(#[$m:meta])* $vis:vis enum $name:ident { $($head:tt)* }
-        @uv $( [ $uv:ident $(=> $sys:ident)? ] )*
-    ) => {
-        $(#[$m])*
-        $vis enum $name {
-            $($head)*
-            $( $uv = (-uv::$uv) as u16, )*
+/// X-macro: invokes `$cb! { $($pre)* @linux [PERM EPERM = 1] … }`.
+///
+/// Row shape: `[<bare> <E-prefixed> = N]` — `enum E` uses the bare spelling
+/// (`PERM`), `enum SystemErrno` the prefixed one (`EPERM`). Optional leading
+/// `#[meta]` attributes apply to the bare variant only.
+macro_rules! for_each_linux_errno {
+    ($cb:ident { $($pre:tt)* }) => {
+        $cb! { $($pre)* @linux
+            [SUCCESS SUCCESS = 0] [PERM EPERM = 1] [NOENT ENOENT = 2] [SRCH ESRCH = 3]
+            [INTR EINTR = 4] [IO EIO = 5] [NXIO ENXIO = 6]
+            // Rust identifiers cannot start with a digit.
+            [#[strum(serialize = "2BIG")] _2BIG E2BIG = 7]
+            [NOEXEC ENOEXEC = 8] [BADF EBADF = 9] [CHILD ECHILD = 10] [AGAIN EAGAIN = 11]
+            [NOMEM ENOMEM = 12] [ACCES EACCES = 13] [FAULT EFAULT = 14] [NOTBLK ENOTBLK = 15]
+            [BUSY EBUSY = 16] [EXIST EEXIST = 17] [XDEV EXDEV = 18] [NODEV ENODEV = 19]
+            [NOTDIR ENOTDIR = 20] [ISDIR EISDIR = 21] [INVAL EINVAL = 22] [NFILE ENFILE = 23]
+            [MFILE EMFILE = 24] [NOTTY ENOTTY = 25] [TXTBSY ETXTBSY = 26] [FBIG EFBIG = 27]
+            [NOSPC ENOSPC = 28] [SPIPE ESPIPE = 29] [ROFS EROFS = 30] [MLINK EMLINK = 31]
+            [PIPE EPIPE = 32] [DOM EDOM = 33] [RANGE ERANGE = 34] [DEADLK EDEADLK = 35]
+            [NAMETOOLONG ENAMETOOLONG = 36] [NOLCK ENOLCK = 37] [NOSYS ENOSYS = 38]
+            [NOTEMPTY ENOTEMPTY = 39] [LOOP ELOOP = 40] [WOULDBLOCK EWOULDBLOCK = 41]
+            [NOMSG ENOMSG = 42] [IDRM EIDRM = 43] [CHRNG ECHRNG = 44] [L2NSYNC EL2NSYNC = 45]
+            [L3HLT EL3HLT = 46] [L3RST EL3RST = 47] [LNRNG ELNRNG = 48] [UNATCH EUNATCH = 49]
+            [NOCSI ENOCSI = 50] [L2HLT EL2HLT = 51] [BADE EBADE = 52] [BADR EBADR = 53]
+            [XFULL EXFULL = 54] [NOANO ENOANO = 55] [BADRQC EBADRQC = 56] [BADSLT EBADSLT = 57]
+            [DEADLOCK EDEADLOCK = 58] [BFONT EBFONT = 59] [NOSTR ENOSTR = 60]
+            [NODATA ENODATA = 61] [TIME ETIME = 62] [NOSR ENOSR = 63] [NONET ENONET = 64]
+            [NOPKG ENOPKG = 65] [REMOTE EREMOTE = 66] [NOLINK ENOLINK = 67] [ADV EADV = 68]
+            [SRMNT ESRMNT = 69] [COMM ECOMM = 70] [PROTO EPROTO = 71] [MULTIHOP EMULTIHOP = 72]
+            [DOTDOT EDOTDOT = 73] [BADMSG EBADMSG = 74] [OVERFLOW EOVERFLOW = 75]
+            [NOTUNIQ ENOTUNIQ = 76] [BADFD EBADFD = 77] [REMCHG EREMCHG = 78]
+            [LIBACC ELIBACC = 79] [LIBBAD ELIBBAD = 80] [LIBSCN ELIBSCN = 81]
+            [LIBMAX ELIBMAX = 82] [LIBEXEC ELIBEXEC = 83] [ILSEQ EILSEQ = 84]
+            [RESTART ERESTART = 85] [STRPIPE ESTRPIPE = 86] [USERS EUSERS = 87]
+            [NOTSOCK ENOTSOCK = 88] [DESTADDRREQ EDESTADDRREQ = 89] [MSGSIZE EMSGSIZE = 90]
+            [PROTOTYPE EPROTOTYPE = 91] [NOPROTOOPT ENOPROTOOPT = 92]
+            [PROTONOSUPPORT EPROTONOSUPPORT = 93] [SOCKTNOSUPPORT ESOCKTNOSUPPORT = 94]
+            // On Linux EOPNOTSUPP is the real value, but it's ~the same and is
+            // incompatible across operating systems:
+            // https://lists.gnu.org/archive/html/bug-glibc/2002-08/msg00017.html
+            [NOTSUP ENOTSUP = 95]
+            [PFNOSUPPORT EPFNOSUPPORT = 96] [AFNOSUPPORT EAFNOSUPPORT = 97]
+            [ADDRINUSE EADDRINUSE = 98] [ADDRNOTAVAIL EADDRNOTAVAIL = 99]
+            [NETDOWN ENETDOWN = 100] [NETUNREACH ENETUNREACH = 101] [NETRESET ENETRESET = 102]
+            [CONNABORTED ECONNABORTED = 103] [CONNRESET ECONNRESET = 104]
+            [NOBUFS ENOBUFS = 105] [ISCONN EISCONN = 106] [NOTCONN ENOTCONN = 107]
+            [SHUTDOWN ESHUTDOWN = 108] [TOOMANYREFS ETOOMANYREFS = 109]
+            [TIMEDOUT ETIMEDOUT = 110] [CONNREFUSED ECONNREFUSED = 111]
+            [HOSTDOWN EHOSTDOWN = 112] [HOSTUNREACH EHOSTUNREACH = 113]
+            [ALREADY EALREADY = 114] [INPROGRESS EINPROGRESS = 115] [STALE ESTALE = 116]
+            [UCLEAN EUCLEAN = 117] [NOTNAM ENOTNAM = 118] [NAVAIL ENAVAIL = 119]
+            [ISNAM EISNAM = 120] [REMOTEIO EREMOTEIO = 121] [DQUOT EDQUOT = 122]
+            [NOMEDIUM ENOMEDIUM = 123] [MEDIUMTYPE EMEDIUMTYPE = 124]
+            [CANCELED ECANCELED = 125] [NOKEY ENOKEY = 126] [KEYEXPIRED EKEYEXPIRED = 127]
+            [KEYREVOKED EKEYREVOKED = 128] [KEYREJECTED EKEYREJECTED = 129]
+            [OWNERDEAD EOWNERDEAD = 130] [NOTRECOVERABLE ENOTRECOVERABLE = 131]
+            [RFKILL ERFKILL = 132] [HWPOISON EHWPOISON = 133]
+            // 134..=137 are made-up / libuv-synthetic codes with no Linux number.
+            [UNKNOWN EUNKNOWN = 134] [CHARSET ECHARSET = 135] [EOF EOF = 136]
+            [FTYPE EFTYPE = 137]
         }
+    };
+}
+
+/// Relay: forwards `$pre` (which already carries the `@linux` head) into
+/// `for_each_uv_errno!` so `__errno_enum!` sees both row lists at once.
+macro_rules! __errno_enum_add_uv_tail {
+    ($($toks:tt)*) => {
+        for_each_uv_errno! { __errno_enum { $($toks)* } }
+    };
+}
+
+/// Emits one `#[repr(u16)]` errno enum from the Linux head + UV_* tail.
+/// `@bare` picks each head row's first ident (`E`); `@prefixed` picks the
+/// second (`SystemErrno`) and drops the bare-only attributes.
+macro_rules! __errno_enum {
+    (
+        @bare $vis:vis enum $name:ident
+        @linux $( [ $(#[$bm:meta])* $bare:ident $sys:ident = $val:literal ] )*
+        @uv $( [ $uv:ident $(=> $uv_sys:ident)? ] )*
+    ) => {
+        __errno_enum! { @emit $vis enum $name {
+            $( $(#[$bm])* $bare = $val, )*
+            $( $uv = (-uv::$uv) as u16, )*
+        } }
+    };
+    (
+        @prefixed $vis:vis enum $name:ident
+        @linux $( [ $(#[$bm:meta])* $bare:ident $sys:ident = $val:literal ] )*
+        @uv $( [ $uv:ident $(=> $uv_sys:ident)? ] )*
+    ) => {
+        __errno_enum! { @emit $vis enum $name {
+            $( $sys = $val, )*
+            $( $uv = (-uv::$uv) as u16, )*
+        } }
+    };
+    (@emit $vis:vis enum $name:ident { $($body:tt)* }) => {
+        #[repr(u16)]
+        #[derive(
+            Copy,
+            Clone,
+            Eq,
+            PartialEq,
+            Hash,
+            Debug,
+            strum::IntoStaticStr,
+            strum::EnumString,
+            strum::FromRepr,
+            enum_map::Enum,
+        )]
+        $vis enum $name { $($body)* }
     };
 }
 
@@ -83,163 +184,7 @@ macro_rules! __errno_enum_with_uv_tail {
 // E
 // ──────────────────────────────────────────────────────────────────────────
 
-for_each_uv_errno! { __errno_enum_with_uv_tail {
-#[repr(u16)]
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
-)]
-pub enum E {
-    SUCCESS = 0,
-    PERM = 1,
-    NOENT = 2,
-    SRCH = 3,
-    INTR = 4,
-    IO = 5,
-    NXIO = 6,
-    // Rust identifiers cannot start with a digit.
-    #[strum(serialize = "2BIG")]
-    _2BIG = 7,
-    NOEXEC = 8,
-    BADF = 9,
-    CHILD = 10,
-    AGAIN = 11,
-    NOMEM = 12,
-    ACCES = 13,
-    FAULT = 14,
-    NOTBLK = 15,
-    BUSY = 16,
-    EXIST = 17,
-    XDEV = 18,
-    NODEV = 19,
-    NOTDIR = 20,
-    ISDIR = 21,
-    INVAL = 22,
-    NFILE = 23,
-    MFILE = 24,
-    NOTTY = 25,
-    TXTBSY = 26,
-    FBIG = 27,
-    NOSPC = 28,
-    SPIPE = 29,
-    ROFS = 30,
-    MLINK = 31,
-    PIPE = 32,
-    DOM = 33,
-    RANGE = 34,
-    DEADLK = 35,
-    NAMETOOLONG = 36,
-    NOLCK = 37,
-    NOSYS = 38,
-    NOTEMPTY = 39,
-    LOOP = 40,
-    WOULDBLOCK = 41,
-    NOMSG = 42,
-    IDRM = 43,
-    CHRNG = 44,
-    L2NSYNC = 45,
-    L3HLT = 46,
-    L3RST = 47,
-    LNRNG = 48,
-    UNATCH = 49,
-    NOCSI = 50,
-    L2HLT = 51,
-    BADE = 52,
-    BADR = 53,
-    XFULL = 54,
-    NOANO = 55,
-    BADRQC = 56,
-    BADSLT = 57,
-    DEADLOCK = 58,
-    BFONT = 59,
-    NOSTR = 60,
-    NODATA = 61,
-    TIME = 62,
-    NOSR = 63,
-    NONET = 64,
-    NOPKG = 65,
-    REMOTE = 66,
-    NOLINK = 67,
-    ADV = 68,
-    SRMNT = 69,
-    COMM = 70,
-    PROTO = 71,
-    MULTIHOP = 72,
-    DOTDOT = 73,
-    BADMSG = 74,
-    OVERFLOW = 75,
-    NOTUNIQ = 76,
-    BADFD = 77,
-    REMCHG = 78,
-    LIBACC = 79,
-    LIBBAD = 80,
-    LIBSCN = 81,
-    LIBMAX = 82,
-    LIBEXEC = 83,
-    ILSEQ = 84,
-    RESTART = 85,
-    STRPIPE = 86,
-    USERS = 87,
-    NOTSOCK = 88,
-    DESTADDRREQ = 89,
-    MSGSIZE = 90,
-    PROTOTYPE = 91,
-    NOPROTOOPT = 92,
-    PROTONOSUPPORT = 93,
-    SOCKTNOSUPPORT = 94,
-    NOTSUP = 95,
-    PFNOSUPPORT = 96,
-    AFNOSUPPORT = 97,
-    ADDRINUSE = 98,
-    ADDRNOTAVAIL = 99,
-    NETDOWN = 100,
-    NETUNREACH = 101,
-    NETRESET = 102,
-    CONNABORTED = 103,
-    CONNRESET = 104,
-    NOBUFS = 105,
-    ISCONN = 106,
-    NOTCONN = 107,
-    SHUTDOWN = 108,
-    TOOMANYREFS = 109,
-    TIMEDOUT = 110,
-    CONNREFUSED = 111,
-    HOSTDOWN = 112,
-    HOSTUNREACH = 113,
-    ALREADY = 114,
-    INPROGRESS = 115,
-    STALE = 116,
-    UCLEAN = 117,
-    NOTNAM = 118,
-    NAVAIL = 119,
-    ISNAM = 120,
-    REMOTEIO = 121,
-    DQUOT = 122,
-    NOMEDIUM = 123,
-    MEDIUMTYPE = 124,
-    CANCELED = 125,
-    NOKEY = 126,
-    KEYEXPIRED = 127,
-    KEYREVOKED = 128,
-    KEYREJECTED = 129,
-    OWNERDEAD = 130,
-    NOTRECOVERABLE = 131,
-    RFKILL = 132,
-    HWPOISON = 133,
-    UNKNOWN = 134,
-    CHARSET = 135,
-    EOF = 136,
-    FTYPE = 137,
-}
-}} // ← UV_* tail appended by `for_each_uv_errno!`
+for_each_linux_errno! { __errno_enum_add_uv_tail { @bare pub enum E } }
 
 impl E {
     #[inline]
@@ -398,165 +343,7 @@ pub fn get_errno<T>(_rc: T) -> E {
 // SystemErrno
 // ──────────────────────────────────────────────────────────────────────────
 
-for_each_uv_errno! { __errno_enum_with_uv_tail {
-#[repr(u16)]
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
-)]
-pub enum SystemErrno {
-    SUCCESS = 0,
-    EPERM = 1,
-    ENOENT = 2,
-    ESRCH = 3,
-    EINTR = 4,
-    EIO = 5,
-    ENXIO = 6,
-    E2BIG = 7,
-    ENOEXEC = 8,
-    EBADF = 9,
-    ECHILD = 10,
-    EAGAIN = 11,
-    ENOMEM = 12,
-    EACCES = 13,
-    EFAULT = 14,
-    ENOTBLK = 15,
-    EBUSY = 16,
-    EEXIST = 17,
-    EXDEV = 18,
-    ENODEV = 19,
-    ENOTDIR = 20,
-    EISDIR = 21,
-    EINVAL = 22,
-    ENFILE = 23,
-    EMFILE = 24,
-    ENOTTY = 25,
-    ETXTBSY = 26,
-    EFBIG = 27,
-    ENOSPC = 28,
-    ESPIPE = 29,
-    EROFS = 30,
-    EMLINK = 31,
-    EPIPE = 32,
-    EDOM = 33,
-    ERANGE = 34,
-    EDEADLK = 35,
-    ENAMETOOLONG = 36,
-    ENOLCK = 37,
-    ENOSYS = 38,
-    ENOTEMPTY = 39,
-    ELOOP = 40,
-    EWOULDBLOCK = 41,
-    ENOMSG = 42,
-    EIDRM = 43,
-    ECHRNG = 44,
-    EL2NSYNC = 45,
-    EL3HLT = 46,
-    EL3RST = 47,
-    ELNRNG = 48,
-    EUNATCH = 49,
-    ENOCSI = 50,
-    EL2HLT = 51,
-    EBADE = 52,
-    EBADR = 53,
-    EXFULL = 54,
-    ENOANO = 55,
-    EBADRQC = 56,
-    EBADSLT = 57,
-    EDEADLOCK = 58,
-    EBFONT = 59,
-    ENOSTR = 60,
-    ENODATA = 61,
-    ETIME = 62,
-    ENOSR = 63,
-    ENONET = 64,
-    ENOPKG = 65,
-    EREMOTE = 66,
-    ENOLINK = 67,
-    EADV = 68,
-    ESRMNT = 69,
-    ECOMM = 70,
-    EPROTO = 71,
-    EMULTIHOP = 72,
-    EDOTDOT = 73,
-    EBADMSG = 74,
-    EOVERFLOW = 75,
-    ENOTUNIQ = 76,
-    EBADFD = 77,
-    EREMCHG = 78,
-    ELIBACC = 79,
-    ELIBBAD = 80,
-    ELIBSCN = 81,
-    ELIBMAX = 82,
-    ELIBEXEC = 83,
-    EILSEQ = 84,
-    ERESTART = 85,
-    ESTRPIPE = 86,
-    EUSERS = 87,
-    ENOTSOCK = 88,
-    EDESTADDRREQ = 89,
-    EMSGSIZE = 90,
-    EPROTOTYPE = 91,
-    ENOPROTOOPT = 92,
-    EPROTONOSUPPORT = 93,
-    ESOCKTNOSUPPORT = 94,
-    /// For Linux, EOPNOTSUPP is the real value
-    /// but it's ~the same and is incompatible across operating systems
-    /// https://lists.gnu.org/archive/html/bug-glibc/2002-08/msg00017.html
-    ENOTSUP = 95,
-    EPFNOSUPPORT = 96,
-    EAFNOSUPPORT = 97,
-    EADDRINUSE = 98,
-    EADDRNOTAVAIL = 99,
-    ENETDOWN = 100,
-    ENETUNREACH = 101,
-    ENETRESET = 102,
-    ECONNABORTED = 103,
-    ECONNRESET = 104,
-    ENOBUFS = 105,
-    EISCONN = 106,
-    ENOTCONN = 107,
-    ESHUTDOWN = 108,
-    ETOOMANYREFS = 109,
-    ETIMEDOUT = 110,
-    ECONNREFUSED = 111,
-    EHOSTDOWN = 112,
-    EHOSTUNREACH = 113,
-    EALREADY = 114,
-    EINPROGRESS = 115,
-    ESTALE = 116,
-    EUCLEAN = 117,
-    ENOTNAM = 118,
-    ENAVAIL = 119,
-    EISNAM = 120,
-    EREMOTEIO = 121,
-    EDQUOT = 122,
-    ENOMEDIUM = 123,
-    EMEDIUMTYPE = 124,
-    ECANCELED = 125,
-    ENOKEY = 126,
-    EKEYEXPIRED = 127,
-    EKEYREVOKED = 128,
-    EKEYREJECTED = 129,
-    EOWNERDEAD = 130,
-    ENOTRECOVERABLE = 131,
-    ERFKILL = 132,
-    EHWPOISON = 133,
-    // made up erropr
-    EUNKNOWN = 134,
-    ECHARSET = 135,
-    EOF = 136,
-    EFTYPE = 137,
-}
-}} // ← UV_* tail appended by `for_each_uv_errno!`
+for_each_linux_errno! { __errno_enum_add_uv_tail { @prefixed pub enum SystemErrno } }
 
 /// Type-dispatch shim for `SystemErrno::init`.
 /// Covers every concrete type the codebase actually passes — `i64` (shared

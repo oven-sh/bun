@@ -72,6 +72,79 @@ impl Error {
     }
 }
 
+/// Placeholder `WorkPoolTask.callback` for the `task` field at construction —
+/// `CompressionStream::write` overwrites it before the task is ever scheduled.
+/// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
+/// struct-init site.
+pub(crate) fn unset_task_callback(_: *mut WorkPoolTask) {
+    unreachable!("WorkPoolTask scheduled before CompressionStream set its callback");
+}
+
+/// Parses the constructor `mode` argument shared by `Native{Zlib,Brotli,Zstd}`:
+/// must be an integer number within the class's `NodeMode` range.
+pub(crate) fn validate_mode(
+    global: &JSGlobalObject,
+    mode: JSValue,
+    min: u8,
+    max: u8,
+) -> JsResult<bun_zlib::NodeMode> {
+    if !mode.is_number() {
+        return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
+    }
+    let mode_double = mode.as_number();
+    if mode_double % 1.0 != 0.0 {
+        return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
+    }
+    let mode_int = mode_double as i64;
+    if mode_int < i64::from(min) || mode_int > i64::from(max) {
+        return Err(global.throw_range_error(
+            mode_int,
+            jsc::RangeErrorOptions {
+                field_name: b"mode",
+                min: i64::from(min),
+                max: i64::from(max),
+                msg: b"",
+            },
+        ));
+    }
+    Ok(bun_zlib::NodeMode::from_int(mode_int as u8))
+}
+
+/// Validates that `value` is a `Uint32Array` view and returns it.
+pub(crate) fn validate_uint32_array(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+) -> JsResult<jsc::ArrayBuffer> {
+    let Some(buf) = value.as_array_buffer(global) else {
+        return Err(global.throw_invalid_argument_type_value(name, "Uint32Array", value));
+    };
+    if buf.typed_array_type != jsc::JSType::Uint32Array {
+        return Err(global.throw_invalid_argument_type_value(name, "Uint32Array", value));
+    }
+    Ok(buf)
+}
+
+/// Validates the JS-owned write-result array passed to `init` (`writeResult` /
+/// `writeState`): `flush_write_result` writes two u32s into it, so it must be
+/// a `Uint32Array` with at least 2 elements.
+pub(crate) fn validate_write_result_array(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+) -> JsResult<()> {
+    let mut buf = validate_uint32_array(global, value, name)?;
+    if buf.as_u32().len() < 2 {
+        return Err(global
+            .err(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!("{name} must be a Uint32Array with at least 2 elements"),
+            )
+            .throw());
+    }
+    Ok(())
+}
+
 // ─── local shims (upstream-crate gaps) ────────────────────────────────────
 
 /// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`

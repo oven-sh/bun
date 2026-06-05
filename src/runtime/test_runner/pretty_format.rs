@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
 
@@ -400,59 +400,10 @@ impl Drop for Formatter<'_> {
     }
 }
 
-/// `Display` adapter for formatting a single [`JSValue`].
-///
-/// `Display::fmt` only gives us `&self`, so the
-/// mutable handle is parked behind a `Cell` and moved out for the duration of
-/// the call — this preserves unique-borrow provenance without the
-/// `&shared → *const → *mut` cast that would be UB under Stacked Borrows.
-pub struct ZigFormatter<'a, 'b> {
-    pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
-    pub global: &'b JSGlobalObject,
-    pub value: JSValue,
-}
-
-impl<'a, 'b> ZigFormatter<'a, 'b> {
-    pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
-        Self { formatter: Cell::new(Some(formatter)), global, value }
-    }
-}
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum WriteError {
     #[error("UhOh")]
     UhOh,
-}
-
-impl core::fmt::Display for ZigFormatter<'_, '_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Move the unique `&mut Formatter` out of the cell for the body;
-        // re-seat it (and clear `remaining_values`) on the way out so the
-        // adapter stays reusable.
-        let formatter: &mut Formatter<'_> = self
-            .formatter
-            .take()
-            .expect("ZigFormatter::fmt re-entered or used after consumption");
-
-        // Assigning a stack-local slice into `Formatter<'b>` would require `'b: 'local`,
-        // which borrowck rejects. The single-value path never reads `remaining_values`
-        // (only `StringPossiblyFormatted` consumes it, and `ZigFormatter` always emits a
-        // single tag), so leaving it `&[]` is observationally equivalent.
-        formatter.remaining_values = &[];
-        formatter.global_this = self.global;
-
-        let result = (|| {
-            let tag = Tag::get(self.value, self.global).map_err(|_| core::fmt::Error)?;
-            let mut adapter = bun_io::FmtAdapter::new(f);
-            formatter
-                .format::<_, false>(tag, &mut adapter, self.value, self.global)
-                .map_err(|_| core::fmt::Error)
-        })();
-
-        formatter.remaining_values = &[];
-        self.formatter.set(Some(formatter));
-        result
-    }
 }
 
 #[repr(u8)]

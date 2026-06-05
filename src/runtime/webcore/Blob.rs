@@ -7335,6 +7335,93 @@ pub trait FileCloser: Sized {
     }
 }
 
+/// Implements [`FileCloser`] for a struct with the standard field set
+/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
+/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
+/// Requires `bun_threading::intrusive_work_task!` and
+/// `bun_io::intrusive_io_request!` on the type for the intrusive-pointer
+/// recovery in the two trampolines.
+macro_rules! impl_file_closer {
+    ($T:ident) => {
+        impl crate::webcore::blob::FileCloser for $T {
+            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
+            fn opened_fd(&self) -> ::bun_sys::Fd {
+                self.opened_fd
+            }
+            fn set_opened_fd(&mut self, fd: ::bun_sys::Fd) {
+                self.opened_fd = fd;
+            }
+            fn close_after_io(&self) -> bool {
+                self.close_after_io
+            }
+            fn set_close_after_io(&mut self, v: bool) {
+                self.close_after_io = v;
+            }
+            fn state(&self) -> &::core::sync::atomic::AtomicU8 {
+                &self.state
+            }
+            fn io_request(&mut self) -> Option<&mut ::bun_io::Request> {
+                Some(&mut self.io_request)
+            }
+            fn io_poll(&mut self) -> &mut ::bun_io::Poll {
+                &mut self.io_poll
+            }
+            fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
+                &mut self.task
+            }
+            fn update(&mut self) {
+                $T::update(self)
+            }
+            #[cfg(windows)]
+            fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {
+                unreachable!()
+            }
+
+            fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
+                // SAFETY: request is &mut self.io_request (intrusive); recover parent.
+                let this = unsafe {
+                    &mut *<$T as ::bun_io::IntrusiveIoRequest>::from_io_request(
+                        ::core::ptr::from_mut(request),
+                    )
+                };
+                fn on_done(ctx: *mut ()) {
+                    // SAFETY: ctx is `self as *mut Self` set below.
+                    let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
+                    <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
+                }
+                // reshaped for borrowck — compute the parent raw pointer
+                // before mutably borrowing `io_poll` so the two borrows do not overlap.
+                let ctx = ::core::ptr::from_mut::<$T>(this).cast::<()>();
+                let fd = this.opened_fd;
+                ::bun_io::Action::Close(::bun_io::CloseAction {
+                    fd,
+                    poll: &mut this.io_poll,
+                    ctx,
+                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
+                    on_done,
+                })
+            }
+
+            // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+            // the trait method cannot be marked `unsafe fn`, so the lint is
+            // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+            // in `on_io_request_closed` and is guaranteed live.
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
+            fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
+                // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
+                // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
+                // recover parent.
+                let this = unsafe {
+                    &mut *<$T as ::bun_threading::IntrusiveWorkTask>::from_task_ptr(task)
+                };
+                this.close_after_io = false;
+                $T::update(this);
+            }
+        }
+    };
+}
+pub(crate) use impl_file_closer;
+
 // ──────────────────────────────────────────────────────────────────────────
 // isAllASCII / takeOwnership / heap-alloc helpers / external_shared_descriptor
 // ──────────────────────────────────────────────────────────────────────────

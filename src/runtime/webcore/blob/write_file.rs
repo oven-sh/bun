@@ -152,75 +152,7 @@ impl MkdirpTarget for WriteFile {
     }
 }
 
-impl FileCloser for WriteFile {
-    const IO_TAG: io::Tag = io::Tag::WriteFile;
-    fn opened_fd(&self) -> Fd {
-        self.opened_fd
-    }
-    fn set_opened_fd(&mut self, fd: Fd) {
-        self.opened_fd = fd;
-    }
-    fn close_after_io(&self) -> bool {
-        self.close_after_io
-    }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
-    }
-    fn state(&self) -> &AtomicU8 {
-        &self.state
-    }
-    fn io_request(&mut self) -> Option<&mut io::Request> {
-        Some(&mut self.io_request)
-    }
-    fn io_poll(&mut self) -> &mut io::Poll {
-        &mut self.io_poll
-    }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
-        &mut self.task
-    }
-    fn update(&mut self) {
-        WriteFile::update(self)
-    }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!()
-    }
-
-    fn schedule_close(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: request is &mut self.io_request (intrusive); recover parent.
-        let this = unsafe { &mut *WriteFile::from_io_request(std::ptr::from_mut(request)) };
-        fn on_done(ctx: *mut ()) {
-            // SAFETY: ctx is `self as *mut WriteFile` set below.
-            let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
-            <WriteFile as FileCloser>::on_io_request_closed(this);
-        }
-        // reshaped for borrowck — compute the parent raw pointer
-        // before mutably borrowing `io_poll` so the two borrows do not overlap.
-        let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
-        let fd = this.opened_fd;
-        io::Action::Close(io::CloseAction {
-            fd,
-            poll: &mut this.io_poll,
-            ctx,
-            tag: <Self as FileCloser>::IO_TAG,
-            on_done,
-        })
-    }
-
-    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-    // the trait method cannot be marked `unsafe fn`, so the lint is
-    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-    // in `on_io_request_closed` and is guaranteed live.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
-        // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-        // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
-        // recover parent.
-        let this = unsafe { &mut *WriteFile::from_task_ptr(task) };
-        this.close_after_io = false;
-        WriteFile::update(this);
-    }
-}
+crate::webcore::blob::impl_file_closer!(WriteFile);
 
 impl WriteFile {
     pub const IO_TAG: io::Tag = io::Tag::WriteFile;

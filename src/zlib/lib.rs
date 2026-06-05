@@ -1076,14 +1076,8 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
     }
 }
 
-// Re-export from bun_zlib_sys, platform-selected.
+// Re-export from bun_zlib_sys.
 mod internal {
-    #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
-    #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
-    #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
-    #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
+    pub(super) use bun_zlib_sys::shared::{DataType, zStream_struct};
+    pub use bun_zlib_sys::shared::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

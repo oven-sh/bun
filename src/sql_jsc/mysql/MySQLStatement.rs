@@ -1,15 +1,13 @@
 use core::cell::Cell;
 
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_collections::StringHashMap;
 
 use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::Flags as DataCellFlags;
+use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
-use bun_sql::shared::ColumnIdentifier;
 
 pub use bun_sql::mysql::mysql_param::Param;
 
@@ -124,49 +122,8 @@ impl MySQLStatement {
         self.execution_flags
             .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
 
-        let mut seen_numbers: Vec<u32> = Vec::new();
-        let mut seen_fields: StringHashMap<()> = StringHashMap::default();
-        seen_fields.reserve(self.columns.len());
-
-        // iterate backwards
-        let mut remaining = self.columns.len();
-        let mut flags = DataCellFlags::default();
-        while remaining > 0 {
-            remaining -= 1;
-            let field: &mut ColumnDefinition41 = &mut self.columns[remaining];
-            match &field.name_or_index {
-                ColumnIdentifier::Name(name) => {
-                    // reshaped for borrowck — compute `found_existing` before
-                    // mutating `field.name_or_index`.
-                    let found_existing = seen_fields
-                        .get_or_put(name.slice())
-                        .expect("OOM")
-                        .found_existing;
-                    if found_existing {
-                        field.name_or_index = ColumnIdentifier::Duplicate;
-                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                    }
-
-                    flags.insert(DataCellFlags::HAS_NAMED_COLUMNS);
-                }
-                ColumnIdentifier::Index(index) => {
-                    let index = *index;
-                    if seen_numbers.contains(&index) {
-                        field.name_or_index = ColumnIdentifier::Duplicate;
-                        flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                    } else {
-                        seen_numbers.push(index);
-                    }
-
-                    flags.insert(DataCellFlags::HAS_INDEXED_COLUMNS);
-                }
-                ColumnIdentifier::Duplicate => {
-                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
-                }
-            }
-        }
-
-        self.fields_flags = flags;
+        self.fields_flags =
+            dedupe_columns(self.columns.iter_mut().rev().map(|c| &mut c.name_or_index));
     }
 
     // Returning `&CachedStructure`

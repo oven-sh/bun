@@ -4,6 +4,7 @@ use core::mem;
 use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
+use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
@@ -382,44 +383,14 @@ impl PostgresSQLQuery {
     // Registered directly as `createQuery` via
     // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let mut args =
-            crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
-        // ArgumentsSlice has Drop.
-        let Some(query) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        };
-        let Some(values) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        };
-
-        if !query.is_string() {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        }
-
-        if values.js_type() != crate::jsc::JSType::Array {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        }
-
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-
-        let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
-        let simple = js_simple.is_boolean() && js_simple.as_boolean();
-        if simple {
-            if values.get_length(global_this)? > 0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
-            }
-            if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
-            }
-        }
-        if !pending_value.js_type().is_array_like() {
-            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
-        }
+        let QueryCtorArgs {
+            query,
+            values,
+            pending_value,
+            columns,
+            bigint,
+            simple,
+        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 

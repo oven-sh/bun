@@ -28,6 +28,8 @@ pub mod shared {
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;
 
+    pub mod query_ctor_args;
+
     #[path = "SQLDataCell.rs"]
     pub mod sql_data_cell;
 

@@ -4699,15 +4699,15 @@ impl VirtualMachine {
             .remove_listening_socket_for_watch_mode(socket);
     }
 
-    /// Spec VirtualMachine.zig:2505 `swapGlobalForTestIsolation`.
+    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles(vm)`
+    /// first so leaked watchers/servers are stopped (dropping their JS-side
+    /// Strongs, which otherwise pin the outgoing global) before the blind
+    /// socket-group close below. That helper lives in the higher-tier crate
+    /// and cannot be called from here.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
         let _ = self.event_loop_mut().drain_microtasks();
-
-        if let Some(rare) = self.rare_data.as_deref_mut() {
-            rare.close_all_watchers_for_isolation();
-        }
 
         {
             // Groups that must survive the per-file isolation swap: this
@@ -4763,6 +4763,28 @@ impl VirtualMachine {
         self.auto_killer.clear();
 
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+
+        // Generation-stale JS timers would otherwise release their pins only
+        // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
+        // Strong on its wrapper (and thereby the outgoing global's whole
+        // graph) for an hour. Every TimeoutObject / ImmediateObject /
+        // AbortSignal timeout in the heap belongs to the outgoing file (the
+        // new global doesn't exist yet), so drop them eagerly, same as
+        // `global_exit()`. Runs no user JS.
+        //
+        // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
+        // it drains the (already-closed — the caller ran
+        // `close_isolation_handles` before this swap) watcher queue and retires
+        // the per-VM scheduler singleton, which the next file's first
+        // `fs.watchFile` lazily recreates. That per-file reset is intentional
+        // — the scheduler's queue and in-flight work-pool task belong to the
+        // outgoing file, and its brief spin-wait is bounded by at most one
+        // in-flight `stat()`.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread; `runtime_state`
+            // stays installed for the whole test run.
+            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+        }
 
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();

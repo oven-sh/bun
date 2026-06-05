@@ -1537,6 +1537,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
+        if self.vm().test_isolation_enabled {
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                    core::ptr::from_ref(self),
+                )));
+            }
+        }
+
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener.take() {
                 // Graceful: GOAWAY + drain via the still-open UDP socket; the
@@ -1863,6 +1871,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         this_ref.notify_inspector_server_stopped();
+        if this_ref.vm().test_isolation_enabled {
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                    this.cast_const(),
+                )));
+            }
+        }
 
         // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
         // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
@@ -3244,7 +3259,7 @@ pub type DebugHTTPSServer = NewServer<true, true>;
 // hand-roll the tag here. AnyServer is cold-path (per-request, not per-tick).
 // PERF(port): was TaggedPointerUnion pack — 8→16 bytes; ~handful of instances.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnyServerTag {
     HTTPServer = 0,
     HTTPSServer = 1,
@@ -3252,7 +3267,7 @@ pub enum AnyServerTag {
     DebugHTTPSServer = 3,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnyServer {
     pub tag: AnyServerTag,
     pub ptr: *mut (),

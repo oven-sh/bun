@@ -3064,6 +3064,7 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
+                            crate::jsc_hooks::close_isolation_handles(vm);
                             vm.swap_global_for_test_isolation();
                             reporter
                                 .jest

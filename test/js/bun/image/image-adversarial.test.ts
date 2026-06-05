@@ -400,7 +400,14 @@ describe("malformed PNG structure", () => {
   test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
-    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
+    expect(await new Bun.Image(buf).metadata()).toEqual({
+      width: 2,
+      height: 2,
+      format: "png",
+      space: "srgb",
+      channels: 4,
+      hasAlpha: true,
+    });
   });
 
   test("IDAT CRC and zlib adler32 mismatches are tolerated (checksums are skipped on decode)", async () => {
@@ -414,7 +421,14 @@ describe("malformed PNG structure", () => {
 
   test("missing IEND is tolerated (spec recovery: stream ending after a complete IDAT is valid)", async () => {
     const buf = tinyPng.subarray(0, tinyPng.length - 12);
-    expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
+    expect(await new Bun.Image(buf).metadata()).toEqual({
+      width: 2,
+      height: 2,
+      format: "png",
+      space: "srgb",
+      channels: 4,
+      hasAlpha: true,
+    });
   });
 
   test("IDAT with zlib bomb (header says small, IDAT inflates huge)", async () => {
@@ -707,7 +721,7 @@ describe("hostile option objects", () => {
   test("data: URL input (base64)", async () => {
     const url = "data:image/png;base64," + Buffer.from(tinyPng).toString("base64");
     const meta = await new Bun.Image(url).metadata();
-    expect(meta).toEqual({ width: 2, height: 2, format: "png" });
+    expect(meta).toEqual({ width: 2, height: 2, format: "png", space: "srgb", channels: 4, hasAlpha: true });
   });
 
   test("data: URL with bad base64 throws", () => {

@@ -200,15 +200,25 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
   with `postMessage`/`start`/`close`, buffering, and port transfer.
 - **`powerMonitor`**: `getSystemIdleState`/`getSystemIdleTime`/
   `isOnBatteryPower`/`getCurrentThermalState` and power-event listeners.
+- **`contextIsolation`** (`webPreferences.contextIsolation: true`): the
+  preload runs in an isolated scope — its `window`/global writes stay
+  invisible to the page, `ipcRenderer`/`contextBridge` are not page globals,
+  and only `contextBridge.exposeInMainWorld` values cross into the page. The
+  preload still reads through to the real DOM and reaches the main process
+  over IPC. (Default is non-isolated, unlike Electron, so existing
+  `nodeIntegration`-style renderers keep working.)
 
 Implemented as data models / process-local (no OS surface wired up): `Menu`
 rendering, `Tray` icon, `Notification` display, `clipboard` (no system
 clipboard), `globalShortcut` key capture.
 
-Not implemented: context isolation (preload and page share one context),
-`nodeIntegration`, partitioned sessions, `webRequest` interception, image
+Not implemented: partitioned sessions, `webRequest` interception, image
 resize/crop in `nativeImage`, `desktopCapturer`, real OS power-event
-delivery.
+delivery, and OS-native rendering of menus/tray/notifications.
+
+Context isolation is implemented at the JS-scope level (observable Electron
+semantics), not via a separate Chromium V8 world — sufficient for the API
+contract, but not the same defense-in-depth as Chrome's isolated worlds.
 
 ## Testing
 
@@ -222,8 +232,8 @@ Tests are ported from Electron's spec suite (names preserved where behavior
 carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`,
 `window-icon`, `safe-storage`, `clipboard`, `global-shortcut`,
-`tray-notification`, `net`, `message-channel`, and `power-monitor` test
-files (164 tests total). App-lifecycle scenarios spawn fresh
+`tray-notification`, `net`, `message-channel`, `power-monitor`, and
+`context-isolation` test files (170 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

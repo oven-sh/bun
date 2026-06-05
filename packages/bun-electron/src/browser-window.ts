@@ -249,6 +249,7 @@ export class BrowserWindow extends EventEmitter {
       if (options.webPreferences?.preload) {
         preloadSource = readFileSync(options.webPreferences.preload, "utf8");
       }
+      const contextIsolation = options.webPreferences?.contextIsolation === true;
       this._resizable = options.resizable ?? true;
       this._minimizable = options.minimizable ?? true;
       this._maximizable = options.maximizable ?? true;
@@ -273,6 +274,7 @@ export class BrowserWindow extends EventEmitter {
         max_width: options.maxWidth,
         max_height: options.maxHeight,
         preload: preloadSource,
+        context_isolation: contextIsolation,
         background_color: options.backgroundColor ? parseBackgroundColor(options.backgroundColor) : undefined,
       });
     }

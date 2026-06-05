@@ -28,6 +28,43 @@
 
 namespace {
 
+// Wraps preload source so its global writes land in an isolated scope rather
+// than on the page's window. Inside the preload, bare identifiers resolve
+// through a Proxy (via `with`): reads fall through to the real global (so
+// `document`, `location`, etc. work), but assignments to `window.x` / bare
+// globals stay in a private store invisible to the page. The real
+// `contextBridge` (from __beInternals) still writes to the page world — the
+// only sanctioned bridge across the isolation boundary.
+//
+// The preload source is the app's own trusted file (Electron likewise
+// executes preload as code); it is concatenated, not interpolated from any
+// untrusted input, and not passed through new Function.
+std::string WrapIsolatedPreload(const std::string& source) {
+  static const char* kPrefix =
+      "(function(){\n"
+      "  var realGlobal = (function(){ return this; })() || globalThis;\n"
+      "  var store = Object.create(null);\n"
+      "  var internals = realGlobal.__beInternals || {};\n"
+      "  var proxy = new Proxy(store, {\n"
+      "    has: function(t, k){ return true; },\n"
+      "    get: function(t, k){\n"
+      "      if (k === Symbol.unscopables) return undefined;\n"
+      "      if (k === 'window' || k === 'self' || k === 'globalThis') return proxy;\n"
+      "      if (k === 'contextBridge') return internals.contextBridge;\n"
+      "      if (k === 'ipcRenderer') return internals.ipcRenderer;\n"
+      "      if (k in t) return t[k];\n"
+      "      var v = realGlobal[k];\n"
+      "      return typeof v === 'function' ? v.bind(realGlobal) : v;\n"
+      "    },\n"
+      "    set: function(t, k, v){ t[k] = v; return true; },\n"
+      "  });\n"
+      "  with (proxy) {\n";
+  static const char* kSuffix =
+      "\n  }\n"
+      "})();\n";
+  return std::string(kPrefix) + source + kSuffix;
+}
+
 class IpcV8Handler : public CefV8Handler {
  public:
   bool Execute(const CefString& name,
@@ -104,10 +141,15 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
       preload_by_browser_[browser->GetIdentifier()] =
           extra_info->GetString("preload").ToString();
     }
+    if (extra_info && extra_info->HasKey("context_isolation")) {
+      isolate_by_browser_[browser->GetIdentifier()] =
+          extra_info->GetBool("context_isolation");
+    }
   }
 
   void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override {
     preload_by_browser_.erase(browser->GetIdentifier());
+    isolate_by_browser_.erase(browser->GetIdentifier());
   }
 
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
@@ -123,18 +165,31 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
                        V8_PROPERTY_ATTRIBUTE_READONLY);
     }
 
+    const bool isolate = isolate_by_browser_.count(browser->GetIdentifier())
+                             ? isolate_by_browser_[browser->GetIdentifier()]
+                             : false;
+    // The bootstrap reads __beIsolate to decide whether to expose
+    // ipcRenderer/contextBridge as page globals.
+    global->SetValue("__beIsolate", CefV8Value::CreateBool(isolate),
+                     V8_PROPERTY_ATTRIBUTE_NONE);
+
     CefRefPtr<CefV8Value> retval;
     CefRefPtr<CefV8Exception> exc;
     context->Eval(kRendererBootstrapJs, frame->GetURL(), 0, retval, exc);
 
     // Preload runs after the bootstrap (so ipcRenderer/contextBridge exist)
-    // and before any page script, matching Electron's ordering.
+    // and before any page script, matching Electron's ordering. With context
+    // isolation, run it through a wrapper whose `window`/`self`/`globalThis`
+    // is an isolated scope: writes to them stay invisible to the page, and
+    // only contextBridge.exposeInMainWorld crosses into the page world.
     auto it = preload_by_browser_.find(browser->GetIdentifier());
     if (it != preload_by_browser_.end() && !it->second.empty()) {
+      std::string preload_source =
+          isolate ? WrapIsolatedPreload(it->second) : it->second;
       CefRefPtr<CefV8Value> preload_ret;
       CefRefPtr<CefV8Exception> preload_exc;
-      if (!context->Eval(it->second, "bun-electron://preload", 0, preload_ret,
-                         preload_exc) &&
+      if (!context->Eval(preload_source, "bun-electron://preload", 0,
+                         preload_ret, preload_exc) &&
           preload_exc) {
         // Surface the failure as a console message (reaches the browser
         // process via OnConsoleMessage). Call console.error through the V8
@@ -198,6 +253,8 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
  private:
   // browser id -> preload source (from CreateBrowserView extra_info).
   std::map<int, std::string> preload_by_browser_;
+  // browser id -> contextIsolation flag.
+  std::map<int, bool> isolate_by_browser_;
 
   IMPLEMENT_REFCOUNTING(HelperApp);
 };

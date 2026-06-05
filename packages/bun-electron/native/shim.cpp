@@ -1366,9 +1366,11 @@ void CreateWindowOnUI(int32_t window_id) {
   // first so ipcRenderer/contextBridge are available to it).
   CefRefPtr<CefDictionaryValue> extra_info;
   std::string preload = KVGet(entry->options, "preload");
-  if (!preload.empty()) {
+  bool context_isolation = KVGetBool(entry->options, "context_isolation", false);
+  if (!preload.empty() || context_isolation) {
     extra_info = CefDictionaryValue::Create();
-    extra_info->SetString("preload", preload);
+    if (!preload.empty()) extra_info->SetString("preload", preload);
+    extra_info->SetBool("context_isolation", context_isolation);
   }
 
   CefRefPtr<CefBrowserView> browser_view = CefBrowserView::CreateBrowserView(

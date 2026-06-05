@@ -271,8 +271,8 @@ static const char kRendererBootstrapJs[] = R"BEJS(
     }
   };
 
-  // Without context isolation the "main world" is this context, so
-  // exposeInMainWorld is a global assignment (Electron-compatible shape).
+  // exposeInMainWorld always writes into the page's real global (the "main
+  // world"), in both isolated and non-isolated modes — that is the bridge.
   var contextBridge = {
     exposeInMainWorld: function (name, api) {
       Object.defineProperty(globalThis, name, {
@@ -289,17 +289,30 @@ static const char kRendererBootstrapJs[] = R"BEJS(
     contextBridge: contextBridge,
   };
 
-  globalThis.bunElectron = electronModule;
-  globalThis.ipcRenderer = ipcRenderer;
-  globalThis.contextBridge = contextBridge;
+  // Stash for the preload runner (used in both modes), non-enumerable so it
+  // doesn't show up as a page global.
+  Object.defineProperty(globalThis, '__beInternals', {
+    value: { ipcRenderer: ipcRenderer, contextBridge: contextBridge, electron: electronModule },
+    enumerable: false,
+    configurable: true,
+  });
 
-  // Compatibility shim so `require('electron')` works in renderer code
-  // written for Electron with nodeIntegration.
-  if (typeof globalThis.require !== 'function') {
-    globalThis.require = function (name) {
-      if (name === 'electron') return electronModule;
-      throw new Error("Cannot find module '" + name + "'");
-    };
+  // With context isolation the page must NOT see ipcRenderer/contextBridge as
+  // globals — only what the preload chooses to expose via contextBridge. The
+  // helper sets globalThis.__beIsolate before evaluating this bootstrap.
+  if (!globalThis.__beIsolate) {
+    globalThis.bunElectron = electronModule;
+    globalThis.ipcRenderer = ipcRenderer;
+    globalThis.contextBridge = contextBridge;
+
+    // Compatibility shim so `require('electron')` works in renderer code
+    // written for Electron with nodeIntegration.
+    if (typeof globalThis.require !== 'function') {
+      globalThis.require = function (name) {
+        if (name === 'electron') return electronModule;
+        throw new Error("Cannot find module '" + name + "'");
+      };
+    }
   }
 })();
 )BEJS";

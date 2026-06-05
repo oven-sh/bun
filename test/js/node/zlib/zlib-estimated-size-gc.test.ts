@@ -93,14 +93,14 @@ async function runGc(fixture: string) {
   return { stdout, stderr: cleanedStderr, exitCode };
 }
 
-test("brotli: estimatedSize during GC while a stream is live exits cleanly", async () => {
+test.concurrent("brotli: estimatedSize during GC while a stream is live exits cleanly", async () => {
   const { stdout, stderr, exitCode } = await runGc(brotliGcFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });
 
-test("zstd: estimatedSize during GC while a stream is live exits cleanly", async () => {
+test.concurrent("zstd: estimatedSize during GC while a stream is live exits cleanly", async () => {
   const { stdout, stderr, exitCode } = await runGc(zstdGcFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");

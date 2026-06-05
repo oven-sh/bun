@@ -447,10 +447,3 @@ test/js/node/test/parallel/test-https-localaddress-bind-error.js
 test/js/node/test/parallel/test-crypto-op-during-process-exit.js
 
 test/js/third_party/prisma/prisma.test.ts
-# The child REPL exits via process.exit() mid-eval, which skips stdio
-# teardown: the lazily-created Bun.stdout/Bun.stderr Blob store and its
-# FileSink writers (BunObject.rs stdio_stores::make_blob, Blob::get_writer)
-# stay allocated and LSAN aborts the child, so the test's exit-code assertion
-# sees a signal kill. Exiting through `.exit` tears down cleanly. Needs a
-# runtime-side fix for stdio teardown under BUN_DESTRUCT_VM_ON_EXIT.
-test/js/node/test/parallel/test-repl-dynamic-import.js

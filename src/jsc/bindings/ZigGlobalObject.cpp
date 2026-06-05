@@ -3964,8 +3964,30 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    // Drop the two creation refs (`VM::tryCreate` + Zig__GlobalObject__create),
+    // holding a protector ref of our own so the count can be inspected after.
+    // When nothing else holds the VM, releasing the protector runs `~VM` →
+    // `Heap::lastChanceToFinalize()`, destroying every remaining cell and the
+    // native objects they own.
+    //
+    // When `process.exit()` is called mid-eval, tick-scoped VM refs can still
+    // be live (they are only released when the interrupted tick completes,
+    // which never happens), so `~VM` would never run. The collectNow() above
+    // does not help either: the exiting JS frames keep their object graph
+    // conservatively reachable — e.g. the REPL keeps process.stdout's
+    // FileSink wrappers alive, and LSAN then reports the FileSink boxes and
+    // the Bun.stdout store as leaked. Finalize the heap explicitly in that
+    // case; the process is about to exit and the suspended frames never
+    // resume. The protector ref is deliberately leaked: releasing it later
+    // could run `~VM`, which would call lastChanceToFinalize() a second time.
+    vm.refSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    if (vm.refCount() == 1) {
+        vm.derefSuppressingSaferCPPChecking();
+    } else {
+        vm.heap.lastChanceToFinalize();
+    }
     runLoop->threadWillExit();
 }
 

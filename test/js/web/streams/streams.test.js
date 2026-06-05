@@ -1327,7 +1327,7 @@ it("subprocess stdout stream (pipe-backed FileReader) resolves pending pulls und
     cmd: [bunExe(), "-e", writer],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "ignore",
   });
   let total = 0;
   let ok = true;

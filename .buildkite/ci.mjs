@@ -766,7 +766,7 @@ function getVerifyBaselineStep(platform, options) {
           `echo Extracting Intel SDE...`,
           `7z x -y sde.tar.xz || exit /b 1`,
           `7z x -y sde.tar || exit /b 1`,
-          `ren sde-external-${SDE_VERSION}-win sde-external`,
+          `ren sde-external-${SDE_VERSION}-win sde-external || exit /b 1`,
         ]
       : [
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,

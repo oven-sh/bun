@@ -6208,9 +6208,8 @@ impl FileSinkPipe {
         // An async writer error recorded between chunks must reject even when
         // the stream itself ended cleanly.
         // SAFETY: `sink` is the live +1 held by this pipe.
-        let err = err.or_else(|| {
-            unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global))
-        });
+        let err =
+            err.or_else(|| unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global)));
         if let Some(stream_) = self.stream.get(global) {
             // BACKREF: live while `self.stream` Strong holds it.
             if let Some(bytes) = stream_.ptr.bytes() {
@@ -6312,10 +6311,10 @@ impl webcore::PipeHandler for FileSinkPipe {
                 // SAFETY: `sink` is the live +1 held by this pipe.
                 match unsafe { (*self.sink).take_stored_error() } {
                     Some(e) => e.to_js(global),
-                    None => bun_core::String::static_(
-                        b"FileSink closed before the stream finished",
-                    )
-                    .to_error_instance(global),
+                    None => {
+                        bun_core::String::static_(b"FileSink closed before the stream finished")
+                            .to_error_instance(global)
+                    }
                 },
             ),
             // SAFETY: `sink` is the live +1 held by this pipe.

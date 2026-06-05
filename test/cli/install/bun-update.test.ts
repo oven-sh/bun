@@ -573,7 +573,7 @@ it("hoisted install removes stale workspace-local node_modules that shadow the h
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "update", "--latest", "baz", "--linker=hoisted"],
     cwd: join(package_dir, "packages", "backend"),
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     env,
   });
@@ -630,7 +630,7 @@ it("hoisted install preserves non-hoistable workspace-local packages", async () 
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
@@ -654,7 +654,7 @@ it("hoisted install preserves non-hoistable workspace-local packages", async () 
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
@@ -709,7 +709,7 @@ it("hoisted install with --filter preserves excluded workspace's non-hoistable p
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--linker=hoisted"],
       cwd: package_dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
@@ -743,7 +743,7 @@ it("hoisted install with --filter preserves excluded workspace's non-hoistable p
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--filter", "target", "--linker=hoisted"],
       cwd: package_dir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
@@ -801,7 +801,7 @@ it("hoisted install prunes stale scoped workspace-local entries", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
     env,
   });

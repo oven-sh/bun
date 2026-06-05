@@ -22,7 +22,12 @@ class MockFunctionContext {
   #restore: (() => void) | undefined;
   #times: number;
 
-  constructor(original: Function, implementation: Function | undefined, restore?: () => void, times: number = Infinity) {
+  constructor(
+    original: Function,
+    implementation: Function | undefined,
+    restore?: () => void,
+    times: number = Infinity,
+  ) {
     this.#calls = [];
     this.#original = original;
     this.#implementation = implementation;
@@ -149,7 +154,12 @@ function mockFn(original?: Function | object, implementation?: Function | object
     implementation = original;
     original = undefined;
   }
-  if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+  if (
+    implementation !== null &&
+    implementation !== undefined &&
+    !$isCallable(implementation) &&
+    typeof implementation === "object"
+  ) {
     options = implementation as object;
     implementation = undefined;
   }
@@ -178,7 +188,12 @@ function mockMethod(
   implementation?: Function | object,
   options?: { getter?: boolean; setter?: boolean } | object,
 ) {
-  if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+  if (
+    implementation !== null &&
+    implementation !== undefined &&
+    !$isCallable(implementation) &&
+    typeof implementation === "object"
+  ) {
     options = implementation;
     implementation = undefined;
   }
@@ -268,7 +283,12 @@ const mock = {
   ) {
     // Shift implementation -> options *before* spreading, or the shift inside
     // mockMethod would clobber the getter flag (node does the same).
-    if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+    if (
+      implementation !== null &&
+      implementation !== undefined &&
+      !$isCallable(implementation) &&
+      typeof implementation === "object"
+    ) {
       options = implementation;
       implementation = undefined;
     }
@@ -287,7 +307,12 @@ const mock = {
     implementation?: Function | object,
     options?: object,
   ) {
-    if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+    if (
+      implementation !== null &&
+      implementation !== undefined &&
+      !$isCallable(implementation) &&
+      typeof implementation === "object"
+    ) {
       options = implementation;
       implementation = undefined;
     }

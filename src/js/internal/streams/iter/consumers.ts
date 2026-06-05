@@ -5,7 +5,6 @@
 // ondrain() - backpressure drain utility
 // (merge() is not ported.)
 
-
 const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
 
 const { from, fromSync } = require("internal/streams/iter/from");

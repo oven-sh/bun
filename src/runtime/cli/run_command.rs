@@ -3011,9 +3011,16 @@ impl RunCommand {
         };
 
         let ext = paths::extension(&path);
-        let loader = bun_bundler::options::DEFAULT_LOADERS
-            .get(ext)
-            .copied()
+        // `--loader .ext:loader` overrides take precedence over the defaults,
+        // matching the run path.
+        let user_loader = ctx.args.loaders.as_ref().and_then(|m| {
+            m.extensions
+                .iter()
+                .position(|e| strings::eql(e, ext))
+                .map(|i| <Loader as bun_options_types::LoaderExt>::from_api(m.loaders[i]))
+        });
+        let loader = user_loader
+            .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
             .filter(|l| l.is_javascript_like())
             .unwrap_or(Loader::Tsx);
 

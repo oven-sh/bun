@@ -78,6 +78,39 @@ describe.concurrent("bun --check", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("honors --loader overrides", async () => {
+    // TS syntax in a .js file: fails by default, passes with -l .js:ts.
+    using dir = tempDir("check-loader", {
+      "script.js": `interface Foo { x: number }\n`,
+    });
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--check", "script.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("error");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    }
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--check", "-l", ".js:ts", "script.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("accepts ESM import/export syntax", async () => {
     using dir = tempDir("check-esm", {
       "esm.mjs": `import foo from "bar";\nexport const x = 1;\n`,

@@ -14,9 +14,9 @@ describe.concurrent("bun --check", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("");
     // The script must not execute.
     expect(stdout).not.toContain("SHOULD NOT RUN");
+    expect(stdout).toBe("");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

@@ -48,6 +48,24 @@ describe("app module", () => {
     expect(app.getRuntimeVersion()).toContain("cef");
   });
 
+  test("app.getAppPath() returns the directory of the main script", () => {
+    expect(app.getAppPath().length).toBeGreaterThan(0);
+  });
+
+  test("app.getLocale() returns a locale string", () => {
+    expect(app.getLocale()).toMatch(/^[a-zA-Z]{1,3}(-[a-zA-Z0-9]+)*$/);
+  });
+
+  // Ported from api-app-spec.ts "should emit browser-window-created event..."
+  test("emits browser-window-created when a window is created", async () => {
+    const { createWindow } = await import("./harness.ts");
+    const created = new Promise<unknown>((resolve) => {
+      app.once("browser-window-created", (event, window) => resolve(window));
+    });
+    const w = createWindow();
+    expect(await created).toBe(w);
+  });
+
   describe("app lifecycle", () => {
     test("quits when all windows are closed (no window-all-closed listener)", async () => {
       const { stdout, exitCode } = await runFixture("quit-on-window-all-closed.js");

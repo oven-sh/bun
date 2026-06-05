@@ -15,6 +15,9 @@ if (!process.env.DISPLAY && process.platform === "linux") {
 // and go between tests.
 app.on("window-all-closed", () => {});
 
+// window.open() without a user gesture would otherwise be popup-blocked.
+app.commandLine.appendSwitch("disable-popup-blocking");
+
 export async function ensureReady(): Promise<void> {
   await app.whenReady();
 }

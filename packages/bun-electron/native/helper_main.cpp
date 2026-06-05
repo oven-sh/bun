@@ -6,6 +6,7 @@
 // In renderer processes this installs the V8 bindings that back the
 // `ipcRenderer` API (see renderer_bootstrap.h).
 
+#include <map>
 #include <string>
 
 #include "include/cef_app.h"
@@ -75,6 +76,18 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
     return this;
   }
 
+  void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefDictionaryValue> extra_info) override {
+    if (extra_info && extra_info->HasKey("preload")) {
+      preload_by_browser_[browser->GetIdentifier()] =
+          extra_info->GetString("preload").ToString();
+    }
+  }
+
+  void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override {
+    preload_by_browser_.erase(browser->GetIdentifier());
+  }
+
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override {
@@ -91,6 +104,33 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
     CefRefPtr<CefV8Value> retval;
     CefRefPtr<CefV8Exception> exc;
     context->Eval(kRendererBootstrapJs, frame->GetURL(), 0, retval, exc);
+
+    // Preload runs after the bootstrap (so ipcRenderer/contextBridge exist)
+    // and before any page script, matching Electron's ordering.
+    auto it = preload_by_browser_.find(browser->GetIdentifier());
+    if (it != preload_by_browser_.end() && !it->second.empty()) {
+      CefRefPtr<CefV8Value> preload_ret;
+      CefRefPtr<CefV8Exception> preload_exc;
+      if (!context->Eval(it->second, "bun-electron://preload", 0, preload_ret,
+                         preload_exc) &&
+          preload_exc) {
+        // Surface the failure as a console message (reaches the browser
+        // process via OnConsoleMessage).
+        std::string msg = preload_exc->GetMessage().ToString();
+        std::string escaped;
+        for (char c : msg) {
+          if (c == '\\' || c == '\'') escaped.push_back('\\');
+          if (c == '\n') {
+            escaped += "\\n";
+            continue;
+          }
+          escaped.push_back(c);
+        }
+        frame->ExecuteJavaScript(
+            "console.error('preload error: " + escaped + "')",
+            frame->GetURL(), 0);
+      }
+    }
   }
 
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
@@ -135,6 +175,10 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
     context->Exit();
     return true;
   }
+
+ private:
+  // browser id -> preload source (from CreateBrowserView extra_info).
+  std::map<int, std::string> preload_by_browser_;
 
   IMPLEMENT_REFCOUNTING(HelperApp);
 };

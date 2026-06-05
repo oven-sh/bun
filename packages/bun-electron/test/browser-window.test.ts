@@ -151,6 +151,76 @@ describe("BrowserWindow module", () => {
     });
   });
 
+  describe("BrowserWindow.setMinimumSize(width, height)", () => {
+    test("sets the minimum size of the window", async () => {
+      const w = createWindow({ show: true, width: 400, height: 300 });
+      await w.loadURL(dataURL("<body></body>"));
+      expect(w.getMinimumSize()).toEqual([0, 0]);
+      w.setMinimumSize(100, 100);
+      expect(w.getMinimumSize()).toEqual([100, 100]);
+    });
+
+    test("respects the minWidth/minHeight constructor options", () => {
+      const w = createWindow({ minWidth: 120, minHeight: 110 });
+      expect(w.getMinimumSize()).toEqual([120, 110]);
+    });
+  });
+
+  describe("BrowserWindow.setMaximumSize(width, height)", () => {
+    test("sets the maximum size of the window", () => {
+      const w = createWindow();
+      expect(w.getMaximumSize()).toEqual([0, 0]);
+      w.setMaximumSize(900, 600);
+      expect(w.getMaximumSize()).toEqual([900, 600]);
+    });
+  });
+
+  describe("BrowserWindow.setResizable(resizable)", () => {
+    test("toggles the resizable state", async () => {
+      const w = createWindow({ show: true });
+      await w.loadURL(dataURL("<body></body>"));
+      expect(w.isResizable()).toBe(true);
+      w.setResizable(false);
+      expect(w.isResizable()).toBe(false);
+      w.setResizable(true);
+      expect(w.isResizable()).toBe(true);
+    });
+
+    test("respects the resizable constructor option", () => {
+      const w = createWindow({ resizable: false });
+      expect(w.isResizable()).toBe(false);
+      expect(w.isMaximizable()).toBe(true);
+    });
+  });
+
+  describe("BrowserWindow.capturePage()", () => {
+    test("resolves with a non-empty NativeImage", async () => {
+      const w = createWindow({ show: true, width: 320, height: 240 });
+      await w.loadURL(dataURL(`<body style="background:#ff0000"></body>`));
+      const image = await w.capturePage();
+      expect(image.isEmpty()).toBe(false);
+      const png = image.toPNG();
+      // PNG magic bytes.
+      expect(png.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    });
+  });
+
+  describe("window.open", () => {
+    test("emits did-create-window and tracks the child as a BrowserWindow", async () => {
+      const w = createWindow({ show: true });
+      await w.loadURL(dataURL("<body>opener</body>"));
+      const created = once(w.webContents, "did-create-window");
+      const before = BrowserWindow.getAllWindows().length;
+      await w.webContents.executeJavaScript(`void window.open("about:blank", "", "width=300,height=200")`);
+      const [child] = await created;
+      expect(child).toBeInstanceOf(BrowserWindow);
+      expect(BrowserWindow.getAllWindows().length).toBe(before + 1);
+      const closed = once(child, "closed");
+      child.destroy();
+      await closed;
+    });
+  });
+
   describe("BrowserWindow events", () => {
     test("emits resize when the window is resized", async () => {
       const w = createWindow({ show: true, width: 300, height: 200 });

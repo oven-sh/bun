@@ -7,7 +7,7 @@
 //   await win.loadURL("https://bun.com");
 
 export { app } from "./app";
-export { BrowserWindow, WebContents } from "./browser-window";
+export { BrowserWindow, NativeImage, WebContents } from "./browser-window";
 export type { BrowserWindowOptions } from "./browser-window";
 export { ipcMain } from "./ipc-main";
 export type { IpcMainEvent, IpcMainInvokeEvent } from "./ipc-main";

@@ -65,6 +65,34 @@ describe("webContents module", () => {
     });
   });
 
+  describe("webContents.insertCSS(css)", () => {
+    test("inserts CSS into the page", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL(`<body><div id="t">x</div></body>`));
+      await w.webContents.insertCSS("#t { color: rgb(255, 0, 0); }");
+      const color = await w.webContents.executeJavaScript(`getComputedStyle(document.getElementById("t")).color`);
+      expect(color).toBe("rgb(255, 0, 0)");
+    });
+
+    test("removeInsertedCSS removes the inserted CSS", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL(`<body><div id="t">x</div></body>`));
+      const key = await w.webContents.insertCSS("#t { color: rgb(0, 128, 0); }");
+      await w.webContents.removeInsertedCSS(key);
+      const color = await w.webContents.executeJavaScript(`getComputedStyle(document.getElementById("t")).color`);
+      expect(color).toBe("rgb(0, 0, 0)");
+    });
+  });
+
+  describe("webContents.isLoading()", () => {
+    test("returns false once the page has finished loading", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body></body>"));
+      expect(w.webContents.isLoading()).toBe(false);
+    });
+  });
+
+
   describe("console-message event", () => {
     test("is emitted for console.log in the page", async () => {
       const w = createWindow();

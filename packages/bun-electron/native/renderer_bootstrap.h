@@ -129,12 +129,27 @@ static const char kRendererBootstrapJs[] = R"BEJS(
     }
   };
 
+  // Without context isolation the "main world" is this context, so
+  // exposeInMainWorld is a global assignment (Electron-compatible shape).
+  var contextBridge = {
+    exposeInMainWorld: function (name, api) {
+      Object.defineProperty(globalThis, name, {
+        value: api,
+        writable: false,
+        configurable: false,
+        enumerable: true,
+      });
+    },
+  };
+
   var electronModule = {
     ipcRenderer: ipcRenderer,
+    contextBridge: contextBridge,
   };
 
   globalThis.bunElectron = electronModule;
   globalThis.ipcRenderer = ipcRenderer;
+  globalThis.contextBridge = contextBridge;
 
   // Compatibility shim so `require('electron')` works in renderer code
   // written for Electron with nodeIntegration.

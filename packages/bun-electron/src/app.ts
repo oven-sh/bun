@@ -60,6 +60,16 @@ class App extends EventEmitter {
     return process.env.npm_package_version ?? "0.0.0";
   }
 
+  getAppPath(): string {
+    const main = process.argv[1];
+    return main ? require("node:path").dirname(require("node:path").resolve(main)) : process.cwd();
+  }
+
+  getLocale(): string {
+    const raw = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || "en-US";
+    return raw.split(".")[0].replace("_", "-") || "en-US";
+  }
+
   /** CEF + shim version string. Not part of Electron's API. */
   getRuntimeVersion(): string {
     return native.version();

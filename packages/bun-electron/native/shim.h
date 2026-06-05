@@ -72,6 +72,11 @@ BE_EXPORT void be_window_command(int32_t id, const char *cmd, const char *arg);
 // minimized,maximized,fullscreen,title,url} or NULL if no such window.
 BE_EXPORT char *be_window_get_state(int32_t id);
 
+// Capture a PNG screenshot of the page via the DevTools protocol. Emits a
+// {"type":"capture-result","captureId":N,"success":bool,"result":{...}}
+// event where result.data is base64 PNG on success.
+BE_EXPORT void be_capture_page(int32_t id, int32_t capture_id);
+
 // Execute JavaScript in the window's main frame. If eval_id > 0 the result
 // round-trips through the renderer and an {"type":"eval-result","evalId":N,
 // "result":...,"isError":bool} event fires; with eval_id == 0 it's

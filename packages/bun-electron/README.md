@@ -23,8 +23,9 @@ await win.loadURL("https://bun.com");
 | Windows x64     | ✅ (untested) | needs verification | —                                   |
 
 The Linux build runs the full ported test suite (subsets of Electron's
-`api-browser-window-spec`, `api-web-contents-spec`, `api-ipc-main-spec`, and
-`api-app-spec`) headlessly under Xvfb. macOS and Windows code paths are
+`api-browser-window-spec`, `api-web-contents-spec`, `api-ipc-main-spec`,
+`api-app-spec`, and `api-context-bridge-spec`, plus preload coverage)
+headlessly under Xvfb. macOS and Windows code paths are
 written but have not been exercised yet.
 
 ## Architecture
@@ -142,12 +143,27 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
 - Renderer: `ipcRenderer.send/invoke/on/once/removeListener`, exposed as
   `globalThis.ipcRenderer`, `globalThis.bunElectron`, and a
   `require('electron')` shim.
-- `shell.openExternal/openPath`.
+- **Preload scripts** (`webPreferences.preload`): run in every new main-frame
+  context after the bootstrap and before page scripts, with `ipcRenderer` and
+  `contextBridge` available (source travels via CEF `extra_info`).
+- **`contextBridge.exposeInMainWorld(name, api)`** (renderers run without
+  context isolation, so this binds a read-only global).
+- **`capturePage()`** on windows and webContents: PNG screenshot through the
+  DevTools protocol (`Page.captureScreenshot`), returns a minimal
+  `NativeImage` (`toPNG()`, `isEmpty()`).
+- **`window.open()`**: popups are tracked as real `BrowserWindow`s; the
+  opener's webContents emits `did-create-window`.
+- Window sizing constraints: `minWidth`/`minHeight`/`maxWidth`/`maxHeight`
+  options, `setMinimumSize`/`setMaximumSize`/`setResizable`/`setMinimizable`/
+  `setMaximizable` + getters.
+- `webContents.insertCSS`/`removeInsertedCSS`/`isLoading`.
+- `app.getAppPath`, `app.getLocale`, `browser-window-created` event.
+- `shell.openExternal/openPath` (scheme-validated).
 
-Not implemented yet: `Menu`, `dialog`, `Tray`, `nativeImage`, `session`,
-`protocol`, preload scripts / `contextBridge`, `nodeIntegration` (renderers
-are plain Chromium; use IPC), multi-arg structured-clone IPC types, window
-icons, `webContents.capturePage`.
+Not implemented yet: `Menu`, `dialog`, `Tray`, full `nativeImage`, `session`,
+`protocol`, context isolation (preload and page share one context),
+`nodeIntegration` (renderers are plain Chromium; use IPC),
+`ipcRenderer.sendSync`, multi-arg structured-clone IPC types, window icons.
 
 ## Testing
 

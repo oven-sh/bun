@@ -1,6 +1,7 @@
 // BrowserWindow + WebContents — Electron-compatible window management.
 
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import * as native from "./native";
 
@@ -18,7 +19,31 @@ export interface BrowserWindowOptions {
   alwaysOnTop?: boolean;
   frame?: boolean;
   backgroundColor?: string;
-  webPreferences?: Record<string, unknown>;
+  minWidth?: number;
+  minHeight?: number;
+  maxWidth?: number;
+  maxHeight?: number;
+  webPreferences?: {
+    preload?: string;
+    [key: string]: unknown;
+  };
+}
+
+/** Minimal stand-in for Electron's NativeImage. */
+export class NativeImage {
+  constructor(private readonly png: Buffer) {}
+
+  toPNG(): Buffer {
+    return this.png;
+  }
+
+  isEmpty(): boolean {
+    return this.png.length === 0;
+  }
+
+  static createEmpty(): NativeImage {
+    return new NativeImage(Buffer.alloc(0));
+  }
 }
 
 interface Rectangle {
@@ -31,6 +56,9 @@ interface Rectangle {
 const windows = new Map<number, BrowserWindow>();
 let nextEvalId = 1;
 const pendingEvals = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+let nextCaptureId = 1;
+const pendingCaptures = new Map<number, { resolve: (v: NativeImage) => void; reject: (e: Error) => void }>();
+let nextCssKey = 1;
 
 // "#rrggbb" / "#aarrggbb" -> CEF cef_color_t hex (AARRGGBB).
 function parseBackgroundColor(color: string): string | undefined {
@@ -51,6 +79,42 @@ export class WebContents extends EventEmitter {
 
   send(channel: string, ...args: unknown[]): void {
     native.ipcSend(this.win.id, channel, JSON.stringify(args));
+  }
+
+  /** Inserts CSS into the page; resolves with a key for removeInsertedCSS. */
+  async insertCSS(css: string): Promise<string> {
+    const key = `be-css-${nextCssKey++}`;
+    await this.executeJavaScript(
+      `(() => {
+        const style = document.createElement("style");
+        style.id = ${JSON.stringify(key)};
+        style.textContent = ${JSON.stringify(css)};
+        document.head.appendChild(style);
+      })()`,
+    );
+    return key;
+  }
+
+  async removeInsertedCSS(key: string): Promise<void> {
+    await this.executeJavaScript(`document.getElementById(${JSON.stringify(key)})?.remove()`);
+  }
+
+  /** Captures the visible page as a PNG via the DevTools protocol. */
+  capturePage(): Promise<NativeImage> {
+    if (this.win.isDestroyed()) {
+      return Promise.reject(new Error("webContents was destroyed"));
+    }
+    const captureId = nextCaptureId++;
+    return new Promise((resolve, reject) => {
+      pendingCaptures.set(captureId, { resolve, reject });
+      this.win._whenBrowserReady(() => {
+        native.capturePage(this.win.id, captureId);
+      });
+    });
+  }
+
+  isLoading(): boolean {
+    return this.win._isLoading;
   }
 
   executeJavaScript(code: string, _userGesture?: boolean): Promise<unknown> {
@@ -119,6 +183,13 @@ export class BrowserWindow extends EventEmitter {
   private _browserReady = false;
   private _browserReadyQueue: Array<() => void> = [];
   private _loadResolvers: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  private _resizable = true;
+  private _minimizable = true;
+  private _maximizable = true;
+  private _minSize: [number, number] = [0, 0];
+  private _maxSize: [number, number] = [0, 0];
+  /** @internal */
+  _isLoading = false;
 
   constructor(options: BrowserWindowOptions = {}) {
     super();
@@ -128,26 +199,56 @@ export class BrowserWindow extends EventEmitter {
     const { app } = require("./app") as typeof import("./app");
     app._ensureStarted();
 
-    this.id = native.windowCreate({
-      width: options.width,
-      height: options.height,
-      x: options.x,
-      y: options.y,
-      show: options.show ?? true,
-      title: options.title,
-      resizable: options.resizable,
-      minimizable: options.minimizable,
-      maximizable: options.maximizable,
-      fullscreen: options.fullscreen,
-      always_on_top: options.alwaysOnTop,
-      frameless: options.frame === false ? true : undefined,
-      background_color: options.backgroundColor ? parseBackgroundColor(options.backgroundColor) : undefined,
-    });
+    const adoptId = (options as { __adoptId?: number }).__adoptId;
+    if (adoptId !== undefined) {
+      // Wrapping a window that already exists natively (window.open popup).
+      this.id = adoptId;
+    } else {
+      let preloadSource: string | undefined;
+      if (options.webPreferences?.preload) {
+        preloadSource = readFileSync(options.webPreferences.preload, "utf8");
+      }
+      this._resizable = options.resizable ?? true;
+      this._minimizable = options.minimizable ?? true;
+      this._maximizable = options.maximizable ?? true;
+      this._minSize = [options.minWidth ?? 0, options.minHeight ?? 0];
+      this._maxSize = [options.maxWidth ?? 0, options.maxHeight ?? 0];
+
+      this.id = native.windowCreate({
+        width: options.width,
+        height: options.height,
+        x: options.x,
+        y: options.y,
+        show: options.show ?? true,
+        title: options.title,
+        resizable: options.resizable,
+        minimizable: options.minimizable,
+        maximizable: options.maximizable,
+        fullscreen: options.fullscreen,
+        always_on_top: options.alwaysOnTop,
+        frameless: options.frame === false ? true : undefined,
+        min_width: options.minWidth,
+        min_height: options.minHeight,
+        max_width: options.maxWidth,
+        max_height: options.maxHeight,
+        preload: preloadSource,
+        background_color: options.backgroundColor ? parseBackgroundColor(options.backgroundColor) : undefined,
+      });
+    }
     if (this.id < 0) {
       throw new Error("Failed to create BrowserWindow (CEF not initialized)");
     }
     this.webContents = new WebContents(this);
     windows.set(this.id, this);
+    app.emit("browser-window-created", {}, this);
+  }
+
+  /** @internal Wrap a natively-created popup window (window.open). */
+  static _adopt(id: number): BrowserWindow {
+    const win = new BrowserWindow({ __adoptId: id } as BrowserWindowOptions);
+    // The popup browser already exists by the time window-open is emitted.
+    win._browserReady = true;
+    return win;
   }
 
   static getAllWindows(): BrowserWindow[] {
@@ -231,6 +332,55 @@ export class BrowserWindow extends EventEmitter {
 
   setAlwaysOnTop(flag: boolean): void {
     this._command("set_always_on_top", flag ? "1" : "0");
+  }
+
+  setResizable(flag: boolean): void {
+    this._resizable = flag;
+    this._command("set_resizable", flag ? "1" : "0");
+  }
+
+  isResizable(): boolean {
+    return this._resizable;
+  }
+
+  setMinimizable(flag: boolean): void {
+    this._minimizable = flag;
+    this._command("set_minimizable", flag ? "1" : "0");
+  }
+
+  isMinimizable(): boolean {
+    return this._minimizable;
+  }
+
+  setMaximizable(flag: boolean): void {
+    this._maximizable = flag;
+    this._command("set_maximizable", flag ? "1" : "0");
+  }
+
+  isMaximizable(): boolean {
+    return this._maximizable;
+  }
+
+  setMinimumSize(width: number, height: number): void {
+    this._minSize = [width, height];
+    this._command("set_min_size", native.encodeKV({ width, height }));
+  }
+
+  getMinimumSize(): [number, number] {
+    return [...this._minSize];
+  }
+
+  setMaximumSize(width: number, height: number): void {
+    this._maxSize = [width, height];
+    this._command("set_max_size", native.encodeKV({ width, height }));
+  }
+
+  getMaximumSize(): [number, number] {
+    return [...this._maxSize];
+  }
+
+  capturePage(): Promise<NativeImage> {
+    return this.webContents.capturePage();
   }
 
   setBounds(bounds: Partial<Rectangle>): void {
@@ -346,9 +496,23 @@ export class BrowserWindow extends EventEmitter {
         break;
       }
       case "loading-state":
+        this._isLoading = Boolean(ev.isLoading);
         if (ev.isLoading) this.webContents.emit("did-start-loading");
         else this.webContents.emit("did-stop-loading");
         break;
+      case "capture-result": {
+        const pending = pendingCaptures.get(ev.captureId as number);
+        if (pending) {
+          pendingCaptures.delete(ev.captureId as number);
+          const result = ev.result as { data?: string; message?: string } | null;
+          if (ev.success && result?.data) {
+            pending.resolve(new NativeImage(Buffer.from(result.data, "base64")));
+          } else {
+            pending.reject(new Error(result?.message ?? "capturePage failed"));
+          }
+        }
+        break;
+      }
       case "page-title-updated":
         this.emit("page-title-updated", { preventDefault() {} }, ev.title);
         this.webContents.emit("page-title-updated", { preventDefault() {} }, ev.title);
@@ -393,6 +557,14 @@ export class BrowserWindow extends EventEmitter {
 }
 
 export function routeWindowEvent(ev: native.NativeEvent): void {
+  if (ev.type === "window-open") {
+    // A window.open() popup: wrap the natively-created window and notify the
+    // opener (Electron's did-create-window).
+    const child = BrowserWindow._adopt(ev.windowId as number);
+    const opener = windows.get(ev.openerId as number);
+    opener?.webContents.emit("did-create-window", child, { url: ev.url });
+    return;
+  }
   const win = windows.get(ev.windowId as number);
   win?._handleEvent(ev);
 }

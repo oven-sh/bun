@@ -111,6 +111,37 @@ describe("ipc main", () => {
     });
   });
 
+  describe("ipcRenderer", () => {
+    test("ipcRenderer.once only fires the listener once", async () => {
+      const w = await loadedWindow();
+      await w.webContents.executeJavaScript(`(() => {
+        window.__count = 0;
+        ipcRenderer.once("only-once", () => { window.__count++; });
+      })()`);
+      w.webContents.send("only-once");
+      w.webContents.send("only-once");
+      await waitForJS(w, "window.__count >= 1");
+      // Deliver one more round-trip to be sure the second send was processed.
+      await w.webContents.executeJavaScript("void 0");
+      expect(await w.webContents.executeJavaScript("window.__count")).toBe(1);
+    });
+
+    test("ipcRenderer.removeListener stops delivery", async () => {
+      const w = await loadedWindow();
+      await w.webContents.executeJavaScript(`(() => {
+        window.__seen = 0;
+        const fn = () => { window.__seen++; };
+        ipcRenderer.on("gone", fn);
+        ipcRenderer.removeListener("gone", fn);
+        ipcRenderer.on("marker", () => { window.__marker = true; });
+      })()`);
+      w.webContents.send("gone");
+      w.webContents.send("marker");
+      await waitForJS(w, "window.__marker");
+      expect(await w.webContents.executeJavaScript("window.__seen")).toBe(0);
+    });
+  });
+
   describe("webContents.send", () => {
     test("delivers messages to ipcRenderer.on listeners", async () => {
       const w = await loadedWindow();

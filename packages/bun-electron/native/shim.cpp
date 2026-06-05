@@ -17,7 +17,10 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
+#include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
+#include "include/cef_registration.h"
+#include "include/cef_values.h"
 #include "include/cef_version.h"
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_browser_view_delegate.h"
@@ -223,6 +226,8 @@ struct WindowEntry {
   CefRefPtr<CefWindow> window;
   CefRefPtr<CefBrowserView> browser_view;
   CefRefPtr<CefBrowser> browser;
+  CefRefPtr<CefRegistration> devtools_registration;
+  std::map<int, int32_t> pending_captures;  // devtools message id -> capture id
   WindowState state;
   bool destroyed = false;
 };
@@ -237,6 +242,34 @@ std::shared_ptr<WindowEntry> FindWindow(int32_t id) {
   std::lock_guard<std::mutex> lock(g_windows_mutex);
   auto it = g_windows.find(id);
   return it == g_windows.end() ? nullptr : it->second;
+}
+
+// Live window options (mutable via be_window_command, e.g. set_resizable).
+bool WindowOptBool(int32_t id, const std::string& key, bool fallback) {
+  auto entry = FindWindow(id);
+  if (!entry) return fallback;
+  std::lock_guard<std::mutex> lock(g_windows_mutex);
+  return KVGetBool(entry->options, key, fallback);
+}
+
+int WindowOptInt(int32_t id, const std::string& key, int fallback) {
+  auto entry = FindWindow(id);
+  if (!entry) return fallback;
+  std::lock_guard<std::mutex> lock(g_windows_mutex);
+  return KVGetInt(entry->options, key, fallback);
+}
+
+void SetWindowOpt(int32_t id, const std::string& key, const std::string& value) {
+  auto entry = FindWindow(id);
+  if (!entry) return;
+  std::lock_guard<std::mutex> lock(g_windows_mutex);
+  for (auto& [k, v] : entry->options) {
+    if (k == key) {
+      v = value;
+      return;
+    }
+  }
+  entry->options.emplace_back(key, value);
 }
 
 // ---------------------------------------------------------------------------
@@ -254,25 +287,54 @@ class Client : public CefClient,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
 
+  // Popups created by window.open() share the opener's CefClient, so the
+  // owning window is resolved through the browser view's ID (assigned at
+  // creation) rather than the constructor argument.
+  int32_t WindowId(CefRefPtr<CefBrowser> browser) {
+    if (browser) {
+      CefRefPtr<CefBrowserView> view = CefBrowserView::GetForBrowser(browser);
+      if (view) {
+        int id = view->GetID();
+        if (id > 0) return id;
+      }
+    }
+    return window_id_;
+  }
+
   // CefLifeSpanHandler
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     int popup_id,
+                     const CefString& target_url,
+                     const CefString& target_frame_name,
+                     WindowOpenDisposition target_disposition,
+                     bool user_gesture,
+                     const CefPopupFeatures& popupFeatures,
+                     CefWindowInfo& windowInfo,
+                     CefRefPtr<CefClient>& client,
+                     CefBrowserSettings& settings,
+                     CefRefPtr<CefDictionaryValue>& extra_info,
+                     bool* no_javascript_access) override;
+
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
-    if (auto entry = FindWindow(window_id_)) {
+    int32_t window_id = WindowId(browser);
+    if (auto entry = FindWindow(window_id)) {
       entry->browser = browser;
     }
-    EmitWindowEvent("browser-created", window_id_);
+    EmitWindowEvent("browser-created", window_id);
   }
 
   bool DoClose(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
-    EmitWindowEvent("close", window_id_);
+    EmitWindowEvent("close", WindowId(browser));
     // Allow the close to proceed; the views window closes with the browser.
     return false;
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
-    if (auto entry = FindWindow(window_id_)) {
+    if (auto entry = FindWindow(WindowId(browser))) {
       entry->browser = nullptr;
     }
   }
@@ -284,7 +346,7 @@ class Client : public CefClient,
                             bool canGoForward) override {
     EmitEvent(JsonObj()
                   .AddString("type", "loading-state")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", WindowId(browser))
                   .AddBool("isLoading", isLoading)
                   .AddBool("canGoBack", canGoBack)
                   .AddBool("canGoForward", canGoForward)
@@ -295,13 +357,14 @@ class Client : public CefClient,
                  CefRefPtr<CefFrame> frame,
                  int httpStatusCode) override {
     if (!frame->IsMain()) return;
-    if (auto entry = FindWindow(window_id_)) {
+    int32_t window_id = WindowId(browser);
+    if (auto entry = FindWindow(window_id)) {
       std::lock_guard<std::mutex> lock(g_windows_mutex);
       entry->state.url = frame->GetURL().ToString();
     }
     EmitEvent(JsonObj()
                   .AddString("type", "did-finish-load")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", window_id)
                   .AddInt("httpStatus", httpStatusCode)
                   .Build());
   }
@@ -314,7 +377,7 @@ class Client : public CefClient,
     if (!frame->IsMain() || errorCode == ERR_ABORTED) return;
     EmitEvent(JsonObj()
                   .AddString("type", "did-fail-load")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", WindowId(browser))
                   .AddInt("errorCode", errorCode)
                   .AddString("errorText", errorText.ToString())
                   .AddString("url", failedUrl.ToString())
@@ -328,7 +391,8 @@ class Client : public CefClient,
     // URL as the "title" for pages without a <title>; keep the window title
     // in that case.
     std::string t = title.ToString();
-    if (auto entry = FindWindow(window_id_)) {
+    int32_t window_id = WindowId(browser);
+    if (auto entry = FindWindow(window_id)) {
       bool is_url_fallback;
       {
         std::lock_guard<std::mutex> lock(g_windows_mutex);
@@ -342,7 +406,7 @@ class Client : public CefClient,
     }
     EmitEvent(JsonObj()
                   .AddString("type", "page-title-updated")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", window_id)
                   .AddString("title", title.ToString())
                   .Build());
   }
@@ -351,13 +415,14 @@ class Client : public CefClient,
                        CefRefPtr<CefFrame> frame,
                        const CefString& url) override {
     if (!frame->IsMain()) return;
-    if (auto entry = FindWindow(window_id_)) {
+    int32_t window_id = WindowId(browser);
+    if (auto entry = FindWindow(window_id)) {
       std::lock_guard<std::mutex> lock(g_windows_mutex);
       entry->state.url = url.ToString();
     }
     EmitEvent(JsonObj()
                   .AddString("type", "address-changed")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", window_id)
                   .AddString("url", url.ToString())
                   .Build());
   }
@@ -369,7 +434,7 @@ class Client : public CefClient,
                         int line) override {
     EmitEvent(JsonObj()
                   .AddString("type", "console-message")
-                  .AddInt("windowId", window_id_)
+                  .AddInt("windowId", WindowId(browser))
                   .AddInt("level", level)
                   .AddString("message", message.ToString())
                   .AddString("source", source.ToString())
@@ -385,10 +450,11 @@ class Client : public CefClient,
                                 CefRefPtr<CefProcessMessage> message) override {
     const std::string name = message->GetName().ToString();
     CefRefPtr<CefListValue> args = message->GetArgumentList();
+    int32_t window_id = WindowId(browser);
     if (name == "be-ipc") {
       EmitEvent(JsonObj()
                     .AddString("type", "ipc-message")
-                    .AddInt("windowId", window_id_)
+                    .AddInt("windowId", window_id)
                     .AddString("channel", args->GetString(0).ToString())
                     .AddRaw("args", args->GetString(1).ToString())
                     .Build());
@@ -397,7 +463,7 @@ class Client : public CefClient,
     if (name == "be-invoke") {
       EmitEvent(JsonObj()
                     .AddString("type", "ipc-invoke")
-                    .AddInt("windowId", window_id_)
+                    .AddInt("windowId", window_id)
                     .AddInt("invokeId", args->GetInt(0))
                     .AddString("channel", args->GetString(1).ToString())
                     .AddRaw("args", args->GetString(2).ToString())
@@ -407,7 +473,7 @@ class Client : public CefClient,
     if (name == "be-eval-result") {
       EmitEvent(JsonObj()
                     .AddString("type", "eval-result")
-                    .AddInt("windowId", window_id_)
+                    .AddInt("windowId", window_id)
                     .AddInt("evalId", args->GetInt(0))
                     .AddRaw("result", args->GetString(1).ToString())
                     .AddBool("isError", args->GetBool(2))
@@ -426,6 +492,16 @@ class Client : public CefClient,
 // Views delegates.
 // ---------------------------------------------------------------------------
 
+// Window id allocated by Client::OnBeforePopup for the popup currently being
+// created. The popup-creation callback chain runs on the UI thread, so a
+// single slot suffices; consumed by OnPopupBrowserViewCreated regardless of
+// which delegate instance receives that callback.
+int32_t g_inflight_popup_window_id = 0;
+
+void CreateTrackedPopupWindow(int32_t window_id,
+                              CefRefPtr<CefBrowserView> opener_view,
+                              CefRefPtr<CefBrowserView> popup_view);
+
 class BrowserViewDelegate : public CefBrowserViewDelegate {
  public:
   explicit BrowserViewDelegate(int32_t window_id) : window_id_(window_id) {}
@@ -437,24 +513,31 @@ class BrowserViewDelegate : public CefBrowserViewDelegate {
   bool OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView> browser_view,
                                  CefRefPtr<CefBrowserView> popup_browser_view,
                                  bool is_devtools) override {
-    // Wrap popups (incl. devtools) in their own top-level window.
-    class PopupWindowDelegate : public CefWindowDelegate {
-     public:
-      explicit PopupWindowDelegate(CefRefPtr<CefBrowserView> view)
-          : view_(view) {}
-      void OnWindowCreated(CefRefPtr<CefWindow> window) override {
-        window->AddChildView(view_);
-        window->Show();
-      }
-      cef_runtime_style_t GetWindowRuntimeStyle() override {
-        return CEF_RUNTIME_STYLE_ALLOY;
-      }
+    int32_t popup_window_id = is_devtools ? 0 : g_inflight_popup_window_id;
+    g_inflight_popup_window_id = 0;
+    if (popup_window_id == 0) {
+      // Wrap untracked popups (devtools) in a plain top-level window.
+      class PopupWindowDelegate : public CefWindowDelegate {
+       public:
+        explicit PopupWindowDelegate(CefRefPtr<CefBrowserView> view)
+            : view_(view) {}
+        void OnWindowCreated(CefRefPtr<CefWindow> window) override {
+          window->AddChildView(view_);
+          window->Show();
+        }
+        cef_runtime_style_t GetWindowRuntimeStyle() override {
+          return CEF_RUNTIME_STYLE_ALLOY;
+        }
 
-     private:
-      CefRefPtr<CefBrowserView> view_;
-      IMPLEMENT_REFCOUNTING(PopupWindowDelegate);
-    };
-    CefWindow::CreateTopLevelWindow(new PopupWindowDelegate(popup_browser_view));
+       private:
+        CefRefPtr<CefBrowserView> view_;
+        IMPLEMENT_REFCOUNTING(PopupWindowDelegate);
+      };
+      CefWindow::CreateTopLevelWindow(
+          new PopupWindowDelegate(popup_browser_view));
+      return true;
+    }
+    CreateTrackedPopupWindow(popup_window_id, browser_view, popup_browser_view);
     return true;
   }
 
@@ -594,17 +677,29 @@ class WindowDelegate : public CefWindowDelegate {
     return KVGetBool(options_, "frameless", false);
   }
 
+  // These read the live entry options so set_resizable & co. take effect
+  // after creation.
   bool CanResize(CefRefPtr<CefWindow> window) override {
-    return KVGetBool(options_, "resizable", true);
+    return WindowOptBool(window_id_, "resizable", true);
   }
 
   bool CanMaximize(CefRefPtr<CefWindow> window) override {
-    return KVGetBool(options_, "maximizable", true) &&
-           KVGetBool(options_, "resizable", true);
+    return WindowOptBool(window_id_, "maximizable", true) &&
+           WindowOptBool(window_id_, "resizable", true);
   }
 
   bool CanMinimize(CefRefPtr<CefWindow> window) override {
-    return KVGetBool(options_, "minimizable", true);
+    return WindowOptBool(window_id_, "minimizable", true);
+  }
+
+  CefSize GetMinimumSize(CefRefPtr<CefView> view) override {
+    return CefSize(WindowOptInt(window_id_, "min_width", 0),
+                   WindowOptInt(window_id_, "min_height", 0));
+  }
+
+  CefSize GetMaximumSize(CefRefPtr<CefView> view) override {
+    return CefSize(WindowOptInt(window_id_, "max_width", 0),
+                   WindowOptInt(window_id_, "max_height", 0));
   }
 
   bool CanClose(CefRefPtr<CefWindow> window) override {
@@ -625,6 +720,136 @@ class WindowDelegate : public CefWindowDelegate {
   const KVList options_;
   IMPLEMENT_REFCOUNTING(WindowDelegate);
 };
+
+// window.open() popups: allocate the window entry and give the popup its own
+// Client so events are attributed correctly from the first callback.
+bool Client::OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           int popup_id,
+                           const CefString& target_url,
+                           const CefString& target_frame_name,
+                           WindowOpenDisposition target_disposition,
+                           bool user_gesture,
+                           const CefPopupFeatures& popupFeatures,
+                           CefWindowInfo& windowInfo,
+                           CefRefPtr<CefClient>& client,
+                           CefBrowserSettings& settings,
+                           CefRefPtr<CefDictionaryValue>& extra_info,
+                           bool* no_javascript_access) {
+  CEF_REQUIRE_UI_THREAD();
+  int32_t id = g_next_window_id.fetch_add(1);
+  auto entry = std::make_shared<WindowEntry>();
+  entry->id = id;
+  entry->options.emplace_back("show", "1");
+  if (popupFeatures.widthSet)
+    entry->options.emplace_back("width", std::to_string(popupFeatures.width));
+  if (popupFeatures.heightSet)
+    entry->options.emplace_back("height", std::to_string(popupFeatures.height));
+  entry->state.url = target_url.ToString();
+  {
+    std::lock_guard<std::mutex> lock(g_windows_mutex);
+    g_windows[id] = entry;
+  }
+  client = new Client(id);
+  g_inflight_popup_window_id = id;
+  return false;  // allow the popup
+}
+
+void CreateTrackedPopupWindow(int32_t window_id,
+                              CefRefPtr<CefBrowserView> opener_view,
+                              CefRefPtr<CefBrowserView> popup_view) {
+  CEF_REQUIRE_UI_THREAD();
+  auto entry = FindWindow(window_id);
+  if (!entry) return;
+  popup_view->SetID(window_id);
+  entry->browser_view = popup_view;
+  std::string url;
+  {
+    std::lock_guard<std::mutex> lock(g_windows_mutex);
+    url = entry->state.url;
+  }
+  EmitEvent(JsonObj()
+                .AddString("type", "window-open")
+                .AddInt("windowId", window_id)
+                .AddInt("openerId", opener_view ? opener_view->GetID() : 0)
+                .AddString("url", url)
+                .Build());
+  CefWindow::CreateTopLevelWindow(
+      new WindowDelegate(window_id, popup_view, entry->options));
+}
+
+// ---------------------------------------------------------------------------
+// capturePage via the DevTools protocol (Page.captureScreenshot).
+// ---------------------------------------------------------------------------
+
+class CaptureObserver : public CefDevToolsMessageObserver {
+ public:
+  explicit CaptureObserver(int32_t window_id) : window_id_(window_id) {}
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void* result,
+                              size_t result_size) override {
+    auto entry = FindWindow(window_id_);
+    if (!entry) return;
+    int32_t capture_id;
+    {
+      std::lock_guard<std::mutex> lock(g_windows_mutex);
+      auto it = entry->pending_captures.find(message_id);
+      if (it == entry->pending_captures.end()) return;
+      capture_id = it->second;
+      entry->pending_captures.erase(it);
+    }
+    std::string json(static_cast<const char*>(result), result_size);
+    EmitEvent(JsonObj()
+                  .AddString("type", "capture-result")
+                  .AddInt("windowId", window_id_)
+                  .AddInt("captureId", capture_id)
+                  .AddBool("success", success)
+                  .AddRaw("result", json.empty() ? "null" : json)
+                  .Build());
+  }
+
+ private:
+  const int32_t window_id_;
+  IMPLEMENT_REFCOUNTING(CaptureObserver);
+};
+
+void CapturePageOnUI(int32_t window_id, int32_t capture_id) {
+  CEF_REQUIRE_UI_THREAD();
+  auto entry = FindWindow(window_id);
+  if (!entry || !entry->browser) {
+    EmitEvent(JsonObj()
+                  .AddString("type", "capture-result")
+                  .AddInt("windowId", window_id)
+                  .AddInt("captureId", capture_id)
+                  .AddBool("success", false)
+                  .AddRaw("result", "{\"message\":\"window destroyed\"}")
+                  .Build());
+    return;
+  }
+  CefRefPtr<CefBrowserHost> host = entry->browser->GetHost();
+  if (!entry->devtools_registration) {
+    entry->devtools_registration =
+        host->AddDevToolsMessageObserver(new CaptureObserver(window_id));
+  }
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetString("format", "png");
+  int message_id = host->ExecuteDevToolsMethod(0, "Page.captureScreenshot", params);
+  if (message_id > 0) {
+    std::lock_guard<std::mutex> lock(g_windows_mutex);
+    entry->pending_captures[message_id] = capture_id;
+  } else {
+    EmitEvent(JsonObj()
+                  .AddString("type", "capture-result")
+                  .AddInt("windowId", window_id)
+                  .AddInt("captureId", capture_id)
+                  .AddBool("success", false)
+                  .AddRaw("result", "{\"message\":\"devtools method failed\"}")
+                  .Build());
+  }
+}
 
 // ---------------------------------------------------------------------------
 // App: browser-process CefApp.
@@ -690,9 +915,21 @@ void CreateWindowOnUI(int32_t window_id) {
   // navigation, so did-finish-load only ever fires for explicit loads.
   std::string url = KVGet(entry->options, "url");
   CefRefPtr<CefClient> client = new Client(window_id);
+
+  // Preload source rides to the render process via extra_info; the helper
+  // executes it in every new main-frame context (renderer_bootstrap runs
+  // first so ipcRenderer/contextBridge are available to it).
+  CefRefPtr<CefDictionaryValue> extra_info;
+  std::string preload = KVGet(entry->options, "preload");
+  if (!preload.empty()) {
+    extra_info = CefDictionaryValue::Create();
+    extra_info->SetString("preload", preload);
+  }
+
   CefRefPtr<CefBrowserView> browser_view = CefBrowserView::CreateBrowserView(
-      client, url, browser_settings, nullptr, nullptr,
+      client, url, browser_settings, extra_info, nullptr,
       new BrowserViewDelegate(window_id));
+  browser_view->SetID(window_id);
   entry->browser_view = browser_view;
 
   CefWindow::CreateTopLevelWindow(
@@ -775,6 +1012,16 @@ void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
     browser->GoForward();
   } else if (cmd == "set_zoom" && browser) {
     browser->GetHost()->SetZoomLevel(atof(arg.c_str()));
+  } else if (cmd == "set_resizable" || cmd == "set_minimizable" ||
+             cmd == "set_maximizable") {
+    SetWindowOpt(window_id, cmd.substr(4), arg == "1" ? "1" : "0");
+  } else if (cmd == "set_min_size" || cmd == "set_max_size") {
+    // arg: "width\nheight" kv pairs via ParseKV-compatible "w=..\nh=.."
+    KVList kv = ParseKV(arg.c_str());
+    const char* prefix = cmd == "set_min_size" ? "min" : "max";
+    SetWindowOpt(window_id, std::string(prefix) + "_width", KVGet(kv, "width", "0"));
+    SetWindowOpt(window_id, std::string(prefix) + "_height", KVGet(kv, "height", "0"));
+    if (window) window->Layout();
   }
 }
 
@@ -1044,6 +1291,10 @@ BE_EXPORT char* be_window_get_state(int32_t id) {
 BE_EXPORT void be_window_eval_js(int32_t id, const char* code, int32_t eval_id) {
   if (!code) return;
   PostToUI(base::BindOnce(&EvalJsOnUI, id, std::string(code), eval_id));
+}
+
+BE_EXPORT void be_capture_page(int32_t id, int32_t capture_id) {
+  PostToUI(base::BindOnce(&CapturePageOnUI, id, capture_id));
 }
 
 BE_EXPORT void be_ipc_send(int32_t id, const char* channel, const char* args_json) {

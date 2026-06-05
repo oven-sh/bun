@@ -62,6 +62,7 @@ interface Shim {
     be_window_command: (id: number, cmd: Buffer, arg: Buffer | null) => void;
     be_window_get_state: (id: number) => bigint | number | null;
     be_window_eval_js: (id: number, code: Buffer, evalId: number) => void;
+    be_capture_page: (id: number, captureId: number) => void;
     be_ipc_send: (id: number, channel: Buffer, args: Buffer) => void;
     be_ipc_reply: (id: number, invokeId: number, result: Buffer, isError: number) => void;
     be_do_message_loop_work: () => void;
@@ -101,6 +102,7 @@ function loadShim(): Shim {
     be_window_command: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_window_get_state: { args: [FFIType.i32], returns: FFIType.ptr },
     be_window_eval_js: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.void },
+    be_capture_page: { args: [FFIType.i32, FFIType.i32], returns: FFIType.void },
     be_ipc_send: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_ipc_reply: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.void },
     be_do_message_loop_work: { args: [], returns: FFIType.void },
@@ -234,6 +236,10 @@ export function windowGetState(id: number): Record<string, unknown> | null {
 
 export function windowEvalJs(id: number, code: string, evalId: number): void {
   loadShim().symbols.be_window_eval_js(id, cstr(code), evalId);
+}
+
+export function capturePage(id: number, captureId: number): void {
+  loadShim().symbols.be_capture_page(id, captureId);
 }
 
 export function ipcSend(id: number, channel: string, argsJson: string): void {

@@ -349,8 +349,9 @@ describe("hostile header dimensions", () => {
       buf[off] = val;
       const dv = new DataView(buf.buffer, buf.byteOffset);
       dv.setUint32(29, crc32(buf.subarray(12, 29)));
-      // metadata() is header-only and IHDR is structurally readable; full
-      // decode is what must reject.
+      // The probe validates colour type and bit depth against the same
+      // table libspng enforces, so metadata() and full decode both reject.
+      expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
       expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
     }
   });

@@ -2383,24 +2383,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Declare receiver-capture temporaries generated while rewriting private
         // member calls (`__privateGet(_obj = recv, ...).call(_obj, ...)`).
         if p.temp_refs_to_declare.len() > temp_refs_before {
-            let mut capture_refs = BumpVec::<Ref>::new_in(bump);
-            for temp in p.temp_refs_to_declare[temp_refs_before..].iter() {
-                capture_refs.push(temp.r#ref);
-            }
-            p.temp_refs_to_declare.truncate(temp_refs_before);
-            let mut capture_decls = BumpVec::<G::Decl>::new_in(bump);
-            for capture_ref in capture_refs.iter() {
-                let binding = p.b(
-                    B::Identifier {
-                        r#ref: *capture_ref,
-                    },
-                    loc,
-                );
+            let capture_count = p.temp_refs_to_declare.len() - temp_refs_before;
+            let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(capture_count, bump);
+            for i in temp_refs_before..p.temp_refs_to_declare.len() {
+                let capture_ref = p.temp_refs_to_declare[i].r#ref;
+                let binding = p.b(B::Identifier { r#ref: capture_ref }, loc);
                 capture_decls.push(G::Decl {
                     binding,
                     value: None,
                 });
             }
+            p.temp_refs_to_declare.truncate(temp_refs_before);
             prefix_stmts.push(p.s(
                 S::Local {
                     decls: DeclList::from_bump_vec(capture_decls),

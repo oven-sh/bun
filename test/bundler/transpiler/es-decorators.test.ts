@@ -865,6 +865,27 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("p1 p2\n");
       expect(exitCode).toBe(0);
     });
+
+    // Decorated class expressions emit the capture temporaries through a
+    // different path (a `var` statement hoisted to the nearest statement
+    // list instead of prefix statements before the class statement).
+    test("decorated class expression evaluates chained private call receivers once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let evals = 0;
+        const C = class Foo {
+          static #m = function (tag) { return { Foo, tag }; };
+          @dec test(o) {
+            return o.effectful()?.Foo.#m("a")?.Foo.#m("b");
+          }
+        };
+        const o = { Foo: C, effectful() { evals++; return { Foo: C }; } };
+        console.log(new C().test(o).tag, evals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("b 1\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

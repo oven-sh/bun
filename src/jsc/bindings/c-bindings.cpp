@@ -337,21 +337,6 @@ extern "C" void on_before_reload_process_linux()
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
 
-// Lazily heap-allocated so it doesn't land in the .tls section on Windows
-// (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
-// zeros in bun.exe and is copied into every thread's TLS block at creation).
-// unique_ptr so the allocation is released when a Worker thread exits —
-// thread_local destructors run via __cxa_thread_atexit and are unaffected
-// by -fno-c++-static-destructors.
-static char* shared_header_buffer_get()
-{
-    static thread_local std::unique_ptr<char[]> buffer;
-    if (!buffer) [[unlikely]] {
-        buffer.reset(new char[LSHPACK_MAX_HEADER_SIZE]);
-    }
-    return buffer.get();
-}
-
 extern "C" {
 typedef void* (*lshpack_wrapper_alloc)(size_t size);
 typedef void (*lshpack_wrapper_free)(void*);
@@ -359,6 +344,7 @@ typedef struct {
     struct lshpack_enc enc;
     struct lshpack_dec dec;
     lshpack_wrapper_free free;
+    char buffer[LSHPACK_MAX_HEADER_SIZE];
 } lshpack_wrapper;
 
 typedef struct {
@@ -393,12 +379,11 @@ size_t lshpack_wrapper_encode(lshpack_wrapper* self,
     if (name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
         return 0;
 
-    char* shared_header_buffer = shared_header_buffer_get();
     lsxpack_header_t hdr;
     memset(&hdr, 0, sizeof(lsxpack_header_t));
-    memcpy(&shared_header_buffer[0], name, name_len);
-    memcpy(&shared_header_buffer[name_len], val, val_len);
-    lsxpack_header_set_offset2(&hdr, &shared_header_buffer[0], 0, name_len, name_len, val_len);
+    memcpy(&self->buffer[0], name, name_len);
+    memcpy(&self->buffer[name_len], val, val_len);
+    lsxpack_header_set_offset2(&hdr, &self->buffer[0], 0, name_len, name_len, val_len);
     if (never_index) {
         hdr.indexed_type = 2;
     }
@@ -415,7 +400,7 @@ size_t lshpack_wrapper_decode(lshpack_wrapper* self,
 {
     lsxpack_header_t hdr;
     memset(&hdr, 0, sizeof(lsxpack_header_t));
-    lsxpack_header_prepare_decode(&hdr, shared_header_buffer_get(), 0, LSHPACK_MAX_HEADER_SIZE);
+    lsxpack_header_prepare_decode(&hdr, self->buffer, 0, LSHPACK_MAX_HEADER_SIZE);
 
     const unsigned char* s = src;
 

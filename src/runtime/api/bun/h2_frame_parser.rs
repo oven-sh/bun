@@ -2155,7 +2155,13 @@ impl AbortListener for SignalRef {
     }
 }
 
-type HeaderValue = lshpack::DecodeResult;
+pub(crate) struct HeaderValue {
+    name_len: usize,
+    never_index: bool,
+    well_know: u16,
+    /// offset of the next header position in src
+    next: usize,
+}
 
 // PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
 // (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
@@ -2211,12 +2217,27 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    /// Decodes one header from `src_buffer` into `scratch` (cleared first):
+    /// name bytes followed by value bytes, split at `HeaderValue::name_len`.
+    pub(crate) fn decode(
+        &self,
+        src_buffer: &[u8],
+        scratch: &mut Vec<u8>,
+    ) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack
+                let result = hpack
                     .decode(src_buffer)
-                    .map_err(|e| hpack_error_to_core(&e));
+                    .map_err(|e| hpack_error_to_core(&e))?;
+                scratch.clear();
+                scratch.extend_from_slice(result.name);
+                scratch.extend_from_slice(result.value);
+                return Ok(HeaderValue {
+                    name_len: result.name.len(),
+                    never_index: result.never_index,
+                    well_know: result.well_know,
+                    next: result.next,
+                });
             }
             Err(bun_core::err!("UnableToDecode"))
         })
@@ -3335,8 +3356,9 @@ impl H2FrameParser {
         // for every other stream. The rejection is applied once after the loop.
         let mut rejected = false;
 
+        let mut scratch: Vec<u8> = Vec::new();
         while offset < payload.len() {
-            let header = match self.decode(&payload[offset..]) {
+            let header = match self.decode(&payload[offset..], &mut scratch) {
                 Ok(h) => h,
                 Err(_) => {
                     // RFC 9113 §4.3: a decoding error in a header block is a
@@ -3352,13 +3374,14 @@ impl H2FrameParser {
                 }
             };
             offset += header.next;
+            let (name, value) = scratch.split_at(header.name_len);
             bun_output::scoped_log!(
                 H2FrameParser,
                 "header {} {}",
-                BStr::new(header.name),
-                BStr::new(header.value)
+                BStr::new(name),
+                BStr::new(value)
             );
-            if self.is_server.get() && header.name == b":status" {
+            if self.is_server.get() && name == b":status" {
                 self.send_go_away(
                     stream_id,
                     ErrorCode::PROTOCOL_ERROR,
@@ -3371,8 +3394,7 @@ impl H2FrameParser {
 
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
-            stream.header_block_size +=
-                header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+            stream.header_block_size += name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
             stream.header_block_count += 1;
 
             // Check against maxHeaderListSize / maxHeaderListPairs.
@@ -3385,7 +3407,7 @@ impl H2FrameParser {
                 continue;
             }
 
-            let is_pseudo_header = header.name.first() == Some(&b':');
+            let is_pseudo_header = name.first() == Some(&b':');
             if is_pseudo_header {
                 if seen_regular_header {
                     malformed = true;
@@ -3393,8 +3415,8 @@ impl H2FrameParser {
             } else {
                 seen_regular_header = true;
             }
-            if is_pseudo_header || header.name == b"content-length" {
-                if let Some(idx) = single_value_headers_index_of(header.name) {
+            if is_pseudo_header || name == b"content-length" {
+                if let Some(idx) = single_value_headers_index_of(name) {
                     if single_value_headers[idx] {
                         malformed = true;
                     }
@@ -3403,14 +3425,14 @@ impl H2FrameParser {
             }
 
             if malformed
-                || is_malformed_field_name(header.name)
-                || is_malformed_field_value(header.value)
-                || is_forbidden_connection_specific_header(header.name, header.value)
+                || is_malformed_field_name(name)
+                || is_malformed_field_value(value)
+                || is_forbidden_connection_specific_header(name, value)
                 || (is_pseudo_header
                     && !if self.is_server.get() {
-                        is_valid_request_pseudo_header(header.name)
+                        is_valid_request_pseudo_header(name)
                     } else {
-                        is_valid_response_pseudo_header(header.name)
+                        is_valid_response_pseudo_header(name)
                     })
             {
                 malformed = true;
@@ -3420,7 +3442,7 @@ impl H2FrameParser {
                 headers.push(&global_object, js_header_name)?;
                 headers.push(
                     &global_object,
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?,
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, value)?,
                 )?;
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
@@ -3431,9 +3453,9 @@ impl H2FrameParser {
                 }
             } else {
                 let js_header_name =
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?;
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, name)?;
                 let js_header_value =
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?;
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, value)?;
 
                 if header.never_index {
                     if sensitive_headers.is_undefined() {

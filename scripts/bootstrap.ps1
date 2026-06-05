@@ -761,7 +761,56 @@ function Prefetch-Build-Deps {
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
 }
 
+function Prefetch-Puppeteer-Browsers {
+  # Bake a complete puppeteer browser cache into the image so test jobs never
+  # download Chrome at test time. puppeteer's install.mjs fires
+  # downloadBrowsers() without awaiting it (still true as of 25.1.0), so the
+  # postinstall can exit 0 silently mid-download/extract — stranding a partial
+  # cache that every later install trips over with "browser folder exists but
+  # the executable is missing" (next-pages tests). Install with the download
+  # skipped, then run the installer ourselves with the promise awaited.
+  #
+  # Version must match test/integration/next-pages/package.json's puppeteer
+  # pin. Drift is safe: a mismatched pin just misses the cache and tests fall
+  # back to downloading (today's behavior).
+  $puppeteerVersion = "24.16.0"
+  $agentHome = "C:\buildkite-agent"
+  $warmDir = Join-Path $env:TEMP "pptr-warm"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $warmDir
+  New-Item -ItemType Directory -Force $warmDir | Out-Null
+  Set-Content "$warmDir\package.json" "{ `"name`": `"pptr-warm`", `"dependencies`": { `"puppeteer`": `"$puppeteerVersion`" } }"
+
+  Push-Location $warmDir
+  try {
+    $env:PUPPETEER_SKIP_DOWNLOAD = "1"
+    & bun install
+    if ($LASTEXITCODE -ne 0) { throw "puppeteer install failed during browser prefetch" }
+    Remove-Item Env:\PUPPETEER_SKIP_DOWNLOAD
+    # puppeteer resolves its cache from os.homedir() (USERPROFILE) — point it
+    # at the agent's home so test jobs find the cache.
+    $env:USERPROFILE = $agentHome
+    & bun -e 'const { downloadBrowsers } = await import("puppeteer/internal/node/install.js"); await downloadBrowsers();'
+    if ($LASTEXITCODE -ne 0) { throw "puppeteer browser prefetch failed" }
+  } finally {
+    $env:USERPROFILE = "$env:SystemDrive\Users\$env:USERNAME"
+    Pop-Location
+  }
+
+  # Verify the cache is complete: a browser folder without its executable is
+  # exactly the poisoned state tests die on — fail the bake loudly instead.
+  foreach ($browser in @("chrome", "chrome-headless-shell")) {
+    $browserDir = "$agentHome\.cache\puppeteer\$browser"
+    if (-not (Test-Path $browserDir)) { throw "puppeteer prefetch verification failed: $browserDir missing" }
+    foreach ($installDir in (Get-ChildItem -Directory $browserDir)) {
+      $exes = Get-ChildItem -Recurse -File $installDir.FullName | Where-Object { $_.Name -in @("chrome.exe", "chrome-headless-shell.exe") }
+      if (-not $exes) { throw "puppeteer prefetch verification failed: no executable under $($installDir.FullName)" }
+    }
+  }
+  Remove-Item -Recurse -Force $warmDir
+}
+
 if ($CI) {
+  Prefetch-Puppeteer-Browsers
   Prefetch-Build-Deps
   Install-Buildkite
 }

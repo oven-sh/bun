@@ -1970,6 +1970,13 @@ EOF
 	done
 
 	grant_to_user "$home/.cache"
+	# The warm ran as root with HOME=$home, so bun's own state ($home/.bun:
+	# install cache, tmp staging) is root-owned now — without this the
+	# agent's bun fails every install with "unable to write files to
+	# tempdir: AccessDenied".
+	if [ -d "$home/.bun" ]; then
+		grant_to_user "$home/.bun"
+	fi
 	execute_sudo rm -rf "$pptr_dir"
 }
 

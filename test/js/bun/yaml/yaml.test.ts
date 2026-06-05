@@ -4680,6 +4680,6 @@ describe("plain scalar whitespace handling", () => {
   });
 
   test("bare dash after a mapping key is a block-sequence indicator, not a plain scalar", () => {
-    expect(() => YAML.parse("g: -")).toThrow();
+    expect(() => YAML.parse("g: -")).toThrow(SyntaxError);
   });
 });

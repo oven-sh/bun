@@ -241,6 +241,95 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     netServer.close();
   });
 
+  test("many sequential connections close cleanly", async () => {
+    // Each iteration drives the full server-side teardown chain:
+    // client.close() sends GOAWAY + close_notify, the server dispatches the
+    // GOAWAY to JS from inside the TLS read callback, JS ends the socket
+    // re-entrantly, and the connection's native state is freed on the next
+    // tick while the next iteration allocates a fresh one.
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+
+    const rawSockets: net.Socket[] = [];
+    const netServer = net.createServer(socket => {
+      rawSockets.push(socket);
+      h2Server.emit("connection", socket);
+    });
+
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    for (let i = 0; i < 20; i++) {
+      const client = connectClient(port);
+      const result = await request(client, "GET", "/");
+      assert.strictEqual(result.status, 200);
+      assert.strictEqual(result.body, "ok");
+
+      const rawSocket = rawSockets[i];
+      assert.ok(rawSocket, `raw socket ${i} captured`);
+      const socketClosed = Promise.withResolvers<void>();
+      rawSocket.once("close", () => socketClosed.resolve());
+      client.close();
+      await socketClosed.promise;
+    }
+
+    netServer.close();
+  });
+
+  test("rawSocket keeps emitting after session destroy", async () => {
+    let rawSocket: net.Socket | undefined;
+    let h2Session: http2.Http2Session | undefined;
+
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("done");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("session", s => {
+      s.on("error", () => {});
+      h2Session = s;
+    });
+
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    const clientClosed = Promise.withResolvers<void>();
+    client.on("close", () => clientClosed.resolve());
+
+    await request(client, "GET", "/");
+
+    // Destroy the server-side session, then keep poking the raw socket. The
+    // upgraded TLS connection has already fired its close callback but its
+    // native state is only freed on the next tick; these events must hit the
+    // already-closed gates instead of a freed connection.
+    h2Session!.destroy();
+    rawSocket!.write(Buffer.alloc(64));
+    rawSocket!.destroy();
+
+    const socketClosed = Promise.withResolvers<void>();
+    if (rawSocket!.closed) {
+      socketClosed.resolve();
+    } else {
+      rawSocket!.once("close", () => socketClosed.resolve());
+    }
+    await socketClosed.promise;
+    await clientClosed.promise;
+
+    netServer.close();
+  });
+
   test("no crash when session.close() precedes rawSocket.destroy()", async () => {
     let rawSocket: net.Socket | undefined;
     let h2Session: http2.Http2Session | undefined;

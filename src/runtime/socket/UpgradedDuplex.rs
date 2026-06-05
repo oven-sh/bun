@@ -136,14 +136,29 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
-        // Zig: `defer this.deinit();` — runs after the two calls below.
 
         (this.handlers.on_close)(this.handlers.ctx);
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 
-        // Early teardown (Zig calls deinit explicitly here; struct itself is dropped later by parent).
-        this.teardown();
+        // PORT NOTE: Zig ran `defer this.deinit()` here, destroying the
+        // SSLWrapper in place. We are reached from
+        // `SSLWrapper::trigger_close_callback`, i.e. there are still
+        // `&mut SSLWrapper` frames (`flush` / `handle_traffic` /
+        // `handle_reading` / `shutdown`) on the stack below us that read
+        // `self.ssl` after we return. Writing `self.wrapper = None` here makes
+        // the niche-optimized `Option<SSLWrapper>` payload uninitialized, so
+        // those re-reads observe garbage instead of `None` and pass a wild
+        // `SSL*` to BoringSSL. Teardown is deferred to the owner: `on_close`
+        // above ran `DuplexUpgradeContext::on_close`, which always enqueues
+        // `deinit_in_next_tick()`; the next-tick Close task drops the
+        // `DuplexUpgradeContext`, whose `Drop for UpgradedDuplex` runs
+        // `teardown()` once no SSLWrapper frame is live. Until then every
+        // re-entry is inert: `closed_notified` is already set (it gates
+        // `handle_traffic` and every data/write/handshake/close callback,
+        // including the ones a re-entrant `shutdown()` would fire), `ssl` is
+        // still a valid pointer, and the `DuplexUpgradeContext` already
+        // nulled its `tls`.
     }
 
     fn call_write_or_end(&mut self, data: Option<&[u8]>, msg_more: bool) {
@@ -479,7 +494,11 @@ impl UpgradedDuplex {
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
 
-    /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
+    /// Side-effecting teardown, run from `Drop` when the owning
+    /// `DuplexUpgradeContext` is freed by its next-tick Close task. Must NOT
+    /// run while any `&mut SSLWrapper` frame is on the stack (see `on_close`):
+    /// `self.wrapper = None` drops the wrapper in place and leaves the
+    /// niche-optimized `Option` payload uninitialized.
     /// Idempotent — resets to empty state. Not the public API; callers drop the struct.
     fn teardown(&mut self) {
         bun_output::scoped_log!(UpgradedDuplex, "deinit");

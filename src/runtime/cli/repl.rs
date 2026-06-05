@@ -845,7 +845,6 @@ pub(super) struct Repl<'a> {
     is_tty: bool,
     use_colors: bool,
     terminal_width: u16,
-    terminal_height: u16,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -881,7 +880,6 @@ impl<'a> Repl<'a> {
             is_tty: false,
             use_colors: false,
             terminal_width: 80,
-            terminal_height: 24,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -922,12 +920,7 @@ impl<'a> Repl<'a> {
         // Check for NO_COLOR
         self.use_colors = !env_var::NO_COLOR.get().unwrap_or(false);
 
-        // Get terminal size
-        let ts = Output::TERMINAL_SIZE.load();
-        if ts.col > 0 {
-            self.terminal_width = ts.col;
-            self.terminal_height = ts.row;
-        }
+        self.update_terminal_size();
 
         // Enable raw mode
         #[cfg(unix)]
@@ -946,6 +939,21 @@ impl<'a> Repl<'a> {
                 },
             )
             .ok();
+        }
+    }
+
+    /// Query the live terminal width (TIOCGWINSZ / console buffer info).
+    /// Called on every prompt redraw so resizing the terminal mid-session is
+    /// picked up without a SIGWINCH handler. Keeps the last known width when
+    /// the query fails.
+    fn update_terminal_size(&mut self) {
+        if !self.is_tty {
+            return;
+        }
+        if let Some(ws) = bun_core::output::File::from(Fd::stdout()).winsize() {
+            if ws.col > 0 {
+                self.terminal_width = ws.col;
+            }
         }
     }
 
@@ -1163,9 +1171,11 @@ impl<'a> Repl<'a> {
         2 // "> " or "\u{276f} "
     }
 
-    fn refresh_line(&self) {
+    fn refresh_line(&mut self) {
         // Flush any buffered output (e.g., from console.log in JS) before drawing prompt
         Output::flush();
+
+        self.update_terminal_size();
 
         let prompt = self.get_prompt();
         let prompt_len = self.get_prompt_length();

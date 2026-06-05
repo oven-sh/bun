@@ -45,15 +45,18 @@ async function withTerminalRepl(
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
+    rawOutput: () => string;
   }) => Promise<void>,
+  options: { cols?: number; rows?: number } = {},
 ) {
+  const { cols = 120, rows = 40 } = options;
   const received: string[] = [];
   let cursor = 0;
   let resolveWaiter: (() => void) | null = null;
 
   await using terminal = new Bun.Terminal({
-    cols: 120,
-    rows: 40,
+    cols,
+    rows,
     data(_term, data) {
       const str = Buffer.from(data).toString();
       received.push(str);
@@ -101,10 +104,11 @@ async function withTerminalRepl(
   };
 
   const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, allOutput });
+  await fn({ terminal, proc, send, waitFor, allOutput, rawOutput });
 
   // Clean exit
   send(".exit\n");
@@ -1077,6 +1081,61 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(/\u276f|> /);
       send("test()\n");
       await waitFor("99");
+    });
+  });
+
+  // The REPL repositions the cursor after each redraw with `\r` + CUF
+  // (ESC [ n C) only when `prompt + line` fits the terminal width. These
+  // tests pin that the width comes from the live PTY, not a hardcoded 80.
+  // https://github.com/oven-sh/bun/issues/31897
+  describe("terminal width", () => {
+    test("cursor reposition uses the real width when wider than 80", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // prompt "> " (2) + 90 chars = cursor_pos 92: fits in 120 columns,
+          // so the REPL must emit ESC[92C. A REPL pinned to width 80 skips it.
+          send(Buffer.alloc(90, "a").toString());
+          await waitFor("\x1b[92C");
+        },
+        { cols: 120 },
+      );
+    });
+
+    test("no out-of-bounds cursor reposition on a terminal narrower than 80", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor, rawOutput }) => {
+          // 60 chars put cursor_pos at 62, past the 40-column width; emitting
+          // ESC[62C would land the cursor on the wrapped row (and the next
+          // redraw would clear the wrong row). A REPL pinned to 80 emits it.
+          send(Buffer.alloc(60, "a").toString());
+          await waitFor(Buffer.alloc(60, "a").toString());
+          // Ctrl+A repositions to column 2; once that arrives, every redraw
+          // from the 60 keystrokes has been received.
+          send("\x01");
+          await waitFor("\x1b[2C");
+          expect(rawOutput()).toContain("\x1b[39C"); // in-bounds repositions still happen
+          expect(rawOutput()).not.toContain("\x1b[62C");
+        },
+        { cols: 40 },
+      );
+    });
+
+    test("re-reads the width after the terminal is resized", async () => {
+      await withTerminalRepl(
+        async ({ terminal, send, waitFor, rawOutput }) => {
+          // At 60 columns, cursor_pos 92 is out of bounds: no reposition.
+          send(Buffer.alloc(90, "a").toString());
+          await waitFor(Buffer.alloc(90, "a").toString());
+          expect(rawOutput()).not.toContain("\x1b[92C");
+
+          // After widening the PTY the same line fits (93 < 200), so the
+          // next keystroke's redraw must reposition again.
+          terminal.resize(200, 40);
+          send("a");
+          await waitFor("\x1b[93C");
+        },
+        { cols: 60 },
+      );
     });
   });
 });

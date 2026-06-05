@@ -3454,9 +3454,8 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a
+            // width; otherwise query stdout directly.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {

@@ -9352,10 +9352,32 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
         ypixel: ws.ws_ypixel,
     })
 }
-#[cfg(not(unix))]
-fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    // TODO(windows): GetConsoleScreenBufferInfo.
-    None
+#[cfg(windows)]
+fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
+    use crate::windows as w;
+    // SAFETY: all-zero is the documented pre-call state for the
+    // `GetConsoleScreenBufferInfo` out-param.
+    let mut csbi: w::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+    // SAFETY: `csbi` is a valid out-ptr; a non-console handle makes the call
+    // return FALSE, never UB.
+    if unsafe { w::kernel32::GetConsoleScreenBufferInfo(fd.native(), &mut csbi) } == w::FALSE {
+        return None;
+    }
+    // `srWindow` is the visible window rect (inclusive), matching what
+    // TIOCGWINSZ reports on POSIX; `dwSize` is the scrollback buffer.
+    let col = u16::try_from(i32::from(csbi.srWindow.Right) - i32::from(csbi.srWindow.Left) + 1)
+        .unwrap_or(0);
+    let row = u16::try_from(i32::from(csbi.srWindow.Bottom) - i32::from(csbi.srWindow.Top) + 1)
+        .unwrap_or(0);
+    if col == 0 {
+        return None;
+    }
+    Some(bun_core::Winsize {
+        row,
+        col,
+        xpixel: 0,
+        ypixel: 0,
+    })
 }
 
 // Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.

@@ -458,7 +458,15 @@ function assertExpectedPlatform() {
     process.exit(1);
   }
 
-  !isQuiet && console.log("Platform check:", checks.filter(([, e]) => e).map(([k, e]) => `${k}=${e}`).join(" "), "(ok)");
+  !isQuiet &&
+    console.log(
+      "Platform check:",
+      checks
+        .filter(([, e]) => e)
+        .map(([k, e]) => `${k}=${e}`)
+        .join(" "),
+      "(ok)",
+    );
 }
 
 async function runTests() {

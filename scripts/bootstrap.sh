@@ -1911,6 +1911,68 @@ ensure_no_tmpfs() {
 	execute_sudo systemctl mask tmp.mount
 }
 
+prefetch_puppeteer_browsers() {
+	# CI-only: bake a complete puppeteer browser cache into the image so test
+	# jobs never download Chrome at test time. Fresh images otherwise leave the
+	# first puppeteer postinstall racing per-test timeouts — a killed download
+	# strands a partial ~/.cache/puppeteer (browser folder without the
+	# executable) that every retry then trips over with "browser folder exists
+	# but the executable is missing" (next-pages tests, all lanes).
+	#
+	# The version must match test/integration/next-pages/package.json's
+	# puppeteer pin. Drift is safe: a mismatched pin just misses the cache and
+	# tests fall back to downloading, which is today's behavior.
+	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+	case "$os" in
+	linux) ;;
+	*) return ;;
+	esac
+
+	puppeteer_version="24.16.0"
+	bun_path="$(require bun)"
+	pptr_dir="$(create_tmp_directory)"
+	cat << EOF > "$pptr_dir/package.json"
+{ "name": "pptr-warm", "dependencies": { "puppeteer": "$puppeteer_version" } }
+EOF
+
+	# PUPPETEER_SKIP_DOWNLOAD: do NOT let the postinstall download the
+	# browsers. puppeteer's install.mjs fires downloadBrowsers() without
+	# awaiting it (still true as of 25.1.0), so the postinstall exits
+	# silently — success exit code, no error — whenever the event loop
+	# momentarily drains mid-download/extract, stranding exactly the partial
+	# cache this function exists to prevent. Reproduces with both bun and
+	# node. Instead install the package, then run the installer ourselves
+	# with the promise awaited.
+	#
+	# HOME pinned to the agent home so puppeteer's cache (os.homedir()/.cache/
+	# puppeteer) lands where test jobs will look for it.
+	if ! (cd "$pptr_dir" && HOME="$home" PUPPETEER_SKIP_DOWNLOAD=1 execute "$bun_path" install); then
+		error "puppeteer install failed during browser prefetch"
+	fi
+	if ! (cd "$pptr_dir" && HOME="$home" execute "$bun_path" -e 'const { downloadBrowsers } = await import("puppeteer/internal/node/install.js"); await downloadBrowsers();'); then
+		error "puppeteer browser prefetch failed — refusing to bake an image with a partial browser cache"
+	fi
+
+	# Verify the cache is complete: every installed browser dir must contain
+	# an executable. A folder without one is exactly the poisoned state the
+	# tests die on — better to fail the bake loudly here with real logs.
+	for browser_dir in "$home/.cache/puppeteer/chrome" "$home/.cache/puppeteer/chrome-headless-shell"; do
+		if ! [ -d "$browser_dir" ]; then
+			error "puppeteer prefetch verification failed: $browser_dir missing"
+		fi
+		for install_dir in "$browser_dir"/*/; do
+			if ! find "$install_dir" -type f \( -name chrome -o -name chrome-headless-shell \) -perm -u+x | grep -q .; then
+				error "puppeteer prefetch verification failed: no executable under $install_dir"
+			fi
+		done
+	done
+
+	grant_to_user "$home/.cache"
+	execute_sudo rm -rf "$pptr_dir"
+}
+
 prefetch_build_deps() {
 	# CI-only: bake a read-only download cache for scripts/build/download.ts
 	# (BUN_BUILD_PREFETCH_DIR). Everything is content-addressed by URL/identity,
@@ -1998,6 +2060,7 @@ main() {
 	install_chromium
 	install_fuse_python
 	install_age
+	prefetch_puppeteer_browsers
 	prefetch_build_deps
 	if [ "${BUN_NO_CORE_DUMP:-0}" != "1" ]; then
 		configure_core_dumps

@@ -266,7 +266,7 @@ class Worker extends EventEmitter {
     // Tracing active (CLI flag or dynamic enable): record the Node-style
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
-    require("internal/trace_events").emitWorkerThreadName(options.name);
+    require("internal/trace_events").emitWorkerThreadName(options.name, this.#worker.threadId);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));

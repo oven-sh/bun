@@ -26,11 +26,8 @@ let tid = 1;
 let initialTitle: string | undefined;
 let filePattern: string | null = null;
 let nextAsyncId = 2;
-// Sequential per-process worker ids for __metadata thread_name events
-// ("[worker 1] WorkerThread"). Node starts at 1.
-let nextWorkerId = 1;
 // Synthetic tid for the PlatformWorkerThread __metadata row. Worker rows use
-// tid + workerId (first worker = 2), so keep this far out of that range to
+// threadId + 1 (first worker = 2), so keep this far out of that range to
 // avoid clobbering a worker's thread_name in last-wins trace viewers.
 const kPlatformWorkerTid = 0x7fffffff;
 // Set by CLI init and node:trace_events enable; left false for
@@ -381,25 +378,31 @@ function emitMetadata(target: object[] = events) {
 
 // Called from the node:worker_threads Worker constructor: when tracing is
 // active, record the Node-style worker thread-name metadata event
-// (`[worker N] <name || 'WorkerThread'>`). No-op (and no id consumed) while
-// tracing is off, so untraced worker spawns stay free.
-function emitWorkerThreadName(name: unknown) {
+// (`[worker N] <name || 'WorkerThread'>`). No-op while tracing is off, so
+// untraced worker spawns stay free. `threadId` is the spawned worker's
+// actual global thread id (Node prints its `thread_id_` the same way), so
+// the row lands on the same tid the worker's own events use
+// (initFromCli sets the worker VM's tid to threadId + 1) — a per-VM
+// counter would drift for nested workers or workers spawned before
+// tracing activated.
+function emitWorkerThreadName(name: unknown, threadId: number) {
   if (!activated) return;
-  const id = nextWorkerId++;
   events.push({
     pid: process.pid,
-    tid: tid + id,
+    tid: threadId + 1,
     ts: 0,
     ph: "M",
     cat: "__metadata",
     name: "thread_name",
-    args: { name: `[worker ${id}] ${typeof name === "string" && name.length !== 0 ? name : "WorkerThread"}` },
+    args: { name: `[worker ${threadId}] ${typeof name === "string" && name.length !== 0 ? name : "WorkerThread"}` },
   });
 }
 
 // inspector NodeTracing domain (dynamic enable over the protocol). Events
-// recorded while the session window is open are handed back to the session
-// at stop (removed from the file buffer) instead of being written at exit.
+// matching the session's categories recorded while its window is open are
+// handed back to the session at stop (removed from the file buffer) instead
+// of being written at exit; events recorded for concurrent consumers (CLI
+// flag / createTracing) stay in the file buffer.
 let inspectorCategories: string[] | null = null;
 let inspectorStartIndex = 0;
 
@@ -411,12 +414,41 @@ function inspectorStart(categories: string[]): boolean {
   return true;
 }
 
+// True when any comma-separated component of `cat` is in `set`.
+function eventMatchesCategories(cat: string, set: Set<string>): boolean {
+  if (set.$has(cat)) return true;
+  if (!cat.includes(",")) return false;
+  for (const part of cat.split(",")) {
+    if (set.$has(part)) return true;
+  }
+  return false;
+}
+
 function inspectorStop(): { collected: object[]; metadata: object[] } {
-  let collected: object[] = [];
+  const collected: object[] = [];
   if (inspectorCategories !== null) {
+    const sessionCats = new Set(inspectorCategories);
     disableCategories(inspectorCategories);
     inspectorCategories = null;
-    collected = events.splice(inspectorStartIndex, events.length - inspectorStartIndex);
+    // Partition the events recorded during the session window instead of
+    // splicing it wholesale: events the session requested go to the
+    // inspector; events recorded for a concurrent consumer (CLI flag /
+    // createTracing) stay in the file buffer — the session must not leave a
+    // hole in node_trace.*.log. An event matching both is delivered to both.
+    const kept: object[] = [];
+    for (let i = inspectorStartIndex; i < events.length; i++) {
+      const event = events[i] as { cat: string };
+      const forSession = eventMatchesCategories(event.cat, sessionCats);
+      if (forSession) collected.push(event);
+      // Keep unless the session was the only consumer: either it wasn't for
+      // the session at all, or its categories are still refcounted-enabled
+      // by someone else now that the session's refs were dropped.
+      if (!forSession || isCategoryGroupEnabled(event.cat)) kept.push(event);
+    }
+    events.length = inspectorStartIndex;
+    for (const event of kept) {
+      events.push(event);
+    }
   }
   const metadata: object[] = [];
   emitMetadata(metadata);
@@ -717,6 +749,10 @@ function installRejectionInstrumentation() {
   let unhandled = 0;
   let handledAfter = 0;
   function emitRejectionsCounter() {
+    // The process listeners stay installed after a dynamic disable (removing
+    // them would flip unhandled-rejection semantics mid-program), so gate
+    // emission per-call like every other emitter in this file.
+    if (!isCategoryGroupEnabled(kRejectionsCat)) return;
     events.push({
       pid: process.pid,
       tid,

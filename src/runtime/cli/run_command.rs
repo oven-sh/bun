@@ -2986,8 +2986,16 @@ impl RunCommand {
                         Output::flush();
                         Global::exit(0);
                     }
+                    // "Cannot find" is only true for ENOENT; EISDIR/EACCES/etc.
+                    // found the path but could not read it.
+                    let verb: &[u8] = if err.get_errno() == sys::E::ENOENT {
+                        b"find module"
+                    } else {
+                        b"read"
+                    };
                     pretty_errorln!(
-                        "<r><red>error<r><d>:<r> Cannot find module {} ({})",
+                        "<r><red>error<r><d>:<r> Cannot {} {} ({})",
+                        bstr::BStr::new(verb),
                         bun_core::fmt::quote(&entry),
                         bstr::BStr::new(err.name()),
                     );

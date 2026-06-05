@@ -567,3 +567,27 @@ for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0
     await Promise.all([close_resolvers.promise, readable_resolvers.promise]);
   });
 }
+
+it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG_VALUE RangeError", async () => {
+  // Regression: ERR_INVALID_ARG_VALUE_RangeError had no case in
+  // jsFunctionMakeErrorWithCode's switch, so the thrown error's message was
+  // just the property name instead of node's formatted message.
+  const script = `
+    const { text, from } = require("node:stream/iter");
+    text(from("hello"), { encoding: "not-a-real-encoding" }).then(
+      () => console.log("FAIL: resolved"),
+      err => console.log([err.name, err.code, err.message].join("|")),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(
+    "RangeError|ERR_INVALID_ARG_VALUE|The property 'options.encoding' is invalid. Received 'not-a-real-encoding'",
+  );
+  expect(exitCode).toBe(0);
+});

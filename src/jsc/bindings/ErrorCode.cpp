@@ -1540,7 +1540,7 @@ static JSC::JSValue ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalOb
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, msg);
 }
 
-static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason)
+static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, JSC::JSValue reason, ErrorCode code = ErrorCode::ERR_INVALID_ARG_VALUE)
 {
     ASSERT(name.isString());
     auto* jsNameString = name.toString(globalObject);
@@ -1566,7 +1566,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
         builder.append(" is invalid. Received "_s);
         JSValueToStringSafe(globalObject, builder, value, true);
         RETURN_IF_EXCEPTION(throwScope, {});
-        return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+        return createError(globalObject, code, builder.toString());
     }
 
     auto* jsReasonString = reason.toString(globalObject);
@@ -1580,7 +1580,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     builder.append(". Received "_s);
     JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
-    return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
+    return createError(globalObject, code, builder.toString());
 }
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, BunString* message)
@@ -1775,6 +1775,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         JSValue arg1 = callFrame->argument(2);
         JSValue arg2 = callFrame->argument(3);
         return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
+    }
+
+    case Bun::ErrorCode::ERR_INVALID_ARG_VALUE_RangeError: {
+        JSValue arg0 = callFrame->argument(1);
+        JSValue arg1 = callFrame->argument(2);
+        JSValue arg2 = callFrame->argument(3);
+        return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2, ErrorCode::ERR_INVALID_ARG_VALUE_RangeError));
     }
 
     case Bun::ErrorCode::ERR_STREAM_ITER_MISSING_FLAG: {

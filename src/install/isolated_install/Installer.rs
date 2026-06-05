@@ -108,6 +108,15 @@ pub struct Installer<'a> {
     pub trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
+    /// Package ids whose store entries an active `bun link` overrides: the
+    /// resolutions of root/workspace direct dependencies whose resolved name
+    /// is link-registered. Name-only matching would stamp the producer tree
+    /// into every version of the name in the lockfile; this keeps transitive
+    /// different-version copies registry-sourced (hoisted-linker parity).
+    /// Built on the main thread before tasks spawn and only read
+    /// concurrently afterwards.
+    pub linked_pkg_ids: DynamicBitSet,
+
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
     /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
@@ -1058,20 +1067,26 @@ impl Task {
                         }
 
                         tag => {
-                            // If an active `bun link` is registered for this package name
-                            // and the user did not opt into the symlink backend, source
-                            // the body from the producer dir instead of the registry
-                            // tarball cache. Under isolated linking the top-level
-                            // symlink-only contract isn't available, so without this the
-                            // `.bun/<storepath>` body stays pinned to the (stale) tarball
-                            // cache while the top-level symlink points at the producer.
+                            // If an active `bun link` overrides this store entry
+                            // (direct-dep resolution of a link-registered name; see
+                            // `linked_pkg_ids`) and the user did not opt into the symlink
+                            // backend, source the body from the producer dir instead of
+                            // the registry tarball cache. Under isolated linking the
+                            // top-level symlink-only contract isn't available, so without
+                            // this the `.bun/<storepath>` body stays pinned to the
+                            // (stale) tarball cache while the top-level symlink points at
+                            // the producer. The bitset gate also keeps transitive
+                            // same-name entries at other versions registry-sourced even
+                            // when the task was started for unrelated reasons (fresh
+                            // `.bun`, force install).
                             //
                             // Relaxed load of `supported_backend` is okay because it's an
                             // optimization hint; a stale read is harmless (same rationale
                             // as the cache-backend switch further down).
-                            if InstallMethod::from_u8(
-                                installer.supported_backend.load(Ordering::Relaxed),
-                            ) != InstallMethod::Symlink
+                            if installer.linked_pkg_ids.is_set(pkg_id as usize)
+                                && InstallMethod::from_u8(
+                                    installer.supported_backend.load(Ordering::Relaxed),
+                                ) != InstallMethod::Symlink
                             {
                                 let mut linked_buf = PathBuffer::uninit();
                                 let producer_path_opt = {

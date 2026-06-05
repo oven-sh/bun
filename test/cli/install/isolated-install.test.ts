@@ -2373,6 +2373,52 @@ describe("bun link integration", () => {
     expect(existsSync(join(bodyDir, "marker.js"))).toBe(false);
   });
 
+  test.skipIf(isWindows)(
+    "isolated: link overrides only the direct-dep resolution, not other versions of the name",
+    async () => {
+      using home = tempDir("link-home-", {});
+      const env = hermeticEnv(String(home));
+      using producer = await setupLinkedNoDeps(env);
+
+      const { packageJson, packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+      });
+      // `one-dep@1.0.0` depends on `no-deps@1.0.1`, so the lockfile resolves
+      // two versions of the linked name: 1.0.0 (direct) and 1.0.1
+      // (transitive). Only the direct resolution may take the producer body —
+      // stamping it into the transitive copy would hand `one-dep` a version
+      // it never asked for (hoisted-linker parity: `npm link` only replaces
+      // the top-level `node_modules/<name>`).
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "isolated-link-consumer-multiversion",
+          dependencies: { "no-deps": "1.0.0", "one-dep": "1.0.0" },
+        }),
+      );
+
+      await using p = spawn({
+        cmd: [bunExe(), "install", "--backend=hardlink"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const directBody = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+      const transitiveBody = join(packageDir, "node_modules", ".bun", "no-deps@1.0.1", "node_modules", "no-deps");
+      // Direct resolution: producer body.
+      expect(existsSync(join(directBody, "marker.js"))).toBe(true);
+      // Transitive different-version copy: registry tarball, no marker.
+      expect(existsSync(join(transitiveBody, "package.json"))).toBe(true);
+      expect(existsSync(join(transitiveBody, "marker.js"))).toBe(false);
+      void producer;
+    },
+  );
+
   // Capability: the installed entry must reflect what a published package
   // would contain — NOT the producer's working tree.
   //

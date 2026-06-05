@@ -239,6 +239,68 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
+    // Store entries an active `bun link` overrides: the resolutions of root /
+    // workspace *direct* dependencies whose resolved package name is
+    // link-registered. Keying the override on name alone would stamp the
+    // producer's working tree into every `.bun/<name>@<ver>/` entry in the
+    // lockfile — when the tree contains the linked name at more than one
+    // version (direct `react@18` plus a transitive `react@16`), the
+    // mismatched copies would break at runtime. The hoisted linker only ever
+    // replaces the top-level `node_modules/<name>`; gating on direct-dep
+    // resolutions preserves that: transitive different-version copies keep
+    // their registry bytes.
+    let linked_pkg_ids: DynamicBitSet = {
+        let mut set = DynamicBitSet::init_empty(lockfile.packages.len())?;
+        let any_links = if cfg!(windows) {
+            manager.linked_names_any_on_windows
+        } else {
+            !manager.linked_names.is_empty()
+        };
+        if any_links
+            && PackageInstall::supported_method() != crate::package_install::Method::Symlink
+        {
+            let pkgs = lockfile.packages.slice();
+            let pkg_dependency_slices = pkgs.items_dependencies();
+            let pkg_names = pkgs.items_name();
+            let resolutions = &lockfile.buffers.resolutions[..];
+            let dependencies = &lockfile.buffers.dependencies[..];
+            let string_buf = &lockfile.buffers.string_bytes[..];
+
+            // Root first, then every workspace package root declares.
+            let mut scan_targets: Vec<usize> = vec![0];
+            for dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
+                if !dependencies[dep_idx as usize].behavior.is_workspace() {
+                    continue;
+                }
+                let res = resolutions[dep_idx as usize];
+                if res != invalid_package_id {
+                    scan_targets.push(res as usize);
+                }
+            }
+            for pid in scan_targets {
+                for dep_idx in
+                    pkg_dependency_slices[pid].begin()..pkg_dependency_slices[pid].end()
+                {
+                    let res = resolutions[dep_idx as usize];
+                    if res == invalid_package_id || set.is_set(res as usize) {
+                        continue;
+                    }
+                    let mut link_buf = PathBuffer::uninit();
+                    if crate::package_manager_real::directories::linked_package_path_mut(
+                        manager,
+                        pkg_names[res as usize].slice(string_buf),
+                        &mut link_buf,
+                    )
+                    .is_some()
+                    {
+                        set.set(res as usize);
+                    }
+                }
+            }
+        }
+        set
+    };
+
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
         let pkgs = lockfile.packages.slice();
@@ -1301,25 +1363,14 @@ pub(crate) fn install_isolated_packages(
                                 // poison every other consumer on the machine that
                                 // resolves the same lockfile closure, and the
                                 // override's pre-delete would wipe the shared
-                                // entry under them. Force linked packages
-                                // project-local. Gated on the backend:
-                                // `--backend=symlink` skips the override entirely,
-                                // so the risk doesn't exist there and
-                                // ineligibility would needlessly cascade to every
-                                // transitive consumer.
-                                if PackageInstall::supported_method()
-                                    != crate::package_install::Method::Symlink
-                                {
-                                    let mut link_buf = PathBuffer::uninit();
-                                    if crate::package_manager_real::directories::linked_package_path_mut(
-                                        manager,
-                                        pkg_names[pkg_id as usize].slice(string_buf),
-                                        &mut link_buf,
-                                    )
-                                    .is_some()
-                                    {
-                                        break 'eligible false;
-                                    }
+                                // entry under them. Force link-overridden
+                                // packages project-local. `linked_pkg_ids` is
+                                // already empty under `--backend=symlink` (the
+                                // override never fires there) and contains only
+                                // direct-dep resolutions, so transitive
+                                // same-name entries keep GVS eligibility.
+                                if linked_pkg_ids.is_set(pkg_id as usize) {
+                                    break 'eligible false;
                                 }
                                 break 'eligible true;
                             }
@@ -2083,6 +2134,7 @@ pub(crate) fn install_isolated_packages(
                     bun_core::ZStr::from_slice_with_nul(b)
                 }),
             global_store_tmp_suffix: fast_random(),
+            linked_pkg_ids,
             summary: Default::default(),
             task_queue: Default::default(),
         };
@@ -2227,39 +2279,15 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    // An active `bun link` for this package name means the
-                    // producer dir is the source of truth — override the
-                    // cache-based materialization regardless of whether the
-                    // store dir already exists. Only fires when the user
-                    // didn't opt into the symlink-only backend.
-                    let has_active_link = {
-                        if PackageInstall::supported_method()
-                            == crate::package_install::Method::Symlink
-                        {
-                            false
-                        } else {
-                            let mut link_buf = paths::PathBuffer::uninit();
-                            // Main-thread path: use the `&mut` entry point so
-                            // the Windows GetFileAttributesW fallback can
-                            // lazy-initialize the global link dir if needed.
-                            // Worker threads use the read-only companion.
-                            //
-                            // Borrow carefully: reach manager/string_buf through
-                            // `installer.manager_mut()` + `pkg_name.slice(string_buf)`
-                            // rather than the bare `manager` / `lockfile.str(&pkg_name)`,
-                            // matching the convention noted at the top of this
-                            // loop (lines 2106-2110). A direct `manager` reborrow
-                            // pops the `manager_ptr` tag stored on installer and
-                            // invalidates every later `installer.manager_mut()`
-                            // call in this loop iteration and beyond.
-                            crate::package_manager_real::directories::linked_package_path_mut(
-                                installer.manager_mut(),
-                                pkg_name.slice(string_buf),
-                                &mut link_buf,
-                            )
-                            .is_some()
-                        }
-                    };
+                    // An active `bun link` whose direct-dep resolution is this
+                    // entry means the producer dir is the source of truth —
+                    // override the cache-based materialization regardless of
+                    // whether the store dir already exists. `linked_pkg_ids`
+                    // was built on the main thread before the installer
+                    // (empty under `--backend=symlink`; direct-dep
+                    // resolutions only, so transitive same-name entries at
+                    // other versions keep their registry bytes).
+                    let has_active_link = installer.linked_pkg_ids.is_set(pkg_id as usize);
 
                     // An entry that lost global-store eligibility since the
                     // previous install (newly patched, newly trusted, a dep

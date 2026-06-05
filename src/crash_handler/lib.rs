@@ -384,6 +384,7 @@ pub mod debug {
 
         type SymInitializeWFn =
             unsafe extern "system" fn(process: HANDLE, search_path: *const u16, invade: i32) -> i32;
+        type SymGetOptionsFn = unsafe extern "system" fn() -> u32;
         type SymSetOptionsFn = unsafe extern "system" fn(options: u32) -> u32;
         type SymFromAddrWFn = unsafe extern "system" fn(
             process: HANDLE,
@@ -432,11 +433,13 @@ pub mod debug {
             let get = |name: &bun_core::ZStr| bun_sys::windows::GetProcAddressA(Some(lib), name);
             let (
                 Some(sym_initialize_w),
+                Some(sym_get_options),
                 Some(sym_set_options),
                 Some(sym_from_addr_w),
                 Some(sym_get_line_from_addr_w64),
             ) = (
                 get(bun_core::zstr!("SymInitializeW")),
+                get(bun_core::zstr!("SymGetOptions")),
                 get(bun_core::zstr!("SymSetOptions")),
                 get(bun_core::zstr!("SymFromAddrW")),
                 get(bun_core::zstr!("SymGetLineFromAddrW64")),
@@ -446,9 +449,16 @@ pub mod debug {
             };
             // SAFETY: pointers resolved from dbghelp.dll under these exported
             // names; signatures per dbghelp.h.
-            let (sym_initialize_w, sym_set_options, sym_from_addr_w, sym_get_line_from_addr_w64) = unsafe {
+            let (
+                sym_initialize_w,
+                sym_get_options,
+                sym_set_options,
+                sym_from_addr_w,
+                sym_get_line_from_addr_w64,
+            ) = unsafe {
                 (
                     core::mem::transmute::<*mut c_void, SymInitializeWFn>(sym_initialize_w),
+                    core::mem::transmute::<*mut c_void, SymGetOptionsFn>(sym_get_options),
                     core::mem::transmute::<*mut c_void, SymSetOptionsFn>(sym_set_options),
                     core::mem::transmute::<*mut c_void, SymFromAddrWFn>(sym_from_addr_w),
                     core::mem::transmute::<*mut c_void, SymGetLineFromAddrW64Fn>(
@@ -456,10 +466,15 @@ pub mod debug {
                     ),
                 )
             };
-            // SAFETY: plain bitmask. Must precede SymInitializeW so the
-            // options apply to the initial module enumeration.
+            // SAFETY: plain bitmask. SymSetOptions replaces the process-global
+            // mask, so OR into the existing options (another in-process user,
+            // e.g. std::backtrace, may have configured dbghelp already). Must
+            // precede SymInitializeW so the options apply to the initial
+            // module enumeration.
             unsafe {
-                sym_set_options(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+                sym_set_options(
+                    sym_get_options() | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES,
+                );
             }
             let process = bun_sys::windows::kernel32::GetCurrentProcess();
             // SAFETY: current-process pseudo-handle; null search path =
@@ -3816,12 +3831,9 @@ mod draft {
                             out_stream.write_all(b"^\n")?;
                         }
                     }
-                    Err(e)
-                        if e == bun_core::err!("EndOfFile")
-                            || e == bun_core::err!("FileNotFound")
-                            || e == bun_core::err!("BadPathName")
-                            || e == bun_core::err!("AccessDenied") => {}
-                    Err(e) => return Err(e),
+                    // The source preview is best-effort: the PDB/DWARF path may
+                    // not exist on this machine. Never abort the trace over it.
+                    Err(_) => {}
                 }
             }
         }
@@ -3938,7 +3950,8 @@ mod draft {
         }
         // expand the highlight to one word
         let mut left = (source_location.column as usize).saturating_sub(1);
-        let mut right = left + 1;
+        // Clamp: column 0 on an empty line would otherwise slice [0..1).
+        let mut right = (left + 1).min(line_without_newline.len());
         while left > 0 {
             match line_without_newline[left] {
                 b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b' ' | b'\t' => break,

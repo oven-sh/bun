@@ -86,11 +86,7 @@ async function runGc(fixture: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const cleanedStderr = stderr
-    .split("\n")
-    .filter(line => line && !line.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  return { stdout, stderr: cleanedStderr, exitCode };
+  return { stdout, stderr, exitCode };
 }
 
 test.concurrent("brotli: estimatedSize during GC while a stream is live exits cleanly", async () => {

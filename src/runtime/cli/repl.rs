@@ -1239,9 +1239,8 @@ impl<'a> Repl<'a> {
         // Position cursor. The cursor is a byte offset, but the terminal column
         // is the display width of the text before it, so multi-byte UTF-8 and
         // wide (e.g. CJK) characters advance the column correctly.
-        let cursor_col = strings::visible::width::exclude_ansi_colors::utf8(
-            &line[..self.line_editor.cursor],
-        );
+        let cursor_col =
+            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
         let cursor_pos = prompt_len + cursor_col;
         if cursor_pos < self.terminal_width as usize {
             self.write(b"\r");

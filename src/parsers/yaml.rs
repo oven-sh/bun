@@ -882,11 +882,8 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 }
 
-// `String.Builder` — owns the pending-whitespace buffer and a read-only view
-// of the input, so it never needs a back-reference into the parser. The
-// parser keeps a reusable `whitespace_buf` Vec for capacity reuse:
-// `Parser::string_builder()` moves it into the builder and
-// `StringBuilder::done()` returns it (cleared).
+// Plain-scalar string builder. `whitespace_buf` is taken from the parser by
+// `string_builder()` and returned by `done()` for capacity reuse.
 pub struct StringBuilder<'i, Enc: Encoding> {
     input: &'i [Enc::Unit],
     whitespace_buf: Vec<Whitespace<Enc>>,
@@ -915,8 +912,6 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
     }
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
-        // take ownership of buf, process, clear, put back (keeps capacity and
-        // sidesteps a simultaneous `&self.whitespace_buf` + `&mut self.str`).
         let buf = core::mem::take(&mut self.whitespace_buf);
         let input = self.input;
         for ws in &buf {
@@ -1083,8 +1078,7 @@ impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
         self.str.len()
     }
 
-    /// Finishes the builder, returning the built string and handing the
-    /// (cleared) whitespace buffer back to the parser for capacity reuse.
+    /// Returns the built string and hands the whitespace buffer back to the parser.
     pub fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
         self.whitespace_buf.clear();
         parser.whitespace_buf = core::mem::take(&mut self.whitespace_buf);
@@ -1104,8 +1098,6 @@ pub enum FirstChar {
     Other,
 }
 
-// Holds no parser back-reference: methods that need parser state take
-// `&Parser`/`&mut Parser` as an explicit argument.
 pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub str_builder: StringBuilder<'i, Enc>,
 
@@ -2357,9 +2349,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub anchors: StringHashMap<Expr>,
     pub tag_handles: StringHashMap<()>,
 
-    /// Reusable backing storage for `StringBuilder`'s pending-whitespace
-    /// buffer; moved into the builder by `string_builder()` and handed back
-    /// (cleared) by `StringBuilder::done()`. Empty while a builder is live.
+    /// Backing storage lent to `StringBuilder`; empty while a builder is live.
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub stack_check: StackCheck,
@@ -4422,9 +4412,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    /// Creates a `StringBuilder` over this parser's input. The reusable
-    /// `whitespace_buf` is moved into the builder (for capacity reuse);
-    /// `StringBuilder::done()` hands it back cleared.
     fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
         StringBuilder {
             input: self.input,
@@ -4439,10 +4426,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // ── scanPlainScalar ─────────────────────────────────────────────────────
     //
     // This is the largest function in the file: a labeled-switch state machine
-    // with an inner `ScalarResolverCtx`. The ctx holds no parser borrow — it
-    // owns the string builder (which owns the whitespace buffer and a shared
-    // view of the input), and every ctx method that needs parser state takes
-    // `&Parser`/`&mut Parser` explicitly.
+    // with an inner `ScalarResolverCtx`.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
         let mut ctx = ScalarResolverCtx::<Enc> {

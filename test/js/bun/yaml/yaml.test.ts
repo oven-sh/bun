@@ -4568,10 +4568,6 @@ test("bounds alias expansion for parsed and imported YAML documents", async () =
 }, 60_000);
 
 describe("plain scalar whitespace handling", () => {
-  // Exercises the plain-scalar string builder's pending-whitespace buffer:
-  // whitespace is buffered separately and only committed when a non-space
-  // character follows, so internal runs are preserved exactly while trailing
-  // runs and pre-newline runs are dropped.
   test("internal whitespace runs are preserved exactly", () => {
     expect(YAML.parse("key: word1   word2")).toEqual({ key: "word1   word2" });
     expect(YAML.parse("key: a \t b")).toEqual({ key: "a \t b" });

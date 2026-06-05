@@ -2326,10 +2326,14 @@ impl VirtualMachine {
         } else {
             &self.main
         };
-        bun_core::pretty_errorln!(
-            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
-            bstr::BStr::new(at),
-        );
+        // One warning line per stalled module (the C++ helper joins multiple
+        // specifiers with '\n'), matching Node's one-warning-per-module shape.
+        for module in at.split(|&b| b == b'\n') {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                bstr::BStr::new(module),
+            );
+        }
         bun_core::Output::flush();
         drop(stalled_utf8);
         stalled.deref();

@@ -873,10 +873,16 @@ pub fn reportUnsettledTopLevelAwait(this: *VirtualMachine) void {
     defer stalled.deref();
     const stalled_utf8 = stalled.toUTF8(bun.default_allocator);
     defer stalled_utf8.deinit();
-    Output.prettyErrorln(
-        "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{s}<r>",
-        .{if (stalled_utf8.len > 0) stalled_utf8.slice() else this.main},
-    );
+    const at = if (stalled_utf8.len > 0) stalled_utf8.slice() else this.main;
+    // One warning line per stalled module (the C++ helper joins multiple
+    // specifiers with '\n'), matching Node's one-warning-per-module shape.
+    var it = std.mem.splitScalar(u8, at, '\n');
+    while (it.next()) |module| {
+        Output.prettyErrorln(
+            "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{s}<r>",
+            .{module},
+        );
+    }
     Output.flush();
 }
 

@@ -170,6 +170,24 @@ describe("bun run: unsettled top-level await", () => {
     expect(r.exitCode).toBe(13);
   });
 
+  test("one warning line per stalled sibling module", async () => {
+    using dir = tempDir("issue-19049-siblings", {
+      "a.mjs": `await new Promise(() => {});`,
+      "b.mjs": `await new Promise(() => {});`,
+      "entry.mjs": `import "./a.mjs";\nimport "./b.mjs";`,
+    });
+    const r = await run({ cmd: [bunExe(), "entry.mjs"], cwd: String(dir) });
+    expect(r.signalCode).toBeNull();
+    // Both siblings are stalled on their own await; each gets its own
+    // warning line, like Node. (Module-map order is not source order, so
+    // don't assert which comes first.)
+    const warnings = r.stderr.split(/\r?\n/).filter(l => l.includes("Detected unsettled top-level await"));
+    expect(warnings).toHaveLength(2);
+    expect(warnings.join("\n")).toContain("a.mjs");
+    expect(warnings.join("\n")).toContain("b.mjs");
+    expect(r.exitCode).toBe(13);
+  });
+
   test("warns and exits with code 13 when a --preload has unsettled TLA", async () => {
     using dir = tempDir("issue-19049-preload", {
       "preload.mjs": `await new Promise(() => {});`,

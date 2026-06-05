@@ -53,15 +53,9 @@ pub struct FSWatcher {
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
     poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
-    /// Reference to the JS wrapper object. Held **weak** on purpose: the
-    /// wrapper's GC liveness is rooted by `has_pending_activity()`
-    /// (`pending_activity_count` starts at 1 and stays > 0 until `close()`/
-    /// `detach()`), never by this field. A `Strong` here would be a self-ref
-    /// cycle that pins the wrapper forever. `detach()` resets it to
-    /// `JsRef::empty()` (idempotent); every reader goes through `try_get()`.
-    /// Note `try_get()` only observes an explicit `detach()` clearing the
-    /// field — it cannot detect GC collection on its own; the finalize →
-    /// `detach()` ordering is what prevents a stale read.
+    /// JS wrapper object, held weak: the wrapper is rooted by
+    /// `has_pending_activity()` while the watcher is open; a strong ref here
+    /// would self-pin it forever. Cleared by `detach()`.
     js_this: JsCell<JsRef>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
@@ -743,8 +737,6 @@ impl FSWatcher {
         // `heap::take(this)`.
         let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
-        // Weak on purpose: `has_pending_activity()` roots the wrapper while
-        // the watcher is live; a Strong here would self-pin it forever.
         this_ref.js_this.set(JsRef::init_weak(js_this));
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
@@ -791,8 +783,6 @@ impl FSWatcher {
         // so both calls are inlined at the end of this function.
 
         err.ensure_still_alive();
-        // Copy the value out; the `&JsRef` borrow must not be held across the
-        // re-entrant listener call below (it may `close()` -> `detach()`).
         let js_this = self.js_this.get().try_get();
         if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
@@ -825,8 +815,6 @@ impl FSWatcher {
         }
         // Reshaped for borrowck — `defer this.close()` moved to fn end.
 
-        // Copy out; do not hold the `&JsRef` borrow across the re-entrant
-        // listener call below.
         let js_this = self.js_this.get().try_get();
         if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
@@ -957,9 +945,8 @@ impl FSWatcher {
         self.mutex.lock();
         if !self.closed.get() {
             self.closed.set(true);
-            // Copy the wrapper value out before `detach()` clears the ref;
-            // `pending_activity_count` is still > 0 here so the copied
-            // JSValue stays valid for the close-event emit below.
+            // Read before `detach()` clears the ref; pending activity still
+            // roots the wrapper for the close-event emit below.
             let js_this = self.js_this.get().try_get();
             self.mutex.unlock();
             self.detach();

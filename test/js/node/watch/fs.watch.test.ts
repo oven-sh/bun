@@ -1073,16 +1073,10 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   expect(exitCode).toBe(0);
 });
 
-// The native FSWatcher keeps a reference to its own JS wrapper to look up the
-// cached event listener when emitting. That reference is intentionally weak
-// (the wrapper is rooted by hasPendingActivity while the watcher is open), so
-// every emit path (change/rename, error, abort, close) must tolerate GC runs
-// between creation, event delivery, abort, and close without the wrapper
-// reference dangling. This subprocess exercises all four paths with forced GC
-// between every step. Regression guard for the weak-self-reference plumbing:
-// the migration this covers was behavior-preserving, so this also passes on
-// older builds — it exists to catch a future rooting/clearing mistake in any
-// of these paths (which would crash the subprocess or drop the awaited events).
+// The native FSWatcher holds a weak reference to its JS wrapper (rooted by
+// hasPendingActivity while open). Exercise every emit path (change, error,
+// abort, close) with forced GC between steps; a rooting/clearing mistake
+// crashes the subprocess or drops the awaited events.
 test("fs.watch wrapper reference survives GC across event, abort and close paths", async () => {
   using dir = tempDir("fswatch-jsref-gc", { "target.txt": "x" });
   const watchDir = String(dir);

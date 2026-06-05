@@ -112,8 +112,10 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
             timestamp,
           },
         };
-        session.emit("inspectorNotification", message);
+        // Node's Session#onMessage emits the method-specific event first,
+        // then the generic "inspectorNotification".
         session.emit("Runtime.consoleAPICalled", message);
+        session.emit("inspectorNotification", message);
       } catch (e) {
         let warning: Error;
         // Both `instanceof` (prototype walk) and String(e) can themselves

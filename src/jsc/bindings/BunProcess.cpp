@@ -1275,6 +1275,11 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 abortOnUncaughtException();
             }
             Bun__Process__exit(lexicalGlobalObject, 7);
+            // Bun__Process__exit is only noreturn on the main thread; in a
+            // Worker it requests termination and returns. Don't fall through
+            // into the capture-callback / 'uncaughtException' routing (and
+            // `handled` is not a meaningful value when the call threw).
+            return true;
         }
         if (handled.toBoolean(lexicalGlobalObject)) {
             return true;
@@ -1308,6 +1313,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 abortOnUncaughtException();
             }
             Bun__Process__exit(lexicalGlobalObject, 7);
+            // See the matching note above: returns in Workers.
+            return true;
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);

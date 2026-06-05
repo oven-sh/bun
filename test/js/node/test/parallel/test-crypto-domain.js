@@ -46,6 +46,13 @@ const test = (fn) => {
   const cb = common.mustCall(function() {
     throw ex;
   });
+  // Note for Bun: upstream calls `d.run(fn, cb)` here, so the throw happens
+  // inside the async crypto callback. Errors thrown from crypto callbacks
+  // surface through the unhandled rejection path in Bun, which does not yet
+  // route rejections through the domain machinery, so this copy invokes the
+  // throwing callback synchronously instead (`fn` is deliberately unused).
+  // That synchronous main-module throw is also why this file is skipped on
+  // Windows above.
   d.run(cb);
 };
 

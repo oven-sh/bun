@@ -912,3 +912,74 @@ test("getEventListeners", () => {
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
 });
+
+// Loading node:domain swaps in domain-aware EventEmitter internals
+// process-wide, so these run in a subprocess.
+describe("node:domain integration", () => {
+  const { bunExe, bunEnv } = require("harness");
+
+  test("'error' on a captureRejections emitter routes to its domain", async () => {
+    // Bun installs the capture-rejections emit variant as an own instance
+    // property; the domain wrapper must apply to it too.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const EventEmitter = require("node:events");
+        const d = domain.create();
+        let ee;
+        d.on("error", e => {
+          console.log("caught", e.message, e.domainEmitter === ee, e.domainThrown);
+        });
+        d.run(() => {
+          ee = new EventEmitter({ captureRejections: true });
+        });
+        setImmediate(() => ee.emit("error", new Error("boom")));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("caught boom true false");
+    expect(exitCode).toBe(0);
+  });
+
+  test("domains entered inside async callbacks do not leak onto the global stack", async () => {
+    // The async-context pairing is entered on the module-global stack when
+    // domain state is touched inside a paired callback (node's before()
+    // hook equivalent); it must come back off once the callback is done
+    // instead of accumulating across ticks.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const d1 = domain.create();
+        const d2 = domain.create();
+        let ticks = 0;
+        d1.run(() => {
+          const i = setInterval(() => {
+            d2.run(() => {});
+            if (++ticks === 5) clearInterval(i);
+          }, 1);
+        });
+        // Scheduled outside any domain: must not observe leaked state.
+        const check = () => {
+          if (ticks < 5) return void setTimeout(check, 5);
+          console.log("stack:", domain._stack.length, "active:", String(process.domain));
+        };
+        setTimeout(check, 5);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("stack: 0 active: undefined");
+    expect(exitCode).toBe(0);
+  });
+});

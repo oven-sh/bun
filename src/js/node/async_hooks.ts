@@ -280,7 +280,7 @@ class AsyncResource {
     // Node's domain init hook tags every async resource created while a
     // domain is active with a non-enumerable `domain` property.
     const domain = (process as any).domain;
-    if (domain !== null && domain !== undefined) {
+    if (domain != null) {
       Object.defineProperty(this, "domain", {
         configurable: true,
         enumerable: false,

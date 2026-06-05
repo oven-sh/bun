@@ -53,8 +53,8 @@ pub struct Expect {
     /// Written by `PendingMatcher::rerun()` for the duration of the
     /// re-invoked matcher call and restored afterwards. `inline_snapshot()`
     /// reads it (gated on `is_async_rerun`) because the user's frame is no
-    /// longer on the stack. The string is owned by `on_settle()`'s scope,
-    /// not by `Expect`.
+    /// longer on the stack. The string is owned by `rerun()`'s scope, not by
+    /// `Expect`.
     pub async_rerun_srcloc: Cell<Option<bun_jsc::CallerSrcLoc>>,
 }
 
@@ -1182,7 +1182,8 @@ impl Expect {
             // bun_core::String is Copy
             // with no Drop, so wrap in the RAII guard to release the +1 on
             // every exit path (including the early returns below). When the
-            // srcloc is borrowed from `PendingMatcher`, it owns the deref.
+            // srcloc is borrowed (the deferred-rerun path),
+            // `PendingMatcher::rerun()`'s scope owns the deref.
             let _srcloc_str_guard = owns_srcloc.then(|| bun_core::OwnedString::new(srcloc.str));
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
@@ -2015,35 +2016,13 @@ impl PendingMatcher {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let expect_this = ctx.get_index(global_this, Self::SLOT_EXPECT_THIS)?;
-        let matcher_fn = ctx.get_index(global_this, Self::SLOT_MATCHER_FN)?;
-        let args_array = ctx.get_index(global_this, Self::SLOT_MATCHER_ARGS)?;
+        // Read the deferred before anything else fallible: every remaining
+        // slot read and the re-run itself happen inside `rerun()`, whose
+        // error feeds the reject arm below instead of returning early and
+        // leaving the deferred pending forever.
         let deferred_value = ctx.get_index(global_this, Self::SLOT_DEFERRED)?;
-        let was_counted = ctx.get_index(global_this, Self::SLOT_WAS_COUNTED)?.to_boolean();
-        let flags = Flags(ctx.get_index(global_this, Self::SLOT_FLAGS)?.to_int32() as u8);
 
-        // Rebuild the caller srcloc. The bun String is owned here (+1 from
-        // `to_bun_string`) and released when `_srcloc_str_guard` drops, after
-        // the re-run below has finished using it via `async_rerun_srcloc`.
-        let srcloc_str_js = ctx.get_index(global_this, Self::SLOT_SRCLOC_STR)?;
-        let _srcloc_str_guard =
-            bun_core::OwnedString::new(srcloc_str_js.to_bun_string(global_this)?);
-        let srcloc = bun_jsc::CallerSrcLoc {
-            str: _srcloc_str_guard.get(),
-            line: ctx.get_index(global_this, Self::SLOT_SRCLOC_LINE)?.to_int32() as core::ffi::c_uint,
-            column: ctx.get_index(global_this, Self::SLOT_SRCLOC_COLUMN)?.to_int32()
-                as core::ffi::c_uint,
-        };
-
-        let result = Self::rerun(
-            global_this,
-            expect_this,
-            matcher_fn,
-            args_array,
-            was_counted,
-            flags,
-            srcloc,
-        );
+        let result = Self::rerun(global_this, ctx);
 
         if let Some(deferred) = deferred_value.as_promise() {
             // SAFETY: `deferred_value` was created by `JSPromise::create` in
@@ -2065,16 +2044,30 @@ impl PendingMatcher {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn rerun(
-        global_this: &JSGlobalObject,
-        expect_this: JSValue,
-        matcher_fn: JSValue,
-        args_array: JSValue,
-        was_counted: bool,
-        flags: Flags,
-        srcloc: bun_jsc::CallerSrcLoc,
-    ) -> JsResult<JSValue> {
+    /// Reads the re-run inputs back out of the context array and re-invokes
+    /// the matcher. Fallible end to end: `on_settle()` routes any error from
+    /// here, including the slot reads, into the deferred's reject arm.
+    fn rerun(global_this: &JSGlobalObject, ctx: JSValue) -> JsResult<JSValue> {
+        let expect_this = ctx.get_index(global_this, Self::SLOT_EXPECT_THIS)?;
+        let matcher_fn = ctx.get_index(global_this, Self::SLOT_MATCHER_FN)?;
+        let args_array = ctx.get_index(global_this, Self::SLOT_MATCHER_ARGS)?;
+        let was_counted = ctx.get_index(global_this, Self::SLOT_WAS_COUNTED)?.to_boolean();
+        let flags = Flags(ctx.get_index(global_this, Self::SLOT_FLAGS)?.to_int32() as u8);
+
+        // Rebuild the caller srcloc. The bun String is owned here (+1 from
+        // `to_bun_string`) and released when `_srcloc_str_guard` drops, after
+        // the matcher call below has finished using it via
+        // `async_rerun_srcloc`.
+        let srcloc_str_js = ctx.get_index(global_this, Self::SLOT_SRCLOC_STR)?;
+        let _srcloc_str_guard =
+            bun_core::OwnedString::new(srcloc_str_js.to_bun_string(global_this)?);
+        let srcloc = bun_jsc::CallerSrcLoc {
+            str: _srcloc_str_guard.get(),
+            line: ctx.get_index(global_this, Self::SLOT_SRCLOC_LINE)?.to_int32() as core::ffi::c_uint,
+            column: ctx.get_index(global_this, Self::SLOT_SRCLOC_COLUMN)?.to_int32()
+                as core::ffi::c_uint,
+        };
+
         // Extract the original arguments back out of the array. Most
         // built-in matchers take 0-2 arguments, but `toHaveBeenCalledWith`
         // and `expect.extend()` custom matchers are variadic.

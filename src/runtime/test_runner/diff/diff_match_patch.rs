@@ -2131,10 +2131,11 @@ mod tests {
 
         // Test that we took at least the timeout period.
         assert!(with_timeout.config.diff_timeout <= elapsed); // diff: Timeout min.
-        // Test that we didn't take forever (be forgiving).
+        // Test that we didn't take forever (be forgiving: 100x the timeout,
+        // i.e. 20 seconds, leaves headroom for slow ASAN/CI machines).
         // Theoretically this test could fail very occasionally if the
-        // OS task swaps or locks up for a second at the wrong moment.
-        assert!(with_timeout.config.diff_timeout * 10000 * 2 > elapsed); // diff: Timeout max.
+        // OS task swaps or locks up at the wrong moment.
+        assert!(with_timeout.config.diff_timeout * 100 * 2 > elapsed); // diff: Timeout max.
     }
 
     #[test]

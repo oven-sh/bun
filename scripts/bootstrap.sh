@@ -819,8 +819,19 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
+		# nodejs.org publishes no musl binaries. Prefer the Bun-maintained S3
+		# mirror; fall back to unofficial-builds.nodejs.org (the mirror's own
+		# upstream) when the mirror doesn't carry this version yet — otherwise
+		# a Node version bump hard-fails the Alpine image bake until someone
+		# repopulates the mirror.
 		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
+		nodejs_probe_url="$nodejs_mirror/v$nodejs_version/$nodejs_foldername.tar.gz"
+		if command -v curl >/dev/null 2>&1; then
+			curl -fsIL -o /dev/null "$nodejs_probe_url" 2>/dev/null || nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
+		else
+			wget -q --spider "$nodejs_probe_url" 2>/dev/null || nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
+		fi
 		;;
 	*)
 		nodejs_mirror="https://nodejs.org/dist"

@@ -1391,11 +1391,10 @@ impl<'a> Transpiler<'a> {
 
         let mut input_fd: Option<FD> = None;
         // Owns the heap allocation backing `source.contents` for the
-        // non-shared-buffer file-read, `data:` URL, and client-entry paths.
-        // Threaded into the
+        // non-shared-buffer file-read and `data:` URL paths. Threaded into the
         // returned `ParseResult` so it drops with the result instead of being
         // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
-        // `node:` / shared-buffer paths it stays `Empty`
+        // client-entry / `node:` / shared-buffer paths it stays `Empty`
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
@@ -1405,25 +1404,11 @@ impl<'a> Transpiler<'a> {
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                // The entry's `source.contents` is `Cow::Owned`; a plain
-                // `.clone()` would deep-copy the heap buffer into the no-Drop
-                // arena slot below and leak it. Move the cloned buffer into
-                // `source_backing` instead (same pattern as the `data:` path
-                // below) so it drops with the `ParseResult`, and let the
-                // arena `Source` re-borrow it.
-                let mut src = client_entry_point.source.clone();
-                source_backing = resolver::cache::Contents::from(core::mem::replace(
-                    &mut src.contents,
-                    std::borrow::Cow::Borrowed(b"".as_slice()),
-                ));
-                // SAFETY: `source_backing` is moved into the returned
-                // `ParseResult` (or drops on `return None`); the re-borrow is
-                // sound because consumers of `source.contents` never outlive
-                // the `ParseResult`.
-                src.contents = std::borrow::Cow::Borrowed(unsafe {
-                    bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice())
-                });
-                break 'brk src;
+                // `ClientEntryPoint::generate` builds the source via
+                // `Source::init_path_string`, so `contents` is `Cow::Borrowed`
+                // (borrowing the entry's `code_buffer`); `.clone()` is a
+                // shallow pointer copy that owns no heap memory.
+                break 'brk client_entry_point.source.clone();
             }
 
             if path.namespace == b"node" {

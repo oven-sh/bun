@@ -1,6 +1,6 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -370,4 +370,65 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+describe("gzip ISIZE trailer handling", () => {
+  // The 4-byte ISIZE trailer is attacker-controlled input that sizes the
+  // decompress reservation. A lying value must neither break decoding nor
+  // leave a grossly oversized allocation pinned behind the body's bytes.
+  it("gzip with trailing data decodes the first member without corruption", async () => {
+    // Trailing bytes (a second gzip member) make the first member's ISIZE
+    // trailer not the buffer's last 4 bytes — the reservation fast path must
+    // fall through without duplicating or corrupting output. Decoding only
+    // the first member matches released Bun's (and the slow path's) behavior.
+    const a = Buffer.from("first-member ");
+    const b = Buffer.from("second-member");
+    const body = Buffer.concat([Buffer.from(Bun.gzipSync(a)), Buffer.from(Bun.gzipSync(b))]);
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(body, { headers: { "Content-Encoding": "gzip" } }),
+    });
+    const text = await (await fetch(server.url)).text();
+    expect(text).toBe("first-member ");
+  });
+
+  it("a lying huge ISIZE on a tiny body does not retain the reservation", async () => {
+    // 30 MB ISIZE on a ~40-byte body: the response must decode correctly and
+    // the process must not accumulate ~30 MB per request of GC-invisible
+    // capacity behind the adopted bytes.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // valid tiny gzip + trailing junk whose last 4 bytes spell a huge
+        // ISIZE: the reservation reads the buffer's final 4 bytes, which with
+        // trailing data are attacker-chosen (the real trailer is intact, so
+        // the stream itself still decodes)
+        const lie = Buffer.alloc(4);
+        lie.writeUInt32LE(30 * 1024 * 1024, 0);
+        const gz = Buffer.concat([Buffer.from(Bun.gzipSync(Buffer.from("tiny body payload"))), lie]);
+        using server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(gz, { headers: { "Content-Encoding": "gzip" } }),
+        });
+        const held = [];
+        for (let i = 0; i < 64; i++) {
+          held.push(await (await fetch(server.url)).bytes());
+          if (held[i].length !== 17) throw new Error("bad decode: " + held[i].length);
+        }
+        Bun.gc(true);
+        // 64 lying responses x 30MB capacity would be ~1.9GB; bounded means fixed
+        console.log(JSON.stringify({ rssMB: Math.round(process.memoryUsage.rss() / 1048576) }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { rssMB } = JSON.parse(stdout.trim().split("\n").at(-1));
+    expect(rssMB).toBeLessThan(700);
+    expect(exitCode).toBe(0);
+  });
 });

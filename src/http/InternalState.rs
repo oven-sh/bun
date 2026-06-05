@@ -312,8 +312,26 @@ impl<'a> InternalState<'a> {
                             &mut body_out_str.list,
                             bun_libdeflate::Encoding::Gzip,
                         );
-                        if result.status == bun_libdeflate::Status::Success {
+                        // Trailing bytes after the gzip stream mean the ISIZE
+                        // we reserved from wasn't the real trailer — fall to
+                        // the streaming slow path, which handles multi-member
+                        // streams and rejects garbage.
+                        if result.status == bun_libdeflate::Status::Success
+                            && result.read == buffer.len()
+                        {
                             still_needs_to_decompress = false;
+                            // The ISIZE trailer is attacker-controlled: a
+                            // lying value reserves up to 32 MB for a tiny
+                            // body, and the buffer is later adopted as-is
+                            // into JS objects whose GC accounting sees only
+                            // `len`. Right-size grossly oversized
+                            // reservations before they leave the HTTP layer.
+                            let list = &mut body_out_str.list;
+                            if list.capacity() > list.len().saturating_mul(2)
+                                && list.capacity() - list.len() > 64 * 1024
+                            {
+                                list.shrink_to_fit();
+                            }
                         }
 
                         break 'libdeflate;

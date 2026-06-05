@@ -426,10 +426,16 @@ function complete(line, callback) {
       return completionGroupsLoaded();
     }
 
+    // Destructuring keeps the "eval" property name out of member-access
+    // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
+    // `x["eval"]` inside builtin sources, and minify-syntax would fold a
+    // bracket access back into dot form.
+    const { eval: evalFn } = this;
+
     return includesProxiesOrGetters(
       completeTargetAst.body[0].expression,
       parsableCompleteTarget,
-      this["eval"],
+      evalFn,
       this.context,
       includes => {
         if (includes) {
@@ -446,41 +452,47 @@ function complete(line, callback) {
 
         const memberGroups = [];
         const evalExpr = `try { ${expr} } catch {}`;
-        this["eval"](evalExpr, this.context, getREPLResourceName(), (e, obj) => {
-          try {
-            let p;
-            if ((typeof obj === "object" && obj !== null) || typeof obj === "function") {
-              ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(obj));
-              p = ObjectGetPrototypeOf(obj);
-            } else {
-              p = obj.constructor ? obj.constructor.prototype : null;
+        // ReflectApply keeps `this` bound like `this.eval(...)` would.
+        ReflectApply(evalFn, this, [
+          evalExpr,
+          this.context,
+          getREPLResourceName(),
+          (e, obj) => {
+            try {
+              let p;
+              if ((typeof obj === "object" && obj !== null) || typeof obj === "function") {
+                ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(obj));
+                p = ObjectGetPrototypeOf(obj);
+              } else {
+                p = obj.constructor ? obj.constructor.prototype : null;
+              }
+              // Circular refs possible? Let's guard against that.
+              let sentinel = 5;
+              while (p !== null && sentinel-- !== 0) {
+                ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(p));
+                p = ObjectGetPrototypeOf(p);
+              }
+            } catch {
+              // Maybe a Proxy object without `getOwnPropertyNames` trap.
+              // We simply ignore it here, as we don't want to break the
+              // autocompletion. Fixes the bug
+              // https://github.com/nodejs/node/issues/2119
             }
-            // Circular refs possible? Let's guard against that.
-            let sentinel = 5;
-            while (p !== null && sentinel-- !== 0) {
-              ArrayPrototypePush(memberGroups, filteredOwnPropertyNames(p));
-              p = ObjectGetPrototypeOf(p);
+
+            if (memberGroups.length) {
+              expr += chaining;
+              ArrayPrototypeForEach(memberGroups, group => {
+                ArrayPrototypePush(
+                  completionGroups,
+                  ArrayPrototypeMap(group, member => `${expr}${member}`),
+                );
+              });
+              filter &&= `${expr}${filter}`;
             }
-          } catch {
-            // Maybe a Proxy object without `getOwnPropertyNames` trap.
-            // We simply ignore it here, as we don't want to break the
-            // autocompletion. Fixes the bug
-            // https://github.com/nodejs/node/issues/2119
-          }
 
-          if (memberGroups.length) {
-            expr += chaining;
-            ArrayPrototypeForEach(memberGroups, group => {
-              ArrayPrototypePush(
-                completionGroups,
-                ArrayPrototypeMap(group, member => `${expr}${member}`),
-              );
-            });
-            filter &&= `${expr}${filter}`;
-          }
-
-          completionGroupsLoaded();
-        });
+            completionGroupsLoaded();
+          },
+        ]);
       },
     );
   }

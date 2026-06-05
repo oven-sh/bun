@@ -267,7 +267,11 @@ class REPLServer extends Interface {
       // An options object was given.
       options = { ...prompt };
       stream = options.stream || options.socket;
-      eval_ = options["eval"];
+      // Destructuring keeps the "eval" property name out of member-access
+      // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
+      // `x["eval"]` inside builtin sources, and minify-syntax would fold a
+      // bracket access back into dot form.
+      ({ eval: eval_ } = options);
       useGlobal = options.useGlobal;
       ignoreUndefined = options.ignoreUndefined;
       prompt = options.prompt;
@@ -667,12 +671,22 @@ class REPLServer extends Interface {
     // The function names are needed for stack trace filtering - they must not
     // be anonymous, but we can't use 'eval' as a name since it's reserved.
     const originalEval = eval_;
-    // eslint-disable-next-line func-name-matching
-    self["eval"] = function REPLEval(code, context, file, cb) {
-      replContext.run({ replServer: self }, function REPLEvalInContext() {
-        originalEval(code, context, file, cb);
-      });
-    };
+    // ObjectDefineProperty instead of a plain assignment: JSC's
+    // assertion-enabled builtin parser rejects the "eval" property name in
+    // member-access position (`self.eval` / `self["eval"]`), and
+    // minify-syntax folds bracket accesses into dot form.
+    ObjectDefineProperty(self, "eval", {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      // eslint-disable-next-line func-name-matching
+      value: function REPLEval(code, context, file, cb) {
+        replContext.run({ replServer: self }, function REPLEvalInContext() {
+          originalEval(code, context, file, cb);
+        });
+      },
+    });
 
     self.clearBufferedCommand();
 
@@ -806,7 +820,10 @@ class REPLServer extends Interface {
       const evalCmd = self[kBufferedCommandSymbol] + cmd + "\n";
 
       debug("eval %j", evalCmd);
-      self["eval"](evalCmd, self.context, getREPLResourceName(), finish);
+      // Destructuring read of the "eval" property; see REPLEval above.
+      // ReflectApply keeps `this === self`, matching `self.eval(...)`.
+      const { eval: selfEval } = self;
+      ReflectApply(selfEval, self, [evalCmd, self.context, getREPLResourceName(), finish]);
 
       function finish(e, ret) {
         debug("finish", e, ret);

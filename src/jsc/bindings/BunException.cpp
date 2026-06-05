@@ -1,7 +1,7 @@
 /**
  * BunException handling and error processing utilities.
  *
- * This file contains functions for converting JavaScript exceptions to ZigException,
+ * This file contains functions for converting JavaScript exceptions to BunException structs,
  * processing stack traces, and collecting source lines.
  */
 #include "root.h"

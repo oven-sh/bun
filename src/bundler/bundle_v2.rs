@@ -1804,8 +1804,13 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_js = self.all_loaders[source_index.get() as usize].is_javascript_like();
-                let is_css = self.all_loaders[source_index.get() as usize].is_css();
+                // JS and HTML importers reference an asset's emitted file by URL, so
+                // either one must keep the physical file alive even when a CSS
+                // `url(...)` reference to the same asset gets inlined as a data: URI.
+                let importer_loader = self.all_loaders[source_index.get() as usize];
+                let is_js =
+                    importer_loader.is_javascript_like() || importer_loader == Loader::Html;
+                let is_css = importer_loader.is_css();
 
                 let import_record_list_id = source_index;
                 let mut has_redirect = false;
@@ -2222,7 +2227,7 @@ pub mod bv2_impl {
                             // SAFETY: see `transpiler` note above.
                             break 'brk Fs::Path::init(path_primary.text)
                                 .loader(unsafe { &(*transpiler).options.loaders })
-                                .unwrap_or(Loader::File);
+                                .unwrap_or(Loader::Url);
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
@@ -2465,7 +2470,7 @@ pub mod bv2_impl {
                     // SAFETY: see `transpiler` note above.
                     break 'brk path
                         .loader(unsafe { &(*transpiler).options.loaders })
-                        .unwrap_or(Loader::File);
+                        .unwrap_or(Loader::Url);
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
@@ -2563,7 +2568,7 @@ pub mod bv2_impl {
             let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = path
                 .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+                .unwrap_or(Loader::Url);
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -2648,6 +2653,8 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
+            // Explicitly listed entry points always emit a physical output, so
+            // they fall back to `.file` rather than the inline-capable `.url`.
             let loader = path
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
@@ -4680,7 +4687,7 @@ pub mod bv2_impl {
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             let loader = path
                                 .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                                .unwrap_or(Loader::Url);
 
                             this.graph
                                 .input_files
@@ -6064,7 +6071,7 @@ pub mod bv2_impl {
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
+                                .unwrap_or(Loader::Url)
                         });
                         import_record.loader = Some(import_record_loader);
 
@@ -6414,20 +6421,15 @@ pub mod bv2_impl {
                     let user_loader = import_record
                         .loader
                         .or_else(|| path.loader(&transpiler.options.loaders));
-                    // Unknown extension falls back to:
-                    //   - `.url` when the import is a CSS `url(...)` reference, so
-                    //     small assets can auto-inline as `data:` URIs while larger
-                    //     assets still get emitted as physical files. The user can
-                    //     opt out of inlining by explicitly configuring
-                    //     `loader: { '.ext': 'file' }`, which always emits.
-                    //   - `.file` otherwise (JS imports of binary assets, etc.).
-                    let resolved_loader = user_loader.unwrap_or(
-                        if loader == Loader::Css && import_record.kind == ImportKind::Url {
-                            Loader::Url
-                        } else {
-                            Loader::File
-                        },
-                    );
+                    // Unknown extensions fall back to `.url`, which behaves like
+                    // `.file` except that CSS `url(...)` references to assets below
+                    // `asset_inline_limit` inline as `data:` URIs. The fallback must
+                    // not depend on the importer: the first importer to resolve a
+                    // path fixes the loader for its single parse task, and parse
+                    // completion order across files is not deterministic. The user
+                    // can opt out of inlining by explicitly configuring
+                    // `loader: { '.ext': 'file' }`, which always emits.
+                    let resolved_loader = user_loader.unwrap_or(Loader::Url);
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
@@ -6551,7 +6553,7 @@ pub mod bv2_impl {
                     value
                         .path
                         .loader(&self.transpiler.options.loaders)
-                        .unwrap_or(Loader::File)
+                        .unwrap_or(Loader::Url)
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;

@@ -52,9 +52,9 @@ pub enum Loader {
     Md = 20,
     /// Emit as a physical file, but if the asset is referenced from a CSS
     /// `url(...)` and its size is below `asset_inline_limit`, inline it as a
-    /// `data:` URI instead. This is the default fallback loader when the user
-    /// has not explicitly configured one for the extension and the file was
-    /// reached via a CSS `url()` reference. Explicit `loader: { '.ext': 'file' }`
+    /// `data:` URI instead. This is the bundler's default fallback loader for
+    /// any extension the user has not explicitly configured (except explicit
+    /// entry points, which always emit). Explicit `loader: { '.ext': 'file' }`
     /// continues to always emit a file.
     Url = 21,
 }

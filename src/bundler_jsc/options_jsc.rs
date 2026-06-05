@@ -49,6 +49,7 @@ pub fn loader_from_js(
     if matches!(
         v,
         bun_ast::Loader::File
+            | bun_ast::Loader::Url
             | bun_ast::Loader::Napi
             | bun_ast::Loader::Base64
             | bun_ast::Loader::Dataurl

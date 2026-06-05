@@ -281,8 +281,12 @@ impl<'a> Scanner<'a> {
             }
             #[cfg(windows)]
             {
+                // Grab the `&'static FileSystem` up front so `path2`'s
+                // borrow of `open_dir_buf` doesn't conflict with a second
+                // `self.fs()` call below.
+                let fs = self.fs();
                 let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let path2 = self.fs().abs_buf_z(&parts2, &mut self.open_dir_buf);
+                let path2 = fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
                 let Ok(child_fd) = bun_sys::open_dir_no_renaming_or_deleting_windows(
                     Fd::INVALID,
                     path2.as_bytes(),
@@ -290,8 +294,7 @@ impl<'a> Scanner<'a> {
                     continue;
                 };
                 let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let stored = self
-                    .fs()
+                let stored = fs
                     .dirname_store
                     .append_slice(path2.as_bytes())
                     .map_err(|_| ScanError::OutOfMemory)?;
@@ -382,7 +385,7 @@ impl<'a> Scanner<'a> {
             return false;
         }
         // Field-precise read: this runs on the iterator-callback path (via
-        // `next` -> `is_test_file`), where `fs()` must not be used.
+        // `next`), where `fs()` must not be used.
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project

@@ -33,14 +33,13 @@ pub struct Transition {
 
 impl Transition {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — field-by-field reflection.
         self == rhs
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
-        // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
-        // arena indirections; #[derive(Clone)] is exact.
+        // All four fields deep-clone via `#[derive(Clone)]` with no
+        // arena indirections (any heap-carrying variants of `PropertyId`/
+        // `EasingFunction` clone deeply onto the global heap), so Clone is exact.
         self.clone()
     }
 
@@ -119,11 +118,9 @@ pub struct TransitionHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: Zig's `property`/`maybeFlush` took `comptime prop: []const u8` and used
-// `@field(this, prop)` + `val: anytype` for comptime field dispatch. Rust has no
-// `@field`, and passing both `&mut self` and `&mut self.<field>` to a generic fn
-// trips borrowck (because `flush` needs `&mut self`). Macros expand at the call
-// site exactly like the Zig comptime dispatch did.
+// Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
+// borrowck (because `flush` needs `&mut self`), so macros expand the field
+// dispatch at the call site instead.
 macro_rules! handler_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -166,8 +163,8 @@ mod transition_handler_body {
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
         ) -> bool {
-            // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
-            // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+            // PropertyHandlerContext carries no arena; it is recovered via
+            // `dest.bump()` (DeclarationList = bumpalo::Vec).
             let arena = dest.bump();
             match prop {
                 Property::TransitionProperty(x) => {
@@ -480,29 +477,17 @@ mod transition_handler_body {
                 delay,
                 timing_function,
             };
-            let mut cloned = false;
-
             let prefix_to_iter = property_id.prefix().or_none();
             // Expand vendor prefixes into multiple transitions.
-            // PORT NOTE: Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
-            // bool fields. With bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
+            // Cloning for every iteration costs at most one extra clone of a
+            // small value.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
-                    let mut t = if cloned {
-                        transition.deep_clone(arena)
-                    } else {
-                        // TODO(port): Zig moved `transition` here on first iteration; Rust
-                        // can't move out of a value that may be reused next iteration.
-                        // Clone unconditionally for now.
-                        transition.deep_clone(arena)
-                    };
-                    cloned = true;
+                    let mut t = transition.deep_clone(arena);
                     t.property = property_id.with_prefix(prefix_flag);
                     transitions.append(t);
                 }
             }
-            let _ = cloned;
         }
         transitions
     }
@@ -830,6 +815,4 @@ mod transition_handler_body {
                 | PropertyId::Transition(..)
         )
     }
-
-    // ported from: src/css/properties/transition.zig
 } // mod transition_handler_body

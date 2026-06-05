@@ -148,8 +148,6 @@ impl Position {
     }
 
     pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
-        // PORT NOTE: reshaped for borrowck — Zig used tag-then-payload-access (`this.x == .side and this.x.side.side != .left`);
-        // Rust uses if-let pattern matching to bind payloads.
         if let (PositionComponent::Side(xs), PositionComponent::Length(yl)) = (&self.x, &self.y) {
             if xs.side != HorizontalPositionKeyword::Left {
                 self.x.to_css(dest)?;
@@ -312,9 +310,8 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-// PORT NOTE: Zig used duck-typed `S.parse`/`S.toCss`; Rust bounds on the
-// values-local `protocol::{Parse,ToCss}` shapes until `generics::Parse`
-// un-gates.
+// `S` is bounded on the values-local `protocol::{Parse,ToCss}` shapes until
+// `generics::Parse` un-gates.
 impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
     pub(crate) fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
@@ -420,5 +417,3 @@ impl VerticalPositionKeyword {
 
 pub(crate) type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
 pub(crate) type VerticalPosition = PositionComponent<VerticalPositionKeyword>;
-
-// ported from: src/css/values/position.zig

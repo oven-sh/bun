@@ -30,7 +30,7 @@ pub enum Kind {
 impl TryFrom<u8> for Kind {
     type Error = ();
     fn try_from(v: u8) -> Result<Self, ()> {
-        // Mirrors Zig `enum(u8)` int → enum: valid only for declared discriminants.
+        // Int → enum: valid only for declared discriminants.
         Ok(match v {
             0 => Kind::Ready,
             1 => Kind::FileStart,
@@ -139,5 +139,3 @@ impl<'a> Reader<'a> {
         s
     }
 }
-
-// ported from: src/cli/test/parallel/Frame.zig

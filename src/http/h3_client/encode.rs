@@ -27,7 +27,7 @@ pub fn write_request(
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // PORT NOTE: reshaped for borrowck — `build_request` returns a `Request<'_>`
+    // `build_request` returns a `Request<'_>`
     // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
@@ -54,7 +54,6 @@ pub fn write_request(
         );
     }
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048)).
     let mut headers: Vec<quic::Header> = Vec::with_capacity(request.headers.len() + 4);
 
     // Names not in the QPACK static table get lowercased into one
@@ -212,5 +211,3 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.want_write(true);
     }
 }
-
-// ported from: src/http/h3_client/encode.zig

@@ -5,9 +5,8 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_core::String as BunString;
-// Zig used `std.hash.Wyhash`; bun_wyhash exports `Wyhash11` (same iterative
-// init/update/final_ surface). Hash is in-memory dedupe only — algorithm
-// identity is not load-bearing.
+// `bun_wyhash` exports `Wyhash11` (iterative init/update/final_ surface).
+// Hash is in-memory dedupe only — algorithm identity is not load-bearing.
 use bun_wyhash::Wyhash11 as Wyhash;
 
 // `libc` does not expose winsock types/constants on Windows; route every
@@ -30,8 +29,8 @@ mod sock {
     pub use bun_windows_sys::ws2_32::{addrinfo, freeaddrinfo};
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
-    // here so address_to_string stays cfg-free below — matches Zig std's
-    // `std.os.windows.ws2_32.sockaddr_un { family: u16, path: [108]u8 }`.
+    // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
+    // cfg-free below.
     #[repr(C)]
     pub(crate) struct sockaddr_un {
         pub sun_family: u16,
@@ -95,11 +94,10 @@ impl GetAddrInfo {
     }
 }
 
-// TODO(port): Zig is `packed struct(u64)` — bit layout: family:2, socktype:2,
-// protocol:2, backend:2, flags:32 (std.c.AI), _:24. Represented here as a plain
-// struct because every use site reads fields by name; only `hash()` cared about
-// the raw bytes (handled via `to_packed_bytes`). Decide if a true
-// `#[repr(transparent)] u64` newtype is needed.
+// Hashed as a packed u64 — bit layout: family:2, socktype:2, protocol:2,
+// backend:2, flags:32 (AI_*), _:24. Represented here as a plain struct
+// because every use site reads fields by name; only `hash()` cares about
+// the raw bytes, which `to_packed_bytes` reconstructs in that exact layout.
 #[derive(Clone, Copy)]
 pub struct Options {
     pub family: Family,
@@ -111,7 +109,7 @@ pub struct Options {
     pub socktype: SocketType,
     pub protocol: Protocol,
     pub backend: Backend,
-    pub flags: c_int, // std.c.AI packed flags
+    pub flags: c_int, // AI_* packed flags
 }
 
 impl Default for Options {
@@ -145,7 +143,7 @@ impl Options {
         Some(hints)
     }
 
-    /// Reconstructs the Zig `packed struct(u64)` byte layout for hashing.
+    /// Reconstructs the packed u64 byte layout for hashing.
     fn to_packed_bytes(self) -> [u8; 8] {
         let low: u8 = (self.family as u8 & 0b11)
             | ((self.socktype as u8 & 0b11) << 2)
@@ -159,24 +157,16 @@ impl Options {
     }
 }
 
-// TODO(port): FromJSError types are only consumed by the *_jsc extension fns;
-// consider moving these to bun_runtime::dns_jsc.
-// TODO(port): thiserror not in deps — dropped Error derive
+// Only consumed by the *_jsc extension fns; messages come from
+// `strum::IntoStaticStr` (variant name == message).
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
-    //     #[error("InvalidFamily")]
     InvalidFamily,
-    //     #[error("InvalidSocketType")]
     InvalidSocketType,
-    //     #[error("InvalidProtocol")]
     InvalidProtocol,
-    //     #[error("InvalidBackend")]
     InvalidBackend,
-    //     #[error("InvalidFlags")]
     InvalidFlags,
-    //     #[error("InvalidOptions")]
     InvalidOptions,
-    //     #[error("JSError")]
     JSError,
 }
 
@@ -339,7 +329,6 @@ impl GetAddrInfoResult {
             // SAFETY: addr is non-null, points into the getaddrinfo result chain
             let a = unsafe { &*addr };
             if let Some(r) = Self::from_addr_info(a) {
-                // PERF(port): was assume_capacity
                 list.push(r);
             }
             addr = a.ai_next;
@@ -367,7 +356,7 @@ impl GetAddrInfoResult {
 }
 
 pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
-    // PORT NOTE: reshaped — bun_sys::net::Address exposes family()/as_in4()/
+    // Reshaped — bun_sys::net::Address exposes family()/as_in4()/
     // as_in6() rather than .in/.in6/.un union views.
     match address.family() {
         sock::AF_INET => {
@@ -380,13 +369,10 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
-            // PORT NOTE: Zig formatted via std.net.Address Display ("[addr%scope]:port")
-            // then sliced the brackets/port off ("TODO: this is a hack"). Here we
-            // render the bare address directly via ares_inet_ntop, then re-append
-            // the `%scope_id` suffix that std.net.Ip6Address.format emits for
-            // nonzero scope (e.g. fe80:: link-local from getaddrinfo) — ntop
-            // only sees the 16 raw addr bytes and cannot emit it itself.
+            // Render the bare address directly via ares_inet_ntop, then
+            // re-append the `%scope_id` suffix for nonzero scope (e.g. fe80::
+            // link-local from getaddrinfo) — ntop only sees the 16 raw addr
+            // bytes and cannot emit it itself.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
             let n = match unsafe {
@@ -407,8 +393,8 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             Ok(BunString::clone_latin1(&buf[..len]))
         }
         sock::AF_UNIX => {
-            // Zig spec gates this on `comptime std.net.has_unix_sockets`, which is
-            // true on every target Bun ships (Windows 10 rs4+ included), so no cfg.
+            // Unix sockets exist on every target Bun ships (Windows 10 rs4+
+            // included), so no cfg.
             // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
             let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
             // SAFETY: reinterpreting [c_char; N] as [u8; N] (same size/align).
@@ -436,8 +422,8 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
 // ──────────────────────────────────────────────────────────────────────────
 // Order — DNS result ordering (verbatim/ipv4first/ipv6first).
 //
-// Moved down from `bun_runtime::api::dns::Resolver::Order` (src/runtime/
-// dns_jsc/dns.zig): `cli` (repl_command, Arguments)
+// Moved down from `bun_runtime::api::dns::Resolver::Order`: `cli`
+// (repl_command, Arguments)
 // needs `Order::from_string_or_die` to parse `--dns-result-order` before the
 // runtime exists. The `toJS` method stays in tier-6 (`bun_runtime::dns_jsc`)
 // as an extension; only the pure enum + string parsing live here.
@@ -479,7 +465,7 @@ impl Order {
     }
 }
 
-/// Zig: `pub const internal = bun.api.dns.internal;` — the process-wide DNS
+/// The process-wide DNS
 /// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
 /// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
@@ -533,5 +519,3 @@ pub mod internal {
         unsafe { Bun__addrinfo_registerQuic(request, pc) }
     }
 }
-
-// ported from: src/dns/dns.zig

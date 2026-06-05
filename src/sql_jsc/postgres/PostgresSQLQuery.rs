@@ -54,8 +54,8 @@ pub struct PostgresSQLQuery {
     pub flags: Cell<Flags>,
 }
 
-// Zig `deinit`: `if (this.statement) |s| s.deref()` then deref query/cursor_name,
-// then `destroy(this)`. `BunString` is `Copy` (FFI by-value, NO `Drop`), so the
+// On drop: deref the statement (if any), then deref query/cursor_name.
+// `BunString` is `Copy` (FFI by-value, NO `Drop`), so the
 // +1 ref taken by `to_bun_string` in `call()` must be released here explicitly.
 // `destroy` is `heap::take` in `deref_`.
 impl Drop for PostgresSQLQuery {
@@ -80,10 +80,10 @@ impl Default for PostgresSQLQuery {
     }
 }
 
-// PORT NOTE: Zig used `packed struct(u8)`. Ported as a plain struct with public
+// Note: a plain struct with public
 // fields because `PostgresSQLConnection.rs` reads/writes these directly
 // (`req.flags.simple`, `req.flags.binary = ...`, `req.flags.result_mode`).
-// The packing is not load-bearing on the Rust side.
+// Bit-packing is not load-bearing here.
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub is_done: bool,
@@ -379,8 +379,8 @@ impl PostgresSQLQuery {
         mem::size_of::<PostgresSQLQuery>()
     }
 
-    // comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLQuery__createInstance" }); }
-    // TODO(port): proc-macro emits the PostgresSQLQuery__createInstance export; verify codegen name.
+    // Registered directly as `createQuery` via
+    // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let mut args =
@@ -428,8 +428,7 @@ impl PostgresSQLQuery {
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
-        // PORT NOTE: Zig's `ptr.* = .{ ... }` is functional-record-update over a
-        // default; in Rust `PostgresSQLQuery` implements `Drop`, so FRU
+        // Note: `PostgresSQLQuery` implements `Drop`, so functional-record-update
         // (`..Default::default()`) is forbidden (E0509). `ptr` was already
         // `default()`-initialised by `Box::new` above, so just overwrite the
         // three non-default fields in place.
@@ -450,12 +449,6 @@ impl PostgresSQLQuery {
         }
 
         Ok(this_value)
-    }
-
-    pub fn push(&self, global_this: &JSGlobalObject, value: JSValue) {
-        // TODO(port): Zig source references `this.pending_value` which is not a field on this
-        // struct — likely dead/broken code in the original. Preserved as a no-op.
-        let _ = (global_this, value);
     }
 
     pub fn do_done(
@@ -490,7 +483,6 @@ impl PostgresSQLQuery {
         }
 
         let mode = js_mode.coerce::<i32>(global_object)?;
-        // std.meta.intToEnum — bounds-checked enum cast.
         let result_mode = match mode {
             0 => PostgresSQLQueryResultMode::Objects,
             1 => PostgresSQLQueryResultMode::Values,
@@ -537,7 +529,6 @@ impl PostgresSQLQuery {
         };
         let connection: &PostgresSQLConnection = &connection;
 
-        // Zig: `connection.poll_ref.ref(globalObject.bunVM())`. In the Rust port,
         // `KeepAlive::ref_` takes an `EventLoopCtx` (manual vtable in `bun_io`), not a
         // `*mut VirtualMachine`. `global_object.bun_vm()` and `get_vm_ctx(.Js)` both
         // resolve to the same singleton JS VM, so route through the global hook —
@@ -658,7 +649,7 @@ impl PostgresSQLQuery {
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
         'enqueue: {
-            // PORT NOTE: `connection_entry_value` is a *mut into connection.statements value slot;
+            // Note: `connection_entry_value` is a *mut into connection.statements value slot;
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;
@@ -872,7 +863,7 @@ impl PostgresSQLQuery {
                     connection
                         .prepared_statement_id
                         .set(connection.prepared_statement_id.get() + 1);
-                    // Zig sets ref_count = .initExactRefs(2) (one for this.statement,
+                    // ref_count starts at 2 (one for this.statement,
                     // one for the connection.statements map).
                     let stmt = {
                         let mut s = PostgresSQLStatement::default();
@@ -941,5 +932,3 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 }
-
-// ported from: src/sql_jsc/postgres/PostgresSQLQuery.zig

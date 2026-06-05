@@ -20,9 +20,6 @@ use bun_js_parser::lexer as js_lexer;
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
-// PORT NOTE: MultiArrayList column access — Zig `list.items(.field)` is mapped here as
-// `list.items_field()` method calls (codegen'd accessors on the SoA wrappers).
-
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     c: &mut LinkerContext,
@@ -40,9 +37,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
-    // PORT NOTE: reshaped for borrowck — grab raw pointers to the SoA columns up front so
+    // Grab raw pointers to the SoA columns up front so
     // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict. Matches Zig which slices once at the top.
+    // don't conflict.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
     let parts: *mut [Part] = {
@@ -61,7 +58,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // referencing everything by array makes the code a lot more annoying :(
     //
-    // PORT NOTE: `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` — the
+    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` — the
     // storage retains ownership of every Drop field (`parts`, `symbols`,
     // `named_imports`, …). The local `flags` mutation below is intentional and
     // stays scoped to this read view.
@@ -74,7 +71,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if c.options.output_format == OutputFormat::InternalBakeDev {
         'brk: {
             if part_range.source_index.is_runtime() {
-                // PERF(port): was @branchHint(.cold)
                 debug_assert!(c.dev_server.is_none());
                 break 'brk; // this is from `bun build --format=internal_bake_dev`
             }
@@ -96,7 +92,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             let all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.len() + 1;
 
             stmts.all_stmts.reserve(all_stmts_len);
-            // PERF(port): was appendSliceAssumeCapacity
             stmts
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
@@ -104,10 +99,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
 
-            // PORT NOTE: reshaped for borrowck — capture pointer/len now, re-slice after pushes.
+            // Capture pointer/len now, re-slice after pushes (borrowck).
             // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
             // subsequent pushes only append past this range and capacity was reserved above
-            // so no reallocation occurs. Matches Zig which slices then continues appending.
+            // so no reallocation occurs.
             let inner = bun_ast::StoreSlice::new_mut(
                 &mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len],
             );
@@ -148,7 +143,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 });
             }
 
-            // PERF(port): was temp_arena.dupe — `G::Arg` is not Copy in Rust
+            // `G::Arg` is not `Copy`; duplicate the args element-wise.
             let dup_args: &mut [G::Arg] = {
                 let mut v = bun_alloc::ArenaVec::with_capacity_in(
                     clousure_args.const_slice().len(),
@@ -160,7 +155,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 v.into_bump_slice_mut()
             };
 
-            // PERF(port): was appendAssumeCapacity
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
                 Expr::init(
@@ -177,7 +171,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     bun_ast::Loc::EMPTY,
                 ),
             ));
-            // PERF(port): was appendSliceAssumeCapacity
             stmts
                 .all_stmts
                 .extend_from_slice(stmts.outside_wrapper_prefix.as_slice());
@@ -187,8 +180,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // TODO: there is a weird edge case where the pretty path is not computed
             // it does not reproduce when debugging.
             let source_ref = c.get_source(source_index as u32);
-            // PORT NOTE: reshaped for borrowck — Zig copies the `Source` by value,
-            // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
+            // `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
             let source_storage: bun_ast::Source;
@@ -309,7 +301,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
         match flags.wrap {
             WrapKind::Esm => {
-                // PORT NOTE: reshaped for borrowck — append_slice borrows `stmts` mutably while
+                // Borrowck: `append_slice` borrows `stmts` mutably while
                 // also reading from a sibling field.
                 let suffix = core::mem::take(&mut stmts.inside_wrapper_suffix);
                 stmts.append_slice(StmtListWhich::OutsideWrapperPrefix, suffix.as_slice());
@@ -399,9 +391,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // PORT NOTE: Zig `properties.clone(temp_arena)` is a memcpy into the
-                // temp arena. `G::Property` is not `Clone` (it embeds a `Vec`), so
-                // mirror the Zig bitwise copy directly. JSON object properties carry no
+                // `G::Property` is not `Clone` (it embeds a `Vec`), so
+                // copy the properties bitwise. JSON object properties carry no
                 // owned heap data (`ts_decorators` is always empty, `class_static_block`
                 // is `None`), so the duplicated bits do not alias any allocation.
                 let src_len = e_object.properties.len();
@@ -519,7 +510,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
-    // PERF(port): was appendSliceAssumeCapacity
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
@@ -557,7 +547,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     .flags
                     .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
                 {
-                    // PERF(port): was appendAssumeCapacity
                     args.push(G::Arg {
                         binding: Binding::alloc(
                             temp_arena,
@@ -570,7 +559,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     });
 
                     if ast.flags.contains(AstFlags::USES_MODULE_REF) {
-                        // PERF(port): was appendAssumeCapacity
                         args.push(G::Arg {
                             binding: Binding::alloc(
                                 temp_arena,
@@ -692,7 +680,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
                     let mut end: usize = 0;
-                    // PORT NOTE: reshaped for borrowck — iterate by index since we mutate
+                    // Iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
                     'hoist: for i in 0..stmts.all_stmts.len() {
                         let stmt = stmts.all_stmts[i];
@@ -751,10 +739,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                 continue 'hoist;
                             }
                             StmtData::SClass(mut class) => 'stmt: {
-                                // PORT NOTE: `class` is `StoreRef<S::Class>` — an arena-owned pointer.
+                                // `class` is `StoreRef<S::Class>` — an arena-owned pointer.
                                 // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
-                                // memory, so wrapping it in a StoreRef for `EClass` is sound and matches
-                                // Zig's `&class.class`.
+                                // memory, so wrapping it in a StoreRef for `EClass` is sound.
                                 if class.class.can_be_moved() {
                                     stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
                                     continue 'hoist;
@@ -1056,8 +1043,6 @@ impl DeclCollector {
         if name.is_empty() {
             return;
         }
-        // Zig: `catch return` — silently drop on alloc failure. With std Vec
-        // push aborts on OOM, so there is nothing to catch.
         self.decls.push(DeclInfo {
             name: name.to_vec().into_boxed_slice(),
             kind,
@@ -1073,7 +1058,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
     let mut did_merge_with_previous_local = false;
     let mut end: usize = 1;
 
-    // PORT NOTE: reshaped for borrowck — iterate by index because we read `stmts[i]`
+    // Iterate by index because we read `stmts[i]`
     // and write `stmts[end - 1]` / `stmts[end]` in the same loop body.
     for i in 1..stmts.len() {
         let stmt = stmts[i];
@@ -1092,7 +1077,6 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 
                         let mut clone =
                             Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
-                        // PERF(port): was appendSliceAssumeCapacity
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -1122,10 +1106,8 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
     stmts.truncate(end);
 }
 
-// Type aliases / re-imports for readability of match arms (mirrors Zig naming).
+// Type aliases / re-imports for readability of match arms.
 use bun_ast::LocalKind;
 use bun_ast::binding::Data as BindingData;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-
-// ported from: src/bundler/linker_context/generateCodeForFileInChunkJS.zig

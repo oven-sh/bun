@@ -50,8 +50,7 @@ enum KnownCommand {
 }
 
 impl KnownCommand {
-    // Zig: bun.ComptimeEnumMap(KnownCommand) — comptime perfect hash over
-    // @tagName bytes. 8 keys is too small for `phf` to pay for itself (its
+    // 8 keys is too small for `phf` to pay for itself (its
     // SipHash + double indirect dominate); a length-gated byte compare is
     // branch-predictable and lets LLVM lower each arm to a single wide
     // integer compare. Within every length bucket the first byte is already
@@ -115,7 +114,7 @@ impl<'a> CommandTag<'a> {
                     let second_space = second_space as usize;
                     remaining = &remaining[(second_space + 1).min(remaining.len())..];
                     // Postgres wire is pure base-10 ASCII so radix-0/`_`/sign
-                    // widening is unreachable; @errorName parity via .name().
+                    // widening is unreachable.
                     match bun_core::fmt::parse_int::<u64>(remaining, 0) {
                         Ok(n) => break 'brk n,
                         Err(err) => {
@@ -157,5 +156,3 @@ impl<'a> CommandTag<'a> {
         }
     }
 }
-
-// ported from: src/sql/postgres/CommandTag.zig

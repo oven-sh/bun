@@ -26,12 +26,12 @@ pub struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
-    // PORT NOTE: `socket` deref'd manually in `Drop` before `named_pipe` field-drop
-    // — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
+    // `socket` is deref'd manually in `Drop` before the `named_pipe` field
+    // drops — teardown order must stay socket.deref() then named_pipe deinit.
     socket: SocketType,
     /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
     /// (sibling module) can call `get_accepted_by` on the freshly-created
-    /// client — Zig had no field visibility.
+    /// client.
     pub(super) named_pipe: WindowsNamedPipe,
 
     // task used to deinit the context in the next tick, vm is used to enqueue the task
@@ -59,7 +59,7 @@ pub enum EventState {
     None,
 }
 
-/// Zig: `union(enum) { tls: *TLSSocket, tcp: *TCPSocket, none }` — raw
+/// Raw
 /// intrusive-refcounted pointers (see `NewSocket::ref_`/`deref`). `Copy` so
 /// matching by value avoids `&self.socket` aliasing `&mut self.named_pipe`.
 #[derive(Copy, Clone)]
@@ -69,8 +69,7 @@ pub enum SocketType {
     None,
 }
 
-/// Zig: `TLSSocket.Socket.fromNamedPipe(&this.named_pipe)` where
-/// `Socket = uws.NewSocketHandler(ssl)`.
+/// Build a `uws::NewSocketHandler` from the wrapped named pipe.
 ///
 /// Takes a raw `*mut WindowsNamedPipe` (NOT `&mut`) because every caller is a
 /// `NamedPipeHandlers` callback invoked *from* `WindowsNamedPipe::on_*`, which
@@ -321,8 +320,7 @@ impl WindowsNamedPipeContext {
         };
         #[cfg(not(windows))]
         {
-            // Zig: `if (Environment.isPosix) @compileError(...)` on `WindowsNamedPipe::from` —
-            // on POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
+            // On POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
             // so no caller can reach `create()`. This arm exists only so the module
             // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
             let _ = (vm, this, handlers, socket);
@@ -334,9 +332,7 @@ impl WindowsNamedPipeContext {
                 let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
                 WindowsNamedPipe::from(pipe, handlers, vm)
             };
-            // Zig: `jsc.AnyTask.New(WindowsNamedPipeContext, runEvent).init(this)` — the
-            // comptime-callback `New<T>` wrapper is not yet expressible on stable Rust,
-            // so build the erased AnyTask directly.
+            // Build the erased AnyTask directly.
             let task = AnyTask {
                 ctx: ptr::NonNull::new(this.cast::<c_void>()),
                 callback: |ctx| {
@@ -363,8 +359,7 @@ impl WindowsNamedPipeContext {
                 );
             }
 
-            // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
-            // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
+            // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
             // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
             match_socket!(socket, |s: NewSocket<SSL>| unsafe { (*s).ref_() });
 
@@ -388,7 +383,8 @@ impl WindowsNamedPipeContext {
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
 
-        // PORT NOTE: reshaped for borrowck — errdefer references `socket` which was moved into `this`
+        // The error-path guard reaches `socket` through `this` because it was
+        // moved into `this` by `create()`.
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.
@@ -459,7 +455,7 @@ impl WindowsNamedPipeContext {
 impl Drop for WindowsNamedPipeContext {
     fn drop(&mut self) {
         bun_output::scoped_log!(WindowsNamedPipeContext, "deinit");
-        // Zig `deinit`: deref the wrapped socket, then `named_pipe.deinit()`.
+        // Deref the wrapped socket, then let `named_pipe` drop.
         match_socket!(
             core::mem::replace(&mut self.socket, SocketType::None),
             // SAFETY: +1 ref taken in `create()`; this is the matching release.
@@ -468,5 +464,3 @@ impl Drop for WindowsNamedPipeContext {
         // `named_pipe` drops via field destructor after this.
     }
 }
-
-// ported from: src/runtime/socket/WindowsNamedPipeContext.zig

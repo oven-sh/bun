@@ -166,8 +166,8 @@ impl T {
 /// The `N <= 8` branch routes through a `u64` and widens with `as u128` so the
 /// upper half is the *literal* `0` rather than a stack-buffer read — LLVM
 /// InstCombine then narrows the resulting `icmp eq i128 (zext %lo), C` back to
-/// a single `i64` compare. This is the codegen Zig's `ComptimeStringMap` emits
-/// (`mov (%rsi),%rax; movabs $imm,%rcx; cmp %rcx,%rax`). Matching on
+/// a single `i64` compare (`mov (%rsi),%rax; movabs $imm,%rcx; cmp %rcx,%rax`).
+/// Matching on
 /// `&[u8; N]` directly does **not** get this: rustc lowers array patterns to a
 /// per-byte `cmpb`+`jne` decision tree (8 branches for `b"function"`), which
 /// is what the previous revision of `by_len!` produced.
@@ -202,8 +202,8 @@ const fn kw_pack<const N: usize>(arr: &[u8; N]) -> u128 {
 ///
 /// Replaces the `phf::Map` lookup for `KEYWORDS` (which hashes through
 /// SipHash13 and showed up as ~4% self-time under `phf_shared::hash` in
-/// `perf record` on the three.js bundle). Mirrors Zig's `ComptimeStringMap`
-/// strategy: bucket by length, then load the candidate once as a wide integer
+/// `perf record` on the three.js bundle). Strategy: bucket by length, then
+/// load the candidate once as a wide integer
 /// and compare against const-folded immediates — one `cmp` per candidate, no
 /// hash, no bounds checks, no `memcmp`, no per-byte ladder.
 ///
@@ -441,7 +441,7 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
 
 /// `.rodata` `[&[u8]; T::COUNT]` indexed by [`T`] discriminant. Replaces an
 /// earlier `LazyLock<EnumMap<T, _>>` so lookup is a plain array index with
-/// zero init code (matches Zig `std.EnumArray`).
+/// zero init code.
 #[repr(transparent)]
 pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
 
@@ -454,7 +454,6 @@ impl core::ops::Index<T> for TokenEnumType {
 }
 
 impl TokenEnumType {
-    /// Zig: `tokenToString.get(token)`.
     #[inline]
     pub fn get(&self, t: T) -> &'static [u8] {
         self.0[t as usize]
@@ -897,8 +896,6 @@ pub static JSX_ENTITY: phf::Map<&'static [u8], CodePoint> = phf_map! {
     b"zwnj" => 0x200C,
 };
 
-// ported from: src/js_parser/lexer_tables.zig
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -985,8 +982,7 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
-    // Zig `isLatin1Identifier(comptime Buffer, name)` is generic over `[]const u8`
-    // and `[]const u16`; the u16 instantiation is [`is_latin1_identifier_u16`].
+    // The UTF-16 counterpart is [`is_latin1_identifier_u16`].
     let name = name.as_ref();
     if name.is_empty() {
         return false;
@@ -1009,9 +1005,8 @@ pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
     true
 }
 
-/// `JSLexer.isLatin1Identifier(comptime []const u16, name)` — UTF-16 overload
-/// of [`is_latin1_identifier`]. Walks code units exactly as the Zig generic
-/// does (no narrowing/alloc): any unit `> 0xFF` fails the predicate, otherwise
+/// UTF-16 overload of [`is_latin1_identifier`]. Walks code units directly
+/// (no narrowing/alloc): any unit `> 0xFF` fails the predicate, otherwise
 /// the byte rules apply.
 pub fn is_latin1_identifier_u16(name: &[u16]) -> bool {
     if name.is_empty() {

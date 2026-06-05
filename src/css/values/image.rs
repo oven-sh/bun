@@ -11,8 +11,6 @@ use bun_alloc::Arena;
 use bun_ast::ImportKind;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
-// TODO(port): `parse`/`to_css` were `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-// — comptime-reflection derives. Hand-expanded below until the proc-macro lands.
 #[derive(Default)]
 pub enum Image {
     /// The `none` keyword.
@@ -21,14 +19,12 @@ pub enum Image {
     /// A `url()`.
     Url(Url),
     /// A gradient.
-    // PERF(port): arena-allocated in Zig (bun.create); LIFETIMES.tsv → Box<Gradient>
     Gradient(Box<Gradient>),
     /// An `image-set()`.
     ImageSet(ImageSet),
 }
 
 impl Image {
-    // NOTE: `pub fn deinit` was a no-op in Zig (all CSS parser memory is arena-owned).
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -67,7 +63,6 @@ impl Image {
 
     pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
@@ -109,8 +104,6 @@ impl Image {
 
     #[inline]
     pub fn eql(&self, other: &Image) -> bool {
-        // TODO(port): was `css.implementEql(@This(), this, other)` (comptime field-walk).
-        // Hand-expanded; replace with `#[derive(PartialEq)]` once `Url: PartialEq`.
         match (self, other) {
             (Image::None, Image::None) => true,
             (Image::Url(a), Image::Url(b)) => a.import_record_idx == b.import_record_idx,
@@ -121,7 +114,6 @@ impl Image {
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` (comptime field-walk).
         match self {
             Image::None => Image::None,
             Image::Url(u) => Image::Url(Url {
@@ -138,12 +130,9 @@ impl Image {
     /// May return an error in case the gradient cannot be converted.
     pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
-            Image::Gradient(gradient) => {
-                // PERF(port): was arena bulk-free — profile if hot
-                Some(Image::Gradient(Box::new(
-                    gradient.get_legacy_webkit(arena)?,
-                )))
-            }
+            Image::Gradient(gradient) => Some(Image::Gradient(Box::new(
+                gradient.get_legacy_webkit(arena)?,
+            ))),
             _ => Some(self.deep_clone(arena)),
         }
     }
@@ -169,8 +158,8 @@ impl Image {
         let prefix_image: &Image = if let Some(r) = &rgb { r } else { &*self };
 
         // Legacy -webkit-gradient()
-        // PORT NOTE: Zig's `and`/`if-else` precedence here is preserved verbatim:
-        // `if (targets.browsers) |b| isWebkitGradient(b) else (false and prefix_image.* == .gradient)`
+        // The `false && ...` else branch is intentional (sic) — kept for
+        // behavioral compatibility.
         if prefixes.contains(VendorPrefix::WEBKIT)
             && if let Some(browsers) = targets.browsers {
                 css::prefixes::Feature::is_webkit_gradient(&browsers)
@@ -223,7 +212,6 @@ impl Image {
 
     pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
@@ -236,11 +224,7 @@ impl Image {
         }
     }
 
-    // TODO(port): `css.DeriveParse(@This()).parse` — hand-expanded: try each
-    // variant in Zig field order (none/url/gradient/image-set).
-    // blocked_on: `Url::parse` (gated on `Parser::add_import_record`). The
-    // gradient/image-set arms are real; the url arm un-gates with url.rs.
-
+    // Variants are tried in declaration order: none, url, gradient, image-set.
     pub fn parse(input: &mut css::Parser) -> Result<Image> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -257,7 +241,6 @@ impl Image {
         ImageSet::parse(input).map(Image::ImageSet)
     }
 
-    // PORT: `css.DeriveToCss(@This()).toCss` — hand-expanded over enum variants.
     pub fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), css::PrintErr> {
         match self {
             Image::None => dest.write_str(b"none"),
@@ -293,7 +276,6 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
     pub options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
@@ -345,14 +327,12 @@ impl ImageSet {
     /// Returns the `image-set()` value with the given vendor prefix.
     pub(crate) fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> ImageSet {
         ImageSet {
-            // TODO(port): was `css.deepClone(ImageSetOption, arena, &this.options)` (comptime helper)
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: prefix,
         }
     }
 
     pub(crate) fn eql(&self, other: &ImageSet) -> bool {
-        // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq instead.
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
             && self
@@ -363,7 +343,6 @@ impl ImageSet {
     }
 
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: self.vendor_prefix,
@@ -390,7 +369,8 @@ pub struct ImageSetOption {
     /// The resolution of the image.
     pub resolution: Resolution,
     /// The mime type of the image.
-    // TODO(port): arena-borrowed slice from tokenizer input; revisit ownership.
+    // Arena-borrowed slice from the tokenizer input; the parser arena outlives
+    // this value (see SAFETY notes at the use sites).
     pub file_type: Option<*const [u8]>,
 }
 
@@ -398,7 +378,7 @@ impl ImageSetOption {
     pub(crate) fn parse(input: &mut css::Parser) -> Result<ImageSetOption> {
         let start_position = input.input.tokenizer.get_position();
         let loc = input.current_source_location();
-        // PORT NOTE: `expect_url_or_string` returns a borrow of the parser, so
+        // `expect_url_or_string` returns a borrow of the parser, so
         // it can't be used as a `try_parse` callback directly (the result type
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
         // — token slices are arena-static (see `css_parser::src_str`).
@@ -413,7 +393,6 @@ impl ImageSetOption {
                 loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
-            // For some reason, `Image.parse` made zls crash; the Zig used `@call(.auto, ...)`.
             Image::parse(input)?
         };
 
@@ -446,7 +425,7 @@ impl ImageSetOption {
                 unreachable!()
             };
             let dep_: Option<UrlDependency> = if dest.dependencies.is_some() {
-                // PORT NOTE: hoist `get_import_records` (mut borrow) out of the
+                // Hoist `get_import_records` (mut borrow) out of the
                 // arg list so `filename()` (shared borrow) can run; result is `&'a _`.
                 let import_records = dest.get_import_records()?;
                 Some(UrlDependency::new(
@@ -464,7 +443,7 @@ impl ImageSetOption {
                 let placeholder = unsafe { crate::arena_str(dep.placeholder) };
                 dest.serialize_string(placeholder)?;
                 if let Some(dependencies) = &mut dest.dependencies {
-                    // PERF(port): was `catch |err| bun.handleOom(err)` — Vec::push aborts on OOM by default
+                    // Vec::push aborts on OOM by default.
                     dependencies.push(css::Dependency::Url(dep));
                 }
             } else {
@@ -497,7 +476,6 @@ impl ImageSetOption {
         if let Some(file_type) = self.file_type {
             dest.write_str(" type(")?;
             // SAFETY: file_type points into the arena-owned parser input which outlives printing.
-            // TODO(port): replace raw slice with proper arena-lifetime borrow.
             let file_type_slice = unsafe { crate::arena_str(file_type) };
             dest.serialize_string(file_type_slice)?;
             dest.write_char(b')')?;
@@ -507,7 +485,6 @@ impl ImageSetOption {
     }
 
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSetOption {
             image: self.image.deep_clone(arena),
             resolution: self.resolution,
@@ -516,7 +493,6 @@ impl ImageSetOption {
     }
 
     pub(crate) fn eql(&self, rhs: &ImageSetOption) -> bool {
-        // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq instead.
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution
             && match (self.file_type, rhs.file_type) {
@@ -531,9 +507,8 @@ impl ImageSetOption {
 fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     input.expect_function_matching(b"type")?;
     input.parse_nested_block(|i: &mut css::Parser| {
-        // TODO(port): expect_string returns arena-borrowed &[u8]; coerced to raw ptr to avoid struct lifetime
+        // expect_string returns an arena-borrowed &[u8]; coerced to a raw ptr to
+        // avoid a struct lifetime (token slices outlive the parse session).
         i.expect_string().map(std::ptr::from_ref::<[u8]>)
     })
 }
-
-// ported from: src/css/values/image.zig

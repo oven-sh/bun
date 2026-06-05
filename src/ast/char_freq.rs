@@ -7,18 +7,13 @@ pub(crate) struct CharAndCount {
     pub index: usize,
 }
 
-// PORT NOTE: Zig `CharAndCount.Array` was an associated type alias; inherent
-// associated types are unstable in Rust, so it's a free alias here.
 pub(crate) type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
-// PERF(port): Zig used `@Vector(CHAR_FREQ_COUNT, i32)` for SIMD adds — profile
+// PERF: candidate for SIMD adds — profile
 type Buffer = [i32; CHAR_FREQ_COUNT];
 
 #[derive(Copy, Clone)]
 pub struct CharFreq {
-    // PORT NOTE: Zig field was `align(1)` (unaligned i32 array). Rust gives natural
-    // alignment; if the packed layout was load-bearing for an FFI/serialized struct,
-    // revisit.
     pub freqs: Buffer,
 }
 
@@ -47,8 +42,7 @@ impl CharFreq {
     }
 
     pub fn include(&mut self, other: &CharFreq) {
-        // https://zig.godbolt.org/z/Mq8eK6K9s
-        // PERF(port): Zig used @Vector SIMD add — profile
+        // PERF: candidate for SIMD add — profile
         for (l, r) in self.freqs.iter_mut().zip(other.freqs.iter()) {
             *l += *r;
         }
@@ -74,16 +68,14 @@ impl CharFreq {
                 };
             }
 
-            // std.sort.pdq → Rust's sort_unstable_by (pattern-defeating quicksort).
-            // PORT NOTE: do NOT route through `CharAndCount::less_than` and map
+            // Do NOT route through `CharAndCount::less_than` and map
             // false→Greater — that comparator never returns `Equal`, which
             // violates `sort_unstable_by`'s total-order contract (Rust 1.81+
             // is permitted to panic on inconsistent comparators). `index` is
             // unique so equality is unreachable in practice, but keep the
             // comparator well-formed regardless.
             arr.sort_unstable_by(|a, b| {
-                // descending by count, then ascending by (index, char) —
-                // matches CharFreq.zig:12 `CharAndCount.lessThan`.
+                // descending by count, then ascending by (index, char).
                 b.count
                     .cmp(&a.count)
                     .then_with(|| a.index.cmp(&b.index))
@@ -108,10 +100,8 @@ impl CharFreq {
         for item in array {
             if item.char < b'0' || item.char > b'9' {
                 minifier.head.push(item.char);
-                // PERF(port): was `catch unreachable` (assume_capacity)
             }
             minifier.tail.push(item.char);
-            // PERF(port): was `catch unreachable` (assume_capacity)
         }
 
         minifier
@@ -119,10 +109,7 @@ impl CharFreq {
 }
 
 fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
-    // https://zig.godbolt.org/z/P5dPojWGK
-    // PORT NOTE: Zig copied `out.*` into a stack local and wrote back via `defer` to
-    // avoid unaligned (`align(1)`) loads in the hot loop. We operate on `out` directly;
-    // the field is naturally aligned in Rust.
+    // The field is naturally aligned, so operate on `out` directly.
     let mut deltas: [i32; 256] = [0; 256];
 
     debug_assert!(text.len() >= SCAN_BIG_CHUNK_SIZE);
@@ -131,7 +118,7 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
     let (chunks, remain) = text.split_at(unrolled);
 
     for chunk in chunks.chunks_exact(SCAN_BIG_CHUNK_SIZE) {
-        // PERF(port): Zig used `inline for` to unroll 32 iterations — profile
+        // PERF: candidate for unrolling — profile
         for i in 0..SCAN_BIG_CHUNK_SIZE {
             deltas[chunk[i] as usize] += delta;
         }
@@ -141,20 +128,11 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
         deltas[c as usize] += delta;
     }
 
-    // PORT NOTE — INTENTIONAL SPEC DIVERGENCE: CharFreq.zig:64 writes
-    // `freqs[0..26].* = deltas[...]`, which *overwrites* the accumulator
-    // (`var freqs = out.*` is dead). That is an upstream bug: every ≥32-byte
-    // scan discards all prior counts, so the result is last-big-scan-wins
-    // rather than the histogram the NameMinifier expects. Zig's output is
-    // stable only because its StringHashMap iteration order is deterministic,
-    // so the *same* symbol name overwrites last on every run. The Rust
-    // `scope.members` map is RandomState-seeded, so a faithful overwrite port
-    // is nondeterministic (the observed `OV`/`OU` flap on three.js), and even
-    // a deterministic-iteration port wouldn't reproduce Zig's specific hash
-    // order. We accumulate (`+=`) instead — the algorithm's intent — which
-    // makes the freq table both correct and run-to-run stable. Minified
-    // output therefore differs from Zig by design here (three.js: 2 bytes
-    // smaller); byte-identical-vs-Zig is not a goal for this function.
+    // Accumulate (`+=`) — overwriting the accumulator instead would make
+    // every ≥32-byte scan discard all prior counts (last-big-scan-wins), and
+    // since `scope.members` is a RandomState-seeded map the result would be
+    // nondeterministic (an observed `OV`/`OU` flap on three.js). Accumulating
+    // keeps the freq table both correct and run-to-run stable.
     for i in 0..26 {
         out[i] += deltas[b'a' as usize + i];
     }
@@ -169,16 +147,15 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
-    // PORT NOTE: Zig copied `out.*` into a stack local to avoid unaligned (`align(1)`)
-    // RMWs in the loop. The Rust field is naturally aligned, so operate on `out` directly
+    // The field is naturally aligned, so operate on `out` directly
     // (same treatment as `scan_big`).
     for &c in text {
         // Indices follow `NameMinifier::DEFAULT_TAIL` order
         // (`a-zA-Z0-9_$` → 0..63), matching `scan_big` which writes digits
-        // at `out[52 + i]`. The Zig original (`char_freq.zig:79`) used `53`,
-        // which shifted `'0'` to 53 and made `'9'` collide with `'_'` at 62,
-        // leaving slot 52 cold for `<32`-byte inputs and slightly skewing
-        // minified-name ranking when digits/underscores appear.
+        // at `out[52 + i]`. Starting digits at 53 instead would shift `'0'`
+        // to 53 and make `'9'` collide with `'_'` at 62, leaving slot 52 cold
+        // for `<32`-byte inputs and slightly skewing minified-name ranking
+        // when digits/underscores appear.
         let i: usize = match c {
             b'a'..=b'z' => c as usize - b'a' as usize,
             b'A'..=b'Z' => c as usize - (b'A' as usize - 26),
@@ -190,5 +167,3 @@ fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
         out[i] += delta;
     }
 }
-
-// ported from: src/js_parser/ast/CharFreq.zig

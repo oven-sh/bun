@@ -10,7 +10,6 @@ impl Parser<'_> {
     pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
-            // PERF(port): Vec::push aborts on OOM; Zig returned error.OutOfMemory
         } else {
             self.containers[self.n_containers as usize] = *c;
         }
@@ -53,8 +52,7 @@ impl Parser<'_> {
     pub fn enter_child_containers(&mut self, count: u32) -> Result<(), AllocError> {
         let mut i: u32 = self.n_containers - count;
         while i < self.n_containers {
-            // PORT NOTE: reshaped for borrowck — capture container fields before
-            // calling &mut self methods.
+            // Capture the container fields before calling &mut self methods.
             let idx = i as usize;
             let ch = self.containers[idx].ch;
             let is_task = self.containers[idx].is_task;
@@ -105,8 +103,7 @@ impl Parser<'_> {
     pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), AllocError> {
         while self.n_containers > keep {
             self.n_containers -= 1;
-            // PORT NOTE: reshaped for borrowck — capture container fields before
-            // calling &mut self methods.
+            // Capture the container fields before calling &mut self methods.
             let idx = self.n_containers as usize;
             let ch = self.containers[idx].ch;
             let is_loose = self.containers[idx].is_loose;
@@ -183,9 +180,8 @@ impl Parser<'_> {
 
     pub fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
         let mut off: usize = 0;
-        // PORT NOTE: reshaped for borrowck — capture raw ptr/len so we can call
-        // &mut self methods inside the loop. block_bytes is not mutated during
-        // process_all_blocks.
+        // Capture the raw ptr/len so we can call &mut self methods inside the
+        // loop. block_bytes is not mutated during process_all_blocks.
         let bytes_len = self.block_bytes.len();
         let bytes_ptr = self.block_bytes.as_ptr();
 
@@ -294,5 +290,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/containers.zig

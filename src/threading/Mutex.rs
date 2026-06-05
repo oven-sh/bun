@@ -1,7 +1,6 @@
 //! This is a copy-pasta of std.Thread.Mutex with some changes.
 //! - No assert with unreachable
 //! - uses bun.Futex instead of std.Thread.Futex
-//! Synchronized with std as of Zig 0.14.1
 //!
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
@@ -37,12 +36,12 @@ use crate::Futex;
 #[derive(Default)]
 pub struct Mutex {
     // `pub(crate)` so `Condition` can reach `srwlock` / `locking_thread` for
-    // `SleepConditionVariableSRW` (mirrors Zig's same-module field access).
+    // `SleepConditionVariableSRW`.
     pub(crate) impl_: Impl,
 }
 
 impl Mutex {
-    /// Const-init an unlocked mutex (Zig: `.{}`). Required for `static` items.
+    /// Const-init an unlocked mutex. Required for `static` items.
     pub const fn new() -> Self {
         Self { impl_: Impl::new() }
     }
@@ -86,15 +85,13 @@ impl Mutex {
 
     /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
     ///
-    /// This is the idiomatic Rust spelling of Zig's `m.lock(); defer m.unlock();`
-    /// — prefer it over a bare [`lock`]/[`unlock`] pair so the critical section
+    /// Prefer this over a bare [`lock`]/[`unlock`] pair so the critical section
     /// is released on every return path (including `?`).
     ///
     /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
     /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
-    /// the owning struct alive. This matches the Zig pattern where the mutex is
-    /// a plain field and the rest of `self` remains freely accessible while
-    /// locked. Caller must ensure the `Mutex` outlives the guard (trivially
+    /// the owning struct alive: the rest of `self` remains freely accessible
+    /// while locked. Caller must ensure the `Mutex` outlives the guard (trivially
     /// true for `'static`/singleton mutexes and for guards that drop before the
     /// owning `self` does).
     #[inline]
@@ -129,8 +126,6 @@ impl Drop for MutexGuard {
         self.mutex.unlock()
     }
 }
-
-// Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.
 
 #[cfg(debug_assertions)]
 type Impl = DebugImpl;
@@ -173,7 +168,6 @@ impl DebugImpl {
     fn try_lock(&self) -> bool {
         let locking = self.impl_.try_lock();
         if locking {
-            // PORT NOTE: Zig uses .unordered; Rust's weakest is Relaxed.
             self.locking_thread
                 .store(current_thread_id(), Ordering::Relaxed);
         }
@@ -274,7 +268,7 @@ pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
 
-// TODO(port): move to bun_sys (darwin libc externs)
+// Darwin libc externs.
 // `&UnsafeCell<OsUnfairLock>` is ABI-identical to `os_unfair_lock_t` (thin
 // non-null pointer to a `#[repr(C)]` u32; `UnsafeCell` is `#[repr(transparent)]`).
 // The type encodes the only pointer-validity precondition, and Apple's runtime
@@ -340,8 +334,8 @@ impl FutexImpl {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             let locked_bit: u32 = Self::LOCKED.trailing_zeros();
-            // PERF(port): Zig emits `lock bts` via atomic bitSet; fetch_or is the closest stable
-            // Rust atomic — profile if it shows up on a hot path and consider inline asm if needed.
+            // PERF: a `lock bts` would be tighter; fetch_or is the closest stable Rust
+            // atomic — profile if it shows up on a hot path and consider inline asm if needed.
             return (self.state.fetch_or(1 << locked_bit, Ordering::Acquire) & (1 << locked_bit))
                 == 0;
         }
@@ -416,5 +410,3 @@ pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
 
 #[unsafe(no_mangle)]
 pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
-
-// ported from: src/threading/Mutex.zig

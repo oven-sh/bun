@@ -1,8 +1,6 @@
 use phf::phf_map;
 
-// PORT NOTE: `build_options` was Zig's build-system-injected module. In Rust it
-// is a generated module (build.rs consts).
-// Zig: `pub const build_options = @import("build_options");` — public re-export.
+// `build_options` is a generated module (build.rs consts), re-exported publicly.
 pub use crate::build_options;
 
 #[repr(u8)]
@@ -30,11 +28,10 @@ pub const IS_WINDOWS: bool = cfg!(windows);
 pub(crate) const IS_POSIX: bool = !IS_WINDOWS && !IS_WASM;
 pub const IS_DEBUG: bool = cfg!(debug_assertions);
 pub(crate) const IS_TEST: bool = cfg!(test);
-// Zig's `Environment.isLinux` is `builtin.target.os.tag == .linux`, which is
-// TRUE on Android (Zig models Android as `os.tag == .linux, abi == .android`).
-// Rust splits them into two `target_os` values, so this const has to OR them
-// to keep the Zig semantics — otherwise `OS` (below) panics at const-eval on
-// the `*-linux-android` cross targets and Linux-only code paths are skipped.
+// Android is a Linux kernel target, but Rust splits the two into separate
+// `target_os` values, so this const has to OR them — otherwise `OS` (below)
+// panics at const-eval on the `*-linux-android` cross targets and Linux-only
+// code paths are skipped.
 pub const IS_LINUX: bool = cfg!(any(target_os = "linux", target_os = "android"));
 pub(crate) const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
@@ -50,8 +47,7 @@ pub const SHOW_CRASH_TRACE: bool = IS_DEBUG || IS_TEST || ENABLE_ASAN;
 
 pub const REPORTED_NODEJS_VERSION: &str = build_options::REPORTED_NODEJS_VERSION;
 pub const BASELINE: bool = build_options::BASELINE;
-/// Zig disabled SIMD under `-Dno_llvm` (self-hosted backend lacked vector
-/// lowering); Rust always uses LLVM, so only `BASELINE` gates it.
+/// Only `BASELINE` gates SIMD.
 pub const ENABLE_SIMD: bool = !BASELINE;
 pub const GIT_SHA: &str = build_options::SHA;
 pub const GIT_SHA_SHORT: &str = if !build_options::SHA.is_empty() {
@@ -102,9 +98,7 @@ pub enum OperatingSystem {
     Wasm,
 }
 
-/// Port of the subset of Zig's `std.Target.Os.Tag` that Bun targets.
-/// Variant names match the Zig stdlib tags (`.macos`, `.linux`, `.freebsd`,
-/// `.windows`) so cross-references in ported code stay 1:1.
+/// OS tag for the targets Bun builds for.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum StdOsTag {
@@ -257,5 +251,3 @@ const fn const_str_slice(s: &'static str, start: usize, end: usize) -> &'static 
         Err(_) => panic!("const_str_slice: not at a UTF-8 boundary"),
     }
 }
-
-// ported from: src/bun_core/env.zig

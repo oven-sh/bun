@@ -1,10 +1,8 @@
 use crate::js_lexer::T;
 use crate::p::P;
 
-// Zig: `p: anytype` for the generic parser instance. Lowered NewParser_ →
-// `P<'a, const TS, const SCAN>` and converted to `impl P` methods (an unbounded
-// `<P>` cannot access fields). The `Metadata::*` methods that need
-// `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
+// The `Metadata::*` methods that need `p.load_name_from_ref` take a closure to
+// avoid the impl-on-foreign-type problem.
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
@@ -43,11 +41,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (can_follow_type_arguments_in_expression)
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    // TODO(port): narrow error set — only `lexer.next()` is fallible here.
     pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
         let p = self;
-        // PORT NOTE: Zig `const old = p.lexer` (value copy). Rust Lexer holds `&mut Log`
-        // so cannot Clone; use the LexerSnapshot POD via `snapshot()`/`restore()`.
+        // Lexer holds `&mut Log` so it cannot Clone; use the LexerSnapshot POD
+        // via `snapshot()`/`restore()`.
         let old_lexer = p.lexer.snapshot();
 
         p.lexer.next()?;
@@ -143,7 +140,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
         let p = self;
-        // PORT NOTE: Zig value-copied the Lexer; use snapshot()/restore() (see is_ts_arrow_fn_jsx).
         let old_lexer = p.lexer.snapshot();
         let old_log_disabled = p.lexer.is_log_disabled;
         p.lexer.is_log_disabled = true;
@@ -152,8 +148,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
         let result = matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot);
 
-        // PORT NOTE: Zig used `defer` for restore; reshaped to linear since there is
-        // no early return between the defer and end of scope.
         p.lexer.restore(&old_lexer);
         p.lexer.is_log_disabled = old_log_disabled;
 
@@ -162,7 +156,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    // PORT NOTE: renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
+    // renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
     fn ts_is_identifier(&self) -> bool {
         use crate::parser::AwaitOrYield::AllowIdent;
         let p = self;
@@ -293,7 +287,7 @@ pub mod identifier {
         }
     }
 
-    // PERF(port): was `phf::Map<&[u8], Kind>`. phf hashes the full identifier
+    // PERF: avoids `phf::Map<&[u8], Kind>` — phf hashes the full identifier
     // (SipHash) on every TIdentifier in a TS type position — including the
     // overwhelmingly-common miss case (a user-defined type name). With only
     // 16 entries spanning lengths 3..=9, a length gate rejects almost every
@@ -393,10 +387,7 @@ pub enum SkipTypeOptions {
     DisallowConditionalTypes,
 }
 
-// PORT NOTE: Zig nested `Bitset` and `empty` inside `SkipTypeOptions`. Rust
-// inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
+// Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
 pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
-
-// ported from: src/js_parser/ast/TypeScript.zig

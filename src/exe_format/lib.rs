@@ -5,7 +5,7 @@ pub mod macho;
 pub mod macho_types;
 pub mod pe;
 
-// --- byte helpers (Zig std.mem.bytesAsValue / asBytes) ---
+// --- byte helpers ---
 //
 // Shared by `elf.rs` and `macho.rs` for unaligned in-place read/modify/write of
 // `#[repr(C)]` POD header structs (Elf64_*, mach-o load commands) that live at

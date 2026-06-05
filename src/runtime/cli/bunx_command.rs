@@ -1,4 +1,5 @@
-//! Port of `src/cli/bunx_command.zig`.
+//! `bun x` / `bunx`: resolves a package's executable — installing it into a
+//! shared cache when not already present — and execs it with the given args.
 
 use bun_collections::VecExt;
 use std::io::Write as _;
@@ -35,13 +36,12 @@ pub(crate) struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
-// PORT NOTE: string fields borrow from `argv` (process-lifetime). The porting
-// convention forbids struct lifetime params, so they are typed `&'static [u8]`.
-// TODO(port): lifetime — these borrow argv, not true 'static.
+// Invariant: string fields borrow from `argv`, which is process-lifetime —
+// that is what makes the `&'static [u8]` typing sound here.
 pub struct Options {
     /// CLI arguments to pass to the command being run.
-    // PORT NOTE: `Box<[u8]>` to match `ContextData::passthrough` /
-    // `Run::run_binary`'s `&[Box<[u8]>]` param. Zig was `[]const string`.
+    // `Box<[u8]>` to match `ContextData::passthrough` /
+    // `Run::run_binary`'s `&[Box<[u8]>]` param.
     pub passthrough_list: Vec<Box<[u8]>>,
     /// `bunx <package_name>`
     pub package_name: &'static [u8],
@@ -57,7 +57,6 @@ pub struct Options {
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
     pub no_install: bool,
-    // PORT NOTE: `std.mem.Allocator` param field dropped — global mimalloc.
 }
 
 impl Default for Options {
@@ -100,7 +99,6 @@ impl Options {
 
             if maybe_package_name.is_some() {
                 opts.passthrough_list.push(Box::<[u8]>::from(positional));
-                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
                 i += 1;
                 continue;
             }
@@ -208,9 +206,6 @@ impl Options {
     }
 }
 
-// PORT NOTE: `fn deinit` only freed `passthrough_list`; `Vec` drops automatically,
-// so no explicit `Drop` impl is needed.
-
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GetBinNameError {
     #[error("NoBinFound")]
@@ -225,16 +220,12 @@ impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
     ///
-    /// Returned `Vec<u8>` is NUL-terminated: `v[v.len()-1] == 0` and the content
-    /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
-    // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
-    // instead of a Vec<u8> with a trailing-NUL convention.
-    pub(crate) fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
+    /// Returns an owned NUL-terminated string.
+    pub(crate) fn add_create_prefix(input: &[u8]) -> Result<bun_core::ZBox, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();
 
         if input.is_empty() {
-            // Zig's `dupeZ(u8, "")` yields a 1-byte allocation containing only NUL.
-            return Ok(vec![0u8]);
+            return Ok(bun_core::ZBox::default());
         }
 
         // +1 for the trailing NUL sentinel; vec! zero-initializes so the last byte stays 0.
@@ -248,7 +239,7 @@ impl BunxCommand {
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"create-");
                 new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH]
                     .copy_from_slice(&input[index..]);
-                return Ok(new_str);
+                return Ok(bun_core::ZBox::from_vec_with_nul(new_str));
             }
             // @org@v -> @org/create@v
             else if let Some(at_i) = strings::index_of_char(&input[1..], b'@') {
@@ -257,20 +248,20 @@ impl BunxCommand {
                 new_str[index..index + PREFIX_LENGTH].copy_from_slice(b"/create");
                 new_str[index + PREFIX_LENGTH..input.len() + PREFIX_LENGTH]
                     .copy_from_slice(&input[index..]);
-                return Ok(new_str);
+                return Ok(bun_core::ZBox::from_vec_with_nul(new_str));
             }
             // @org -> @org/create
             else {
                 new_str[0..input.len()].copy_from_slice(input);
                 new_str[input.len()..input.len() + PREFIX_LENGTH].copy_from_slice(b"/create");
-                return Ok(new_str);
+                return Ok(bun_core::ZBox::from_vec_with_nul(new_str));
             }
         }
 
         new_str[0..PREFIX_LENGTH].copy_from_slice(b"create-");
         new_str[PREFIX_LENGTH..input.len() + PREFIX_LENGTH].copy_from_slice(input);
 
-        Ok(new_str)
+        Ok(bun_core::ZBox::from_vec_with_nul(new_str))
     }
 
     /// 1 day
@@ -310,8 +301,7 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // PORT NOTE: Zig passed `transpiler.allocator` (global mimalloc). The
-        // Rust JSON parser takes a bump arena; everything we keep is cloned
+        // The JSON parser takes a bump arena; everything we keep is cloned
         // into `Box<[u8]>` before returning, so a local arena suffices.
         let bump = bun_alloc::Arena::new();
         let expr = json::parse_package_json_utf8(&source, log, &bump)?;
@@ -355,7 +345,7 @@ impl BunxCommand {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                 if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
-                    // Zig: `defer bin_dir.close()` — Fd is non-owning Copy; guard it.
+                    // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
                     let mut entry = iterator.next();
@@ -391,7 +381,6 @@ impl BunxCommand {
         package_name: &[u8],
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let mut subpath = PathBuffer::uninit();
-        // TODO(port): bun.pathLiteral() rewrites '/' to the platform separator at comptime.
         let len = {
             let total = subpath.len();
             let mut cursor: &mut [u8] = &mut subpath[..];
@@ -612,7 +601,6 @@ impl BunxCommand {
         ctx: &mut ContextData,
         argv: &[&'static ZStr],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -686,7 +674,6 @@ impl BunxCommand {
 
         // fast path: they're actually using this interchangeably with `bun run`
         // so we use Bun.which to check
-        // PORT NOTE: out-param init — Zig `var this_transpiler: Transpiler = undefined;`.
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
@@ -729,15 +716,13 @@ impl BunxCommand {
             .get(b"BUN_WHICH_IGNORE_CWD")
             .unwrap_or(b"")
             .to_vec();
-        // PORT NOTE: cloned to drop the borrow on `env_loader.map` before mutating it.
+        // Cloned to drop the borrow on `env_loader.map` before mutating it.
 
         if !ignore_cwd.is_empty() {
             env_loader.map.remove(b"BUN_WHICH_IGNORE_CWD");
         }
 
         let mut path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
-        // PORT NOTE: reshaped for borrowck — Zig held a borrowed slice into env.map and
-        // later overwrote PATH with a new allocation; here we own PATH as a Vec<u8>.
 
         // `configurePathForRun` builds PATH by appending ORIGINAL_PATH to a set of
         // `*/node_modules/.bin` directories (plus the bun-node shim dir). Capture just
@@ -751,7 +736,7 @@ impl BunxCommand {
             } else {
                 path.clone()
             };
-        // PORT NOTE: cloned to avoid borrowck overlap when PATH is reassigned below.
+        // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
@@ -870,7 +855,6 @@ impl BunxCommand {
 
             break 'brk new_path;
         };
-        // PORT NOTE: `defer ctx.allocator.free(PATH_FOR_BIN_DIRS)` — Vec drops automatically.
 
         // The bunx cache path is at the following location
         //
@@ -886,16 +870,13 @@ impl BunxCommand {
         //   - If you set permission to 777, you run into a potential attack vector
         //     where a user can replace the directory with malicious code.
         //
-        // If this format changes, please update cache clearing code in package_manager_command.zig
+        // If this format changes, please update cache clearing code in package_manager_command.rs
         #[cfg(unix)]
         // SAFETY: getuid() is always safe to call (no preconditions, never fails)
         let uid = unsafe { libc::getuid() };
         #[cfg(windows)]
         let uid = bun_sys::windows::user_unique_id();
 
-        // PORT NOTE: Zig used `switch (PATH.len > 0) { inline else => |path_is_nonzero| ... }`
-        // to monomorphize the format string. Collapsed to a runtime branch.
-        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
@@ -924,7 +905,7 @@ impl BunxCommand {
 
         bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
 
-        // PORT NOTE: Zig's module-level `var path_buf` is a stack local here so
+        // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
         let mut path_buf = PathBuffer::uninit();
         let top_level_dir: &[u8] = fs.top_level_dir;
@@ -943,7 +924,7 @@ impl BunxCommand {
             )
             .map_err(|_| bun_core::err!("PathTooLong"))?;
             let written = buf_total - cursor.len();
-            // PORT NOTE: reshaped for borrowck — re-slice from buffer
+            // Re-slice from the buffer so the borrow on `cursor` ends here.
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
@@ -977,10 +958,7 @@ impl BunxCommand {
                 //
                 //  1. Try the bin in the current node_modules and then we try the bin in the global cache
                 //
-                // PORT NOTE: Zig kept a single `?[:0]const u8 destination_` and
-                // `orelse`d the cache probe. NLL can't see that the buffer
-                // borrow is dead in the `None` arm, so we fold both probes into
-                // one labeled block instead.
+                // Both probes are folded into one labeled block.
                 let dest_or_cache: Option<&ZStr> = 'find: {
                     // Only use the system-installed version if there is no version specified
                     if update_request.version.literal.is_empty() {
@@ -1047,7 +1025,7 @@ impl BunxCommand {
                                         break 'is_stale false;
                                     }
                                 };
-                                // Zig: `defer fd.close()` — closed explicitly below before
+                                // The fd is closed explicitly below before
                                 // any `break 'is_stale` (no early-return between open & close).
 
                                 let mut io_status_block: win::IO_STATUS_BLOCK =
@@ -1323,10 +1301,9 @@ impl BunxCommand {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
                         // `this_transpiler.env` is the process-lifetime loader
-                        // singleton populated during transpiler init
-                        // (Zig: `initGlobal(this_transpiler.env, null)`).
+                        // singleton populated during transpiler init.
                         //
-                        // PORT NOTE (aliasing): do NOT call `this_transpiler.env_mut()` here —
+                        // Aliasing: do NOT call `this_transpiler.env_mut()` here —
                         // `env_loader` (line 594) is still live and is used again below at the
                         // post-install `Run::run_binary` calls. A second `env_mut()` would
                         // `unsafe { &mut *self.env }` from the raw field, popping `env_loader`'s
@@ -1362,9 +1339,8 @@ impl BunxCommand {
 
         match &spawn_result.status {
             SpawnStatus::Exited(exited) => {
-                // Zig: `if (exit.signal.valid())` — non-exhaustive `enum(u8)`, any
-                // non-zero byte (incl. RT signals >31) is "valid". `signal_code()`
-                // would drop RT signals, so check the raw byte directly.
+                // Any non-zero byte (incl. RT signals >31) is a valid signal.
+                // `signal_code()` would drop RT signals, so check the raw byte directly.
                 if exited.signal != 0 {
                     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                         .get()
@@ -1388,9 +1364,7 @@ impl BunxCommand {
                     bun_crash_handler::suppress_reporting();
                 }
 
-                // Zig: `.signaled => |signal| Global.raiseIgnoringPanicHandler(signal)` —
-                // unconditionally noreturn. Zig's `SignalCode` is non-exhaustive
-                // `enum(u8)` so RT signals (>31) are valid payloads; forward the
+                // RT signals (>31) are valid payloads; forward the
                 // raw byte instead of lossy `signal_code()` so this arm always
                 // diverges with the *actual* signal.
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
@@ -1543,5 +1517,3 @@ impl BunxCommand {
         Global::exit(1);
     }
 }
-
-// ported from: src/cli/bunx_command.zig

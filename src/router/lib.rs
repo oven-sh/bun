@@ -725,9 +725,7 @@ impl<'a> RouteLoader<'a> {
             .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
 
         let mut route_list = RouteIndexList::default();
-        route_list
-            .set_capacity(this.all_routes.len())
-            .expect("unreachable");
+        bun_core::handle_oom(route_list.set_capacity(this.all_routes.len()));
         let route_capacity = this.all_routes.len();
 
         let mut dynamic_start: Option<usize> = None;

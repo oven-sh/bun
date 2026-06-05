@@ -604,7 +604,7 @@ impl FileSystemRouter {
         // `defer params.deinit(allocator)` → Drop
         // SAFETY: R-2 — short-lived `&mut Router` for the route lookup;
         // `match_page_with_allocator` is pure (no JS re-entry), and the returned
-        // `Match<'p>` borrows `params`/`path_bytes`, not `*router`, so the
+        // `Match<'p>` borrows `params`/`url_path`, not `*router`, so the
         // exclusive borrow ends at the `;`.
         let Some(route) = unsafe { this.router.get_mut() }
             .routes

@@ -81,7 +81,9 @@ impl URLPath {
     /// were computed against exactly these bytes, so slices previously read
     /// through the accessors remain valid against the returned `Box` (heap
     /// address is stable across the move). After this call the accessors on
-    /// `self` all return empty slices.
+    /// `self` all return empty slices, except `path()`, which still returns
+    /// `b"."` when the path is the root (`path_is_dot` is unaffected — `b"."`
+    /// is a static literal, not backed by this allocation).
     #[must_use = "dropping the returned storage frees the bytes previously returned by this URLPath's accessors"]
     pub fn take_backing(&mut self) -> Option<Box<[u8]>> {
         self.backing.take()

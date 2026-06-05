@@ -1034,8 +1034,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
+                // Extract arm) for the defer body.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
                     task.request_extract().network
                 } else {

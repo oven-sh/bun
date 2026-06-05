@@ -688,10 +688,13 @@ public:
     // once per registry (ESM import vs require), but Node guarantees
     // require(id) === (await import(id)).default === process.getBuiltinModule(id).
     // Cache the default-export object per module key so every evaluation
-    // shares one instance. JSC::Strong roots the objects (no visitChildren
-    // wiring needed); builtins live for the global's lifetime anyway.
-    WTF::HashMap<WTF::String, JSC::Strong<JSC::JSObject>> m_nativeModuleDefaultObjects;
-    WTF::HashMap<WTF::String, JSC::Strong<JSC::JSObject>>& nativeModuleDefaultObjects() { return m_nativeModuleDefaultObjects; }
+    // shares one instance. WriteBarrier (visited in visitChildrenImpl under
+    // the GC lock), NOT JSC::Strong: a Strong member would root an object
+    // that references this global, so the global itself could never be
+    // collected — `bun test --isolate` discards globals all the time.
+    // Mutate only while holding gcLock(); the GC thread iterates it.
+    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>> m_nativeModuleDefaultObjects;
+    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>>& nativeModuleDefaultObjects() { return m_nativeModuleDefaultObjects; }
 
     // This is the result of dlopen()ing a napi module.
     // We will add it to the resulting napi value.

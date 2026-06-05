@@ -84,18 +84,23 @@
   JSC::VM &vm = globalObject->vm();                                            \
   /* Node guarantees require(id), import(id).default and                       \
      process.getBuiltinModule(id) are the same object; the generator runs      \
-     once per registry, so reuse one default object per module key. */         \
+     once per registry, so reuse one default object per module key. The        \
+     structural map mutation happens under the GC lock because the GC          \
+     thread iterates this map in visitChildrenImpl. */                         \
   auto &nativeModuleDefaultSlot =                                              \
-      globalObject->nativeModuleDefaultObjects()                               \
-          .add(moduleKey.string(), JSC::Strong<JSC::JSObject>())               \
-          .iterator->value;                                                    \
+      ([&]() -> JSC::WriteBarrier<JSC::JSObject> & {                           \
+        WTF::Locker locker { globalObject->gcLock() };                         \
+        return globalObject->nativeModuleDefaultObjects()                      \
+            .add(moduleKey.string(), JSC::WriteBarrier<JSC::JSObject>())       \
+            .iterator->value;                                                  \
+      })();                                                                    \
   [[maybe_unused]] const bool defaultObjectWasCached = !!nativeModuleDefaultSlot; \
   JSC::JSObject *defaultObject = defaultObjectWasCached                        \
       ? nativeModuleDefaultSlot.get()                                          \
       : JSC::constructEmptyObject(                                             \
             globalObject, globalObject->objectPrototype(), numberOfExportNames); \
   if (!defaultObjectWasCached)                                                 \
-    nativeModuleDefaultSlot = JSC::Strong<JSC::JSObject>(vm, defaultObject);   \
+    nativeModuleDefaultSlot.set(vm, globalObject, defaultObject);              \
   __NATIVE_MODULE_ASSERT_DECL(numberOfExportNames);                            \
   [[maybe_unused]] const auto put = [&](JSC::Identifier name, JSC::JSValue value) {                   \
     if (defaultObjectWasCached) {                                              \

@@ -256,4 +256,3 @@ impl fmt::Display for UUID5 {
         self.to_uuid().fmt(f)
     }
 }
-

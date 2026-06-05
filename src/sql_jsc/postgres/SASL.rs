@@ -156,4 +156,3 @@ impl SASL {
 
 // The only "deinit" site (`AuthenticationState::zero`) replaces the whole
 // enum variant by assignment, so no `reset()` is needed and nothing maps to Drop.
-

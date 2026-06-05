@@ -79,4 +79,3 @@ impl Pwd {
         Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
     }
 }
-

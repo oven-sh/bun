@@ -156,4 +156,3 @@ pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-right-to-line-left.
     Rtl,
 }
-

@@ -56,4 +56,3 @@ impl ErrorPacketJsc for ErrorPacket {
         .unwrap_or_else(|err| global.take_exception(err))
     }
 }
-

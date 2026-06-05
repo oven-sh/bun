@@ -354,12 +354,10 @@ impl<D> DimensionPercentage<D> {
                 };
                 a.add_impl(*v)
             }
-            (a, b) => {
-                Self::Calc(Box::new(Calc::Sum {
-                    left: Box::new(a.into_calc()),
-                    right: Box::new(b.into_calc()),
-                }))
-            }
+            (a, b) => Self::Calc(Box::new(Calc::Sum {
+                left: Box::new(a.into_calc()),
+                right: Box::new(b.into_calc()),
+            })),
         }
     }
 

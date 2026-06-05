@@ -137,7 +137,6 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     }
     #[cfg(target_os = "macos")]
     {
-
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
         // again after dup2 (socketpair flags are per-fd, not per-pair).
         let fds: [Fd; 2] = bun_sys::socketpair(

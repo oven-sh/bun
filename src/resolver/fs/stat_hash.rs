@@ -1,6 +1,6 @@
-use bun_sys::{S, Stat, Timespec};
 use bun_hash::XxHash64Streaming as XxHash64;
 use bun_http_types::ETag::wtf;
+use bun_sys::{S, Stat, Timespec};
 
 #[derive(Default)]
 pub struct StatHash {

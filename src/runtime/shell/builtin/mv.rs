@@ -616,4 +616,3 @@ impl Default for Opts {
         }
     }
 }
-

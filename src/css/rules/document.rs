@@ -35,4 +35,3 @@ impl<R> MozDocumentRule<R> {
         }
     }
 }
-

@@ -921,7 +921,6 @@ macro_rules! literal {
     };
 }
 
-
 pub(super) use crate::strings::push_codepoint_utf16;
 
 // `unreachable_pub`: these are re-exported externally via the parent's

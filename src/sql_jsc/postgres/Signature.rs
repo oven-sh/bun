@@ -126,4 +126,3 @@ impl Signature {
         })
     }
 }
-

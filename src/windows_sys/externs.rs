@@ -1757,4 +1757,3 @@ unsafe extern "system" {
 unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
-

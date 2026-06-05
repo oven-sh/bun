@@ -3058,4 +3058,3 @@ impl PostgresSQLConnection {
         Some(on_close)
     }
 }
-

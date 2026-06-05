@@ -15,7 +15,15 @@ use phf;
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(
-    Copy, Clone, Default, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr,
+    Copy,
+    Clone,
+    Default,
+    Eq,
+    PartialEq,
+    Debug,
+    Hash,
+    Enum,
+    strum::IntoStaticStr,
     strum::VariantNames,
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
@@ -57,7 +65,6 @@ bun_core::assert_ffi_discr!(
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
 );
-
 
 /// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
 #[repr(transparent)]

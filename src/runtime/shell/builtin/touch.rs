@@ -391,4 +391,3 @@ impl FlagParser for Opts {
         }
     }
 }
-

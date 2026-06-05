@@ -1168,4 +1168,3 @@ pub use crate::ThreadPool;
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::BakeExtra;
-

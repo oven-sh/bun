@@ -2,8 +2,8 @@ use core::ptr;
 use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
-use bun_sql::shared::Data;
 use bun_core::wtf::WTFStringImpl;
+use bun_sql::shared::Data;
 
 // Note: This entire type is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is

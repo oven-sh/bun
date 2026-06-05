@@ -169,4 +169,3 @@ fn define_var(name: &'static [u8], value: css::Token) -> Property {
         },
     })
 }
-

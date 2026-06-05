@@ -130,11 +130,9 @@ impl Image {
     /// May return an error in case the gradient cannot be converted.
     pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
-            Image::Gradient(gradient) => {
-                Some(Image::Gradient(Box::new(
-                    gradient.get_legacy_webkit(arena)?,
-                )))
-            }
+            Image::Gradient(gradient) => Some(Image::Gradient(Box::new(
+                gradient.get_legacy_webkit(arena)?,
+            ))),
             _ => Some(self.deep_clone(arena)),
         }
     }

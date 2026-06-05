@@ -2805,7 +2805,7 @@ impl IPCInstance {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-/// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
+    /// Dispatches a decoded IPC message (and optional handle) to the JS `process` listeners.
     pub fn handle_ipc_message(&mut self, message: &crate::ipc::DecodedIPCMessage, handle: JSValue) {
         crate::mark_binding!();
         let global_this = self.global_this;
@@ -2840,7 +2840,7 @@ impl IPCInstance {
         }
     }
 
-/// Tears down the IPC channel and emits the disconnect events on `process`.
+    /// Tears down the IPC channel and emits the disconnect events on `process`.
     pub fn handle_ipc_close(&mut self) {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         // SAFETY: VM singleton is process-lifetime.

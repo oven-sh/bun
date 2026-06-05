@@ -570,4 +570,3 @@ pub(crate) fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> Wa
         ..Default::default()
     }
 }
-

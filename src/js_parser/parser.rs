@@ -2362,4 +2362,3 @@ pub struct ParseBindingOptions {
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub is_using_statement: bool,
 }
-

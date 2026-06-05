@@ -138,4 +138,3 @@ impl Drop for MaxHeapAllocator {
         }
     }
 }
-

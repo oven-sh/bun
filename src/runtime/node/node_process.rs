@@ -314,7 +314,6 @@ mod _impl {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
-
         let worker: Option<&WebWorker> = vm.worker_ref();
 
         let args_count: usize = match worker {

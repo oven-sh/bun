@@ -542,4 +542,3 @@ unsafe extern "C" {
         free_func: Option<unsafe extern "C" fn(*mut c_void)>,
     );
 }
-

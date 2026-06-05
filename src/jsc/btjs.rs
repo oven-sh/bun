@@ -478,4 +478,3 @@ fn get_symbol_at_address(module: &mut Module, addr: usize) -> Result<SymbolInfo,
 fn get_module_name_for_address(di: &mut SelfInfo, addr: usize) -> Option<Box<[u8]>> {
     di.get_module_name_for_address(addr)
 }
-

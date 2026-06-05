@@ -123,4 +123,3 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
 
     Ok(Tag::numeric)
 }
-

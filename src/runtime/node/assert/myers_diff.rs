@@ -524,7 +524,6 @@ mod tests {
         ));
     }
 
-
     type StrDiffer<'a> = Differ<&'a [u8], true>;
 
     #[test]

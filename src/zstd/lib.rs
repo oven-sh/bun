@@ -471,4 +471,3 @@ impl Drop for ZstdReaderArrayList<'_> {
         self.end();
     }
 }
-

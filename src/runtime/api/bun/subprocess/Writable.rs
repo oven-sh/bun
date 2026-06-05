@@ -559,4 +559,3 @@ impl<'a> SignalHandler for Subprocess<'a> {
     fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
     fn on_start(&mut self) {}
 }
-

@@ -128,4 +128,3 @@ pub unsafe fn free_without_size(ptr: *mut c_void) {
     // libc free accepts null.
     unsafe { libc::free(ptr) }
 }
-

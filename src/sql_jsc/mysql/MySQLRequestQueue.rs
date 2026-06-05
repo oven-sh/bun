@@ -358,4 +358,3 @@ impl Drop for MySQLRequestQueue {
         // self.requests drops automatically.
     }
 }
-

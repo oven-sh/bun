@@ -745,13 +745,9 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
-                return if let Some(res) = (crate::cache::JavaScript {}).parse(
-                    bump,
-                    opts,
-                    &topts.define,
-                    log,
-                    source,
-                )? {
+                return if let Some(res) =
+                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
+                {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {

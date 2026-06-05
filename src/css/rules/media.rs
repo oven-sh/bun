@@ -45,4 +45,3 @@ impl<R> MediaRule<R> {
         }
     }
 }
-

@@ -31,4 +31,3 @@ impl ToJsWithType for Data {
         str.to_js(global).map_err(js_error_to_postgres)
     }
 }
-

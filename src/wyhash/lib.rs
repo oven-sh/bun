@@ -1177,4 +1177,3 @@ mod tests {
         assert_ne!(Wyhash::hash(0, b"abc"), Wyhash11::hash(0, b"abc"));
     }
 }
-

@@ -26,4 +26,3 @@ pub(crate) fn field_message_payload(msg: &FieldMessage) -> &bun_core::String {
         | FieldMessage::Routine(s) => s,
     }
 }
-

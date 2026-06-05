@@ -232,4 +232,3 @@ impl Seq {
 fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
 }
-

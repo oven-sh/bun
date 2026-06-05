@@ -44,4 +44,3 @@ impl FileRange {
         Some(stolen)
     }
 }
-

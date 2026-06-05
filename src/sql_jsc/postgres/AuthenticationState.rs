@@ -15,4 +15,3 @@ impl AuthenticationState {
         *self = AuthenticationState::None;
     }
 }
-

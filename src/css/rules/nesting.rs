@@ -34,4 +34,3 @@ impl<R> NestingRule<R> {
         }
     }
 }
-

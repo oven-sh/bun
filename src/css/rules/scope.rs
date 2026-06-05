@@ -101,4 +101,3 @@ impl<R> ScopeRule<R> {
         }
     }
 }
-

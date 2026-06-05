@@ -24,4 +24,3 @@ pub fn from_js<V: Copy>(
     let utf8 = str.to_utf8();
     Ok(map.get(utf8.slice()).copied())
 }
-

@@ -499,4 +499,3 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 }
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
-

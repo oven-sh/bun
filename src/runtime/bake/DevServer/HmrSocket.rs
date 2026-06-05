@@ -108,8 +108,7 @@ impl HmrSocket {
                     .source_maps
                     .remove_or_upgrade_weak_ref(source_map_id, RemoveOrUpgradeMode::Upgrade)
                 {
-                    self.referenced_source_maps
-                        .insert(source_map_id, ());
+                    self.referenced_source_maps.insert(source_map_id, ());
                 }
             }
             x if x == IncomingMessageId::Subscribe as u8 => {

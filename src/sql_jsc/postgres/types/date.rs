@@ -95,4 +95,3 @@ pub fn to_js_data(global_object: &JSGlobalObject, value: &Data) -> JSValue {
     let cstr = unsafe { bun_core::ffi::cstr(z.as_ptr()) };
     JSValue::from_date_string(global_object, cstr)
 }
-

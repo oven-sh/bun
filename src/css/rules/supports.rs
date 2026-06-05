@@ -485,4 +485,3 @@ impl<R> SupportsRule<R> {
         }
     }
 }
-

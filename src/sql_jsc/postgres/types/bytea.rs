@@ -19,4 +19,3 @@ impl ByteaToJs for Data {
         ArrayBuffer::create_buffer(global, self.slice()).map_err(js_error_to_postgres)
     }
 }
-

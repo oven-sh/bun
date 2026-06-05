@@ -100,4 +100,3 @@ const _: () = assert!(
     core::mem::size_of::<NullableAllocator>() == core::mem::size_of::<StdAllocator>(),
     "Expected the sizes to be the same."
 );
-

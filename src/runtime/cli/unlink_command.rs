@@ -237,4 +237,3 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         Global::crash();
     }
 }
-

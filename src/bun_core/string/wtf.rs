@@ -1,5 +1,5 @@
-use crate::string::strings;
 use crate::string::ZigStringSlice;
+use crate::string::strings;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no

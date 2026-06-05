@@ -484,7 +484,6 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-
         let elapsed_time_ms = suite_info.metrics.elapsed_time;
         let elapsed_time_ms_f64: f64 = elapsed_time_ms as f64;
         let elapsed_time_seconds = elapsed_time_ms_f64 / bun::time::MS_PER_S as f64;
@@ -3285,4 +3284,3 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: bun_core:
     }
     Global::exit(1);
 }
-

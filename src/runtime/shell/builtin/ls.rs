@@ -807,4 +807,3 @@ pub struct Opts {
     /// `-1` — list one file per line
     pub one_file_per_line: bool,
 }
-

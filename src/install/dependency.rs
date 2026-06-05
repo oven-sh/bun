@@ -824,7 +824,6 @@ impl TagExt for Tag {
             return Tag::Folder;
         }
 
-
         match dependency[0] {
             // =1
             // >1.2

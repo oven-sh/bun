@@ -372,4 +372,3 @@ pub static TABLE: Table = Table({
 
     t
 });
-

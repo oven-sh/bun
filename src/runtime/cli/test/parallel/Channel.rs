@@ -671,4 +671,3 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
         this.ingest(&[]);
     }
 }
-

@@ -187,9 +187,7 @@ pub enum Value {
     Move(FileOperation),
     Copy(FileOperation),
     Noop,
-    Buffer {
-        bytes: Box<[u8]>,
-    },
+    Buffer { bytes: Box<[u8]> },
     // Note: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
     // is several hundred bytes).
     Pending(Box<bun_resolver::Result>),
@@ -447,9 +445,7 @@ impl OutputFile {
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
-                        data: bun_sys::WriteFileData::Buffer {
-                            buffer: bytes,
-                        },
+                        data: bun_sys::WriteFileData::Buffer { buffer: bytes },
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,

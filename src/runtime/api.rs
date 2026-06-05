@@ -277,4 +277,3 @@ pub(crate) fn with_text_format_source<R>(
 
     f(&arena, &mut log, &source)
 }
-

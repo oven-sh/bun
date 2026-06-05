@@ -17,8 +17,7 @@ use crate::css_properties::flex::{
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
-#[derive(Clone, PartialEq, Eq)]
-#[derive(css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum AlignContent {
     /// Default alignment.
     Normal,
@@ -207,8 +206,7 @@ impl JustifyContent {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
-#[derive(Clone, PartialEq, Eq)]
-#[derive(css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum AlignSelf {
     /// Automatic alignment.
     Auto,
@@ -376,8 +374,7 @@ impl JustifySelf {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
-#[derive(Clone, PartialEq, Eq)]
-#[derive(css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum AlignItems {
     /// Default alignment.
     Normal,
@@ -599,8 +596,7 @@ impl LegacyJustify {
 
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
-#[derive(Clone, PartialEq)]
-#[derive(css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,

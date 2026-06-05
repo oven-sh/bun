@@ -870,4 +870,3 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     });
     G::DeclList::from_arena_slice(slice)
 }
-

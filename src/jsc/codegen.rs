@@ -60,4 +60,3 @@ impl CallbackWrapper {
         Ok(None)
     }
 }
-

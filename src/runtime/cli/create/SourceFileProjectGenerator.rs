@@ -731,7 +731,6 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         return Some(&duped[0..output_index]);
                     }
                 }
-
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {

@@ -1480,4 +1480,3 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
-

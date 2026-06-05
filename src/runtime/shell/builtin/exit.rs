@@ -58,4 +58,3 @@ fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
     // %256 is bash semantics — keep wrapper fn.
     bun_core::fmt::parse_decimal::<u64>(s).map(|n| (n % 256) as crate::shell::ExitCode)
 }
-

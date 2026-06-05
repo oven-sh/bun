@@ -41,4 +41,3 @@ unsafe extern "C" {
         stream_size: c_int,
     ) -> ReturnCode;
 }
-

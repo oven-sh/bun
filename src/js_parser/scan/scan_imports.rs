@@ -829,4 +829,3 @@ impl<'a> ImportScanner<'a> {
         Ok(scanner)
     }
 }
-

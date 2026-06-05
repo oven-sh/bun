@@ -486,4 +486,3 @@ pub const BROTLI_MAX_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
 pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
-

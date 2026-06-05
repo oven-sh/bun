@@ -60,8 +60,8 @@ test.skipIf(!isLinux)(
           // The test still validates that every child fires onExit (the
           // level-triggered pidfd registration makes that robust regardless
           // of whether the nested-tick drop path is exercised). The deferred
-          // matcher is awaited below so its PendingMatcher is freed before
-          // LSan checks at process exit.
+          // matcher is awaited below so the assertion completes within this
+          // test rather than racing process teardown.
           if (!nested) {
             nested = true;
             deferred = expect(Bun.sleep(1)).resolves.toBe(undefined);

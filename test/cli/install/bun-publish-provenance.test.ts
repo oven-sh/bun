@@ -507,7 +507,7 @@ describe("--provenance", () => {
         cmd: [bunExe(), "pm", "pack"],
         cwd: packageDir,
         env: bunEnv,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [packStderr, packExitCode] = await Promise.all([packProc.stderr.text(), packProc.exited]);

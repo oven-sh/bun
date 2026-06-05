@@ -6229,6 +6229,19 @@ impl FileSinkPipe {
         if let Some(err) = err {
             // SAFETY: `sink` is the live +1 held by this pipe.
             let _ = unsafe { (*self.sink).end(None) };
+            // `end`'s Pending arm (an async write is still in flight) marks
+            // the sink done but leaves the writer running, expecting a
+            // pending JS write's completion to close it — pipe mode has none
+            // (`pending.state` is never `Pending` here), so without an
+            // explicit `writer.end()` the write-completion callback skips
+            // both cleanup arms in `on_write` and the keep-alive ref (and
+            // the fd) leak. No-op for the arms where `end` already ended the
+            // writer.
+            // SAFETY(JsCell): `IOWriter::end` is pure I/O; the `on_close`
+            // re-entry it may trigger (POSIX) goes via the stored
+            // `*mut FileSink` backref, and cannot drop the last ref — this
+            // pipe still holds one until `destroy` below.
+            unsafe { (*self.sink).writer.with_mut(|w| w.end()) };
             // `reject` only errs on VM termination; nothing to settle then.
             let _ = self.promise.reject(global, Ok(err));
             // SAFETY: sole owner; nothing touches `this` after destroy.

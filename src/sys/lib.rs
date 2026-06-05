@@ -4126,9 +4126,10 @@ mod windows_impl {
         // Windows has no lchmod; libuv chmod follows symlinks. Match Node: fall through.
         chmod(path, mode)
     }
-    pub fn lchown(_path: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
-        // Windows has no ownership model; libuv uv_fs_lchown is a no-op success.
-        Ok(())
+    pub fn lchown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
+        // Delegates like chown/fchown; uv_fs_lchown is a no-op success on
+        // Windows (no POSIX ownership model).
+        sys_uv::lchown(path, uid as _, gid as _)
     }
     pub fn fchownat(_dir: impl AsFd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
         let _dir = _dir.as_fd();

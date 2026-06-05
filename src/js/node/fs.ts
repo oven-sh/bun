@@ -928,10 +928,10 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
   const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
-  const { getValidatedPath } = require("internal/validators");
+  const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
-  src = getValidatedPath(src);
-  dest = getValidatedPath(dest);
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
   if (
     !options.filter &&
     !options.dereference &&
@@ -958,10 +958,10 @@ function cp(src, dest, options, callback) {
 
   // node's callback form throws synchronously on invalid options/paths
   const { validateCpOptions } = require("internal/fs/cp-sync");
-  const { getValidatedPath } = require("internal/validators");
+  const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
-  src = getValidatedPath(src);
-  dest = getValidatedPath(dest);
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
 
   promises.cp(src, dest, options).then(() => callback(null), callback);
 }
@@ -1089,7 +1089,9 @@ class Dir {
   read(cb?: (err: Error | null, entry: DirentType) => void): any {
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
-      return this.read().then(entry => cb(null, entry), cb);
+      // node's callback overload returns undefined (like close(cb) above)
+      this.read().then(entry => cb(null, entry), cb);
+      return;
     }
 
     return this.#enqueue(() => {

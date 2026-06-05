@@ -36,6 +36,9 @@ function createIgnoreMatcher(ignore) {
   }
 
   return filename => {
+    // With encoding: "buffer" the watcher delivers Buffer filenames; the
+    // string/glob matchers (and basename()) need a string.
+    if (typeof filename !== "string") filename = String(filename);
     for (const match of compiled) {
       if (match(filename)) return true;
     }

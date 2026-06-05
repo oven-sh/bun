@@ -267,8 +267,9 @@ for (const [name, copy] of impls) {
 
       await copy(basename + "/from", basename + "/result", {
         filter: (src: string) => {
-          // cp resolves src before walking, so on Windows the filter sees
-          // backslash-separated paths; normalize for the assertion.
+          // cp joins child paths with the platform separator, so on Windows
+          // the filter sees backslash-separated paths; normalize for the
+          // assertion.
           src = src.replaceAll("\\", "/");
           return src.endsWith("/from") || src.includes("a.txt");
         },

@@ -174,10 +174,10 @@ function watch(
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 async function cp(src, dest, options) {
   const { validateCpOptions } = require("internal/fs/cp-sync");
-  const { getValidatedPath } = require("internal/validators");
+  const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
-  src = getValidatedPath(src);
-  dest = getValidatedPath(dest);
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
   if (
     !options.filter &&
     !options.dereference &&
@@ -796,22 +796,27 @@ function asyncWrap(fn: any, name: string) {
 
       this[kLocked] = true;
 
-      handle[kRef]();
-
       const fsSync = (nodeFsForIter ??= require("node:fs"));
-
-      function cleanup() {
-        handle[kLocked] = false;
-        handle[kUnref]();
-        if (autoClose) {
-          handle[kCloseSync]();
-        }
-      }
 
       const source = {
         __proto__: null,
         [Symbol.iterator]() {
+          // Acquire the ref per iteration (like pull()'s async generator), so
+          // an iterable that is never consumed doesn't pin the handle open;
+          // cleanup is idempotent so a stray next() after return() can't
+          // double-unref.
+          handle[kRef]();
           let done = false;
+          let cleanedUp = false;
+          function cleanup() {
+            if (cleanedUp) return;
+            cleanedUp = true;
+            handle[kLocked] = false;
+            handle[kUnref]();
+            if (autoClose) {
+              handle[kCloseSync]();
+            }
+          }
           return {
             __proto__: null,
             next() {
@@ -950,12 +955,14 @@ function asyncWrap(fn: any, name: string) {
             signal?.throwIfAborted();
 
             if (bytesWritten === 0) {
+              // Retry the writev as-is on a zero-byte write (up to 5 times)
+              // instead of degrading to the concat fallback below.
               if (++retries > 5) {
                 throw $ERR_OPERATION_FAILED("Operation failed: writev failed after retries");
               }
-            } else {
-              retries = 0;
+              continue;
             }
+            retries = 0;
 
             totalBytesWritten += bytesWritten;
             totalSize -= bytesWritten;

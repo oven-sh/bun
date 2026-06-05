@@ -932,6 +932,24 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await Bun.file(filePath).text()).toBe("precious contents");
     });
 
+    it("rejects a locked stream even when the public locked getter is shadowed", async () => {
+      using dir = tempDir("bun-write-locked-stream-shadowed", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+      stream.getReader();
+      // shadowing the web-standard getter must not bypass the lock check
+      Object.defineProperty(stream, "locked", { value: false });
+
+      expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream is locked");
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
+    });
+
     it("creates parent directories by default", async () => {
       using dir = tempDir("bun-write-stream-createpath", {});
       const filePath = join(String(dir), "made", "up", "dirs", "out.bin");

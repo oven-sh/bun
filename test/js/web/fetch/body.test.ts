@@ -909,7 +909,11 @@ describe("converted streams are marked disturbed", () => {
     });
     const response = await fetch(server.url);
     const captured = response.body!;
-    // let the body buffer fully so consumption takes the Bytes conversion path
+    // let the body buffer fully so consumption takes the Bytes conversion
+    // path; buffering completes on the HTTP client thread and every
+    // JS-observable probe of it would disturb the stream, so there is no
+    // condition to await (the assertions hold either way — an unbuffered
+    // body just takes the JS streaming path instead)
     await Bun.sleep(50);
     expect(await response.text()).toHaveLength(64 * 1024);
     expect(async () => {

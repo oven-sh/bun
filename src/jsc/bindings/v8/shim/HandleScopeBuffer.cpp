@@ -71,13 +71,16 @@ TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
 
 TaggedPointer* HandleScopeBuffer::createRawHandleSlot()
 {
-    auto& handle = createEmptyHandle();
-    TaggedPointer* slot = handle.slot();
-    {
-        WTF::Locker locker { m_gcLock };
-        m_rawGrants.append({ slot, m_storage.size() - 1 });
-    }
+    WTF::Locker locker { m_gcLock };
+    m_storage.append(Handle {});
+    TaggedPointer* slot = m_storage.last().slot();
+    m_rawGrants.append({ slot, m_storage.size() - 1 });
     return slot;
+}
+
+Handle* HandleScopeBuffer::reserveEscapeHandle()
+{
+    return &createEmptyHandle();
 }
 
 void HandleScopeBuffer::deleteGrantsBack(const uintptr_t* limit)

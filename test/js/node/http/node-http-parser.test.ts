@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 const { HTTPParser, ConnectionsList } = process.binding("http_parser");
+const { parsers } = require("node:_http_common");
 
 const kOnHeaders = HTTPParser.kOnHeaders;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete;
@@ -251,7 +252,6 @@ describe("ConnectionsList", () => {
 
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
   test("only fills remaining capacity instead of pushing the whole batch", () => {
-    const { parsers } = require("node:_http_common");
     const parser = parsers.alloc();
     try {
       const onHeaders = parser[kOnHeaders];

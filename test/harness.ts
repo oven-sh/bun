@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -13,7 +14,6 @@ import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1996,4 +1996,23 @@ export function nodeModulesPackages(nodeModulesPath: string): string {
   packages.sort();
 
   return packages.join("\n");
+}
+
+/**
+ * Env additions for `bun install` in tests whose dependencies trigger
+ * puppeteer's browser download. The dev-server-puppeteer launcher prefers a
+ * system Chromium when one is installed (CI bootstraps one on every Linux
+ * flavor), and several platforms have no Chrome for Testing build at all
+ * (linux-arm64, windows-arm64 CI). Skip the download there: it wastes ~150MB
+ * per run, and a half-extracted download left in the shared agent cache by an
+ * earlier failed run makes @puppeteer/browsers refuse every later install
+ * ("browser folder exists but the executable is missing").
+ */
+export function getPuppeteerInstallEnv(): Record<string, string> {
+  const hasSystemChromium = !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
+  const skipBrowserDownload =
+    hasSystemChromium ||
+    (process.platform === "linux" && process.arch === "arm64") ||
+    (process.platform === "win32" && (!!process.env.CI || !!process.env.BUILDKITE));
+  return skipBrowserDownload ? { PUPPETEER_SKIP_DOWNLOAD: "1" } : {};
 }

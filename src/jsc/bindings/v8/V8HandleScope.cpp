@@ -57,9 +57,15 @@ HandleScope::~HandleScope()
         if (auto* current = m_isolate->globalInternals()->currentHandleScope()) {
             current->m_buffer->deleteGrantsBack(data->limit);
         }
+        // This frame is an escapable scope going through the exported destructor (old ABI);
+        // drop its escape reservation if Escape() was never called.
+        m_isolate->globalInternals()->escapeReservations().remove(this);
         return;
     }
     m_isolate->globalInternals()->setCurrentHandleScope(m_previousHandleScope);
+    // Escape reservations in this buffer belong to scopes that are dead or dying (their slots
+    // are about to be cleared); purge them so stale stack-address keys can't alias new scopes.
+    m_isolate->globalInternals()->purgeEscapeReservations(m_buffer);
     m_buffer->clear();
     m_buffer = nullptr;
 }

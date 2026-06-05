@@ -1787,9 +1787,13 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
 
     const { code } = await goawayReceived;
     expect(code).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
-    expect(sessionError?.code).not.toBe("ERR_HTTP2_SESSION_ERROR");
 
     await clientClosed;
+    // Like Node, a non-NO_ERROR GOAWAY destroys the session with
+    // ERR_HTTP2_SESSION_ERROR (verified against Node 26: a server-sent
+    // ENHANCE_YOUR_CALM goaway yields exactly this error on the client).
+    expect(sessionError?.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(sessionError?.message).toBe("Session closed with error code 11");
   } finally {
     server.close();
   }

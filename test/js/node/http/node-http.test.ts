@@ -2281,6 +2281,23 @@ it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
   msg3.setHeader("Set-Cookie", []);
   expect(msg3.getRawHeaderNames()).toEqual(["Set-Cookie"]);
   expect(msg3.getHeaderNames()).toEqual(["set-cookie"]);
+  // The Bun-specific headers accessor agrees with getHeaders().
+  expect(msg3.headers).toEqual({ "set-cookie": [] });
+
+  // Appending a cookie supersedes the present-but-empty marker (no duplicate
+  // name in getRawHeaderNames, value visible everywhere).
+  msg3.appendHeader("Set-Cookie", "a=1");
+  expect(msg3.getHeader("set-cookie")).toEqual(["a=1"]);
+  expect(msg3.getRawHeaderNames().filter(n => n.toLowerCase() === "set-cookie")).toHaveLength(1);
+  expect(msg3.getHeaders()["set-cookie"]).toEqual(["a=1"]);
+
+  // Replacing the whole header bag drops the marker.
+  const msg4 = new OutgoingMessage();
+  msg4.setHeader("set-cookie", []);
+  (msg4 as any).headers = { "x-test": "1" };
+  expect(msg4.getHeader("set-cookie")).toBeUndefined();
+  expect(msg4.hasHeader("set-cookie")).toBe(false);
+  expect(msg4.getHeaderNames()).toEqual(["x-test"]);
 });
 
 it("https.Agent applies defaultPort/protocol through options (nodejs/node#58980)", () => {
@@ -2433,10 +2450,9 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   expect(new OutgoingMessage().outputData.length).toBe(0);
 
   // Like Node, the prototype has no outputData property at all; reading it off
-  // the prototype (e.g. a spread or inspection) must not materialize shared
-  // state on the prototype.
+  // the prototype must not materialize shared state on the prototype.
   expect(Object.getOwnPropertyDescriptor(OutgoingMessage.prototype, "outputData")).toBeUndefined();
-  void { ...OutgoingMessage.prototype };
+  void (OutgoingMessage.prototype as any).outputData;
   const c = new OutgoingMessage();
   const d = new OutgoingMessage();
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });

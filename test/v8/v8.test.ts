@@ -305,6 +305,10 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope");
     });
+
+    it("escaped handles survive in-scope inline handle creation", async () => {
+      await checkSameOutput("test_v8_escapable_handle_scope_inline_grants");
+    });
   });
 
   describe("MaybeLocal", () => {

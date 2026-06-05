@@ -273,24 +273,27 @@ unsafe extern "C" {
 fn abort_for_unsupported_simdutf() -> ! {
     use bun_core::Environment;
 
+    const IS_X64: bool = cfg!(target_arch = "x86_64");
+    const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+
     // simdutf's minimum compiled-in kernel is westmere (SSE4.2) for the
     // baseline build and haswell (AVX2) for the default build — the lower
     // tiers are elided once __SSE4_2__ / __AVX2__ are defined.
-    let requirement: &core::ffi::CStr = if Environment::IS_X64 {
+    let requirement: &core::ffi::CStr = if IS_X64 {
         if Environment::BASELINE {
             c"SSE4.2"
         } else {
             c"AVX2"
         }
-    } else if Environment::IS_AARCH64 {
+    } else if IS_AARCH64 {
         c"NEON"
     } else {
         c"SIMD"
     };
 
-    let hint: &core::ffi::CStr = if Environment::IS_X64 && Environment::BASELINE {
+    let hint: &core::ffi::CStr = if IS_X64 && Environment::BASELINE {
         c"  Bun's baseline build targets Nehalem-class (2008+) x86_64 CPUs.\n  If this is a VM, enable host CPU passthrough (e.g. -cpu host for QEMU/KVM).\n"
-    } else if Environment::IS_X64 {
+    } else if IS_X64 {
         bun_runtime::cli::upgrade_command::SIMDUTF_BASELINE_HINT
     } else {
         c""

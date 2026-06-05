@@ -20,9 +20,8 @@ bun_core::declare_scope!(FileReader, visible);
 
 // `pending_view` and the `Js`/`Temporary` variants below borrow into a
 // JS-owned typed-array buffer kept alive by `pending_value: Strong` /
-// `ensure_still_alive`. Mutable views are carried as `streams::RawSliceMut<u8>`
-// (raw fat-pointer wrapper, no forged lifetime); each re-borrow to `&mut [u8]`
-// is a scoped `unsafe` block citing the GC rooting in force at that point.
+// `ensure_still_alive`. Mutable views are carried as `streams::RawSliceMut<u8>`;
+// each re-borrow cites the GC rooting in force at that point.
 
 // R-2 (host-fn re-entrancy): every JS-exposed / vtable-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell` (non-
@@ -43,15 +42,10 @@ pub struct FileReader {
     pub done: Cell<bool>,
     pub pending: JsCell<streams::Pending>,
     pub pending_value: JsCell<Strong>, // Strong.Optional
-    /// Borrowed view into the JS typed array of the in-flight pull, rooted by
-    /// `pending_value`. Raw wrapper (no lifetime, no uniqueness claim) — see
-    /// the note at the top of this file.
-    ///
-    /// Intentionally never read: every fulfillment path re-derives the
-    /// destination from the GC-rooted `pending_value` via `as_array_buffer`
-    /// (detach-safe — a detached view re-derives to an empty slice). Keep it
-    /// that way; reading this stored slice would reintroduce the
-    /// dangling-on-detach hazard the re-derivation avoids.
+    /// View into the JS typed array of the in-flight pull, rooted by
+    /// `pending_value`. Never read back: fulfillment re-derives the
+    /// destination from `pending_value` (detach-safe); reading this stored
+    /// slice would reintroduce the dangling-on-detach hazard.
     pub pending_view: Cell<streams::RawSliceMut<u8>>,
     pub fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
@@ -102,8 +96,8 @@ pub const TAG: readable_stream::Tag = readable_stream::Tag::File;
 #[derive(strum::IntoStaticStr)]
 pub enum ReadDuringJSOnPullResult {
     None,
-    /// In-flight JS pull buffer (rooted by the enclosing `on_pull` frame's
-    /// `EnsureStillAlive(array)`); raw wrapper, re-borrowed in tight scopes.
+    /// In-flight JS pull buffer, rooted by the enclosing `on_pull` frame's
+    /// `EnsureStillAlive(array)`.
     Js(streams::RawSliceMut<u8>),
     AmountRead(usize),
     /// Borrows the reader/JS buffer for the duration of one `on_pull` call
@@ -628,14 +622,10 @@ impl FileReader {
             self.read_inside_on_pull.with_mut(|riop| match riop {
                 ReadDuringJSOnPullResult::Js(in_progress) => {
                     if in_progress.len() >= buf.len() && !has_more {
-                        // SAFETY: `in_progress` points into the JS typed array
-                        // rooted by the enclosing `on_pull` frame
-                        // (`EnsureStillAlive(array)`); this is the only live
-                        // reference into it, confined to this statement.
+                        // SAFETY: rooted by the enclosing `on_pull` frame; sole live reference, statement-scoped.
                         let dst = unsafe { in_progress.slice_mut() };
                         dst[..buf.len()].copy_from_slice(buf);
-                        // SAFETY: in-bounds — `buf.len() <= in_progress.len()`
-                        // checked above; same live allocation.
+                        // SAFETY: `buf.len() <= in_progress.len()` checked above.
                         let remaining = unsafe { in_progress.slice_from(buf.len()) };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
@@ -822,9 +812,7 @@ impl FileReader {
 
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
-                // SAFETY: `buffer` points into the JS typed array kept alive by
-                // `array` (`EnsureStillAlive` above) for this whole call; this
-                // is the only live reference into it, confined to this statement.
+                // SAFETY: kept alive by `array` (`EnsureStillAlive` above); sole live reference, statement-scoped.
                 let dst = unsafe { buffer.slice_mut() };
                 dst[0..drained_len as usize].copy_from_slice(drained.slice());
                 // drain() moved ownership of the allocation into `drained` and
@@ -867,7 +855,6 @@ impl FileReader {
                 let global = self.parent_global();
                 self.pending_value.with_mut(|p| p.set(&global, array));
                 self.pending_view.set(buffer);
-                // Non-null: derived from the embedded `pending` field of `self`.
                 return streams::Result::Pending(
                     core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
                 );
@@ -911,7 +898,6 @@ impl FileReader {
                     self.pending_value.with_mut(|p| p.set(&global, array));
                     self.pending_view.set(remaining_buf);
                     bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
-                    // Non-null: derived from the embedded `pending` field of `self`.
                     return streams::Result::Pending(
                         core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
                     );
@@ -959,7 +945,6 @@ impl FileReader {
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
 
-        // Non-null: derived from the embedded `pending` field of `self`.
         streams::Result::Pending(
             core::ptr::NonNull::new(self.pending.as_ptr()).expect("embedded field"),
         )
@@ -1118,8 +1103,7 @@ impl readable_stream::SourceContext for FileReader {
         Self::on_start(self)
     }
     fn on_pull(&mut self, buf: &mut [u8], arr: JSValue) -> streams::Result {
-        // Wrap the borrow as a raw slice; `Self::on_pull` re-borrows it only in
-        // scopes covered by `arr`'s rooting (see the note at the top of the file).
+        // `Self::on_pull` re-borrows only in scopes covered by `arr`'s rooting.
         Self::on_pull(self, streams::RawSliceMut::new(buf), arr)
     }
     fn on_cancel(&mut self) {

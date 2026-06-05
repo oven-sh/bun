@@ -917,9 +917,7 @@ impl BufferOutputSink {
             // ref taken for the in-flight bufferer.
             unsafe { BufferOutputSink::deref(sink) };
             return match buffering_error {
-                // The original JS exception is still pending on the VM —
-                // propagate it instead of masking it with a synthetic
-                // "Failed to pipe stream" error.
+                // JS exception still pending on the VM — propagate, don't mask.
                 webcore::body::BufferError::Js(js_err) => Err(js_err),
                 webcore::body::BufferError::Native(e)
                     if e == bun_core::err!("StreamAlreadyUsed") =>

@@ -27,14 +27,9 @@ pub struct ByteStream {
     pub pending: JsCell<streams::Pending>,
     pub done: Cell<bool>,
     /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // `RawSliceMut` (raw fat slice wrapper) because the backing store is
-    // JS-heap-owned and rooted via `pending_value: Strong`. Never freed by Rust.
-    //
-    // Intentionally never read: the fulfillment path (`on_data` pending
-    // branch) re-derives the destination from the GC-rooted `pending_value`
-    // via `as_array_buffer` (detach-safe). Keep it that way; reading this
-    // stored slice would reintroduce the dangling-on-detach hazard the
-    // re-derivation avoids.
+    // Never read back: the fulfillment path re-derives the destination from
+    // the GC-rooted `pending_value` (detach-safe); reading this stored slice
+    // would reintroduce the dangling-on-detach hazard.
     pub pending_buffer: Cell<streams::RawSliceMut<u8>>,
     pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
@@ -454,14 +449,12 @@ impl ByteStream {
         }
 
         // Root the view BEFORE stashing the raw borrow, so the stored slice
-        // is never live without its GC anchor (both happen inside one
-        // JS-blocked region either way).
+        // is never live without its GC anchor.
         self.set_value(view);
         self.pending_buffer.set(streams::RawSliceMut::new(buffer));
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
-        // returned `streams::Result::Pending` raw-backref needs; non-null
-        // because it is derived from the embedded `pending` field of `self`.
+        // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(NonNull::new(self.pending.as_ptr()).expect("embedded field"))
     }
 

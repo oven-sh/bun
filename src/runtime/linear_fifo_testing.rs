@@ -31,11 +31,7 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 ///   1 — wrapped-prefix sub-branch (`index < head`), `head > count`:
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
 ///   2 — same wrapped layout as 0, but with a `NonNull`-bearing element type
-///       (niche-optimized enum, NOT any-bit-pattern-valid). Covers the
-///       `MaybeUninit` accessor rework: pre-rework every accessor formed
-///       `&[T]` over the partially-uninitialized backing store, which is
-///       undefined behavior for such types; post-rework only the logically
-///       written window is assumed-init. Returns the pointed-to values.
+///       (not any-bit-pattern-valid); returns the pointed-to values.
 ///
 /// Any other scenario value returns an empty array.
 pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -86,23 +82,17 @@ pub fn ordered_remove_probe(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     Ok(array)
 }
 
-/// Scenario 2: rebuild the scenario-0 wrapped state (`head=8 count=14`,
-/// remove offset 6) in a fifo of `NonNull`-bearing enum items, then read the
-/// surviving items back through `peek_item` and dereference the pointers.
-/// Expected result is identical to scenario 0:
-/// `[8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]`.
+/// Scenario 2: the scenario-0 wrapped state with `NonNull`-bearing enum
+/// items; expected result identical to scenario 0.
 fn nonnull_probe(global: &JSGlobalObject) -> JsResult<JSValue> {
     use core::ptr::NonNull;
 
-    /// Niche-optimized over a non-null pointer — uninitialized slots read as
-    /// this type are invalid values, unlike the `i32` probe above.
     #[derive(Clone, Copy)]
     enum Item {
         Val(NonNull<i32>),
     }
 
-    // Stable addresses for the lifetime of this fn; the fifo stores pointers
-    // into this vec.
+    // Stable addresses; the fifo stores pointers into this vec.
     let backing: Vec<i32> = (0..110).collect();
     let item = |v: usize| Item::Val(NonNull::from(&backing[v]));
 
@@ -122,8 +112,7 @@ fn nonnull_probe(global: &JSGlobalObject) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global, len)?;
     for i in 0..len {
         let Item::Val(p) = fifo.peek_item(i);
-        // SAFETY: every stored pointer targets `backing`, which is live until
-        // this fn returns.
+        // SAFETY: stored pointers target `backing`, live until this fn returns.
         let value = unsafe { *p.as_ref() };
         array.put_index(global, i as u32, JSValue::js_number_from_int32(value))?;
     }

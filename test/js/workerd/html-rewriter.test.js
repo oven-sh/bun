@@ -797,13 +797,8 @@ payloads.forEach(type => {
   });
 });
 
-// Regression guard (passes pre- and post-BufferError refactor): pins the
-// native stream-state error mapping that the BufferError split must preserve.
 // A JS-defined ReadableStream body is unsupported by transform() and has
-// always surfaced ERR_STREAM_CANNOT_PIPE (the Native catch-all branch).
-// The Js-propagation branch itself is not reachable from plain JS (it requires
-// to_readable_stream to throw inside the bufferer's double-waiter path), so it
-// has no direct JS-level test.
+// always surfaced ERR_STREAM_CANNOT_PIPE.
 it("transform() of a Response with a JS-defined ReadableStream body reports ERR_STREAM_CANNOT_PIPE", async () => {
   const stream = new ReadableStream({
     pull(controller) {
@@ -824,14 +819,9 @@ it("transform() of a Response with a JS-defined ReadableStream body reports ERR_
 });
 
 it("transform() of a streaming Response survives forced GC between chunks", async () => {
-  // Regression guard: exercises the body-value bufferer + sink backpressure
-  // (Writable pending backref) with full GCs interleaved between producer
-  // chunks. The Pending representation change it covers is behavior-neutral,
-  // so this is GC-stress coverage, not a pre-fix-failing test.
-  //
-  // The chunked body is served over HTTP because transform() only accepts
-  // native (fetched/file) bodies — JS-defined ReadableStream bodies throw
-  // ERR_STREAM_CANNOT_PIPE synchronously.
+  // GC-stress for the body-value bufferer + sink backpressure. The chunked
+  // body is served over HTTP because transform() only accepts native
+  // (fetched/file) bodies.
   const piece = "<p>x</p>";
   const perChunk = 64;
   const chunks = 16;

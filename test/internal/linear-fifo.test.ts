@@ -34,11 +34,8 @@ test("ordered_remove_item preserves FIFO order in the wrapped prefix sub-branch 
 });
 
 test("wrapped fifo of NonNull-bearing items survives peek/remove (MaybeUninit accessor rework)", () => {
-  // Scenario 2 rebuilds the scenario-0 wrapped state (head=8, count=14) with a
-  // niche-optimized NonNull-bearing element type. Before the MaybeUninit
-  // accessor rework, every fifo accessor formed `&[T]` over the partially
-  // uninitialized backing store — undefined behavior for such element types
-  // (the same shape as the in-tree RefDataValue / PromisePair / Task fifos).
-  // The probe returns the pointed-to values of the surviving items.
+  // Scenario 2: the scenario-0 wrapped state (head=8, count=14) with a
+  // niche-optimized NonNull-bearing element type; the probe returns the
+  // pointed-to values of the surviving items.
   expect(linearFifoOrderedRemoveProbe(2)).toEqual([8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]);
 });

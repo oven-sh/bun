@@ -1518,7 +1518,6 @@ impl FileSink {
                     p.consumed += pending_written as u64; // @truncate
                     p.result = streams::Writable::Owned(pending_written as u64);
                 });
-                // Non-null: derived from the embedded `pending` field of `self`.
                 streams::Writable::Pending(
                     NonNull::new(self.pending.as_ptr()).expect("embedded field"),
                 )

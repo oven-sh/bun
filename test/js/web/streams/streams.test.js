@@ -1278,12 +1278,9 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
 });
 
 it("Bun.file().stream() pulls remain correct under forced GC (raw pending-view slice)", async () => {
-  // Regression coverage for the FileReader pending-view refactor: the
-  // in-flight pull buffer is a raw slice into a JS typed-array buffer rooted
-  // only by the pull's view value (previously held as a forged
-  // `&'static mut [u8]`). Force a full GC around every read to give a stale
-  // or wrongly-rooted buffer the best chance to be collected/moved; the
-  // assembled bytes must still match the file exactly.
+  // The in-flight pull buffer is a raw slice into a JS typed-array rooted only
+  // by the pull's view value; force a full GC around every read to catch a
+  // stale or wrongly-rooted buffer.
   const script = `
     const size = 1 << 20;
     const pattern = new Uint8Array(size);
@@ -1310,8 +1307,7 @@ it("Bun.file().stream() pulls remain correct under forced GC (raw pending-view s
     cwd: String(dir),
     stderr: "pipe",
   });
-  // stderr is drained but deliberately not asserted on: the stdout JSON plus
-  // exit code cover the behavior, and benign warnings must not break this.
+  // stderr is drained but not asserted on; benign warnings must not break this.
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(JSON.parse(stdout)).toEqual({ total: 1 << 20, ok: true });
   expect(exitCode).toBe(0);
@@ -1319,8 +1315,7 @@ it("Bun.file().stream() pulls remain correct under forced GC (raw pending-view s
 
 it("subprocess stdout stream (pipe-backed FileReader) resolves pending pulls under forced GC", async () => {
   // A pipe-backed FileReader returns `Pending` from onPull when the writer is
-  // slower than the reader, exercising the pending-view/pending-result path
-  // (raw slice + NonNull pending backref). Force GC between chunks.
+  // slower than the reader; force GC between chunks.
   const writer = `
     const chunk = Buffer.alloc(65536, 0xab);
     for (let i = 0; i < 16; i++) {
@@ -1350,8 +1345,7 @@ it("subprocess stdout stream (pipe-backed FileReader) resolves pending pulls und
 
 it("fetch() body stream (ByteStream) resolves pending reads correctly under forced GC", async () => {
   // The client reads faster than the server produces, so each read parks a
-  // pending pull (rooted view + raw pending buffer) that is later fulfilled
-  // by onData re-deriving the destination from the GC-rooted view.
+  // pending pull that is fulfilled later from the GC-rooted view.
   const part = "0123456789abcdef".repeat(256); // 4096 bytes
   const parts = 8;
   using server = Bun.serve({

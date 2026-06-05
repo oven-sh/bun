@@ -2166,15 +2166,9 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) type ValueBuffererCallback =
     fn(ctx: *mut c_void, bytes: &[u8], err: Option<ValueError>, is_async: bool);
 
-/// Error surface of [`ValueBufferer::run`] / `buffer_locked_body_value`.
-///
-/// Mirrors the original error union: stream-state failures are carried as
-/// native string-coded errors, while a JS exception raised during body
-/// conversion (e.g. `to_readable_stream`) is propagated as
-/// [`bun_jsc::JsError`] — the exception value itself stays *pending on the
-/// VM* (the repo-wide `JsError::Thrown` convention), so no GC rooting is
-/// needed here and callers can rethrow or inspect it via the exception scope
-/// instead of receiving a flattened synthetic "JSError" string.
+/// Error from [`ValueBufferer::run`]: a native stream-state failure, or a JS
+/// exception left pending on the VM so callers can rethrow it instead of a
+/// flattened synthetic error.
 pub enum BufferError {
     /// A JS exception is pending on the VM (or OOM/termination).
     Js(bun_jsc::JsError),
@@ -2522,8 +2516,6 @@ impl<'a> ValueBufferer<'a> {
 
         if locked.on_receive_value.is_some() || locked.task.is_some() {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
-            // A thrown exception propagates as `BufferError::Js` (pending on
-            // the VM) instead of being flattened to a synthetic string error.
             let readable = value
                 .to_readable_stream(self.global)
                 .map_err(BufferError::Js)?;

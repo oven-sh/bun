@@ -24,34 +24,15 @@ pub enum LinearFifoBufferType {
     Dynamic,
 }
 
-/// Marker for element types where every *initialized* bit pattern is a valid
-/// value — integers and raw pointers. Bounds the [`LinearFifo::writable_slice`]
-/// family, which exposes logically-uninitialized slots as `&mut [T]` so
-/// byte-oriented callers can fill them in place.
-///
-/// This marker only legitimizes *forming* `&mut [T]` over those slots for
-/// write-before-read use. It does NOT make reading a never-written slot
-/// defined: under current Rust semantics, reading uninitialized memory is UB
-/// at every type (uninit bytes are valid only at `MaybeUninit`), regardless
-/// of this marker. Callers must write a slot before anything reads it, and
-/// the `update()` protocol ensures only written prefixes become readable.
-///
-/// Note this is deliberately narrower than `bytemuck::AnyBitPattern`, which
-/// excludes raw pointers (for the uninit-read and provenance reasons above);
-/// the pointer impls here are sound only because the exposed slots are
-/// write-only until `update()` marks them readable.
-///
-/// For any other `T` (enums, `NonNull`-bearing structs, anything with a
-/// validity invariant) those slots must never be materialized as `T`; such
-/// types go through `write_item` / `write_item_assume_capacity`, which write
-/// through the `MaybeUninit` storage directly.
+/// Element types where any initialized bit pattern is a valid value (integers,
+/// raw pointers). Bounds the [`LinearFifo::writable_slice`] family, which
+/// exposes not-yet-written slots as `&mut [T]`; callers must still write a
+/// slot before anything reads it. Other `T` (enums, `NonNull`-bearing structs)
+/// must go through `write_item` / `write_item_assume_capacity`.
 ///
 /// # Safety
 ///
-/// Implementors assert that any *initialized* bit pattern — including the
-/// `0xAA` debug poison fill — is a valid `T`, so a `&mut [T]` over poisoned
-/// (but written) slots cannot hold an invalid value. The write-before-read
-/// obligation above still applies to every caller.
+/// Implementors assert every initialized bit pattern is a valid `T`.
 pub unsafe trait AnyBitPattern: Copy {}
 
 macro_rules! impl_any_bit_pattern {
@@ -61,10 +42,9 @@ macro_rules! impl_any_bit_pattern {
     )*};
 }
 impl_any_bit_pattern!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize);
-// SAFETY: raw pointers have no validity invariant (any address, including
-// dangling/garbage, is a valid *value*; dereferencing is a separate contract).
+// SAFETY: raw pointers have no validity invariant (dereferencing is a separate contract).
 unsafe impl<T> AnyBitPattern for *mut T {}
-// SAFETY: see `*mut T` above.
+// SAFETY: same as `*mut T`.
 unsafe impl<T> AnyBitPattern for *const T {}
 
 /// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
@@ -73,11 +53,8 @@ unsafe impl<T> AnyBitPattern for *const T {}
 // instantiates `SliceBuffer` directly; `threading::Channel::init_slice` wraps
 // it for `.Slice` API parity.
 //
-// The accessors deliberately expose `MaybeUninit<T>`, never `&[T]`: only the
-// `LinearFifo` core knows which subranges are logically written, and it alone
-// assume-inits exactly those (see `readable_slice`). This is what keeps
-// non-any-bit-pattern element types (`NonNull`-bearing enums, `Strong`-bearing
-// structs, the event-loop `Task` enum) sound in a partially-filled fifo.
+// Accessors expose `MaybeUninit<T>`, never `&[T]`: only the `LinearFifo` core
+// knows which subranges are logically written, and it alone assume-inits them.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -107,11 +84,8 @@ pub trait LinearFifoBuffer<T> {
 ///
 /// # Safety
 ///
-/// Every element of `s` must have been initialized (written through one of
-/// the fifo's write paths and still inside the `[head, head+count)` readable
-/// window), OR `T: AnyBitPattern` AND the returned slice is used strictly
-/// write-before-read (the `writable_slice` family's contract — reading a
-/// never-written slot is UB even for `AnyBitPattern` types).
+/// Every element of `s` must be initialized, or `T: AnyBitPattern` and the
+/// result used strictly write-before-read (the `writable_slice` contract).
 #[inline(always)]
 unsafe fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
     // SAFETY: forwarded to caller — see fn doc.
@@ -136,20 +110,14 @@ unsafe fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
 #[inline(always)]
 fn write_copy<T: Copy>(dst: &mut [MaybeUninit<T>], src: &[T]) {
     debug_assert_eq!(dst.len(), src.len());
-    // SAFETY: `dst` is a unique borrow and `src` a shared one, so the ranges
-    // cannot overlap; lengths are equal; copying valid `T` bit patterns into
-    // `MaybeUninit<T>` slots initializes them.
+    // SAFETY: `dst` is a unique borrow so the ranges cannot overlap; lengths are equal.
     unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<T>(), src.len()) };
 }
 
 /// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
-/// `ordered_remove_item` for the four wrap/non-wrap segment shifts. Operates
-/// on the raw `MaybeUninit` storage: the shifted range may include
-/// logically-unwritten tail slots (the non-wrapped branch passes
-/// `buf[head+offset..]`, which extends past `head+count`), and a raw byte
-/// move of uninit slots is sound where a `&mut [T]` over them would not be.
-/// The duplicated tail slot is logically discarded by the subsequent
-/// `count -= 1`.
+/// `ordered_remove_item`. Operates on raw `MaybeUninit` storage because the
+/// shifted range may include logically-unwritten tail slots; the duplicated
+/// tail slot is discarded by the subsequent `count -= 1`.
 #[inline(always)]
 fn shift_down_one<T>(slice: &mut [MaybeUninit<T>]) {
     if slice.len() <= 1 {
@@ -198,11 +166,9 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
 
 /// `buffer_type == .Slice` — caller-provided `[]T`.
 ///
-/// The caller hands in initialized storage; it is viewed as `MaybeUninit<T>`
-/// internally for uniformity with the other buffer kinds. The fifo only ever
-/// writes valid `T` (or, in debug builds, the 0xAA poison over *discarded*
-/// slots — callers of `.Slice` fifos must treat the backing slice's contents
-/// as unspecified once handed to the fifo).
+/// Viewed as `MaybeUninit<T>` internally; callers must treat the backing
+/// slice's contents as unspecified once handed to the fifo (debug builds
+/// poison discarded slots).
 pub struct SliceBuffer<'a, T>(&'a mut [T]);
 
 impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
@@ -211,15 +177,13 @@ impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
 
     #[inline]
     fn as_uninit_slice(&self) -> &[MaybeUninit<T>] {
-        // SAFETY: `&[T]` → `&[MaybeUninit<T>]` is always sound (initialized is
-        // a subset of maybe-initialized; identical layout).
+        // SAFETY: `&[T]` → `&[MaybeUninit<T>]` is layout-identical and always sound.
         unsafe { &*(ptr::from_ref::<[T]>(self.0) as *const [MaybeUninit<T>]) }
     }
     #[inline]
     fn as_uninit_slice_mut(&mut self) -> &mut [MaybeUninit<T>] {
-        // SAFETY: layout-identical view; the fifo never writes an
-        // uninitialized *value* through this (only valid `T` or the debug
-        // poison bytes over logically-discarded slots — see type-level doc).
+        // SAFETY: layout-identical view; the fifo only writes valid `T` (or
+        // debug poison over discarded slots — see type-level doc).
         unsafe { &mut *(ptr::from_mut::<[T]>(self.0) as *mut [MaybeUninit<T>]) }
     }
 }
@@ -263,17 +227,11 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
 /// Ring buffer over `MaybeUninit<T>` storage.
 ///
 /// INVARIANT: exactly the slots in `[head, head+count)` (modulo wrap) are
-/// initialized; everything else is logically uninitialized (and 0xAA-poisoned
-/// in debug builds). Every accessor that materializes `&[T]`/`&mut [T]` does
-/// so only over that window — except the [`Self::writable_slice`] family,
-/// which is restricted to [`AnyBitPattern`] element types.
+/// initialized. Accessors materialize `&[T]` only over that window, except
+/// the [`Self::writable_slice`] family ([`AnyBitPattern`] only).
 ///
-/// DROP SEMANTICS: the fifo never drops `T`. `discard`/`Drop` simply forget
-/// the items (matching the original semantics where the buffer held raw
-/// `undefined`-able storage). Non-`Copy` element types that own resources
-/// (`PromisePair`'s promise strongs, boxed tasks, …) must be drained with
-/// `read_item` and released by the owner before the fifo is dropped;
-/// undrained items leak by design.
+/// The fifo never drops `T`: resource-owning items must be drained with
+/// `read_item` before drop, or they leak by design.
 pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
     buf: B,
     head: usize,
@@ -323,9 +281,7 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
 }
 
 // `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static/Slice are
-// no-ops. Field drop glue covers it; no explicit impl needed. Note the fifo
-// intentionally does NOT drop remaining `T` items — see the type-level
-// DROP SEMANTICS note.
+// no-ops. Field drop glue covers it; no explicit impl needed.
 
 impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]
@@ -361,7 +317,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             let head = self.head;
             let buf = self.buf.as_uninit_slice_mut();
             // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            // `MaybeUninit` copy is sound regardless of slot initialization.
             unsafe { ptr::copy(buf.as_ptr().add(head), buf.as_mut_ptr(), count) };
             self.head = 0;
         } else {
@@ -482,9 +437,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// First contiguous readable segment starting at `offset`, as raw
-    /// `MaybeUninit` storage. Every slot in the returned range is inside the
-    /// `[head, head+count)` initialized window — callers may overwrite it
-    /// with valid `T` (e.g. `unget`) or poison it (`discard`) but must not
+    /// `MaybeUninit` storage; callers may overwrite or poison it but must not
     /// read it as `T` without `assume_init`.
     fn readable_uninit_slice_mut(&mut self, offset: usize) -> &mut [MaybeUninit<T>] {
         if offset > self.count {
@@ -519,9 +472,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             let end = (self.head + self.count).min(buf_len);
             &buf[start..end]
         };
-        // SAFETY: `range` lies entirely within the `[head, head+count)`
-        // readable window (modulo wrap), every slot of which was initialized
-        // by a write path before `count` covered it.
+        // SAFETY: `range` is within the `[head, head+count)` initialized window.
         unsafe { assume_init_slice(range) }
     }
 
@@ -560,9 +511,8 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         if self.count == 0 {
             return None;
         }
-        // SAFETY: buf[head] is in the readable region (count > 0), hence
-        // initialized; we move it out and immediately discard(1), so the slot
-        // is never read again.
+        // SAFETY: buf[head] is initialized (count > 0); moved out then
+        // discard(1), so the slot is never read again.
         let c = unsafe {
             ptr::read(
                 self.buf
@@ -606,8 +556,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// First contiguous writable segment starting at `offset`, as raw
-    /// `MaybeUninit` storage. The slots are logically uninitialized; callers
-    /// must fully write any prefix they later commit via [`Self::update`].
+    /// `MaybeUninit` storage (logically uninitialized slots).
     fn writable_uninit_slice(&mut self, offset: usize) -> &mut [MaybeUninit<T>] {
         let buf_len = self.buf_len();
         if offset > buf_len {
@@ -629,17 +578,14 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     /// Returns the first section of writable buffer.
     /// Note that this may be of length 0.
     ///
-    /// Restricted to [`AnyBitPattern`] element types because the returned
-    /// `&mut [T]` covers never-written slots; for other `T` use
-    /// [`Self::write_item`] / [`Self::write_item_assume_capacity`].
+    /// `T: AnyBitPattern` because the returned `&mut [T]` covers never-written
+    /// slots; for other `T` use [`Self::write_item`].
     pub fn writable_slice(&mut self, offset: usize) -> &mut [T]
     where
         T: AnyBitPattern,
     {
         let slice = self.writable_uninit_slice(offset);
-        // SAFETY: `T: AnyBitPattern` — every bit pattern is a valid `T`, so
-        // exposing not-yet-written slots as `&mut [T]` cannot create an
-        // invalid value.
+        // SAFETY: `T: AnyBitPattern` — every bit pattern is a valid `T`.
         unsafe { assume_init_slice_mut(slice) }
     }
 
@@ -757,9 +703,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         self.rewind(src.len());
 
-        // The rewound slots `[head, head+src.len())` are logically
-        // uninitialized until this copy lands, so write through the
-        // `MaybeUninit` view rather than materializing `&mut [T]` over them.
         // reshaped for borrowck — copy into first chunk in a scoped
         // block, drop borrow, then re-borrow for the wrapped chunk.
         let slice_len = {
@@ -789,8 +732,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             index %= self.buf_len();
         }
-        // SAFETY: `offset < count` ⇒ the slot is inside the readable window,
-        // hence initialized.
+        // SAFETY: `offset < count` ⇒ the slot is initialized.
         unsafe { self.buf.as_uninit_slice()[index].assume_init_read() }
     }
 
@@ -805,8 +747,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         } else {
             index %= self.buf_len();
         }
-        // SAFETY: `offset < count` ⇒ the slot is inside the readable window,
-        // hence initialized.
+        // SAFETY: `offset < count` ⇒ the slot is initialized.
         unsafe { self.buf.as_uninit_slice_mut()[index].assume_init_mut() }
     }
 
@@ -864,8 +805,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     // `src_reader(buf)` ≙ `reader.read(buf)`, `dest_writer(buf)` ≙
     // `writer.write(buf)`, both returning a count (`Ok(0)` from the reader
     // means EOF). This keeps `pump` generic over `T`, which `std::io` cannot.
-    // `T: AnyBitPattern` because the reader closure is handed the raw
-    // writable (not-yet-written) slots as `&mut [T]`.
+    // `T: AnyBitPattern`: the reader closure is handed not-yet-written slots as `&mut [T]`.
     pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
     where
         T: AnyBitPattern,
@@ -1126,14 +1066,9 @@ mod tests {
         per_type!(u8, u16, u64);
     }
 
-    // A `NonNull`-bearing enum: NOT any-bit-pattern-valid (a niche-optimized
-    // discriminant over a non-null pointer), mirroring the in-tree element
-    // types `bun_test::RefDataValue`, `ValkeyCommand::PromisePair`, and the
-    // event-loop `Task` enum. Pre-rework, *every* fifo accessor materialized
-    // `&[T]` over the whole (partially uninitialized) backing store, which is
-    // immediate UB for this type under Miri; post-rework only logically
-    // written subranges are assumed-init. Run with
-    // `cargo miri test -p bun_collections linear_fifo` to verify.
+    // NonNull-bearing enum (niche-optimized, NOT any-bit-pattern-valid), like
+    // the in-tree `Task` enum: verifies only logically written subranges are
+    // assumed-init. `cargo miri test -p bun_collections linear_fifo` checks this.
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     enum PtrItem {
         Val(core::ptr::NonNull<i32>),
@@ -1149,8 +1084,7 @@ mod tests {
 
     fn deref_item(item: PtrItem) -> i32 {
         match item {
-            // SAFETY: pointer targets the `backing` array, which outlives the
-            // fifo in every test below.
+            // SAFETY: pointer targets `backing`, which outlives the fifo.
             PtrItem::Val(p) => unsafe { *p.as_ref() },
             PtrItem::Marker => -1,
         }
@@ -1162,9 +1096,7 @@ mod tests {
         let items = ptr_items(&backing);
 
         let mut fifo = LinearFifo::<PtrItem, StaticBuffer<PtrItem, 16>>::init();
-        // Recreate the wrapped layout from the i32 tests: write 12, read 8,
-        // write 10 → head=8, count=14, wraps. Every read/peek goes through a
-        // partially-uninitialized backing store.
+        // write 12, read 8, write 10 → head=8, count=14, wraps.
         for v in 0..12 {
             fifo.write_item(items[v]).unwrap();
         }

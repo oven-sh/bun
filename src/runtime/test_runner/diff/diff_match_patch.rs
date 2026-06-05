@@ -1679,9 +1679,8 @@ mod tests {
 
     #[test]
     fn test_diff_lines_to_chars_many_lines() {
-        // 254 two-byte "lines" of the form { i, '\n' }. The i == '\n' entry
-        // splits into two "\n" lines that share one line_array slot, so the
-        // text has 255 lines referencing 254 unique lines.
+        // 254 two-byte "lines"; the i == '\n' entry splits into two "\n" lines
+        // sharing one line_array slot, so 255 lines map to 254 unique entries.
         let mut line_list: Vec<u8> = Vec::new();
         for i in 1u8..255 {
             line_list.push(i);
@@ -2121,20 +2120,15 @@ mod tests {
         let b = "I am the very model of a modern major general,\nI've information vegetable, animal, and mineral,\nI know the kings of England, and I quote the fights historical,\nFrom Marathon to Waterloo, in order categorical.\n"
             .repeat(1024);
 
-        // Measure elapsed time with the same clock the diff deadline uses, so
-        // a wall-clock step cannot make the lower-bound assertion flake.
+        // Use the same clock as the diff deadline so a wall-clock step can't flake the bounds.
         let start = milli_timestamp();
         let _diffs = with_timeout
             .diff(a.as_bytes(), b.as_bytes(), false)
             .unwrap();
         let elapsed = milli_timestamp().saturating_sub(start);
 
-        // Test that we took at least the timeout period.
         assert!(with_timeout.config.diff_timeout <= elapsed); // diff: Timeout min.
-        // Test that we didn't take forever (be forgiving: 100x the timeout,
-        // i.e. 20 seconds, leaves headroom for slow ASAN/CI machines).
-        // Theoretically this test could fail very occasionally if the
-        // OS task swaps or locks up at the wrong moment.
+        // Generous upper bound (200x) for slow ASAN/CI machines.
         assert!(with_timeout.config.diff_timeout * 100 * 2 > elapsed); // diff: Timeout max.
     }
 

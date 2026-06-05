@@ -1718,6 +1718,11 @@ impl Log {
 
     pub fn reset(&mut self) {
         self.msgs.clear();
+        // The packed string buffers (see `clone_to_with_recycled` /
+        // `append_to`) only back `self.msgs`; once those are cleared nothing
+        // borrows them, so drop them too — otherwise a long-lived Log (e.g.
+        // the dev server's) accumulates one buffer per appended log forever.
+        self.owned_strings.clear();
         self.warnings = 0;
         self.errors = 0;
         // Drop the per-source scan cache with the messages it was built for;
@@ -1909,6 +1914,10 @@ impl Log {
     pub fn clear_and_free(&mut self) {
         self.msgs.clear();
         self.msgs.shrink_to_fit();
+        // See `reset` — the packed string buffers only back `self.msgs`, so
+        // release them with the messages.
+        self.owned_strings.clear();
+        self.owned_strings.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
         // See `reset` — the scan cache goes with the messages.

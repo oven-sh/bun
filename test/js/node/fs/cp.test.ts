@@ -42,9 +42,11 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      // node maps this to ERR_FS_EISDIR (SystemError), not a raw EISDIR
+      // node maps this to ERR_FS_EISDIR (SystemError), not a raw EISDIR.
+      // The path field echoes the caller's string verbatim (node does not
+      // resolve or normalize it), so expect the same concatenation we passed.
       expect(e.code).toBe("ERR_FS_EISDIR");
-      expect(e.path).toBe(join(basename, "from"));
+      expect(e.path).toBe(basename + "/from");
     });
 
     test("recursive directory structure - no destination", async () => {
@@ -137,9 +139,10 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      // node maps this to ERR_FS_CP_EEXIST (SystemError), not a raw EEXIST
+      // node maps this to ERR_FS_CP_EEXIST (SystemError), not a raw EEXIST.
+      // As above, the path field carries the caller's string verbatim.
       expect(e.code).toBe("ERR_FS_CP_EEXIST");
-      expect(e.path).toBe(join(basename, "result", "a.txt"));
+      expect(e.path).toBe(basename + "/result/a.txt");
 
       assertContent(basename + "/result/a.txt", "win");
     });

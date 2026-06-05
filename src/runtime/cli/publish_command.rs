@@ -949,7 +949,7 @@ impl PublishCommand {
         // explicit `--access public`.
         if cfg.access != Some(Access::Public) && cfg.provenance_file.is_empty() {
             Output::err_generic(
-                "--provenance requires <cyan>--access public<r> (provenance cannot be \
+                "provenance requires <cyan>--access public<r> (provenance cannot be \
                  generated for private packages)",
                 (),
             );

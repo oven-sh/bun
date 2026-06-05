@@ -293,7 +293,10 @@ describe("--provenance", () => {
       write(packageJson, JSON.stringify({ name: "prov-pkg-4", version: "1.0.0" })),
     ]);
     const { err, exitCode } = await publish({ ...bunEnv, GITHUB_ACTIONS: "true", CI: "1" }, packageDir, "--provenance");
-    expect(err).toContain("--access public");
+    // Flag-agnostic wording: the same check fires for publishConfig.provenance
+    // and NPM_CONFIG_PROVENANCE, where no --provenance flag was typed.
+    expect(err).toContain("provenance requires --access public");
+    expect(err).not.toContain("--provenance requires");
     expect(exitCode).toBe(1);
   });
 

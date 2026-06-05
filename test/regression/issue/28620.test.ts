@@ -34,6 +34,7 @@ test('foo', () => {
   expect(stderr).toContain("% Lines");
   // Built-in modules should not appear in the coverage table
   expect(stderr).not.toContain("internal:");
+  expect(stderr).not.toContain("bun:");
   expect(result.exitCode).toBe(0);
 });
 
@@ -70,5 +71,6 @@ test('foo', () => {
   expect(stderr).toContain("% Lines");
   // Built-in modules should not appear in the coverage table
   expect(stderr).not.toContain("internal:");
+  expect(stderr).not.toContain("node:");
   expect(result.exitCode).toBe(0);
 });

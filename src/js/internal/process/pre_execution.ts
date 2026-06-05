@@ -149,36 +149,46 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
   }
 }
 
+// Captured at module-eval time (before user code runs) so the proxy traps
+// keep working even if user code overwrites Reflect.* later.
+const ReflectGet = Reflect.get;
+const ReflectSet = Reflect.set;
+const ReflectHas = Reflect.has;
+const ReflectDeleteProperty = Reflect.deleteProperty;
+const ReflectDefineProperty = Reflect.defineProperty;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const ReflectOwnKeys = Reflect.ownKeys;
+
 function installEnvTracing(): void {
   const real = process.env;
   const proxy = new Proxy(real, {
     get(target, prop) {
       if (typeof prop === "string") printEnvTrace("get", prop);
-      return Reflect.get(target, prop);
+      return ReflectGet(target, prop);
     },
     set(target, prop, value) {
       if (typeof prop === "string") printEnvTrace("set", prop);
-      return Reflect.set(target, prop, value);
+      return ReflectSet(target, prop, value);
     },
     has(target, prop) {
       if (typeof prop === "string") printEnvTrace("query", prop);
-      return Reflect.has(target, prop);
+      return ReflectHas(target, prop);
     },
     deleteProperty(target, prop) {
       if (typeof prop === "string") printEnvTrace("delete", prop);
-      return Reflect.deleteProperty(target, prop);
+      return ReflectDeleteProperty(target, prop);
     },
     defineProperty(target, prop, desc) {
       if (typeof prop === "string") printEnvTrace("define", prop);
-      return Reflect.defineProperty(target, prop, desc);
+      return ReflectDefineProperty(target, prop, desc);
     },
     getOwnPropertyDescriptor(target, prop) {
       if (typeof prop === "string") printEnvTrace("descriptor", prop);
-      return Reflect.getOwnPropertyDescriptor(target, prop);
+      return ReflectGetOwnPropertyDescriptor(target, prop);
     },
     ownKeys(target) {
       printEnvTrace("enumerate", null);
-      return Reflect.ownKeys(target);
+      return ReflectOwnKeys(target);
     },
   });
   Object.defineProperty(process, "env", {

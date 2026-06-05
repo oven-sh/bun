@@ -787,8 +787,9 @@ describe("compression stream wrapper GC liveness", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK"`);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 
   it("destroying streams with in-flight writes under GC pressure does not crash", async () => {
     // Exercises the pending_close path (close while write_in_progress) and the
@@ -839,6 +840,7 @@ describe("compression stream wrapper GC liveness", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK"`);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-  }, 60_000);
+  });
 });

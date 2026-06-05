@@ -1132,8 +1132,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         entry_path: Box<[u8]>,
         graph: &mut bun_standalone_graph::Graph,
     ) -> Result<(), bun_core::Error> {
-        use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
-
         bun_jsc::initialize(false);
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
@@ -1141,8 +1139,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.
         // load_config checks disable_autoload_bunfig internally via
-        // StandaloneModuleGraph::get(), so the compile flag is still honoured.
-        if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
+        // StandaloneModuleGraph::get(), so the compile flag is honoured.
+        if !ctx.debug.loaded_bunfig {
             arguments::load_config(CommandTag::RunCommand, None, ctx)?;
         }
 

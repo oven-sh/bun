@@ -955,13 +955,14 @@ impl<'a> Parser<'a> {
                     let mut names: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
                     for item in items {
                         self.expect_string(item)?;
-                        names.push(estring_to_owned(
+                        let raw = estring_to_owned(
                             item.data
                                 .e_string()
                                 .expect("infallible: variant checked")
                                 .get(),
                             self.bump,
-                        ));
+                        );
+                        names.push(self.resolve_bunfig_path(raw));
                     }
                     self.ctx.args.entry_points = names;
                 }

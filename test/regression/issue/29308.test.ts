@@ -7,6 +7,11 @@ import { join } from "path";
 // `bunfig.toml` at the project root was ignored when running `bun` from a
 // subdirectory, which broke `preload` (and every other config entry) in
 // monorepos where commands are invoked from inside a package directory.
+//
+// All tests here skip Windows: windows-2019 CI intermittently failed this
+// file with output/timeout flake unrelated to the fix (the behavior itself
+// is covered on Windows by "autoload ancestor bunfig.toml (sub cwd)" in
+// test/cli/install/bun-run-bunfig.test.ts).
 test.skipIf(process.platform === "win32").each([
   { label: "bun file.ts", argv: ["src/index.ts"] },
   { label: "bun run file.ts", argv: ["run", "src/index.ts"] },

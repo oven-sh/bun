@@ -528,10 +528,8 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // Reuse the parser-owned stack to avoid per-call allocation. This
-        // function recurses through `simplify_unused_expr`, so record a bottom
-        // watermark on entry and truncate back to it before returning — inner
-        // frames only ever touch elements above their own watermark.
+        // This function recurses through `simplify_unused_expr`, so each frame
+        // only touches elements above its watermark and truncates back on exit.
         let stack_bottom = p.binary_expression_simplify_stack.len();
         p.binary_expression_simplify_stack
             .push(BinaryExpressionSimplifyVisitor { bin: root_bin });
@@ -554,8 +552,6 @@ impl SideEffects {
         let mut result = Self::simplify_unused_expr(p, left).unwrap_or(Expr::EMPTY);
         while i > stack_bottom {
             i -= 1;
-            // Copy the element out before re-entering `simplify_unused_expr`
-            // (which takes `&mut P` and may push/truncate above our watermark).
             let top = p.binary_expression_simplify_stack[i];
             let right = top.bin.right;
             let visited_right = Self::simplify_unused_expr(p, right).unwrap_or(Expr::EMPTY);

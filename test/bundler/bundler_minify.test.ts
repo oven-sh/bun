@@ -213,21 +213,17 @@ describe("bundler", () => {
     },
   });
   itBundled("minify/UnusedCommaAndStrictEqChains", {
-    // Exercises the parser's reusable binary-comma simplification stack:
-    // long left-nested comma chains (many stack entries in one frame) plus
-    // comma/strict-eq operands nested on the right (recursive re-entry while
-    // the outer frame's stack slice is still live). Side-effecting calls must
-    // survive in source order; pure strict-eq comparisons must be dropped.
+    // Exercises the reusable binary-comma simplification stack, including
+    // recursive re-entry while an outer frame's stack slice is still live.
     files: {
       "/entry.js": /* js */ `
         function eff(n) { console.log(n); return n; }
-        // Deep left-nested comma chain (comma is left-associative).
+        // Deep left-nested comma chain.
         (${new Array(60)
           .fill(null)
           .map((_, i) => `eff(${i + 1})`)
           .join(", ")});
-        // Comma chain whose right operands are themselves comma chains
-        // (forces recursion through the shared stack).
+        // Comma chain whose right operands are themselves comma chains.
         (eff(61), (eff(62), (eff(63), eff(64)), eff(65)), eff(66));
         // Unused strict-eq/ne: pure comparison dropped, operand side effects kept.
         (eff(67) === (eff(68), eff(69)), eff(70));
@@ -245,7 +241,6 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      // The unused strict equality comparisons themselves must be eliminated.
       expect(code).not.toContain("===");
       expect(code).not.toContain("!==");
     },

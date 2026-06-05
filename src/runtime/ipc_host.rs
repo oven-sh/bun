@@ -33,6 +33,51 @@ pub(crate) enum FromEnum {
     Process,
 }
 
+/// Windows: serialize `fd` (a SOCKET) for adoption by `peer_pid` with
+/// `WSADuplicateSocketW` and attach the hex-encoded `WSAPROTOCOL_INFOW` to
+/// `message` under `$winSocketInfo`, where the receiving process imports it
+/// (see `import_windows_socket_payload` in ipc.rs). The source socket must
+/// stay open until the receiver acks - the existing handle ACK protocol
+/// guarantees that. Returns false when the export failed (dead peer, WSA
+/// error); the caller falls back to sending without the handle.
+#[cfg(windows)]
+pub(crate) fn attach_windows_socket_payload(
+    global: &JSGlobalObject,
+    message: JSValue,
+    fd: bun_sys::Fd,
+    peer_pid: u32,
+) -> bool {
+    if peer_pid == 0 {
+        return false;
+    }
+    let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
+    let mut info = vec![0u8; size];
+    // SAFETY: `info` is `size` bytes as required; `fd.native()` is the SOCKET.
+    let rc = unsafe {
+        bun_uws::socket_transfer::bsd_socket_export(
+            fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+            peer_pid,
+            info.as_mut_ptr().cast::<core::ffi::c_void>(),
+        )
+    };
+    if rc != 0 {
+        log!(
+            "attachWindowsSocketPayload: WSADuplicateSocketW failed: {}",
+            rc
+        );
+        return false;
+    }
+    let mut hex = vec![0u8; size * 2];
+    let n = bun_core::immutable::encode_bytes_to_hex(&mut hex, &info);
+    debug_assert!(n == size * 2);
+    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex[..n]) else {
+        global.clear_exception();
+        return false;
+    };
+    message.put(global, bun_jsc::ipc::WIN_SOCKET_INFO_KEY, str_js);
+    true
+}
+
 #[bun_jsc::host_fn]
 fn emit_process_error_event(
     global_this: &JSGlobalObject,
@@ -75,8 +120,11 @@ pub(crate) fn do_send(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
     from: FromEnum,
+    peer_pid: u32,
 ) -> JsResult<JSValue> {
     let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+    #[cfg(not(windows))]
+    let _ = peer_pid;
 
     if handle.is_callable() {
         callback = handle;
@@ -123,6 +171,7 @@ pub(crate) fn do_send(
         ));
     }
 
+    let original_message = message;
     if !handle.is_undefined_or_null() {
         let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
         if serialized_array.is_undefined_or_null() {
@@ -176,6 +225,21 @@ pub(crate) fn do_send(
                 });
             }
         }
+    }
+
+    // Windows: the fd cannot ride the pipe as ancillary data; serialize the
+    // socket for the peer process and attach it to the NODE_HANDLE message.
+    #[cfg(windows)]
+    if let Some(h) = &zig_handle {
+        if !attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+            zig_handle = None;
+        }
+    }
+    // No transferable native socket (handle without a live fd, a named-pipe
+    // listener, or a failed Windows export): deliver the plain message
+    // instead of a NODE_HANDLE wrapper the receiver could never pair.
+    if zig_handle.is_none() {
+        message = original_message;
     }
 
     let status = ipc_data.serialize_and_send(
@@ -248,5 +312,11 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
     let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
-    do_send(ipc, global, frame, FromEnum::Process)
+    // The peer of a child process's IPC channel is its parent.
+    #[cfg(windows)]
+    // SAFETY: trivial libuv accessor, no preconditions.
+    let peer_pid = unsafe { bun_libuv_sys::uv_os_getppid() } as u32;
+    #[cfg(not(windows))]
+    let peer_pid = 0;
+    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
 }

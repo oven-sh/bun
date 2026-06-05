@@ -21,8 +21,6 @@
 
 'use strict';
 const common = require('../common');
-if (common.isWindows)
-  common.skip('Bun does not support cluster shared listening sockets on Windows');
 const assert = require('assert');
 const cluster = require('cluster');
 const net = require('net');

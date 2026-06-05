@@ -5,6 +5,9 @@ const { kClusterOwner: owner_symbol } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
+// Closes a numeric cluster fd. On Windows these are raw SOCKETs that must go
+// through closesocket(), not the CRT fd table that fs.closeSync uses.
+const closeRawHandle = $newZigFunction("node_cluster_binding.zig", "clusterCloseHandle", 1);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -28,10 +31,7 @@ function makeConnectionHandle(fd) {
     close(cb?) {
       if (!closed) {
         closed = true;
-        fs ??= require("node:fs");
-        try {
-          fs.closeSync(fd);
-        } catch {}
+        closeRawHandle(fd);
       }
       if (typeof cb === "function") process.nextTick(cb);
     },
@@ -167,10 +167,7 @@ function makeSharedHandle(fd) {
       if (!closed) {
         closed = true;
         if (!handle.adopted) {
-          fs ??= require("node:fs");
-          try {
-            fs.closeSync(fd);
-          } catch {}
+          closeRawHandle(fd);
         }
       }
       if (typeof cb === "function") process.nextTick(cb);

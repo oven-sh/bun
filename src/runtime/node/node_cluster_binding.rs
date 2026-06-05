@@ -224,18 +224,37 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         if !fd_value.is_number() {
             return Err(global.throw_invalid_argument_type_value("handle.fd", "number", fd_value));
         }
-        let raw_fd = fd_value.to_int32();
-        if raw_fd < 0 {
-            return Err(global.throw(format_args!("cluster handle has invalid fd")));
-        }
+        // POSIX: a plain fd; Windows: the raw SOCKET value (see
+        // `to_js_without_making_lib_uv_owned`).
+        #[cfg(not(windows))]
+        let native_fd = {
+            let raw_fd = fd_value.to_int32();
+            if raw_fd < 0 {
+                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+            }
+            bun_sys::Fd::from_uv(raw_fd)
+        };
+        #[cfg(windows)]
+        let native_fd = {
+            let raw = fd_value.to_number(global)?;
+            if !(raw.is_finite() && raw >= 0.0) {
+                return Err(global.throw(format_args!("cluster handle has invalid fd")));
+            }
+            bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
+        };
         message.put(global, b"$hasHandle", JSValue::TRUE);
-        // `from_uv` takes an i32 on every target (`from_native` expects u64 on
-        // Windows); this path is runtime-unreachable on Windows but must still
-        // type-check there.
-        native_handle = Some(bun_jsc::ipc::Handle::init(
-            bun_sys::Fd::from_uv(raw_fd),
-            handle,
-        ));
+        // Windows: the fd cannot ride the pipe as ancillary data; serialize
+        // the socket for the worker process and attach it to the message.
+        // When the export fails (worker died) the receiver NACKs and the
+        // normal retransmission/giving-up path runs.
+        #[cfg(windows)]
+        let _ = crate::ipc_host::attach_windows_socket_payload(
+            global,
+            message,
+            native_fd,
+            subprocess.pid() as u32,
+        );
+        native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
     }
     let success = ipc_data.serialize_and_send(
         global,
@@ -395,13 +414,69 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
 pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
-        let _ = (frame, global);
-        // Bun cannot share bound sockets between processes on Windows (no
-        // SCM_RIGHTS equivalent is wired up). Reply with ENOTSUP so the
-        // requesting worker surfaces a normal bind error instead of the
-        // primary crashing; node's dgram clustering on Windows errors the
-        // same way (its own tests skip it there).
-        return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
+        let arguments = frame.arguments_old::<4>().ptr;
+        let address_type = arguments[0];
+        let address = arguments[1];
+        let port = arguments[2].to_int32();
+        let flags = arguments[3].to_int32();
+
+        // UDP sockets and pipes cannot be shared across processes on Windows
+        // (node's dgram clustering is ENOTSUP there too; pipes would need
+        // DuplicateHandle plumbing). TCP shared handles work: the socket is
+        // bound here and each worker imports a WSADuplicateSocketW copy and
+        // does its own listen().
+        if address_type.is_string() || address_type.to_int32() == -1 {
+            return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
+        }
+        let atype = address_type.to_int32();
+
+        let host_owned: Vec<u8> = if address.is_string() {
+            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let mut v = s.slice().to_vec();
+            v.push(0);
+            v
+        } else if atype == 6 {
+            b"::\0".to_vec()
+        } else {
+            b"0.0.0.0\0".to_vec()
+        };
+
+        // flags bit 0 = ipv6only (matches the POSIX branch / UV_TCP_IPV6ONLY).
+        let options: core::ffi::c_int = if flags & 1 != 0 {
+            bun_uws::LIBUS_SOCKET_IPV6_ONLY
+        } else {
+            0
+        };
+
+        let mut out_port: core::ffi::c_int = 0;
+        let mut err: core::ffi::c_int = 0;
+        // SAFETY: `host_owned` is NUL-terminated; out params are live locals.
+        let fd = unsafe {
+            bun_uws::socket_transfer::bsd_create_bound_socket(
+                host_owned.as_ptr().cast(),
+                if port >= 0 { port } else { 0 },
+                options,
+                &mut out_port,
+                &mut err,
+            )
+        };
+        if fd == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+            // Contract: negative uv-style errno. `err` is a WSA error code;
+            // uv_translate_sys_error returns the matching negative UV_E*.
+            // SAFETY: pure translation function.
+            let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(err) };
+            // -4094 is UV_UNKNOWN (no `UV_E` const is generated for it).
+            return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+                uv_err
+            } else {
+                -4094
+            }));
+        }
+
+        let obj = JSValue::create_empty_object(global, 2);
+        obj.put(global, b"fd", JSValue::js_number_from_uint64(fd as u64));
+        obj.put(global, b"port", JSValue::js_number_from_int32(out_port));
+        return Ok(obj);
     }
     #[cfg(not(windows))]
     {
@@ -633,4 +708,38 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             Ok(obj)
         }
     }
+}
+
+/// `clusterCloseHandle(fd)` — close a numeric fd held by cluster JS (shared
+/// listen handles that were never adopted by a native socket). On Windows the
+/// number is a raw SOCKET, which must go through closesocket();
+/// `fs.closeSync` would route it through the CRT fd table and close an
+/// unrelated descriptor.
+#[bun_jsc::host_fn]
+pub(crate) fn cluster_close_handle(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let _ = global;
+    let value = frame.arguments_old::<1>().ptr[0];
+    if value.is_number() {
+        #[cfg(windows)]
+        {
+            let raw = value.to_number(global)?;
+            if raw.is_finite() && raw >= 0.0 {
+                bun_uws::socket_transfer::bsd_close_socket(
+                    raw as u64 as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+                );
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let fd = value.to_int32();
+            if fd >= 0 {
+                // SAFETY: closing a caller-owned descriptor.
+                unsafe { libc::close(fd) };
+            }
+        }
+    }
+    Ok(JSValue::UNDEFINED)
 }

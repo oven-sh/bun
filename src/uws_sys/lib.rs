@@ -182,6 +182,33 @@ bun_core::opaque_extern!(
 // Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
 // SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
+/// Cross-process socket transfer. On Windows this wraps WSADuplicateSocketW /
+/// WSASocketW(FROM_PROTOCOL_INFO): the exporter serializes the SOCKET for a
+/// target pid into an opaque blob that travels in-band over the IPC pipe; the
+/// importer reconstructs an independent descriptor from it. On POSIX these
+/// return ENOTSUP - fds travel as SCM_RIGHTS ancillary data there instead.
+pub mod socket_transfer {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        pub safe fn bsd_socket_export_size() -> c_int;
+        pub fn bsd_socket_export(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            target_pid: c_uint,
+            info_out: *mut c_void,
+        ) -> c_int;
+        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub fn bsd_create_bound_socket(
+            host: *const c_char,
+            port: c_int,
+            options: c_int,
+            out_port: *mut c_int,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+    }
+}
+
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
 // scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
 unsafe extern "C" {

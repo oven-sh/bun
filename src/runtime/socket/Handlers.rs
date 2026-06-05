@@ -509,7 +509,19 @@ impl SocketConfig {
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(|v| {
+                    // JS-visible socket fds are raw SOCKET values on Windows
+                    // (see `to_js_without_making_lib_uv_owned`), plain fds on
+                    // POSIX.
+                    #[cfg(windows)]
+                    {
+                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Fd::from_uv(v)
+                    }
+                }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, is_server)?,
                 default_data: if generated.data.is_undefined() {

@@ -391,17 +391,13 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    /* EINVAL matches both the pre-fd-adoption behavior ("Bun does not support
-     * listening on a file descriptor", EINVAL) and node's listen({fd}) error
-     * class on Windows (test-net-listen-fd0 accepts EINVAL/ENOTSOCK). */
-    *error = EINVAL;
-    return 0;
-#else
+    /* Works on every backend (the libuv eventing polls raw SOCKETs via
+     * uv_poll_init_socket). listen(2) on a non-socket fd (e.g. listen({fd:0})
+     * on stdin) fails with ENOTSOCK/EINVAL below, matching node. */
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
     if (listen(fd, backlog > 0 ? backlog : 512)) {
-        *error = errno;
+        *error = LIBUS_ERR; /* WSAGetLastError() on Windows, errno on POSIX */
         return 0;
     }
 
@@ -417,7 +413,6 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     }
 
     return ls;
-#endif
 }
 
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,

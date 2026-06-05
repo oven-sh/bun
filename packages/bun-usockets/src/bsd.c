@@ -1040,6 +1040,106 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
+int bsd_socket_export_size(void) {
+#ifdef _WIN32
+    return (int) sizeof(WSAPROTOCOL_INFOW);
+#else
+    return 0;
+#endif
+}
+
+int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out) {
+#ifdef _WIN32
+    if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
+        return WSAGetLastError();
+    }
+    return 0;
+#else
+    (void) fd; (void) target_pid; (void) info_out;
+    /* POSIX transfers fds with SCM_RIGHTS (us_socket_ipc_write_fd). */
+    return ENOTSUP;
+#endif
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
+#ifdef _WIN32
+    SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
+                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED);
+    if (s == INVALID_SOCKET) {
+        *err = WSAGetLastError();
+        return LIBUS_SOCKET_ERROR;
+    }
+    return s;
+#else
+    (void) info;
+    *err = ENOTSUP;
+    return LIBUS_SOCKET_ERROR;
+#endif
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    if (getaddrinfo(host, port_string, &hints, &result)) {
+        *error = LIBUS_ERR;
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
+    /* Prefer IPv6 (dual-stack) like bsd_create_listen_socket. */
+    for (int family = AF_INET6; fd == LIBUS_SOCKET_ERROR && family >= AF_INET; family -= (AF_INET6 - AF_INET)) {
+        for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+            if (a->ai_family != family) {
+                continue;
+            }
+            fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+            if (fd == LIBUS_SOCKET_ERROR) {
+                continue;
+            }
+#if defined(SO_REUSEADDR) && !defined(_WIN32)
+            /* See bsd_bind_listen_fd: on Windows SO_REUSEADDR steals ports. */
+            int one = 1;
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+#ifdef IPV6_V6ONLY
+            if (a->ai_family == AF_INET6) {
+                int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+                setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &enabled, sizeof(enabled));
+            }
+#endif
+            int rc;
+            do
+                rc = bind(fd, a->ai_addr, (socklen_t) a->ai_addrlen);
+            while (IS_EINTR(rc));
+            if (rc != 0) {
+                *error = LIBUS_ERR;
+                bsd_close_socket(fd);
+                fd = LIBUS_SOCKET_ERROR;
+                continue;
+            }
+            break;
+        }
+    }
+    freeaddrinfo(result);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+    struct bsd_addr_t tmp;
+    if (bsd_local_addr(fd, &tmp) == 0) {
+        *out_port = bsd_addr_get_port(&tmp);
+    } else {
+        *out_port = port;
+    }
+    return fd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));

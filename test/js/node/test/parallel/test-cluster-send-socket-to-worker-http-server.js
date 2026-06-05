@@ -5,8 +5,6 @@
 // and the `'connection'` event is emitted manually on an HTTP server.
 
 const common = require('../common');
-if (common.isWindows)
-  common.skip('Bun does not support passing socket handles over IPC on Windows');
 const assert = require('assert');
 const cluster = require('cluster');
 const http = require('http');

@@ -398,9 +398,9 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 }
 
 struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
+    /* Works on every backend: the libuv eventing registers raw SOCKETs via
+     * uv_poll_init_socket (see eventing/libuv.c), which is how all Windows
+     * sockets are polled already. */
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -438,7 +438,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     }
 
     return s;
-#endif
 }
 
 void *us_socket_get_native_handle(struct us_socket_t *s) {

@@ -1,6 +1,5 @@
 const clusterRawBind = $newZigFunction("node_cluster_binding.zig", "clusterRawBind", 4);
-
-let fs;
+const closeRawHandle = $newZigFunction("node_cluster_binding.zig", "clusterCloseHandle", 1);
 
 // node's lib/internal/cluster/shared_handle.js: the primary binds (never
 // listens); every worker that asks gets the same fd (duplicated by
@@ -42,10 +41,7 @@ export default class SharedHandle {
     if (this.workers.size !== 0) return false;
 
     if (this.handle) {
-      fs ??= require("node:fs");
-      try {
-        fs.closeSync(this.handle.fd);
-      } catch {}
+      closeRawHandle(this.handle.fd);
       this.handle = null;
     }
     return true;

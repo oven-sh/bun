@@ -863,15 +863,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.func.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
+                e.func.body.stmts = self.declare_capture_temps_in_fn_body(
+                    e.func.body.stmts,
+                    temps_before,
+                    e.func.body.loc,
+                );
             }
             js_ast::ExprData::EArrow(e) => {
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
+                e.body.stmts =
+                    self.declare_capture_temps_in_fn_body(e.body.stmts, temps_before, e.body.loc);
             }
             _ => {}
         }
+    }
+
+    /// Declare receiver-capture temporaries created past `temps_before` at the
+    /// top of the function body they were created in, so each invocation gets
+    /// a fresh binding. A binding hoisted outside the function would be shared
+    /// across invocations, and `__privateGet(_obj = recv, _s, getter)` runs the
+    /// user getter between the write and the `.call(_obj)` read; re-entering
+    /// the same call site through that getter would clobber the shared temp.
+    fn declare_capture_temps_in_fn_body(
+        &mut self,
+        stmts: js_ast::StmtNodeList,
+        temps_before: usize,
+        body_loc: bun_ast::Loc,
+    ) -> js_ast::StmtNodeList {
+        let total = self.temp_refs_to_declare.len();
+        if total == temps_before {
+            return stmts;
+        }
+        let bump = self.arena;
+        let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(total - temps_before, bump);
+        for i in temps_before..total {
+            let capture_ref = self.temp_refs_to_declare[i].r#ref;
+            let binding = self.b(B::Identifier { r#ref: capture_ref }, body_loc);
+            capture_decls.push(G::Decl {
+                binding,
+                value: None,
+            });
+        }
+        self.temp_refs_to_declare.truncate(temps_before);
+        let decl_stmt = self.s(
+            S::Local {
+                decls: DeclList::from_bump_vec(capture_decls),
+                ..Default::default()
+            },
+            body_loc,
+        );
+        let old_stmts = stmts.slice();
+        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, bump);
+        new_stmts.push(decl_stmt);
+        new_stmts.extend_from_slice(old_stmts);
+        js_ast::StmtNodeList::from_bump(new_stmts)
     }
 
     fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
@@ -2380,8 +2430,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.has_decorators = false;
         class.should_lower_standard_decorators = false;
 
-        // Declare receiver-capture temporaries generated while rewriting private
-        // member calls (`__privateGet(_obj = recv, ...).call(_obj, ...)`).
+        // Declare the receiver-capture temporaries that were created outside any
+        // function body (field initializers, static blocks, pre-eval/decorate
+        // expressions). Temps created inside method/function/arrow bodies were
+        // already declared there by `declare_capture_temps_in_fn_body`; these
+        // remaining sites run at most once per class evaluation, so a binding
+        // hoisted next to the other lowering variables is safe (and matches
+        // where esbuild hoists them).
         if p.temp_refs_to_declare.len() > temp_refs_before {
             let capture_count = p.temp_refs_to_declare.len() - temp_refs_before;
             let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(capture_count, bump);

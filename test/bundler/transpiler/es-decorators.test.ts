@@ -813,6 +813,36 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("receiver temps are scoped per invocation, not shared across reentrant calls", async () => {
+      // A private getter runs user code inside __privateGet, between the
+      // `_obj = recv` write and the `.call(_obj)` read. If the getter reenters
+      // the same call site, a temp hoisted outside the method would be
+      // clobbered and the outer call would see the inner receiver. Declaring
+      // the temp inside the method body gives each invocation its own binding.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let nextId = 0;
+        let depth = 0;
+        const order = [];
+        class C {
+          get #g() {
+            if (depth++ === 0) make().run();
+            const self = this;
+            return function () { order.push(self.id + ":" + this.id); };
+          }
+          @dec run() { make().#g(); }
+        }
+        function make() { const c = new C(); c.id = ++nextId; return c; }
+        make().run();
+        console.log(JSON.stringify(order));
+      `);
+      expect(stderr).toBe("");
+      // Each entry pairs the receiver seen at getter time with the receiver
+      // the returned function was invoked on; they must always match.
+      expect(stdout).toBe('["4:4","2:2"]\n');
+      expect(exitCode).toBe(0);
+    });
+
     test("private method call receiver is evaluated exactly once", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(value, ctx) { return value; }

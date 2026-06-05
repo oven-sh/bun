@@ -395,7 +395,9 @@ describe("gzip ISIZE trailer handling", () => {
   it("a lying huge ISIZE on a tiny body does not retain the reservation", async () => {
     // 30 MB ISIZE on a ~40-byte body: the response must decode correctly and
     // the process must not accumulate ~30 MB per request of GC-invisible
-    // capacity behind the adopted bytes.
+    // capacity behind the adopted bytes. The reservation's pages are never
+    // touched, so retained capacity is invisible to RSS — on Linux, measure
+    // the VmSize delta across the loop, which it cannot hide from.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -412,6 +414,12 @@ describe("gzip ISIZE trailer handling", () => {
           port: 0,
           fetch: () => new Response(gz, { headers: { "Content-Encoding": "gzip" } }),
         });
+        function vmSizeMB() {
+          if (process.platform !== "linux") return null;
+          const status = require("node:fs").readFileSync("/proc/self/status", "utf8");
+          return Number(status.match(/VmSize:\\s+(\\d+) kB/)[1]) / 1024;
+        }
+        const vszBefore = vmSizeMB();
         const held = [];
         for (let i = 0; i < 64; i++) {
           held.push(await (await fetch(server.url)).bytes());
@@ -419,16 +427,24 @@ describe("gzip ISIZE trailer handling", () => {
         }
         Bun.gc(true);
         // 64 lying responses x 30MB capacity would be ~1.9GB; bounded means fixed
-        console.log(JSON.stringify({ rssMB: Math.round(process.memoryUsage.rss() / 1048576) }));
+        console.log(JSON.stringify({
+          rssMB: Math.round(process.memoryUsage.rss() / 1048576),
+          vszDeltaMB: vszBefore === null ? null : Math.round(vmSizeMB() - vszBefore),
+        }));
         `,
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const { rssMB } = JSON.parse(stdout.trim().split("\n").at(-1));
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { rssMB, vszDeltaMB } = JSON.parse(stdout.trim().split("\n").at(-1));
     expect(rssMB).toBeLessThan(700);
+    if (process.platform === "linux") {
+      // retained reservations would be 64 x ~30MB ≈ 1.9GB of address space
+      expect(vszDeltaMB).toBeLessThan(1024);
+    }
     expect(exitCode).toBe(0);
   });
 });

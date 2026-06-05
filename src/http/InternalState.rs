@@ -320,17 +320,29 @@ impl<'a> InternalState<'a> {
                             && result.read == buffer.len()
                         {
                             still_needs_to_decompress = false;
-                            // The ISIZE trailer is attacker-controlled: a
-                            // lying value reserves up to 32 MB for a tiny
-                            // body, and the buffer is later adopted as-is
-                            // into JS objects whose GC accounting sees only
-                            // `len`. Right-size grossly oversized
-                            // reservations before they leave the HTTP layer.
+                            // Right-size before the buffer leaves the HTTP
+                            // layer: the list can carry large capacity from a
+                            // previous response on a reused connection, and
+                            // it is later adopted as-is into JS objects whose
+                            // GC accounting sees only `len`.
                             let list = &mut body_out_str.list;
                             if list.capacity() > list.len().saturating_mul(2)
                                 && list.capacity() - list.len() > 64 * 1024
                             {
                                 list.shrink_to_fit();
+                            }
+                        } else {
+                            // The buffer's last 4 bytes weren't the real
+                            // trailer (trailing data) or the decode failed,
+                            // so the reservation was sized from
+                            // attacker-chosen bytes. Discard the partial
+                            // output and the oversized reservation before the
+                            // slow path reuses this list; the capacity would
+                            // otherwise ride along behind the body's bytes
+                            // (up to 32 MB pinned per tiny response).
+                            body_out_str.list.clear();
+                            if body_out_str.list.capacity() > 64 * 1024 {
+                                body_out_str.list.shrink_to_fit();
                             }
                         }
 

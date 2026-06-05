@@ -402,17 +402,9 @@ export function windowsEnv(
     return o;
   };
 
-  (internalEnv as any).toJSON = () => {
-    // Mirror enumeration (and the inspect.custom helper above): original-case
-    // key names with case-insensitive lookups. Spreading internalEnv directly
-    // would leak the canonical UPPERCASE storage keys into
-    // JSON.stringify(process.env) and IPC env echoes.
-    let o = {};
-    for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
-    }
-    return o;
-  };
+  // No toJSON helper: process.env.toJSON is undefined in Node, and
+  // JSON.stringify(process.env) already yields original-case keys through
+  // the ownKeys/getOwnPropertyDescriptor/get traps.
 
   return new Proxy(internalEnv, {
     get(_, p) {

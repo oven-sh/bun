@@ -112,13 +112,23 @@ pub fn getOrCreateDigest(
         // it did, the entry would never tombstone and `entry.ctx` would dangle
         // after the CTX is freed. Don't cache it; caller still owns the ref.
         if (BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry) != 1) return ctx;
+        // Same strong-ref invariant as the fresh-insert path below.
+        _ = BoringSSL.SSL_CTX_up_ref(ctx);
         entry.ctx = ctx;
         return ctx;
     }
 
     const entry = bun.new(Entry, .{ .ctx = ctx, .owner = self });
     gop.value_ptr.* = entry;
+    // Hold the cache's own strong ref so a cached SSL_CTX can never reach
+    // refcount 0 while it is still mapped. This closes the resurrection race:
+    // an off-thread SSL_CTX_free can no longer drive `references` to 0
+    // underneath a concurrent getOrCreate that is about to up_ref the same ctx
+    // (the "JS-thread-only free" assumption was violated by node:http2 socket
+    // teardown under connection churn, producing indefinite TLS handshake hangs).
+    _ = BoringSSL.SSL_CTX_up_ref(ctx);
     if (BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), entry) != 1) {
+        BoringSSL.SSL_CTX_free(ctx);
         _ = self.map.swapRemove(d);
         bun.destroy(entry);
         return ctx;
@@ -168,16 +178,16 @@ fn compactLocked(self: *SSLContextCache) void {
     }
 }
 
-/// VM teardown. Clears each live entry's ex_data so the eventual
-/// `SSL_CTX_free` (from sockets/SecureContexts that outlive RareData) doesn't
-/// dereference the freed `Entry`/map. Map itself holds no refs, so no
-/// `SSL_CTX_free` here.
+/// VM teardown. Clears each live entry's ex_data so a later `SSL_CTX_free`
+/// (from sockets/SecureContexts that outlive RareData) doesn't dereference the
+/// freed `Entry`/map, then drops the cache's own strong ref on each ctx.
 pub fn deinit(self: *SSLContextCache) void {
     self.mutex.lock();
     defer self.mutex.unlock();
     for (self.map.values()) |entry| {
         if (entry.ctx) |ctx| {
             _ = BoringSSL.SSL_CTX_set_ex_data(ctx, c.us_ssl_ctx_cache_ex_idx(), null);
+            BoringSSL.SSL_CTX_free(ctx);
         }
         bun.destroy(entry);
     }

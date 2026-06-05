@@ -1096,6 +1096,9 @@ test.skipIf(isWindows)("SIGINT after a breakOnSigint run without a signal listen
   const exited = proc.exited;
   const ready = Promise.withResolvers<void>();
   const pong = Promise.withResolvers<void>();
+  // If the child dies before ready, await ready.promise throws and pong.promise
+  // is never awaited; keep a sink so its rejection here is never unhandled.
+  pong.promise.catch(() => {});
   // If the process dies early (e.g. it crashed on the signal), reject the
   // awaited handshakes so the test fails fast instead of hanging.
   exited.then(() => {

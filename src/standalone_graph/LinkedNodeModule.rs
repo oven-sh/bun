@@ -298,7 +298,10 @@ fn ensure_loaded(table: &mut Table) {
 }
 
 fn parse_blob(table: &mut Table, blob: &'static [u8]) -> Result<(), BindError> {
-    let mut r = Reader { bytes: blob, pos: 0 };
+    let mut r = Reader {
+        bytes: blob,
+        pos: 0,
+    };
     if r.u32_()? != LINKED_MAGIC {
         return Err(BindError::BadMagic);
     }
@@ -514,8 +517,7 @@ fn bind(entry: &Entry) -> Result<Resolved, BindError> {
     // handler should set BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1.
     if entry.entry_point != 0 {
         const DLL_PROCESS_ATTACH: u32 = 1;
-        type DllMain =
-            unsafe extern "system" fn(*mut c_void, u32, *mut c_void) -> i32;
+        type DllMain = unsafe extern "system" fn(*mut c_void, u32, *mut c_void) -> i32;
         // entry_point is a bun-relative RVA (rebased at build time), so
         // the absolute address is a single add.
         //
@@ -717,8 +719,7 @@ pub unsafe extern "C" fn Bun__initLinkedNodeModule(
         *out = Resolved::empty();
     }
 
-    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get()
-        == Some(true)
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get() == Some(true)
     {
         return false;
     }

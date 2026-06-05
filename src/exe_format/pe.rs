@@ -1006,8 +1006,9 @@ impl<'a> AddonView<'a> {
             return Err(Error::InvalidPEFile);
         }
         // SAFETY: bounds-checked by view_at_const; PEHeader is packed POD.
-        let pe =
-            unsafe { ptr::read_unaligned(view_at_const::<PEHeader>(bytes, dos.e_lfanew as usize)?) };
+        let pe = unsafe {
+            ptr::read_unaligned(view_at_const::<PEHeader>(bytes, dos.e_lfanew as usize)?)
+        };
         if pe.signature != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
@@ -1016,7 +1017,8 @@ impl<'a> AddonView<'a> {
             return Err(Error::UnsupportedPEFormat);
         }
         // SAFETY: bounds-checked by view_at_const; OptionalHeader64 is packed POD.
-        let opt = unsafe { ptr::read_unaligned(view_at_const::<OptionalHeader64>(bytes, opt_off)?) };
+        let opt =
+            unsafe { ptr::read_unaligned(view_at_const::<OptionalHeader64>(bytes, opt_off)?) };
         if opt.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -1117,15 +1119,27 @@ fn section_final_protect(ch: u32) -> u32 {
 }
 
 fn read_u16_le(b: &[u8], off: usize) -> u16 {
-    u16::from_le_bytes(b[off..off + 2].try_into().expect("infallible: size matches"))
+    u16::from_le_bytes(
+        b[off..off + 2]
+            .try_into()
+            .expect("infallible: size matches"),
+    )
 }
 
 fn read_u32_le(b: &[u8], off: usize) -> u32 {
-    u32::from_le_bytes(b[off..off + 4].try_into().expect("infallible: size matches"))
+    u32::from_le_bytes(
+        b[off..off + 4]
+            .try_into()
+            .expect("infallible: size matches"),
+    )
 }
 
 fn read_u64_le(b: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes(b[off..off + 8].try_into().expect("infallible: size matches"))
+    u64::from_le_bytes(
+        b[off..off + 8]
+            .try_into()
+            .expect("infallible: size matches"),
+    )
 }
 
 impl PEFile {
@@ -1248,8 +1262,8 @@ impl PEFile {
         if want_sections > 96 {
             return Err(Error::InsufficientHeaderSpace);
         }
-        let new_headers_end = self.section_headers_offset
-            + size_of::<SectionHeader>() * want_sections as usize;
+        let new_headers_end =
+            self.section_headers_offset + size_of::<SectionHeader>() * want_sections as usize;
         let reserved_headers = align_up_u32(
             u32::try_from(new_headers_end).expect("int cast"),
             file_align,
@@ -1401,7 +1415,8 @@ impl PEFile {
                         return Ok(None);
                     }
                     let slot = &mut image[target_rva as usize..][..8];
-                    let old = u64::from_le_bytes(slot.try_into().expect("infallible: size matches"));
+                    let old =
+                        u64::from_le_bytes(slot.try_into().expect("infallible: size matches"));
                     let new = (old as i64).wrapping_add(build_delta) as u64;
                     slot.copy_from_slice(&new.to_le_bytes());
                 }
@@ -1923,7 +1938,10 @@ pub fn serialize_linked_addons(addons: &[LinkedAddon]) -> Vec<u8> {
         for lib in &a.imports {
             w_str(&mut buf, &lib.name);
             buf.push(lib.is_host as u8);
-            w_u32(&mut buf, u32::try_from(lib.entries.len()).expect("int cast"));
+            w_u32(
+                &mut buf,
+                u32::try_from(lib.entries.len()).expect("int cast"),
+            );
             for e in &lib.entries {
                 w_u32(&mut buf, e.iat_rva);
                 buf.extend_from_slice(&e.ordinal.to_le_bytes());

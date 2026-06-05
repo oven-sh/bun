@@ -1073,8 +1073,7 @@ fn link_native_addons_for_windows(
     output_files: &[OutputFile],
     module_prefix: &[u8],
 ) -> Result<(), bun_pe::Error> {
-    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get()
-        == Some(true)
+    if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK::get() == Some(true)
     {
         return Ok(());
     }

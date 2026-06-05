@@ -630,6 +630,7 @@ describe("resolver liveness across pending-cache completion", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout.trim()).toBe("done");
     expect(exitCode).toBe(0);
   });

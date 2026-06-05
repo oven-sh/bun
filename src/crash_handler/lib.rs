@@ -405,8 +405,8 @@ pub mod debug {
 
         enum State {
             Untried,
-            /// Never retried — `SymInitializeW` fails on a second call for the
-            /// same process.
+            /// Never retried — a missing dbghelp.dll or export won't appear
+            /// on a second attempt.
             Failed,
             Ready(Api),
         }
@@ -416,20 +416,7 @@ pub mod debug {
         fn init() -> State {
             // Load only from System32 so a rogue dbghelp.dll on the default
             // DLL search path can't be injected into the crashing process.
-            const DBGHELP_W: &[u16] = &[
-                b'd' as u16,
-                b'b' as u16,
-                b'g' as u16,
-                b'h' as u16,
-                b'e' as u16,
-                b'l' as u16,
-                b'p' as u16,
-                b'.' as u16,
-                b'd' as u16,
-                b'l' as u16,
-                b'l' as u16,
-                0,
-            ];
+            const DBGHELP_W: &[u16] = bun_core::wstr!("dbghelp.dll");
             const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
             // SAFETY: DBGHELP_W is NUL-terminated.
             let lib = unsafe {
@@ -480,7 +467,18 @@ pub mod debug {
             // Modules loaded after this point are never registered and
             // degrade to the `???` path.
             if unsafe { sym_initialize_w(process, core::ptr::null(), 1) } == 0 {
-                return State::Failed;
+                // ERROR_INVALID_PARAMETER means dbghelp was already
+                // initialized for this process — e.g. by Rust's
+                // `std::backtrace` (which calls SymInitializeW and ignores
+                // the result). The session is usable; treat it as success.
+                // Note: std's internal dbghelp lock and `STATE`'s mutex are
+                // independent, so concurrent std backtrace captures aren't
+                // serialized against our calls — acceptable for a
+                // best-effort crash path.
+                const ERROR_INVALID_PARAMETER: u16 = 87;
+                if bun_sys::windows::get_last_win32_error().0 != ERROR_INVALID_PARAMETER {
+                    return State::Failed;
+                }
             }
             State::Ready(Api {
                 sym_from_addr_w,
@@ -544,12 +542,7 @@ pub mod debug {
             {
                 // SAFETY: `FileName` is a valid NUL-terminated wide string
                 // while the mutex is held.
-                let wide = unsafe {
-                    core::slice::from_raw_parts(
-                        line.file_name,
-                        bun_core::ffi::wcslen(line.file_name),
-                    )
-                };
+                let wide = unsafe { bun_core::WStr::from_ptr(line.file_name) }.as_slice();
                 Some(SourceLocation {
                     file_name: bun_core::strings::to_utf8_alloc(wide).into_boxed_slice(),
                     line: line.line_number,

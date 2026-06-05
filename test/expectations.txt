@@ -7,6 +7,10 @@ test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > 
 test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
 test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
+# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
+# the spawned child needs process.binding('inspector'), which is not implemented
+test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
 test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # hangs: native http client coalesces response-body segments between pulls; needs per-socket-read delivery
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)

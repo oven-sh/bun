@@ -11,7 +11,7 @@ use core::ptr::NonNull;
 
 use bun_core::ZBox;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::JSGlobalObject;
 
 // ─── un-gated host-fn bodies (open/close/compile/generate_symbols) ───────────
 mod host_fns;
@@ -242,12 +242,9 @@ pub enum Step {
     Failed { msg: Box<[u8]>, allocated: bool },
 }
 
+/// Draft-path sibling of `ffi_body::Compiled`; see it for JS function rooting.
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // Rooted via the JSFFI `symbolsValue` own-property on the wrapper object;
-    // never written on this draft path (only `ffi_body::Compiled` stores a
-    // live function value).
-    pub js_function: JSValue,
     pub js_context: Option<*mut JSGlobalObject>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
@@ -256,7 +253,6 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            js_function: JSValue::ZERO,
             js_context: None,
             ffi_callback_function_wrapper: None,
         }

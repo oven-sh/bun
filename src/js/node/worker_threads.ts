@@ -308,7 +308,7 @@ function makePortWritable(port) {
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
   // (node's kWaitingStreams) but an idle stream never pins the loop.
-  let pendingWriteCallback: (() => void) | null = null;
+  let pendingWriteCallback: ((error?: Error | null) => void) | null = null;
   function onAck() {
     const cb = pendingWriteCallback;
     if (cb !== null) {
@@ -341,6 +341,20 @@ function makePortWritable(port) {
     final(cb) {
       port.postMessage(null);
       cb();
+    },
+    destroy(err, cb) {
+      // Discharge an in-flight batch: the reader may never ack a destroyed
+      // stream, so release the loop ref taken in writev and complete the
+      // parked callback; drop the ack listener so a late ack can't fire
+      // into the destroyed stream.
+      const pending = pendingWriteCallback;
+      if (pending !== null) {
+        pendingWriteCallback = null;
+        port.unref();
+        pending(err);
+      }
+      port.off("message", onAck);
+      cb(err);
     },
   });
 }

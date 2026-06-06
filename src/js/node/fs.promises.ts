@@ -294,7 +294,28 @@ const exports = {
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
-  rm: asyncWrap(fs.rm, "rm"),
+  rm: async function rm(path, options) {
+    if (!options?.recursive) {
+      // node validates in JS and reports ERR_FS_EISDIR for directories
+      // (same check as rmSync)
+      let stats;
+      try {
+        stats = await fs.lstat(path);
+      } catch {
+        // let the native call produce the error (respects force/ENOENT)
+      }
+      if (stats?.isDirectory()) {
+        const err = new Error(`Path is a directory: rm returned EISDIR (is a directory) ${path}`) as any;
+        err.code = "ERR_FS_EISDIR";
+        err.info = { code: "EISDIR", message: "is a directory", path, syscall: "rm", errno: 21 };
+        err.errno = 21;
+        err.syscall = "rm";
+        err.path = path;
+        throw err;
+      }
+    }
+    return fs.rm(path, options);
+  },
   rmdir: async function rmdir(path, options) {
     // node throws for any defined `recursive`, not just truthy ones
     if (options?.recursive !== undefined) {
@@ -737,6 +758,9 @@ function asyncWrap(fn: any, name: string) {
       const source = {
         __proto__: null,
         async *[Symbol.asyncIterator]() {
+          // The fd was captured when pull() was called; the handle may have
+          // been closed in between (an unstarted source doesn't hold a ref).
+          if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           handle[kRef]();
           try {
             while (remaining !== 0) {
@@ -807,6 +831,10 @@ function asyncWrap(fn: any, name: string) {
       const source = {
         __proto__: null,
         [Symbol.iterator]() {
+          // The fd was captured when pullSync() was called; the handle may
+          // have been closed in between (an unstarted source doesn't hold a
+          // ref).
+          if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           // Acquire the ref per iteration (like pull()'s async generator), so
           // an iterable that is never consumed doesn't pin the handle open;
           // cleanup is idempotent so a stray next() after return() can't
@@ -1044,6 +1072,10 @@ function asyncWrap(fn: any, name: string) {
           if (closed) {
             return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
           }
+          if (handle[kFd] === -1) {
+            // The handle was closed before this writer took its ref.
+            return Promise.$reject($ERR_INVALID_STATE("The FileHandle is closed"));
+          }
           validateObject(options, "options");
           const { signal } = options;
           if (signal !== undefined) {
@@ -1070,6 +1102,9 @@ function asyncWrap(fn: any, name: string) {
           if (closed) {
             return Promise.$reject($ERR_INVALID_STATE_TypeError("The writer is closed"));
           }
+          if (handle[kFd] === -1) {
+            return Promise.$reject($ERR_INVALID_STATE("The FileHandle is closed"));
+          }
           validateObject(options, "options");
           const { signal } = options;
           if (signal !== undefined) {
@@ -1095,6 +1130,7 @@ function asyncWrap(fn: any, name: string) {
 
         writeSync(chunk) {
           if (error || closed || asyncPending) return false;
+          if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           chunk = toUint8Array(chunk);
           const length = chunk.byteLength;
           if (length > syncWriteThreshold) return false;
@@ -1131,6 +1167,7 @@ function asyncWrap(fn: any, name: string) {
 
         writevSync(chunks) {
           if (error || closed || asyncPending) return false;
+          if (handle[kFd] === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
           chunks = convertChunks(chunks);
           let totalSize = 0;
           for (let i = 0; i < chunks.length; i++) {

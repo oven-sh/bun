@@ -297,3 +297,49 @@ it("an unused FileHandle.writer() does not prevent close()", async () => {
   await fh.close();
   expect(fh.fd).toBe(-1);
 });
+
+it("sources created before close() refuse to use the stale fd", async () => {
+  const dir = tempDirWithFiles("stale-fd", { "x.txt": "hello" });
+  const file = join(dir, "x.txt");
+
+  // writer
+  {
+    const fh = await fsPromises.open(file, "r+");
+    const w = fh.writer();
+    await fh.close();
+    expect(w.write(Buffer.from("a"))).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(() => w.writeSync(Buffer.from("a"))).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+  // pull
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pull();
+    await fh.close();
+    expect(
+      (async () => {
+        for await (const _ of src);
+      })(),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+  }
+  // pullSync
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pullSync();
+    await fh.close();
+    expect(() => {
+      for (const _ of src);
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+});
+
+it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async () => {
+  const dir = tempDirWithFiles("rm-eisdir", { "sub/a.txt": "x" });
+  const target = join(dir, "sub");
+  expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
+  const { promise, resolve } = Promise.withResolvers();
+  fs.rm(target, err => resolve(err));
+  expect((await promise)?.code).toBe("ERR_FS_EISDIR");
+  // directory is still removable the supported way
+  await fsPromises.rm(target, { recursive: true });
+  expect(fs.existsSync(target)).toBe(false);
+});

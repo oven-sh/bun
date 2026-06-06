@@ -80,7 +80,8 @@ var access = function access(path, mode, callback) {
     }
 
     ensureCallback(callback);
-    fs.rm(path, options).then(nullcallback(callback), callback);
+    // route through promises.rm for the JS-side ERR_FS_EISDIR validation
+    promises.rm(path, options).then(nullcallback(callback), callback);
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {

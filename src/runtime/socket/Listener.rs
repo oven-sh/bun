@@ -978,12 +978,17 @@ impl Listener {
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
-                    // JS-visible socket fds are raw SOCKET values on Windows
-                    // (see `to_js_without_making_lib_uv_owned`); tagging them
-                    // `.uv` would round-trip through the CRT fd table and
-                    // produce a garbage handle.
+                    // Windows has two fd namespaces meeting here: CRT/libuv
+                    // fds (child_process stdio pipes - the historical
+                    // behavior) and raw SOCKET values (cluster/IPC handle
+                    // transfer). The internal transfer paths mark theirs with
+                    // `fdIsRawSocket`; everything else keeps CRT semantics.
                     #[cfg(windows)]
-                    let fd = Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void);
+                    let fd = if opts.get_truthy(global, "fdIsRawSocket")?.is_some() {
+                        Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
+                    } else {
+                        Fd::from_uv(fd_.to_int32())
+                    };
                     #[cfg(not(windows))]
                     let fd = Fd::from_uv(fd_.to_int32());
                     break 'blk UnixOrHost::Fd(fd);

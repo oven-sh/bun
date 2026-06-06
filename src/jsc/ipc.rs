@@ -771,12 +771,15 @@ impl SendHandle {
     pub fn complete(mut self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
-                // The receiver owns the connection now (it holds a dup of the
-                // fd, so this close sends no FIN/RST to the peer). Call the
-                // native socket's terminate() — the uv_close() equivalent.
+                // The receiver owns the connection now; drop OUR descriptor
+                // only. `close()` (fast_shutdown) is a plain closesocket -
+                // with the receiver's duplicate alive that is a pure refcount
+                // drop. NOT terminate(): that arms SO_LINGER{1,0} on the
+                // *shared* socket object and aborts the transferred
+                // connection with RST on Windows.
                 let js = handle.js.value();
                 if js.is_object() {
-                    match js.get(global, "terminate") {
+                    match js.get(global, "close") {
                         Ok(Some(f)) if f.is_callable() => {
                             if f.call(global, js, &[]).is_err() {
                                 global.clear_exception();
@@ -1840,7 +1843,15 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
 fn received_fd_to_js(fd: Fd) -> JSValue {
     #[cfg(windows)]
     {
-        JSValue::js_number_from_uint64(fd.native() as u64)
+        // Prefer an int32-encoded number: the consuming paths (bindgen b.i32
+        // fields, to_int32 reads) all speak int32, and Windows guarantees
+        // kernel handles use only the lower 32 bits.
+        let v = fd.native() as u64;
+        if v <= i32::MAX as u64 {
+            JSValue::js_number_from_int32(v as i32)
+        } else {
+            JSValue::js_number_from_uint64(v)
+        }
     }
     #[cfg(not(windows))]
     {

@@ -512,7 +512,17 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
 
         let obj = JSValue::create_empty_object(global, 2);
-        obj.put(global, b"fd", JSValue::js_number_from_uint64(fd as u64));
+        // int32-encode when possible (Windows handles fit 32 bits); the
+        // consuming fd fields are int32-typed.
+        obj.put(
+            global,
+            b"fd",
+            if (fd as u64) <= i32::MAX as u64 {
+                JSValue::js_number_from_int32(fd as i32)
+            } else {
+                JSValue::js_number_from_uint64(fd as u64)
+            },
+        );
         obj.put(global, b"port", JSValue::js_number_from_int32(out_port));
         return Ok(obj);
     }

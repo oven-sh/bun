@@ -888,6 +888,9 @@ Socket.prototype.connect = function connect(...args) {
       doConnect(this._handle, {
         data: this,
         fd: fd,
+        // Windows: distinguishes raw SOCKETs (cluster/IPC handle transfer)
+        // from CRT/libuv fds (child_process stdio pipes).
+        fdIsRawSocket: options.fdIsRawSocket === true,
         socket: SocketHandlers,
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {
@@ -2729,7 +2732,7 @@ function onClusterConnection(err, clientHandle) {
   // needed here.
   socket.server = self;
   self._connections++;
-  socket.connect({ fd: clientHandle.fd, pauseOnConnect: self.pauseOnConnect });
+  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
   // Mirror ServerHandlers.open(): the constructor-supplied connection
   // listener is invoked via a once-listener per accepted connection.
   const connectionListener = self[bunSocketServerOptions]?.connectionListener;

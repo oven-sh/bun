@@ -246,7 +246,7 @@ export function parseHandle(target, serialized, fd) {
     }
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
-      socket.connect({ fd });
+      socket.connect({ fd, fdIsRawSocket: true });
       emit(target, serialized.message, socket);
       return;
     }

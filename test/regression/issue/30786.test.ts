@@ -17,6 +17,8 @@ test("no static Mutex is initialized via zeroed_unchecked (use Mutex::new())", a
   const offenders: string[] = [];
 
   const files = await Array.fromAsync(new Glob("src/**/*.rs").scan({ cwd: root }));
+  // Guard against a vacuous pass if `root` is miscomputed or `src/` is absent.
+  expect(files.length).toBeGreaterThan(0);
   await Promise.all(
     files.map(async rel => {
       const raw = await Bun.file(join(root, rel)).text();

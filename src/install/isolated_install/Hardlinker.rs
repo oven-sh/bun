@@ -298,6 +298,11 @@ impl Hardlinker {
                                     }
                                     sys::E::EPERM | sys::E::EACCES => {
                                         // OHOS SELinux blocks linkat; fall back to copy
+                                        // Ensure parent directory exists (may not on first install)
+                                        let Some(dest_parent) = self.dest.dirname() else {
+                                            break 'body Some(link_err1);
+                                        };
+                                        let _ = Fd::cwd().make_path(dest_parent);
                                         let inf = match sys::File::openat(entry.dir, entry.basename, sys::O::RDONLY, 0) {
                                             Ok(f) => f,
                                             Err(_) => break 'body Some(link_err1),

@@ -122,12 +122,22 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
+        // `from_string`/`from_utf8` return an owned C++ heap pointer that the
+        // caller must free exactly once via `deinit`/`destroy`.
+        pub fn from_string(str: String) -> Option<core::ptr::NonNull<URL>> {
+            let mut input = str;
             URL__fromString(&mut input)
         }
         pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
+            Self::from_string(String::borrow_utf8(input))
+        }
+        /// By-value form of the free [`file_url_from_string`] helper.
+        pub fn file_url_from_string(str: String) -> String {
+            file_url_from_string(&str)
+        }
+        /// By-value form of the free [`path_from_file_url`] helper.
+        pub fn path_from_file_url(str: String) -> String {
+            path_from_file_url(&str)
         }
         /// Includes the leading '#'.
         pub fn hash(&self) -> String {
@@ -184,6 +194,15 @@ pub mod whatwg {
         }
         pub fn deinit(&mut self) {
             URL__deinit(self)
+        }
+        /// Raw-pointer form of [`URL::deinit`].
+        ///
+        /// # Safety
+        /// `this` must be a live heap pointer from `from_string`/`from_utf8`
+        /// (or the C++ side), freed exactly once.
+        pub unsafe fn destroy(this: *mut Self) {
+            // SAFETY: caller guarantees `this` is valid and uniquely owned.
+            unsafe { URL__deinit(&mut *this) }
         }
     }
 }

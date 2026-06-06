@@ -896,24 +896,31 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    // Decorated class expressions emit the capture temporaries through a
-    // different path (a `var` statement hoisted to the nearest statement
-    // list instead of prefix statements before the class statement).
+    // Covers both temp placements in a decorated class expression: the method
+    // body receiver gets a per-invocation `var` inside the method, while the
+    // field initializer receiver is rewritten outside any function body, so
+    // its temp is hoisted to the nearest statement list through the
+    // class-expression path.
     test("decorated class expression evaluates chained private call receivers once", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(value, ctx) { return value; }
         let evals = 0;
+        let initEvals = 0;
+        function pick(x) { initEvals++; return x; }
         const C = class Foo {
           static #m = function (tag) { return { Foo, tag }; };
+          #p(tag) { return "i" + tag; }
+          @dec r = pick(this).#p("0");
           @dec test(o) {
             return o.effectful()?.Foo.#m("a")?.Foo.#m("b");
           }
         };
         const o = { Foo: C, effectful() { evals++; return { Foo: C }; } };
-        console.log(new C().test(o).tag, evals);
+        const inst = new C();
+        console.log(inst.r, inst.test(o).tag, evals, initEvals);
       `);
       expect(stderr).toBe("");
-      expect(stdout).toBe("b 1\n");
+      expect(stdout).toBe("i0 b 1 1\n");
       expect(exitCode).toBe(0);
     });
   });

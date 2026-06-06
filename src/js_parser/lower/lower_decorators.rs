@@ -883,6 +883,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Drain receiver-capture temporaries created past `baseline` into a
+    /// single `var` declaration statement; `None` if none were created.
+    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+        let total = self.temp_refs_to_declare.len();
+        if total == baseline {
+            return None;
+        }
+        let bump = self.arena;
+        let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(total - baseline, bump);
+        for i in baseline..total {
+            let capture_ref = self.temp_refs_to_declare[i].r#ref;
+            let binding = self.b(B::Identifier { r#ref: capture_ref }, loc);
+            capture_decls.push(G::Decl {
+                binding,
+                value: None,
+            });
+        }
+        self.temp_refs_to_declare.truncate(baseline);
+        Some(self.s(
+            S::Local {
+                decls: DeclList::from_bump_vec(capture_decls),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
     /// Declare receiver-capture temporaries created past `temps_before` at the
     /// top of the function body they were created in, so each invocation gets
     /// a fresh binding. A binding hoisted outside the function would be shared
@@ -895,30 +922,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         temps_before: usize,
         body_loc: bun_ast::Loc,
     ) -> js_ast::StmtNodeList {
-        let total = self.temp_refs_to_declare.len();
-        if total == temps_before {
+        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
             return stmts;
-        }
-        let bump = self.arena;
-        let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(total - temps_before, bump);
-        for i in temps_before..total {
-            let capture_ref = self.temp_refs_to_declare[i].r#ref;
-            let binding = self.b(B::Identifier { r#ref: capture_ref }, body_loc);
-            capture_decls.push(G::Decl {
-                binding,
-                value: None,
-            });
-        }
-        self.temp_refs_to_declare.truncate(temps_before);
-        let decl_stmt = self.s(
-            S::Local {
-                decls: DeclList::from_bump_vec(capture_decls),
-                ..Default::default()
-            },
-            body_loc,
-        );
+        };
         let old_stmts = stmts.slice();
-        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, bump);
+        let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, self.arena);
         new_stmts.push(decl_stmt);
         new_stmts.extend_from_slice(old_stmts);
         js_ast::StmtNodeList::from_bump(new_stmts)
@@ -2437,25 +2445,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // remaining sites run at most once per class evaluation, so a binding
         // hoisted next to the other lowering variables is safe (and matches
         // where esbuild hoists them).
-        if p.temp_refs_to_declare.len() > temp_refs_before {
-            let capture_count = p.temp_refs_to_declare.len() - temp_refs_before;
-            let mut capture_decls = BumpVec::<G::Decl>::with_capacity_in(capture_count, bump);
-            for i in temp_refs_before..p.temp_refs_to_declare.len() {
-                let capture_ref = p.temp_refs_to_declare[i].r#ref;
-                let binding = p.b(B::Identifier { r#ref: capture_ref }, loc);
-                capture_decls.push(G::Decl {
-                    binding,
-                    value: None,
-                });
-            }
-            p.temp_refs_to_declare.truncate(temp_refs_before);
-            prefix_stmts.push(p.s(
-                S::Local {
-                    decls: DeclList::from_bump_vec(capture_decls),
-                    ..Default::default()
-                },
-                loc,
-            ));
+        if let Some(decl_stmt) = p.drain_capture_temp_decls(temp_refs_before, loc) {
+            prefix_stmts.push(decl_stmt);
         }
 
         // ── Phase 8: Assemble output ─────────────────────

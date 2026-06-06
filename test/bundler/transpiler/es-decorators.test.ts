@@ -1088,6 +1088,26 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("[null,[true,1],null,9]\n");
       expect(exitCode).toBe(0);
     });
+
+    test("optional call of a super property keeps valid syntax and `this`", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Base {
+          hit() { return this; }
+        }
+        class Sub extends Base {
+          #f = 7;
+          @dec() go() { return super.hit?.().#f; }
+          @dec() goMissing() { return super.missing?.().#f; }
+          @dec() goComputed(k) { return super[k]?.().#f; }
+        }
+        const s = new Sub();
+        console.log(s.go(), s.goMissing(), s.goComputed("hit"));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("7 undefined 7\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

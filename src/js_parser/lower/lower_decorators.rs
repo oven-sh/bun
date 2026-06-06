@@ -833,6 +833,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // capture the receiver so `.call(...)` re-reads it without side
             // effects.
             js_ast::ExprData::EDot(mut e) => {
+                // `super.m?.()`: bare `super` is not an expression, so it
+                // cannot be captured; per MakeSuperPropertyReference the
+                // call's `this` value is the current `this`.
+                if matches!(e.target.data, js_ast::ExprData::ESuper(_)) {
+                    return (callee, Some(self.new_expr(E::This {}, l)));
+                }
                 let mut target = e.target;
                 self.rewrite_private_accesses_in_expr(&mut target, map);
                 let (recv_write, recv_read) = self.capture_expr_for_reuse(target, l);
@@ -840,13 +846,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 (callee, Some(recv_read))
             }
             js_ast::ExprData::EIndex(mut e) => {
+                let mut idx = e.index;
+                self.rewrite_private_accesses_in_expr(&mut idx, map);
+                e.index = idx;
+                // `super[k]?.()`: same as `super.m?.()` above.
+                if matches!(e.target.data, js_ast::ExprData::ESuper(_)) {
+                    return (callee, Some(self.new_expr(E::This {}, l)));
+                }
                 let mut target = e.target;
                 self.rewrite_private_accesses_in_expr(&mut target, map);
                 let (recv_write, recv_read) = self.capture_expr_for_reuse(target, l);
                 e.target = recv_write;
-                let mut idx = e.index;
-                self.rewrite_private_accesses_in_expr(&mut idx, map);
-                e.index = idx;
                 (callee, Some(recv_read))
             }
             // Not a member access: the call's `this` is undefined.

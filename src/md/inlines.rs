@@ -90,9 +90,9 @@ pub const HTML_SCAN_KIND_COUNT: usize = 4;
 /// after position P of the paragraph" covers every later position of every
 /// label inside it. Sub-slice scans never overwrite the enclosing slice's
 /// entry (they prove nothing beyond their own extent), and
-/// `process_inline_content` starts each slice from an empty memo and restores
-/// the caller's on return, so recycled merged-line buffers and transient
-/// table-cell buffers can never alias a previous slice's entry.
+/// `process_inline_content` starts each block's slice from an empty memo, so
+/// recycled merged-line buffers and transient table-cell buffers can never
+/// alias a previous slice's entry.
 #[derive(Clone, Copy)]
 pub struct HtmlScanMemo {
     slice_addr: usize,
@@ -181,7 +181,7 @@ impl Parser<'_> {
         // so a stale entry could alias a new slice of the same length).
         // Label frames below are subslices of `content`, so the memo stays
         // valid for them via `offset_within`.
-        let outer_html_scan_memo = self.html_scan_memo.replace(HtmlScanMemo::EMPTY);
+        self.html_scan_memo.set(HtmlScanMemo::EMPTY);
 
         // Bracket-pair map for the whole slice: link processing looks up the
         // ']' matching a '[' here instead of rescanning the rest of the slice
@@ -586,9 +586,6 @@ impl Parser<'_> {
 
         // Hand the bracket-map storage back for reuse by the next block.
         self.bracket_pairs = brackets.into_storage();
-        // Restore the enclosing slice's memo (the entries built for this slice
-        // are meaningless to the caller).
-        self.html_scan_memo.set(outer_html_scan_memo);
         Ok(())
     }
 

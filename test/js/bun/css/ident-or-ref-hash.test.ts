@@ -16,8 +16,9 @@ test("IdentOrRef::hash distinguishes distinct refs and is invariant over debug-o
   expect(h_a).toBe(h_a_dup);
   expect(h_b).toBe(h_b_dup);
 
-  // Distinct refs must hash distinctly (wyhash collision probability on
-  // 8-byte inputs is ~2^-64).
+  // Distinct refs must hash distinctly. The binding folds each hash to 30
+  // bits (~2^-30 per-pair collision probability), and the inputs are
+  // deterministic, so a passing run stays passing.
   expect(h_a).not.toBe(h_b);
 });
 

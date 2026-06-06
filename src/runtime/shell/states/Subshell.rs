@@ -1,7 +1,7 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
+    Bufio, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -195,12 +195,23 @@ impl Subshell {
             if redirect_flags.duplicate_out() {
                 let me = interp.as_subshell_mut(this);
                 if redirect_flags.stdout() {
-                    // `2>&1`: route stderr to stdout's writer.
+                    // `2>&1`: route stderr to stdout's target.
                     me.io.stderr = me.io.stdout.clone();
+                    // `OutKind::Pipe` carries no target identity (downstream
+                    // resolves it positionally to the env's stderr buffer),
+                    // so alias the env's stderr capture buffer to stdout's.
+                    if matches!(me.io.stderr, OutKind::Pipe) {
+                        let stdout_buf = me.base.shell_mut().buffered_stdout();
+                        me.base.shell_mut()._buffered_stderr = Bufio::Borrowed(stdout_buf);
+                    }
                 }
                 if redirect_flags.stderr() {
-                    // `1>&2`: route stdout to stderr's writer.
+                    // `1>&2`: route stdout to stderr's target.
                     me.io.stdout = me.io.stderr.clone();
+                    if matches!(me.io.stdout, OutKind::Pipe) {
+                        let stderr_buf = me.base.shell_mut().buffered_stderr();
+                        me.base.shell_mut()._buffered_stdout = Bufio::Borrowed(stderr_buf);
+                    }
                 }
             }
             return None;

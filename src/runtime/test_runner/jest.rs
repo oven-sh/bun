@@ -218,13 +218,8 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        // Key on the full path string. A prior version truncated
-        // `bun_wyhash::hash(file_path)` to u32 and used that as the key; two
-        // distinct paths whose wyhash lower-32-bits collided would share a
-        // file_id, silently dropping the second file's Source and corrupting
-        // downstream per-file state (--randomize PRNG seed, --concurrent
-        // glob match). Callers pass paths interned in FileSystem's
-        // filename_store, so the slice outlives this map.
+        // Callers pass paths interned in FileSystem's filename_store, so the
+        // borrowed key slice outlives this map.
         let entry = self.index.get_or_put(file_path).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
@@ -292,7 +287,6 @@ bun_collections::multi_array_columns! {
         log: bun_ast::Log,
     }
 }
-// Key on the full path string (see `get_or_put_file` for the rationale).
 pub(crate) type FileMap = StringArrayHashMap<FileId>;
 
 #[allow(non_snake_case)]

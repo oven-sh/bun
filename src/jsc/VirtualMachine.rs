@@ -3444,6 +3444,9 @@ impl VirtualMachine {
     /// dependency was enqueued, which requires a previously successful
     /// `get_package_manager`, so the init error is surfaced as a resolve
     /// failure in `Resolver::load_node_modules` long before reaching here.
+    /// The one caller outside that machinery is the `bun:internal-for-testing`
+    /// `parseLockfile` binding (`install_jsc/install_binding.rs`), which may
+    /// lazy-init here and accepts the panic on its test-only surface.
     #[inline]
     pub fn package_manager(&mut self) -> &mut bun_install::PackageManager {
         let pm = self

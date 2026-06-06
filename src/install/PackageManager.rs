@@ -2270,6 +2270,8 @@ pub(crate) fn init_with_runtime(
     // null on failure, so later callers have to see the error instead of a
     // null singleton.
     static ONCE: std::sync::Once = std::sync::Once::new();
+    // `0` = initialized without error; `bun_core::Error` is a `NonZeroU16`, so
+    // every real code round-trips exactly through `as_u16`/`from_raw`.
     static INIT_ERROR: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
     ONCE.call_once(|| {
         if let Err(err) = init_with_runtime_once(log, bun_install, cli, env) {

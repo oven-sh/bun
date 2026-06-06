@@ -151,9 +151,9 @@ pub mod js_bindings {
             // offset 0 everywhere we ship, but going through libc keeps this
             // honest.
             fn handler(sig: libc::c_int) -> usize {
-                // SAFETY: zeroed sigaction is a valid query buffer; `act=NULL`
-                // is the documented "read current disposition" form.
-                let mut current: libc::sigaction = unsafe { core::mem::zeroed() };
+                // Zeroed sigaction is a valid query buffer; `act=NULL` is the
+                // documented "read current disposition" form.
+                let mut current: libc::sigaction = bun_core::ffi::zeroed();
                 // SAFETY: out-pointer to stack-local, act=NULL.
                 if unsafe { libc::sigaction(sig, core::ptr::null(), &raw mut current) } != 0 {
                     return 0;

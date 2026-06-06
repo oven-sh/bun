@@ -37,14 +37,21 @@ async function runRepl(
 
 const stripAnsi = Bun.stripANSI;
 
+// Width of the PTY used by withTerminalRepl. The REPL queries the real
+// terminal width (TIOCGWINSZ), so tests that reconstruct the rendered grid
+// must use this same width to match how the REPL wrapped its output.
+const TERMINAL_REPL_COLS = 120;
+
 // Helper to run REPL in a PTY and interact with it
 async function withTerminalRepl(
   fn: (helpers: {
     terminal: Bun.Terminal;
     proc: Bun.ChildProcess;
+    cols: number;
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     allOutput: () => string;
+    rawOutput: () => string;
   }) => Promise<void>,
 ) {
   const received: string[] = [];
@@ -52,7 +59,7 @@ async function withTerminalRepl(
   let resolveWaiter: (() => void) | null = null;
 
   await using terminal = new Bun.Terminal({
-    cols: 120,
+    cols: TERMINAL_REPL_COLS,
     rows: 40,
     data(_term, data) {
       const str = Buffer.from(data).toString();
@@ -101,15 +108,128 @@ async function withTerminalRepl(
   };
 
   const allOutput = () => stripAnsi(received.join(""));
+  const rawOutput = () => received.join("");
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, allOutput });
+  await fn({ terminal, proc, cols: TERMINAL_REPL_COLS, send, waitFor, allOutput, rawOutput });
 
   // Clean exit
   send(".exit\n");
   await Promise.race([proc.exited, Bun.sleep(2000)]);
   if (!proc.killed) proc.kill();
+}
+
+// Replay a stream of terminal output (including cursor-movement and
+// erase escapes) into a character grid and return the visible rows. This
+// lets a test assert what the user actually SEES after the REPL's many
+// in-place redraws, rather than how many bytes were written. Implements DEC
+// deferred line-wrap (the "last column" flag used by xterm/vte): writing the
+// final column of a row leaves the cursor pending, so an explicit newline that
+// follows does not double-advance. The grid only grows (never scrolls) so row
+// indices stay stable across the whole stream.
+function renderTerminalGrid(output: string, cols: number): string[] {
+  const grid: string[][] = [];
+  const ensure = (row: number) => {
+    while (grid.length <= row) grid.push(Array(cols).fill(" "));
+  };
+  let row = 0;
+  let col = 0;
+  let pendingWrap = false;
+
+  for (let i = 0; i < output.length; i++) {
+    const ch = output[i];
+    const code = output.charCodeAt(i);
+
+    if (ch === "\r") {
+      col = 0;
+      pendingWrap = false;
+      continue;
+    }
+    if (ch === "\n") {
+      pendingWrap = false;
+      row++;
+      ensure(row);
+      continue;
+    }
+    if (code === 0x1b) {
+      if (output[i + 1] === "[") {
+        // CSI sequence: ESC [ <params> <final>
+        let j = i + 2;
+        let params = "";
+        while (j < output.length && /[0-9;?]/.test(output[j])) params += output[j++];
+        const final = output[j];
+        const n = parseInt(params, 10);
+        const count = Number.isNaN(n) ? 1 : n;
+        ensure(row);
+        switch (final) {
+          // Cursor-moving sequences clear the pending-wrap flag.
+          case "A": // cursor up
+            row = Math.max(0, row - count);
+            pendingWrap = false;
+            break;
+          case "B": // cursor down
+            row += count;
+            ensure(row);
+            pendingWrap = false;
+            break;
+          case "C": // cursor forward
+            col = Math.min(cols - 1, col + count);
+            pendingWrap = false;
+            break;
+          case "D": // cursor back
+            col = Math.max(0, col - count);
+            pendingWrap = false;
+            break;
+          case "H": // cursor home
+          case "f":
+            row = 0;
+            col = 0;
+            pendingWrap = false;
+            break;
+          case "K": // erase in line (0/default = to end, 2 = whole line)
+            if (params === "" || params === "0") for (let x = col; x < cols; x++) grid[row][x] = " ";
+            else if (params === "2") grid[row].fill(" ");
+            break;
+          case "J": // erase in display (0/default = below, 2 = all)
+            if (params === "" || params === "0") {
+              for (let x = col; x < cols; x++) grid[row][x] = " ";
+              for (let y = row + 1; y < grid.length; y++) grid[y].fill(" ");
+            } else if (params === "2") {
+              for (const r of grid) r.fill(" ");
+            }
+            break;
+          // SGR ("m") and other sequences do not move the cursor, so they
+          // must NOT clear a pending wrap (xterm behavior).
+        }
+        i = j;
+        continue;
+      }
+      if (output[i + 1] === "]") {
+        // OSC sequence (e.g. clipboard) terminated by BEL — skip it entirely.
+        let j = i + 1;
+        while (j < output.length && output.charCodeAt(j) !== 0x07) j++;
+        i = j;
+        continue;
+      }
+      continue; // lone ESC / unsupported
+    }
+    if (code < 0x20) continue; // other control bytes
+
+    // Printable: apply any deferred wrap, then write.
+    if (pendingWrap) {
+      row++;
+      col = 0;
+      pendingWrap = false;
+      ensure(row);
+    }
+    ensure(row);
+    grid[row][col] = ch;
+    if (col === cols - 1) pendingWrap = true;
+    else col++;
+  }
+
+  return grid.map(r => r.join("").replace(/\s+$/, ""));
 }
 
 describe.concurrent("Bun REPL", () => {
@@ -1173,6 +1293,173 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       terminal.write(new Uint8Array([0xc2, 0x62])); // stray lead + 'b'
       send('".length\n');
       await waitFor(/\n\s*2\b/);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/31604
+  // Pasting a single line that is wider than the terminal used to re-render the
+  // whole line once per pasted byte while only clearing the row the cursor sat
+  // on, so every wrapped row piled up and the screen filled with hundreds of
+  // stale copies. refresh_line now erases every row the previous render used
+  // before redrawing, so the line appears once (wrapped), not repeated.
+  test("pasting a long wrapping line does not spam the screen (issue #31604)", async () => {
+    await withTerminalRepl(async ({ send, waitFor, rawOutput, cols }) => {
+      // The exact payload from the issue: one physical line (the `\n` are
+      // literal backslash-n, not newlines) long enough to wrap several rows
+      // (399 chars wraps at the 120-column PTY).
+      const payload = String.raw`.copy "pub const panic = _bun.crash_handler.panic;\npub const std_options = std.Options{\n    .enable_segfault_handler = false,\n    // Use BoringSSL's RAND_bytes instead of the default getrandom() syscall.\n    // BoringSSL falls back to /dev/urandom on older kernels (< 3.17) where\n    // the getrandom syscall doesn't exist, avoiding a panic on ENOSYS.\n    .cryptoRandomSeed = _bun.csprng,\n};"`;
+      send(payload);
+
+      // Wait for the payload's true tail (the last bytes: `…csprng,\n};"`, the
+      // `\n` being literal backslash-n). Matching the real end guarantees the
+      // resolving chunk extends through the final redraw's rewrite, so the grid
+      // isn't sampled mid-refresh with the prompt row momentarily cleared.
+      await waitFor(String.raw`.cryptoRandomSeed = _bun.csprng,\n};"`);
+
+      // Replay the terminal output into a grid at the PTY's width (the REPL
+      // wraps at the real terminal width) and inspect what's actually visible.
+      // The distinctive prefix `.copy "pub const panic` lives on the first
+      // wrapped row only, so counting rows that contain it tells us how many
+      // stacked copies survived. The fix leaves exactly one; the bug left
+      // hundreds.
+      const rows = renderTerminalGrid(rawOutput(), cols).filter(line => line.length > 0);
+      const copies = rows.filter(line => line.includes('.copy "pub const panic')).length;
+
+      expect(copies).toBe(1);
+      // The wrapped line occupies a handful of rows; the bug produced hundreds.
+      expect(rows.length).toBeLessThan(20);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/27670
+  // Minimal form of the same bug: pasting a run of characters wider than the
+  // terminal produced one duplicate line per overflowing character.
+  test("pasting a line of repeated characters wraps once (issue #27670)", async () => {
+    await withTerminalRepl(async ({ send, waitFor, rawOutput, cols }) => {
+      // A distinctive tail at the end of the payload is only echoed once the
+      // whole (wrapped) line has been rendered, so waiting for it is
+      // deterministic — no fixed sleeps that could sample a partial redraw.
+      // Make it comfortably wider than the terminal so it definitely wraps.
+      const tail = "__END27670";
+      const fill = cols * 2;
+      send('.copy "' + Buffer.alloc(fill - tail.length, "a").toString() + tail + '"');
+      await waitFor(tail + '"');
+
+      const rows = renderTerminalGrid(rawOutput(), cols).filter(line => line.length > 0);
+      const copies = rows.filter(line => /^[❯>] \.copy "a/.test(line)).length;
+
+      expect(copies).toBe(1);
+      expect(rows.length).toBeLessThan(20);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/27461 (line-wrap half)
+  // Same root cause reached by typing rather than pasting: once the input grew
+  // past the terminal edge, every subsequent keystroke re-emitted the whole
+  // line without clearing the earlier wrapped rows. (The separate typing
+  // flicker reported in that issue — the line is still redrawn per keystroke —
+  // is not addressed here.)
+  test("typing past the terminal width wraps once (issue #27461)", async () => {
+    await withTerminalRepl(async ({ send, waitFor, rawOutput, cols }) => {
+      // Unique tail typed last; waiting for it means the final keystroke's
+      // redraw has landed before we sample the grid. Type well past the
+      // terminal edge so the line wraps.
+      const tail = "__END27461";
+      const text = 'console.log("' + Buffer.alloc(cols * 2 - tail.length, "a").toString() + tail;
+      // Send one byte at a time so each is a distinct keystroke/redraw.
+      for (const ch of text) send(ch);
+      await waitFor(tail);
+
+      const rows = renderTerminalGrid(rawOutput(), cols).filter(line => line.length > 0);
+      const copies = rows.filter(line => line.includes('console.log("a')).length;
+
+      expect(copies).toBe(1);
+      expect(rows.length).toBeLessThan(20);
+    });
+  });
+
+  // The multi-row clear walks the cursor up based on the terminal width, so the
+  // REPL must know the *real* width. If it assumed a narrower width than the PTY,
+  // typing past that assumed width would make it clear rows it doesn't own —
+  // eating earlier output like the welcome banner. Type a line that fits on one
+  // physical row at the PTY width and confirm nothing above the prompt is erased.
+  test("does not erase earlier output on a wide terminal", async () => {
+    await withTerminalRepl(async ({ send, waitFor, rawOutput, cols }) => {
+      // Comfortably under the PTY width so it must NOT wrap (would have been
+      // treated as wrapped under the old hardcoded 80-column assumption).
+      const tail = "__NOWRAP";
+      const text = Buffer.alloc(Math.floor(cols * 0.7) - tail.length, "a").toString() + tail;
+      for (const ch of text) send(ch);
+      await waitFor(tail);
+
+      const rows = renderTerminalGrid(rawOutput(), cols).filter(line => line.length > 0);
+      // The welcome banner printed at startup must still be on screen.
+      expect(rows.some(line => line.includes("Welcome to Bun"))).toBe(true);
+      // The input fits on one row, so exactly one row carries it.
+      expect(rows.filter(line => line.includes(tail)).length).toBe(1);
+    });
+  });
+
+  // terminal_width must track mid-session resizes: refresh_line re-queries it
+  // each redraw. After narrowing the terminal, a line that fit before now wraps,
+  // and the REPL must clear/redraw at the new width (one copy), not the old one.
+  test("tracks a mid-session terminal resize", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor, rawOutput }) => {
+      const narrow = 40;
+      terminal.resize(narrow, 40);
+
+      // A line wider than the new width but not the old one: it must wrap at 40.
+      // refresh_line re-queries the width on every keystroke, so the resize is
+      // picked up as the line is typed (no prompt is re-emitted on resize, so
+      // there's nothing to wait on until the tail echoes back).
+      const tail = "__RESIZED";
+      const text = Buffer.alloc(narrow * 2 - tail.length, "Z").toString() + tail;
+      for (const ch of text) send(ch);
+      await waitFor(tail);
+
+      const rows = renderTerminalGrid(rawOutput(), narrow).filter(line => line.length > 0);
+      // Rendered once at the new width: the prompt row appears exactly once and
+      // the screen isn't flooded with stale copies.
+      const promptRows = rows.filter(line => /^[❯>] Z/.test(line)).length;
+      expect(promptRows).toBe(1);
+      expect(rows.length).toBeLessThan(20);
+    });
+  });
+
+  // Editing a wrapped line and then committing (here: Ctrl+C) from an interior
+  // cursor row must not leave the tail of the cancelled input stranded below the
+  // fresh prompt. The commit paths snap the cursor to the bottom of the render
+  // before emitting their newline.
+  test("cancelling a wrapped line from the start leaves no stale tail", async () => {
+    await withTerminalRepl(async ({ send, waitFor, rawOutput, cols }) => {
+      // Fill with a distinctive character that appears nowhere in the prompt,
+      // the `^C`, or the post-cancel output — so finding it below the `^C` row
+      // unambiguously means a fragment of the cancelled input was stranded
+      // there. A trailing tail gives a deterministic "fully echoed" signal.
+      const tail = "__CANCELTAIL";
+      send(Buffer.alloc(cols * 2 - tail.length, "Z").toString() + tail);
+      await waitFor(tail);
+
+      send("\x01"); // Ctrl+A -> cursor to start of the wrapped line
+      await waitFor(/\u276f|> /); // refresh repositions the cursor; prompt is re-emitted
+      send("\x03"); // Ctrl+C -> cancel
+      await waitFor("^C");
+
+      // Evaluate a fresh marker so we can locate the new prompt.
+      send("7 * 6\n");
+      await waitFor("42");
+
+      const rows = renderTerminalGrid(rawOutput(), cols).filter(line => line.length > 0);
+      expect(rows.some(line => line.includes("^C"))).toBe(true);
+      // The fix drops the cursor to the *last* wrapped row before printing `^C`,
+      // so the cancelled input stays intact on the rows above it. Without the
+      // snap, `^C` is written at column 2 of the *first* render row where Ctrl+A
+      // left the cursor, producing `❯ ^CZZZ…` — i.e. the first row carrying the
+      // fill char would also carry `^C`. Assert it doesn't (payload-independent;
+      // the `^C` lands on a separate, lower row when the snap is present).
+      const firstFillRow = rows.find(line => line.includes("Z"));
+      expect(firstFillRow).toBeDefined();
+      expect(firstFillRow).not.toContain("^C");
     });
   });
 });

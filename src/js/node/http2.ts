@@ -138,7 +138,7 @@ function validateSettings(settings: any) {
 
   if (settings.initialWindowSize !== undefined) {
     const v = settings.initialWindowSize;
-    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+    if (typeof v !== "number" || v < 0 || v > kMaxWindowSize || Number.isNaN(v)) {
       throwSettingRangeError("initialWindowSize", v);
     }
   }
@@ -352,6 +352,7 @@ const {
   validateInt32,
   validateBuffer,
   validateNumber,
+  validateAbortSignal,
 } = require("internal/validators");
 
 let utcCache;
@@ -380,6 +381,7 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
+
 function cache() {
   const d = new Date();
   utcCache = d.toUTCString();
@@ -2478,7 +2480,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -2519,7 +2521,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -2638,7 +2640,10 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
+      // TODO: support the v26 raw-headers array form ([name1, value1, name2, value2, ...]).
+      // Until then, reject arrays instead of spreading them into numeric-string keys
+      // and sending garbage header frames.
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -3037,6 +3042,7 @@ class ServerHttp2Session extends Http2Session {
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
+      parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
@@ -3352,6 +3358,17 @@ function emitTimeout(session: ClientHttp2Session) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+
+// After the socket is gone a graceful close can never complete — the parser
+// is detached, so the stream's writable side has nothing left to flush
+// through and 'finish'/'close' would never fire. Mirror Node's closeSession,
+// which hard-destroys every stream that is still alive after the
+// close(NGHTTP2_CANCEL) pass.
+function streamSocketClosed(stream: Http2Stream) {
+  if (!stream.destroyed) {
+    stream.destroy();
+  }
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
   #closed: boolean = false;
@@ -3522,9 +3539,19 @@ class ClientHttp2Session extends Http2Session {
     },
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      if (self.destroyed) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
-      if (self.closed) return;
-      self.destroy(undefined, errorCode);
+      if (errorCode === NGHTTP2_NO_ERROR) {
+        // A no-error GOAWAY begins a graceful shutdown: no new streams
+        // permitted (request() throws ERR_HTTP2_GOAWAY_SESSION while the
+        // session is closed-but-not-destroyed), but existing streams may
+        // finish naturally.
+        self.close();
+      } else {
+        // Mirror Node: destroy immediately with an error, but send our own
+        // goaway with NGHTTP2_NO_ERROR since this side had no error.
+        self.destroy($ERR_HTTP2_SESSION_ERROR(errorCode), NGHTTP2_NO_ERROR);
+      }
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -3602,6 +3629,7 @@ class ClientHttp2Session extends Http2Session {
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
       parser.forEachStream(streamCancel);
+      parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
@@ -3898,8 +3926,11 @@ class ClientHttp2Session extends Http2Session {
 
   request(headers: any, options?: any) {
     try {
-      if (this.destroyed || this.closed) {
-        throw $ERR_HTTP2_INVALID_STREAM();
+      if (this.destroyed) {
+        throw $ERR_HTTP2_INVALID_SESSION();
+      }
+      if (this.closed) {
+        throw $ERR_HTTP2_GOAWAY_SESSION();
       }
 
       if (this.sentTrailers) {
@@ -3973,6 +4004,25 @@ class ClientHttp2Session extends Http2Session {
           options = { endStream: true };
         } else {
           options = { ...options, endStream: true };
+        }
+      }
+      // Like Node, a request whose signal is already aborted never touches the
+      // wire: the stream is created without an id and destroyed with an
+      // AbortError on the next tick (_destroy skips the RST for id-less
+      // streams). Sending an RST for a stream the peer never saw is a
+      // connection error that makes conforming servers reply with GOAWAY.
+      if ($isObject(options) && options.signal) {
+        // Node validates the signal before reading .aborted — a duck-typed
+        // { aborted: true } must throw ERR_INVALID_ARG_TYPE, not short-circuit.
+        validateAbortSignal(options.signal, "options.signal");
+        if (options.signal.aborted) {
+          const req = new ClientHttp2Stream(undefined, this, headers);
+          const signal = options.signal;
+          // The request never started, so the stream counts as aborted but the
+          // 'aborted' event is not emitted — only the AbortError.
+          req[kAborted] = true;
+          process.nextTick(() => req.destroy($makeAbortError(undefined, { cause: signal.reason })));
+          return req;
         }
       }
       let stream_id: number = this.#parser.getNextStream();
@@ -4109,14 +4159,14 @@ function initializeOptions(options) {
   }
 
   if (options.maxSessionInvalidFrames !== undefined)
-    validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+    validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
 
   if (options.maxSessionRejectedStreams !== undefined) {
-    validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+    validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
   }
 
   if (options.unknownProtocolTimeout !== undefined)
-    validateUint32(options.unknownProtocolTimeout, "unknownProtocolTimeout");
+    validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;
 
   // Used only with allowHTTP1
@@ -4237,10 +4287,10 @@ class Http2SecureServer extends tls.Server {
       validateObject(settings, "options.settings");
     }
     if (options.maxSessionInvalidFrames !== undefined)
-      validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+      validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
 
     if (options.maxSessionRejectedStreams !== undefined) {
-      validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+      validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();

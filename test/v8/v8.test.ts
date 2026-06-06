@@ -21,7 +21,7 @@ enum BuildMode {
 delete bunEnv.CC;
 delete bunEnv.CXX;
 
-// Node.js 24.3.0 requires C++20
+// Node.js 26.3.0 requires C++20
 bunEnv.CXXFLAGS ??= "";
 if (process.platform == "darwin") {
   bunEnv.CXXFLAGS += " -std=gnu++20";
@@ -76,8 +76,28 @@ async function build(
             buildMode == BuildMode.debug ? "--debug" : "--release",
             "-j",
             "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
           ]
-        : [bunExe(), "run", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : // for node.js we don't bother with debug mode. The trailing gyp defines
+          // neutralize LTO flags that leak out of a clang-cl-built Node's
+          // process.config into MSVC addon builds (link.exe chokes on
+          // /opt:lldltojobs); they're no-ops elsewhere.
+          [
+            bunExe(),
+            "run",
+            "node-gyp",
+            "rebuild",
+            "--release",
+            "-j",
+            "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
+          ],
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -305,6 +325,14 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("keeps handles alive in the outer scope", async () => {
       await checkSameOutput("test_v8_escapable_handle_scope");
     });
+
+    it("escaped handles survive in-scope inline handle creation", async () => {
+      await checkSameOutput("test_v8_escapable_handle_scope_inline_grants");
+    });
+
+    it("inline handles survive a nested call's scope push/pop", async () => {
+      await checkSameOutput("test_v8_locals_survive_nested_call");
+    });
   });
 
   describe("MaybeLocal", () => {
@@ -399,11 +427,13 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
 
 describe.todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
   it(
-    "saturates at INT32_MAX for strings whose UTF-8 size exceeds it",
+    "reports sizes beyond INT32_MAX without wrapping",
     async () => {
-      // Build a tiny standalone V8-API addon that just reports String::Utf8Length of its
+      // Build a tiny standalone V8-API addon that just reports String::Utf8LengthV2 of its
       // argument, then feed it a Latin-1 string whose UTF-8 expansion is larger than INT32_MAX.
-      // The reported length must stay positive and saturate at INT32_MAX instead of wrapping.
+      // Utf8LengthV2 returns size_t, so the reported length must be the exact byte count
+      // instead of wrapping to a negative or small value (the legacy int-returning Utf8Length
+      // saturated at INT32_MAX here).
       using dir = tempDir("v8-utf8-length", {
         "package.json": JSON.stringify({
           name: "v8-utf8-length-test",
@@ -434,7 +464,7 @@ namespace utf8len_test {
 void string_utf8_length(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<String> s = info[0].As<String>();
-  printf("Utf8Length = %d\\n", s->Utf8Length(isolate));
+  printf("Utf8Length = %zu\\n", s->Utf8LengthV2(isolate));
   fflush(stdout);
 }
 
@@ -471,7 +501,20 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
 
       {
         const build = spawn({
-          cmd: [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
+          cmd: [
+            bunExe(),
+            "--bun",
+            "run",
+            "node-gyp",
+            "rebuild",
+            "--release",
+            "-j",
+            "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
+          ],
           cwd,
           env: bunEnv,
           stdin: "inherit",
@@ -507,9 +550,10 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
         .trim()
         .split(/\r?\n/)
         .filter(Boolean);
-      // The small string reports its exact UTF-8 size; the oversized string saturates at
-      // INT32_MAX (2147483647) instead of wrapping to a negative or small value.
-      expect(lines, `stderr:\n${err}`).toEqual(["Utf8Length = 6", "Utf8Length = 2147483647"]);
+      // Both strings report their exact UTF-8 size: Utf8LengthV2 returns size_t, so the
+      // oversized string's 2**31 + 2 bytes are reported exactly instead of wrapping or
+      // saturating at INT32_MAX like the legacy Utf8Length did.
+      expect(lines, `stderr:\n${err}`).toEqual(["Utf8Length = 6", "Utf8Length = 2147483650"]);
       expect(exitCode).toBe(0);
     },
     10 * 60 * 1000,

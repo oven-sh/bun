@@ -60,7 +60,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
         version: "1.0.0",
         gypfile: true,
         scripts: {
-          install: "node-gyp rebuild",
+          install: "node-gyp rebuild -- -Denable_lto=false -Denable_thin_lto=false -Dlto_jobs=",
         },
         devDependencies: {
           "node-gyp": "^11.2.0",

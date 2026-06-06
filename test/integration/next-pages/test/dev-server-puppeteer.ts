@@ -13,7 +13,13 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
-const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
+const browserPath =
+  which("chromium-browser") ||
+  which("chromium") ||
+  which("chrome") ||
+  which("google-chrome-stable") ||
+  which("google-chrome") ||
+  undefined;
 if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }

@@ -1778,6 +1778,15 @@ install_chromium() {
 		else
 			install_packages libasound2
 		fi
+
+		# Install Chrome itself on x64 (no arm64 build exists): with a system
+		# browser present, puppeteer-based tests skip their per-run ~300MB
+		# Chrome for Testing download entirely (see
+		# test/harness.ts getPuppeteerInstallEnv).
+		if [ "$arch" = "x64" ]; then
+			chrome_deb=$(download_file "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb")
+			execute_sudo apt-get install -y "$chrome_deb" || execute_sudo dpkg -i "$chrome_deb" || true
+		fi
 		;;
 	dnf | yum)
 		install_packages \

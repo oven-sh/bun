@@ -2009,7 +2009,13 @@ export function nodeModulesPackages(nodeModulesPath: string): string {
  * ("browser folder exists but the executable is missing").
  */
 export function getPuppeteerInstallEnv(): Record<string, string> {
-  const hasSystemChromium = !!(Bun.which("chromium-browser") || Bun.which("chromium") || Bun.which("chrome"));
+  const hasSystemChromium = !!(
+    Bun.which("chromium-browser") ||
+    Bun.which("chromium") ||
+    Bun.which("chrome") ||
+    Bun.which("google-chrome-stable") ||
+    Bun.which("google-chrome")
+  );
   const skipBrowserDownload =
     hasSystemChromium ||
     (process.platform === "linux" && process.arch === "arm64") ||

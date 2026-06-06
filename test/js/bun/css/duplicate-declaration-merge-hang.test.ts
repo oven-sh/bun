@@ -73,8 +73,10 @@ test("duplicate declarations across merged rules minify in linear time instead o
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Benign debug/ASAN startup noise on stderr is tolerated; real errors fail.
-  expect({ stdout, stderr: stderr.includes("error") ? stderr : "", exitCode }).toEqual({
+  // Benign debug/ASAN startup noise on stderr is tolerated; real failures
+  // (JS errors, Rust panics/asserts, crash banners, ASAN reports) surface in
+  // the failure diff.
+  expect({ stdout, stderr: /error|panic|assert|crash|abort/i.test(stderr) ? stderr : "", exitCode }).toEqual({
     stdout: [
       "OK:fuzzer-input",
       "OK:color-scheme-dark",

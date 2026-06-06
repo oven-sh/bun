@@ -239,6 +239,170 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
     selectors.into_boxed_slice()
 }
 
+/// Estimated serialized byte size of every selector in `selectors`, for
+/// weighting the selector-expansion budget
+/// ([`MAX_SELECTOR_EXPANSION_BYTES`](crate::css_rules::MAX_SELECTOR_EXPANSION_BYTES)).
+///
+/// Counting expanded *selectors* alone does not bound the expansion's size:
+/// a selector's serialized form is input-controlled (long identifiers,
+/// multi-argument `:lang()`, raw custom pseudo-class arguments), so a few fat
+/// selectors multiplied through compiled nesting can reach hundreds of
+/// megabytes while staying under the count cap. This estimate only needs to
+/// be proportional to the serialized size, not exact.
+pub(crate) fn selector_list_weight(selectors: &[Selector]) -> u32 {
+    let mut weight: u32 = 0;
+    for selector in selectors {
+        weight = weight.saturating_add(selector_weight(selector));
+    }
+    weight
+}
+
+pub(crate) fn selector_weight(selector: &Selector) -> u32 {
+    let mut weight: u32 = 0;
+    for component in selector.components.iter() {
+        weight = weight.saturating_add(component_weight(component));
+    }
+    weight
+}
+
+fn component_weight(component: &Component) -> u32 {
+    const BASE: u32 = 4;
+    let payload: u32 = match component {
+        Component::DefaultNamespace(url) => url.len() as u32,
+        Component::Namespace { prefix, url } => {
+            (prefix.v.len() as u32).saturating_add(url.len() as u32)
+        }
+        Component::LocalName(name) => name.name.v.len() as u32,
+        Component::Id(ident) | Component::Class(ident) => ident_or_ref_weight(*ident),
+        Component::AttributeInNoNamespaceExists { local_name, .. } => local_name.v.len() as u32,
+        Component::AttributeInNoNamespace {
+            local_name, value, ..
+        } => (local_name.v.len() as u32).saturating_add(value.len() as u32),
+        Component::AttributeOther(attr) => {
+            let op_len = match &attr.operation {
+                parser::attrs::ParsedAttrSelectorOperation::Exists => 0,
+                parser::attrs::ParsedAttrSelectorOperation::WithValue {
+                    expected_value, ..
+                } => expected_value.len() as u32,
+            };
+            (attr.local_name.v.len() as u32).saturating_add(op_len)
+        }
+        Component::Negation(list)
+        | Component::Where(list)
+        | Component::Is(list)
+        | Component::Any {
+            selectors: list, ..
+        }
+        | Component::Has(list) => selector_list_weight(list),
+        Component::NthOf(nth) => selector_list_weight(&nth.selectors),
+        Component::Slotted(selector) => selector_weight(selector),
+        Component::Host(selector) => selector.as_ref().map_or(0, selector_weight),
+        Component::Part(names) => {
+            let mut w: u32 = 0;
+            for name in names.iter() {
+                w = w.saturating_add(name.v.len() as u32);
+            }
+            w
+        }
+        Component::NonTsPseudoClass(pseudo) => pseudo_class_weight(pseudo),
+        Component::PseudoElement(pseudo) => pseudo_element_weight(pseudo),
+        _ => BASE,
+    };
+    BASE.saturating_add(payload)
+}
+
+fn ident_or_ref_weight(ident: css::css_values::ident::IdentOrRef) -> u32 {
+    // CSS-modules refs resolve through the symbol table; use a flat estimate.
+    match ident.as_ident() {
+        Some(ident) => ident.v.len() as u32,
+        None => 16,
+    }
+}
+
+fn pseudo_class_weight(pseudo: &PseudoClass) -> u32 {
+    // Longest built-in pseudo-class names are ~24 bytes (vendor prefixes
+    // included); variants carrying input-controlled payloads are measured.
+    const NAME: u32 = 24;
+    match pseudo {
+        PseudoClass::Lang { languages } => {
+            // Downleveling multiplies each language into its own `:lang()`
+            // inside `:is()`, so charge per-language overhead too.
+            let mut w: u32 = 0;
+            for lang in languages {
+                w = w.saturating_add(lang.len() as u32).saturating_add(8);
+            }
+            w
+        }
+        PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+            selector_weight(selector)
+        }
+        PseudoClass::Custom { name } => NAME.saturating_add(name.len() as u32),
+        PseudoClass::CustomFunction { name, arguments } => NAME
+            .saturating_add(name.len() as u32)
+            .saturating_add(token_list_weight(arguments)),
+        _ => NAME,
+    }
+}
+
+fn pseudo_element_weight(pseudo: &PseudoElement) -> u32 {
+    const NAME: u32 = 24;
+    match pseudo {
+        PseudoElement::CueFunction { selector } | PseudoElement::CueRegionFunction { selector } => {
+            NAME.saturating_add(selector_weight(selector))
+        }
+        PseudoElement::Custom { name } => NAME.saturating_add(name.len() as u32),
+        PseudoElement::CustomFunction { name, arguments } => NAME
+            .saturating_add(name.len() as u32)
+            .saturating_add(token_list_weight(arguments)),
+        _ => NAME,
+    }
+}
+
+fn token_list_weight(list: &crate::properties::custom::TokenList) -> u32 {
+    use crate::properties::custom::TokenOrValue;
+    let mut weight: u32 = 0;
+    for token_or_value in &list.v {
+        let w = match token_or_value {
+            TokenOrValue::Token(token) => token_weight(token),
+            TokenOrValue::Var(var) => var
+                .fallback
+                .as_ref()
+                .map_or(0, token_list_weight)
+                .saturating_add(16),
+            TokenOrValue::Env(env) => env
+                .fallback
+                .as_ref()
+                .map_or(0, token_list_weight)
+                .saturating_add(16),
+            TokenOrValue::Function(func) => {
+                (func.name.v.len() as u32).saturating_add(token_list_weight(&func.arguments))
+            }
+            _ => 16,
+        };
+        weight = weight.saturating_add(w).saturating_add(4);
+    }
+    weight
+}
+
+fn token_weight(token: &css::Token) -> u32 {
+    use css::Token;
+    match token {
+        Token::Ident(v)
+        | Token::Function(v)
+        | Token::AtKeyword(v)
+        | Token::UnrestrictedHash(v)
+        | Token::IdHash(v)
+        | Token::QuotedString(v)
+        | Token::BadString(v)
+        | Token::UnquotedUrl(v)
+        | Token::BadUrl(v)
+        | Token::Whitespace(v)
+        | Token::Comment(v) => v.len() as u32,
+        Token::Dimension(dim) => dim.unit.len() as u32,
+        _ => 8,
+    }
+}
+
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
 pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
@@ -1342,35 +1506,26 @@ pub mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
+    /// Maximum number of bytes parent-selector substitutions may emit across
+    /// a whole stylesheet.
+    ///
+    /// [`MAX_NESTING_EXPANSIONS`] bounds how many times `&` is substituted,
+    /// but each substitution writes the parent selector list, whose size is
+    /// input-controlled (long identifiers, long pseudo-class argument lists).
+    /// Substitution count × parent size lets a few KB of input print hundreds
+    /// of megabytes while staying under the count limit, so the bytes emitted
+    /// by substitutions are budgeted as well. Same judgment as
+    /// `MAX_PREFIX_EXPANSION_BYTES` (`rules/style.rs`): real stylesheets
+    /// substitute a tiny fraction of this; anything past it is a runaway
+    /// expansion.
+    const MAX_NESTING_EXPANSION_BYTES: usize = 64 << 20;
+
     pub(crate) fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,
     ) -> Result<(), PrintErr> {
-        if let Some(ctx) = context {
-            dest.nesting_expansions += 1;
-            if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
-                return dest.new_error(
-                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
-                    None,
-                );
-            }
-            // If there's only one simple selector, just serialize it directly.
-            // Otherwise, use an :is() pseudo class.
-            // Type selectors are only allowed at the start of a compound selector,
-            // so use :is() if that is not the case.
-            if ctx.selectors.v.len() == 1
-                && (first
-                    || (!has_type_selector(ctx.selectors.v.at(0))
-                        && is_simple(ctx.selectors.v.at(0))))
-            {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
-            } else {
-                dest.write_str(b":is(")?;
-                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
-                dest.write_char(b')')?;
-            }
-        } else {
+        let Some(ctx) = context else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.
             if dest.targets.should_compile_same(Feature::Nesting) {
@@ -1378,8 +1533,58 @@ pub mod serialize {
             } else {
                 dest.write_char(b'&')?;
             }
+            return Ok(());
+        };
+
+        dest.nesting_expansions += 1;
+        if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
+            return dest.new_error(
+                crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                None,
+            );
+        }
+        // Meter the bytes this substitution emits. Only the outermost
+        // substitution measures: recursive substitutions (the parent's own
+        // `&` referring to the grandparent) are contained in the outer span,
+        // so measuring them too would double-count.
+        let outermost = dest.nesting_expansion_meter_depth == 0;
+        let bytes_before = if outermost { dest.bytes_written() } else { 0 };
+        dest.nesting_expansion_meter_depth += 1;
+        let result = serialize_nesting_substitution(dest, ctx, first);
+        dest.nesting_expansion_meter_depth -= 1;
+        result?;
+        if outermost {
+            let emitted = dest.bytes_written().saturating_sub(bytes_before);
+            dest.nesting_expansion_bytes = dest.nesting_expansion_bytes.saturating_add(emitted);
+            if dest.nesting_expansion_bytes > MAX_NESTING_EXPANSION_BYTES {
+                return dest.new_error(
+                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                    None,
+                );
+            }
         }
         Ok(())
+    }
+
+    fn serialize_nesting_substitution(
+        dest: &mut Printer,
+        ctx: &StyleContext,
+        first: bool,
+    ) -> Result<(), PrintErr> {
+        // If there's only one simple selector, just serialize it directly.
+        // Otherwise, use an :is() pseudo class.
+        // Type selectors are only allowed at the start of a compound selector,
+        // so use :is() if that is not the case.
+        if ctx.selectors.v.len() == 1
+            && (first
+                || (!has_type_selector(ctx.selectors.v.at(0)) && is_simple(ctx.selectors.v.at(0))))
+        {
+            serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)
+        } else {
+            dest.write_str(b":is(")?;
+            serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
+            dest.write_char(b')')
+        }
     }
 }
 

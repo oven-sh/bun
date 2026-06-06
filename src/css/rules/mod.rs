@@ -1069,6 +1069,22 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the estimated serialized bytes of the selectors that
+/// compiling nested rules away for the configured targets may expand a
+/// stylesheet into.
+///
+/// [`MAX_SELECTOR_EXPANSION`] bounds how many selectors the expansion
+/// produces, but each expanded selector repeats its ancestor chain, whose
+/// per-level size is input-controlled (long identifiers, multi-argument
+/// `:lang()`, raw custom pseudo-class arguments). Count × size lets a few KB
+/// of input expand into hundreds of megabytes of cloned rules and output while
+/// staying under the count cap, so the expansion is also charged by estimated
+/// bytes ([`selector::selector_list_weight`](crate::selectors::selector)).
+/// Exceeding this is reported as a `selector_expansion_bytes_limit_exceeded`
+/// minify error. The thresholds are ordered so that stylesheets with
+/// ordinary-sized selectors keep hitting the count limit first.
+pub const MAX_SELECTOR_EXPANSION_BYTES: u64 = 64 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1104,4 +1120,13 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Estimated serialized bytes one expanded selector's ancestor chain
+    /// contributes: the sum over the enclosing (compiled) style rules of the
+    /// average selector weight of their lists. `0` at the top level;
+    /// maintained alongside `selector_expansion_multiplier` in
+    /// `StyleRule::minify_nested_rules`.
+    pub selector_expansion_chain_bytes: u32,
+    /// Running estimate of the serialized bytes the expansion will produce,
+    /// checked against [`MAX_SELECTOR_EXPANSION_BYTES`].
+    pub selector_expansion_bytes_total: u64,
 }

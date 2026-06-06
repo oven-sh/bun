@@ -385,19 +385,43 @@ impl<R> StyleRule<R> {
     /// otherwise a few hundred bytes of deeply nested multi-selector rules
     /// expand into gigabytes of cloned rules and output. See
     /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
+    ///
+    /// The expansion is charged twice, in this order: by selector count
+    /// (bounds how many rules/selectors materialize) and by estimated
+    /// serialized bytes (bounds their size; per-selector size is
+    /// input-controlled, so a few fat selectors could otherwise expand into
+    /// hundreds of megabytes while staying under the count cap). See
+    /// [`css_rules::MAX_SELECTOR_EXPANSION_BYTES`](super::MAX_SELECTOR_EXPANSION_BYTES).
     pub(crate) fn charge_selector_expansion(
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
         if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
+            let len = self.selectors.v.len().max(1);
+            context.selector_expansion_total = context
+                .selector_expansion_total
+                .saturating_add(context.selector_expansion_multiplier.saturating_mul(len));
             if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc: self.loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+
+            // Every expanded copy of one of this rule's selectors also repeats
+            // its ancestor chain, so charge chain bytes once per copy.
+            let own_bytes = selector::selector_list_weight(self.selectors.v.slice()) as u64;
+            let chain_bytes =
+                (context.selector_expansion_chain_bytes as u64).saturating_mul(len as u64);
+            context.selector_expansion_bytes_total =
+                context.selector_expansion_bytes_total.saturating_add(
+                    (context.selector_expansion_multiplier as u64)
+                        .saturating_mul(own_bytes.saturating_add(chain_bytes)),
+                );
+            if context.selector_expansion_bytes_total > super::MAX_SELECTOR_EXPANSION_BYTES {
+                context.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_bytes_limit_exceeded,
                     loc: self.loc,
                 });
                 return Err(MinifyErr::minify_err);
@@ -432,6 +456,7 @@ impl<R> StyleRule<R> {
         // nesting is compiled away the printed output still fans out per
         // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
+        let saved_expansion_chain_bytes = context.selector_expansion_chain_bytes;
         let selectors_incompatible = self.selectors.v.len() > 1
             && context.targets.should_compile_selectors()
             && !self.is_compatible(context.targets);
@@ -440,9 +465,17 @@ impl<R> StyleRule<R> {
                 && !self.selectors.any_has_pseudo_element()
                 && self.selectors.specifities_all_equal());
         if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
-            context.selector_expansion_multiplier = context
-                .selector_expansion_multiplier
-                .saturating_mul(self.selectors.v.len().max(1));
+            let len = self.selectors.v.len().max(1);
+            context.selector_expansion_multiplier =
+                context.selector_expansion_multiplier.saturating_mul(len);
+            // Each expanded descendant selector is prefixed with one selector
+            // from this level; track the level's average selector weight as
+            // the chain-bytes contribution.
+            let avg_weight =
+                (selector::selector_list_weight(self.selectors.v.slice()) / len).max(1);
+            context.selector_expansion_chain_bytes = context
+                .selector_expansion_chain_bytes
+                .saturating_add(avg_weight);
         }
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
@@ -456,6 +489,7 @@ impl<R> StyleRule<R> {
             &mut handler_context,
         );
         context.selector_expansion_multiplier = saved_expansion_multiplier;
+        context.selector_expansion_chain_bytes = saved_expansion_chain_bytes;
         result
     }
 

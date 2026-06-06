@@ -590,16 +590,19 @@ var access = function access(path, mode, callback) {
     // the eager path check runs on an async stat so the JS thread isn't
     // blocked and the callback never fires synchronously.
     const result = new Dir(1, path, options, kAlreadyValidated);
+    // Invoke the callback from process.nextTick so an exception thrown by it
+    // surfaces as an uncaught exception instead of rejecting this internal
+    // promise chain (same convention as glob() below).
     fs.stat(path).then(
       stats => {
         if (!stats.isDirectory()) {
-          callback(opendirNotDirError(path));
+          process.nextTick(callback, opendirNotDirError(path));
           return;
         }
-        callback(null, result);
+        process.nextTick(callback, null, result);
       },
       err => {
-        callback(typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+        process.nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
       },
     );
   };

@@ -217,6 +217,15 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   try {
     for (const item of transferList) {
       if (item !== null && typeof item === "object" && typeof item[kTransfer] === "function") {
+        if (replacements?.has(item)) {
+          // node (and the HTML spec) reject duplicate transferList entries;
+          // without this the second kTransfer() would read the already
+          // neutered fd (-1) and clobber the real marker.
+          throw new DOMException(
+            `Transfer list contains duplicate ${item.constructor?.name ?? "entry"}`,
+            "DataCloneError",
+          );
+        }
         const extraTransfers = item[kTransferList]?.();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
@@ -237,10 +246,14 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   if (!replacements) return options;
 
   const seen = new Map<object, unknown>();
+  const usedMarkers = new Set<object>();
   function replace(value: unknown): unknown {
     if (value === null || typeof value !== "object") return value;
     const replacement = replacements!.get(value);
-    if (replacement !== undefined) return replacement;
+    if (replacement !== undefined) {
+      usedMarkers.add(value);
+      return replacement;
+    }
     const cached = seen.get(value);
     if (cached !== undefined) return cached;
     if (Array.isArray(value)) {
@@ -263,6 +276,19 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     workerData: replace(options.workerData),
     transferList: nativeTransferList,
   };
+  // A handle in transferList but never referenced from workerData is still
+  // detached from this thread (fd === -1, like node), but no marker will
+  // deserialize it on the worker side - close the orphaned fd instead of
+  // leaking it (node's worker-side instance is reclaimed by GC).
+  for (const { 0: item, 1: data } of neutered) {
+    if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
+      try {
+        require("node:fs").closeSync((data as any).fd);
+      } catch {
+        // already closed
+      }
+    }
+  }
   packed[kRestoreJSTransferables] = restoreNeutered;
   return packed;
 }

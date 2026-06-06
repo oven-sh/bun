@@ -547,3 +547,36 @@ test("a FileHandle referenced twice in workerData deserializes to one instance",
   await worker.terminate();
   expect(message).toEqual({ same: true, closed: true });
 });
+
+test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  expect(() => {
+    new Worker(file, { workerData: { fh }, transferList: [fh as any, fh as any] } as any);
+  }).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+  // like node, the handle is still usable after the rejected transfer
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});
+
+test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "noop.mjs");
+  fs.writeFileSync(script, `import { parentPort } from "worker_threads"; parentPort.postMessage("ok");`);
+  const fh = await fs.promises.open(file, "r");
+  const fd = fh.fd;
+  const worker = new Worker(script, { workerData: {}, transferList: [fh as any] } as any);
+  const [message] = await once(worker, "message");
+  expect(message).toBe("ok");
+  await worker.terminate();
+  // the parent handle is neutered like node...
+  expect(fh.fd).toBe(-1);
+  // ...and the orphaned fd was closed (not leaked): re-opening reuses low fds,
+  // and closing the old number must not hit a still-open descriptor we own.
+  expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+});

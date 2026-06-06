@@ -60,7 +60,13 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
         version: "1.0.0",
         gypfile: true,
         scripts: {
-          install: "node-gyp rebuild -- -Denable_lto=false -Denable_thin_lto=false -Dlto_jobs=",
+          // Run node-gyp under the bun being tested: the system Node on Windows
+          // is built with clang-cl and its process.config leaks thin-LTO flags
+          // into addon builds (link.exe fails on /opt:lldltojobs), and the
+          // system Node's ABI may not match ours at all (e.g. older macOS CI
+          // machines). gyp -D defines can't override target_defaults, so use
+          // bun's clean process.config instead.
+          install: `${JSON.stringify(bunExe())} --bun node-gyp rebuild`,
         },
         devDependencies: {
           "node-gyp": "^11.2.0",
@@ -82,7 +88,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     }
 
     addonPath = join(dir, "build", "Release", "addon.node");
-  });
+  }, 180_000);
 
   test("should load the same module twice successfully", async () => {
     const testScript = `

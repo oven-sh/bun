@@ -160,7 +160,7 @@ test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
 
     ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
       cwd: root,
-      env: bunEnv,
+      env: { ...bunEnv, ...puppeteerInstallEnv },
       stdio: ["ignore", "inherit", "inherit"],
     }));
 

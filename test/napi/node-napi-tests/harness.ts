@@ -7,7 +7,7 @@ const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
 
 export async function build(dir: string) {
   const child = spawn({
-    cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose"],
+    cmd: [bunExe(), "x", "node-gyp@11", "rebuild", "--debug", "-j", "max", "--verbose", "--", "-Denable_lto=false", "-Denable_thin_lto=false", "-Dlto_jobs="],
     cwd: dir,
     stderr: "pipe",
     stdout: "ignore",

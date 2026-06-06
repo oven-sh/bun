@@ -76,8 +76,28 @@ async function build(
             buildMode == BuildMode.debug ? "--debug" : "--release",
             "-j",
             "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
           ]
-        : [bunExe(), "run", "node-gyp", "rebuild", "--release", "-j", "max"], // for node.js we don't bother with debug mode
+        : // for node.js we don't bother with debug mode. The trailing gyp defines
+          // neutralize LTO flags that leak out of a clang-cl-built Node's
+          // process.config into MSVC addon builds (link.exe chokes on
+          // /opt:lldltojobs); they're no-ops elsewhere.
+          [
+            bunExe(),
+            "run",
+            "node-gyp",
+            "rebuild",
+            "--release",
+            "-j",
+            "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
+          ],
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",
@@ -477,7 +497,20 @@ addon.string_utf8_length("\\u00ff".repeat(2 ** 30 + 1));
 
       {
         const build = spawn({
-          cmd: [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
+          cmd: [
+            bunExe(),
+            "--bun",
+            "run",
+            "node-gyp",
+            "rebuild",
+            "--release",
+            "-j",
+            "max",
+            "--",
+            "-Denable_lto=false",
+            "-Denable_thin_lto=false",
+            "-Dlto_jobs=",
+          ],
           cwd,
           env: bunEnv,
           stdin: "inherit",

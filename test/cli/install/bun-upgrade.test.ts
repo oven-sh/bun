@@ -971,6 +971,10 @@ describe.concurrent("bun upgrade pr argument spellings", () => {
           ...env,
           NODE_TLS_REJECT_UNAUTHORIZED: "0",
           GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+          // The lookup reaches the HTTP path, which intentionally leaks
+          // process-lifetime allocations (CLI arena); leak detection is not
+          // what this asserts.
+          ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
         },
       });
 

@@ -731,6 +731,9 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
+  // MySQL defers synchronous creation failures to the next tick; Postgres
+  // reports them synchronously. Each driver keeps its pre-existing timing.
+  deferSyncCloseError: boolean,
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -782,10 +785,11 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
-    // Deferred to the next tick: a synchronous `onClose` here re-enters the
-    // adapter while the connection slot is still being constructed, crashing
-    // the pool and hanging the pending query (see sql-invalid-tls-option test).
-    process.nextTick(closeNT, onClose, e);
+    if (deferSyncCloseError) {
+      process.nextTick(closeNT, onClose, e);
+    } else {
+      onClose(e as Error);
+    }
     return null;
   }
 }

@@ -20,7 +20,7 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::MacroOptions;
+use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -37,6 +37,99 @@ pub struct Bunfig;
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+/// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
+/// implemented here against the value-shaped `bun_ast::Expr` (the
+/// tree produced by the TOML/JSON parsers) and returning the
+/// `bun_options_types::context::MacroMap` shape so the result slots directly
+/// into `ctx.debug.macros` without crossing the `bun_ast::Expr` /
+/// `StringArrayHashMap` newtype boundary that `bun_resolver`'s copy uses.
+fn parse_macros_json(
+    macros: &Expr,
+    log: &mut bun_ast::Log,
+    json_source: &bun_ast::Source,
+    bump: &Bump,
+) -> MacroMap {
+    let mut macro_map = MacroMap::default();
+    let ExprData::EObject(obj) = &macros.data else {
+        return macro_map;
+    };
+
+    for property in obj.properties.slice() {
+        let Some(key_expr) = property.key.as_ref() else {
+            continue;
+        };
+        let Some(key) = key_expr.as_string(bump) else {
+            continue;
+        };
+        if !bun_resolver::is_package_path(key) {
+            log.add_range_warning_fmt(
+                Some(json_source),
+                json_source.range_of_string(key_expr.loc),
+                format_args!(
+                    "\"{}\" is not a package path. \"macros\" remaps package paths to macros. Skipping.",
+                    bstr::BStr::new(key)
+                ),
+            );
+            continue;
+        }
+
+        let Some(value) = property.value.as_ref() else {
+            continue;
+        };
+        let ExprData::EObject(value_obj) = &value.data else {
+            log.add_warning_fmt(
+                Some(json_source),
+                value.loc,
+                format_args!(
+                    "Invalid macro remapping in \"{}\": expected object where the keys are import names and the value is a string path to replace",
+                    bstr::BStr::new(key)
+                ),
+            );
+            continue;
+        };
+
+        let remap_properties = value_obj.properties.slice();
+        if remap_properties.is_empty() {
+            continue;
+        }
+
+        let mut map = MacroImportReplacementMap::default();
+        map.reserve(remap_properties.len());
+        for remap in remap_properties {
+            let Some(remap_key) = remap.key.as_ref() else {
+                continue;
+            };
+            let Some(import_name) = remap_key.as_string(bump) else {
+                continue;
+            };
+            let Some(remap_value) = remap.value.as_ref() else {
+                continue;
+            };
+            let remap_value_str = match &remap_value.data {
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
+                _ => {
+                    log.add_warning_fmt(
+                        Some(json_source),
+                        remap_value.loc,
+                        format_args!(
+                            "Invalid macro remapping for import \"{}\": expected string to remap to. e.g. \"graphql\": \"bun-macro-relay\" ",
+                            bstr::BStr::new(import_name)
+                        ),
+                    );
+                    continue;
+                }
+            };
+            map.insert(Box::<[u8]>::from(import_name), remap_value_str);
+        }
+
+        if map.len() > 0 {
+            macro_map.insert(Box::<[u8]>::from(key), map);
+        }
+    }
+
+    macro_map
 }
 
 #[inline]
@@ -935,12 +1028,7 @@ impl<'a> Parser<'a> {
                 }
             } else {
                 self.ctx.debug.macros =
-                    MacroOptions::Map(bun_resolver::package_json::PackageJSON::parse_macros_map(
-                        &expr,
-                        self.log,
-                        self.source,
-                        self.bump,
-                    ));
+                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }

@@ -133,6 +133,7 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
       this.connectionInfo,
       this.handleConnected.bind(this),
       this.handleClose.bind(this),
+      true,
     );
   }
 

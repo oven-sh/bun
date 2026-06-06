@@ -6,8 +6,6 @@ use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
-use super::stringify_space::Space;
-
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
@@ -106,6 +104,39 @@ impl From<JsError> for StringifyError {
 }
 
 type StringifyResult<T> = Result<T, StringifyError>;
+
+enum Space {
+    Minified,
+    Number(u32),
+    Str(BunString),
+}
+
+impl Space {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+            // toInt32() wraps large values and Infinity to 0, which is wrong.
+            let num_f = space.as_number();
+            if num_f.is_nan() || num_f < 1.0 {
+                // handles NaN, -Infinity, 0, negatives
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
+        }
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                // `str` drops here (deref)
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+        Ok(Space::Minified)
+    }
+}
+
+// NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
 
 impl Stringifier {
     pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
@@ -377,8 +408,26 @@ impl Stringifier {
     }
 
     fn newline(&mut self) {
-        self.space
-            .append_newline_indent(&mut self.builder, self.indent);
+        match &self.space {
+            Space::Minified => {}
+            Space::Number(space_num) => {
+                self.builder.append_lchar(b'\n');
+                for _ in 0..(self.indent * (*space_num as usize)) {
+                    self.builder.append_lchar(b' ');
+                }
+            }
+            Space::Str(space_str) => {
+                self.builder.append_lchar(b'\n');
+                let clamped = if space_str.length() > 10 {
+                    space_str.substring_with_len(0, 10)
+                } else {
+                    space_str.clone()
+                };
+                for _ in 0..self.indent {
+                    self.builder.append_string(clamped.clone());
+                }
+            }
+        }
     }
 }
 

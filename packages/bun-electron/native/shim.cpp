@@ -330,6 +330,18 @@ class Client : public CefClient,
                                           CefRefPtr<CefRequest> request,
                                           CefRefPtr<CefCallback> callback) override;
 
+  bool OnResourceResponse(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefFrame> frame,
+                          CefRefPtr<CefRequest> request,
+                          CefRefPtr<CefResponse> response) override;
+
+  void OnResourceLoadComplete(CefRefPtr<CefBrowser> browser,
+                              CefRefPtr<CefFrame> frame,
+                              CefRefPtr<CefRequest> request,
+                              CefRefPtr<CefResponse> response,
+                              cef_urlrequest_status_t status,
+                              int64_t received_content_length) override;
+
   // Popups created by window.open() share the opener's CefClient, so the
   // owning window is resolved through the browser view's ID (assigned at
   // creation) rather than the constructor argument.
@@ -813,6 +825,53 @@ cef_return_value_t Client::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
                 .AddString("resourceType", rt)
                 .Build());
   return RV_CONTINUE_ASYNC;
+}
+
+bool Client::OnResourceResponse(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                CefRefPtr<CefRequest> request,
+                                CefRefPtr<CefResponse> response) {
+  if (!g_web_request_active.load()) return false;
+  // headers-received: observational (we don't rewrite headers here).
+  std::string headers = "{";
+  CefResponse::HeaderMap map;
+  response->GetHeaderMap(map);
+  bool first = true;
+  for (auto& [k, v] : map) {
+    if (!first) headers += ',';
+    first = false;
+    headers += '"';
+    JsonEscapeTo(headers, k.ToString());
+    headers += "\":\"";
+    JsonEscapeTo(headers, v.ToString());
+    headers += '"';
+  }
+  headers += '}';
+  EmitEvent(JsonObj()
+                .AddString("type", "web-request-headers")
+                .AddInt("windowId", WindowId(browser))
+                .AddString("url", request->GetURL().ToString())
+                .AddInt("statusCode", response->GetStatus())
+                .AddRaw("headers", headers)
+                .Build());
+  return false;
+}
+
+void Client::OnResourceLoadComplete(CefRefPtr<CefBrowser> browser,
+                                    CefRefPtr<CefFrame> frame,
+                                    CefRefPtr<CefRequest> request,
+                                    CefRefPtr<CefResponse> response,
+                                    cef_urlrequest_status_t status,
+                                    int64_t received_content_length) {
+  if (!g_web_request_active.load()) return;
+  const bool ok = status == UR_SUCCESS;
+  EmitEvent(JsonObj()
+                .AddString("type", ok ? "web-request-completed" : "web-request-error")
+                .AddInt("windowId", WindowId(browser))
+                .AddString("url", request->GetURL().ToString())
+                .AddInt("statusCode", response ? response->GetStatus() : 0)
+                .AddInt("contentLength", static_cast<int64_t>(received_content_length))
+                .Build());
 }
 
 // window.open() popups: allocate the window entry and give the popup its own

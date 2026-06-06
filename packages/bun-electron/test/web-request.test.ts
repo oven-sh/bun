@@ -35,7 +35,11 @@ beforeAll(async () => {
 afterAll(() => server.stop(true));
 
 afterEach(() => {
-  session.defaultSession.webRequest.onBeforeRequest(null);
+  const wr = session.defaultSession.webRequest;
+  wr.onBeforeRequest(null);
+  wr.onHeadersReceived(null);
+  wr.onCompleted(null);
+  wr.onErrorOccurred(null);
 });
 
 describe("session.webRequest.onBeforeRequest", () => {
@@ -76,6 +80,45 @@ describe("session.webRequest.onBeforeRequest", () => {
     await new Promise((r) => setTimeout(r, 200));
     // The filter only matches blocked.js, so the listener never saw allowed.js.
     expect(sawAllowed).toBe(false);
+  });
+
+  test("onCompleted fires with a status code", async () => {
+    const statuses: number[] = [];
+    session.defaultSession.webRequest.onCompleted((details) => {
+      if (String(details.url).endsWith("/")) statuses.push(details.statusCode as number);
+    });
+    const w = createWindow();
+    await w.loadURL(`${base}/`);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(statuses.some((s) => s === 200)).toBe(true);
+    session.defaultSession.webRequest.onCompleted(null);
+  });
+
+  test("onHeadersReceived sees response headers", async () => {
+    let headers: Record<string, string> | null = null;
+    session.defaultSession.webRequest.onHeadersReceived((details) => {
+      if (String(details.url).endsWith("/")) headers = details.responseHeaders as Record<string, string>;
+    });
+    const w = createWindow();
+    await w.loadURL(`${base}/`);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(headers).not.toBeNull();
+    session.defaultSession.webRequest.onHeadersReceived(null);
+  });
+
+  test("onErrorOccurred fires for a failed load", async () => {
+    const free = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const deadPort = free.port;
+    free.stop(true);
+    let errored = false;
+    session.defaultSession.webRequest.onErrorOccurred(() => {
+      errored = true;
+    });
+    const w = createWindow();
+    await w.loadURL(`http://127.0.0.1:${deadPort}/`).catch(() => {});
+    await new Promise((r) => setTimeout(r, 200));
+    expect(errored).toBe(true);
+    session.defaultSession.webRequest.onErrorOccurred(null);
   });
 
   test("onBeforeRequest(null) removes the listener", () => {

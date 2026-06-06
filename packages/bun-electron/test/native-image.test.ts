@@ -49,6 +49,61 @@ describe("nativeImage module", () => {
     });
   });
 
+  describe("resize()", () => {
+    // Build a 4x4 opaque-red RGBA PNG with the package's own encoder so the
+    // codec round-trip is self-consistent.
+    function redPng(w: number, h: number) {
+      const { encodePNG } = require("../src/png") as typeof import("../src/png");
+      const data = Buffer.alloc(w * h * 4);
+      for (let i = 0; i < w * h; i++) {
+        data[i * 4] = 255;
+        data[i * 4 + 3] = 255;
+      }
+      return encodePNG({ width: w, height: h, data });
+    }
+
+    test("resizes to the requested dimensions", () => {
+      const img = nativeImage.createFromBuffer(redPng(4, 4));
+      const resized = img.resize({ width: 8, height: 8 });
+      expect(resized.getSize()).toEqual({ width: 8, height: 8 });
+    });
+
+    test("preserves aspect ratio when only width is given", () => {
+      const img = nativeImage.createFromBuffer(redPng(4, 2));
+      const resized = img.resize({ width: 8 });
+      expect(resized.getSize()).toEqual({ width: 8, height: 4 });
+    });
+
+    test("returns the same image when no dimensions are given", () => {
+      const img = nativeImage.createFromBuffer(redPng(4, 4));
+      expect(img.resize({}).getSize()).toEqual({ width: 4, height: 4 });
+    });
+  });
+
+  describe("crop()", () => {
+    function gradientPng(w: number, h: number) {
+      const { encodePNG } = require("../src/png") as typeof import("../src/png");
+      const data = Buffer.alloc(w * h * 4);
+      for (let i = 0; i < w * h; i++) {
+        data[i * 4] = i & 0xff;
+        data[i * 4 + 3] = 255;
+      }
+      return encodePNG({ width: w, height: h, data });
+    }
+
+    test("crops to the requested rectangle", () => {
+      const img = nativeImage.createFromBuffer(gradientPng(8, 8));
+      const cropped = img.crop({ x: 2, y: 2, width: 4, height: 3 });
+      expect(cropped.getSize()).toEqual({ width: 4, height: 3 });
+    });
+
+    test("clamps the rectangle to the image bounds", () => {
+      const img = nativeImage.createFromBuffer(gradientPng(8, 8));
+      const cropped = img.crop({ x: 6, y: 6, width: 10, height: 10 });
+      expect(cropped.getSize()).toEqual({ width: 2, height: 2 });
+    });
+  });
+
   describe("toDataURL()", () => {
     test("round-trips through createFromDataURL", () => {
       const original = nativeImage.createFromBuffer(Buffer.from(ONE_BY_ONE, "base64"));

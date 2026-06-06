@@ -180,6 +180,9 @@ class App extends EventEmitter {
         routeCookiesEvent(ev);
         return;
       case "web-request-before":
+      case "web-request-headers":
+      case "web-request-completed":
+      case "web-request-error":
         routeWebRequestEvent(ev);
         return;
       default:

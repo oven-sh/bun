@@ -3,6 +3,7 @@
 // raster pipeline (no resize/crop) yet.
 
 import { existsSync, readFileSync } from "node:fs";
+import { cropRaw, decodePNG, encodePNG, resizeRaw } from "./png";
 
 interface Size {
   width: number;
@@ -91,6 +92,30 @@ export class NativeImage {
 
   isEmpty(): boolean {
     return this.bytes.length === 0;
+  }
+
+  /**
+   * Returns a resized copy. Decodes the PNG, nearest-neighbor scales, and
+   * re-encodes. If the source isn't a decodable 8-bit PNG, returns this image
+   * unchanged. `options.quality` is accepted for API compatibility (ignored).
+   */
+  resize(options: { width?: number; height?: number; quality?: string }): NativeImage {
+    const raw = decodePNG(this.bytes);
+    if (!raw) return this;
+    let width = options.width ?? 0;
+    let height = options.height ?? 0;
+    if (!width && !height) return this;
+    // Preserve aspect ratio when only one dimension is given (Electron does).
+    if (width && !height) height = Math.max(1, Math.round((raw.height * width) / raw.width));
+    if (height && !width) width = Math.max(1, Math.round((raw.width * height) / raw.height));
+    return new NativeImage(encodePNG(resizeRaw(raw, width, height)));
+  }
+
+  /** Returns a cropped copy (RGBA). Returns empty if the source isn't PNG. */
+  crop(rect: { x: number; y: number; width: number; height: number }): NativeImage {
+    const raw = decodePNG(this.bytes);
+    if (!raw) return NativeImage.createEmpty();
+    return new NativeImage(encodePNG(cropRaw(raw, rect.x, rect.y, rect.width, rect.height)));
   }
 }
 

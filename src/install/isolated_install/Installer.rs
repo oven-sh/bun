@@ -5,7 +5,7 @@ use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, PathBuffer};
+use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{Mutex, UnboundedQueue, thread_pool};
 
@@ -1088,7 +1088,7 @@ impl Task {
                                     installer.supported_backend.load(Ordering::Relaxed),
                                 ) != InstallMethod::Symlink
                             {
-                                let mut linked_buf = PathBuffer::uninit();
+                                let mut linked_buf = paths::path_buffer_pool::get();
                                 let producer_path_opt = {
                                     // Worker thread: must not form `&mut PackageManager`
                                     // (the Task::run SAFETY contract at the top of
@@ -1101,7 +1101,7 @@ impl Task {
                                     match directories::linked_package_path(
                                         manager,
                                         pkg_name.slice(string_buf),
-                                        &mut linked_buf,
+                                        &mut *linked_buf,
                                     ) {
                                         Some(p) => {
                                             // Copy bytes so we don't hold &manager across
@@ -1113,9 +1113,10 @@ impl Task {
                                     }
                                 };
                                 if let Some((ptr, len)) = producer_path_opt {
-                                    // SAFETY: `linked_buf` is on this stack frame and lives
-                                    // until the end of this arm; the pointer is valid for
-                                    // the remainder of the Step::LinkPackage match arm.
+                                    // SAFETY: the `linked_buf` pool guard lives until the
+                                    // end of this arm and the pooled buffer doesn't move,
+                                    // so the pointer is valid for the remainder of the
+                                    // Step::LinkPackage match arm.
                                     let producer_path: &[u8] =
                                         unsafe { core::slice::from_raw_parts(ptr, len) };
 
@@ -1254,6 +1255,17 @@ impl Task {
                                     // staging rename). Files the producer has since
                                     // deleted would otherwise persist across
                                     // reinstalls.
+                                    //
+                                    // Link-overridden entries are forced GVS-ineligible
+                                    // by the eligibility carve-out in isolated_install.rs
+                                    // (`linked_pkg_ids.is_set` implies `entry_hash == 0`),
+                                    // so `append_real_store_path` here is guaranteed
+                                    // project-local. If that ever regressed, this
+                                    // delete_tree would silently wipe a machine-wide
+                                    // `<cache>/links/<hash>/` entry.
+                                    debug_assert!(
+                                        !installer.entry_uses_global_store(self.entry_id)
+                                    );
                                     let mut final_path = AutoPath::init();
                                     installer.append_real_store_path(
                                         &mut final_path,

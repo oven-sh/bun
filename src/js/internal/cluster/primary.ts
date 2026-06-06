@@ -239,6 +239,15 @@ function queryServer(worker, message) {
     (message.port === 0 ? `:${message.index}` : "");
   let handle = handles.get(key);
 
+  if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
+    // A TLS worker cannot adopt round-robin connection fds (the native
+    // listener owns the TLS accept lifecycle), but another worker already
+    // claimed this key as round-robin. Fail this listen loudly instead of
+    // handing plaintext connections to the TLS server.
+    send(worker, { errno: -1, errcode: "EINVAL", key, ack: message.seq, data: handle.data }, null);
+    return;
+  }
+
   if (handle === undefined) {
     let address = message.address;
 

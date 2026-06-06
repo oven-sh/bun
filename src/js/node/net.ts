@@ -2629,7 +2629,15 @@ function listenInCluster(
         // Prefer the code string the primary forwarded: the numeric errno is
         // only meaningful on POSIX (negated platform errno == uv code) and
         // would render as "Unknown system error" on Windows.
-        ex = new Error(`bind ${reply.errcode} ${address}:${port}`);
+        // Match ExceptionWithHostPort: pipes and fds carry no meaningful
+        // port (-1 / null), so only positive ports go in the message.
+        let details = "";
+        if (port && port > 0) {
+          details = ` ${address}:${port}`;
+        } else if (address) {
+          details = ` ${address}`;
+        }
+        ex = new Error(`bind ${reply.errcode}${details}`);
         ex.code = reply.errcode;
         ex.errno = err;
         ex.syscall = "bind";

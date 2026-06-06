@@ -1402,7 +1402,7 @@ pub(crate) fn __bun_js_event_loop_current() -> *mut () {
 /// to fall back to `MiniEventLoop` for VM-less callers (bun build CLI,
 /// bundler worker thread).
 #[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_current_or_null() -> *mut () {
+pub(crate) fn __bun_js_event_loop_current_or_null() -> *mut () {
     match VirtualMachine::get_or_null() {
         Some(vm) => {
             // SAFETY: `get_or_null` returned `Some`, so the pointer names a

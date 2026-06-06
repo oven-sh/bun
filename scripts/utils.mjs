@@ -1478,6 +1478,11 @@ export function tmpdir() {
   }
 
   if (isMacOS || isLinux) {
+    // Check TMPDIR env var first (user override for read-only /tmp, e.g. OHOS)
+    const userTmp = process.env["TMPDIR"] || process.env["TEMP"] || process.env["TMP"];
+    if (userTmp) {
+      return userTmp;
+    }
     if (existsSync("/tmp")) {
       return "/tmp";
     }

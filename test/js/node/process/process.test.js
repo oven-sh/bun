@@ -144,8 +144,10 @@ it("process.release", () => {
   const abi = familySync() === "musl" ? "-musl" : "";
   const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
   const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
+  // OHOS (HarmonyOS): release URL uses platform "ohos" instead of "linux"
+  const ohosUrl = `https://github.com/springmin/bun/releases/download/rust-bun-ohos-v${process.versions.bun}/bun-ohos-aarch64-v${process.versions.bun}.zip`;
 
-  expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
+  expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline, ohosUrl]);
 });
 
 it("process.env", () => {

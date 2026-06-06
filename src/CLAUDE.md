@@ -343,3 +343,50 @@ unsafe { bun_core::heap::destroy(raw) };
 bun_wyhash::hash(bytes)            // u64
 bun_wyhash::hash_with_seed(seed, bytes)
 ```
+
+## OHOS (HarmonyOS) 移植说明
+
+### 构建方式
+
+```bash
+# 使用 OHOS SDK sysroot 交叉编译
+cmake -B build -G Ninja \
+  -DCMAKE_C_COMPILER=/path/to/clang \
+  -DCMAKE_CXX_COMPILER=/path/to/clang++ \
+  -DCMAKE_SYSROOT=/path/to/ohos-sdk/sysroot \
+  -DTARGET_ARCH=aarch64-linux-ohos
+
+# Bun 的构建系统已支持 --target=aarch64-linux-ohos
+bun run build:release --target=aarch64-linux-ohos \
+  --sysroot=/path/to/ohos-sdk/sysroot
+```
+
+### 已知限制
+
+| 限制 | 原因 | 影响 |
+|------|------|------|
+| `spawnSync({stdout:'pipe'})` 不可用 | OHOS vfork fd 限制：子进程无法 dup2/close/open | spawnSync pipe 捕获为空，exitCode 正确 |
+| `async Bun.spawn({stdout:'pipe'})` 正常 | 不同内核路径 | ✅ 完整支持 |
+| `fstat()` 在 pipe/socket 上返回 EACCES | OHOS SELinux (E008) | 需要用 `fcntl(F_GETFD)` 代替 |
+| 二进制需签名 | SELinux 要求 | `binary-sign-tool sign -selfSign "1"` |
+| `/tmp` 只读 | 文件系统限制 | 用 `$HOME/tmp` 或 `$TMPDIR` |
+| `pidfd_open`/`close_range` 不可用 | 未实现 syscall (E051) | 使用 `BUN_OHOS_DISABLE_PIDFD` 标志跳过 |
+| 某些 POSIX syscall 未实现 | 内核限制 | 见 `BUN_OHOS_DISABLE_PIDFD` + close_range fallback |
+| 多线程 `fork()` 后 fd 不可用 | 内核限制 | 子进程无法访问父进程的 pipe/file fd |
+
+### spawn 实现说明
+
+```zig
+// 关键标志（c-bindings.cpp）：
+// BUN_OHOS_DISABLE_PIDFD — 跳过 pidfd_open/close_range（SIGSYS 来源）
+//
+// spawn 路径（process.zig）：
+// .buffer 模式：
+//   options.sync=true (spawnSync): inherit fallback（不创建 pipe）
+//   options.sync=false (async): 正常 socketpair（event loop 读取）
+// memfd: BUN_OHOS_DISABLE_PIDFD 时禁用（用 socketpair 替代）
+//
+// resolver (resolver.zig)：
+// PermissionDenied 在 readdir 时静默处理（不输出错误日志）
+```
+

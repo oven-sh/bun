@@ -1,0 +1,215 @@
+# Bun OHOS Incremental Build CI
+#
+# Uses persistent self-hosted runner workspace + ccache + zig cache for
+# near-instant incremental rebuilds. Typically completes in 1-3 minutes
+# for small changes (vs 30-60 min for a full clean build).
+#
+# Principles:
+#   - Workspace persists between runs (self-hosted runner never cleans it)
+#   - ninja's depfile + ccache handle C++ incrementality automatically
+#   - zig's own cache handles zig incrementality
+#   - Only reconfigure when build scripts change
+#   - WebKit build cached separately (only rebuilds on version change)
+#
+# Trigger: manual (workflow_dispatch) or push to ohos-aarch64
+
+name: OHOS Build (incremental)
+
+on:
+  push:
+    branches:
+      - ohos-aarch64
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - 'test/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ohos-build-incr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OHOS_SDK_ROOT: /home/user/setup-ohos-sdk
+  OHOS_SYSROOT: /home/user/setup-ohos-sdk/ohos/native/sysroot
+  OHOS_CROSS_LIBS: /home/user/sources/bun/build/ohos-cross-libs
+  OHOS_ICU_DIR: /home/user/sources/bun/build/ohos-icu/target
+  NINJA_JOBS: 2
+  WEBKIT_FORK: springmin/WebKit
+  WEBKIT_REF: ohos-aarch64
+
+jobs:
+  build:
+    name: Incremental Build OHOS
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 60  # incremental builds are fast
+
+    steps:
+      - name: Checkout Bun source (incremental — preserve workspace)
+        uses: actions/checkout@v4
+        with:
+          repository: springmin/bun
+          ref: ohos-aarch64
+          fetch-depth: 1
+          # Do NOT clean — keep build artifacts for incremental rebuild
+          clean: false
+
+      - name: Restore zig compiler from local cache
+        run: |
+          rm -rf vendor/zig
+          if [ -d /home/user/sources/bun/vendor/zig ]; then
+            cp -a /home/user/sources/bun/vendor/zig vendor/zig
+            echo "✅ Copied zig from local build"
+          else
+            echo "⚠️  No local zig found, will download during build"
+          fi
+
+      - name: Checkout/update WebKit fork
+        run: |
+          if [ -d vendor/WebKit/.git ]; then
+            # Clean stale lock files from cancelled runs
+            rm -f vendor/WebKit/.git/shallow.lock vendor/WebKit/.git/index.lock
+            cd vendor/WebKit
+            git fetch origin ${{ env.WEBKIT_REF }} --depth=1
+            git checkout -f FETCH_HEAD
+            echo "✅ WebKit updated incrementally"
+          else
+            rm -rf vendor/WebKit
+            git clone --depth 1 --branch ${{ env.WEBKIT_REF }} \
+              https://github.com/${{ env.WEBKIT_FORK }}.git vendor/WebKit
+            echo "✅ WebKit cloned fresh"
+          fi
+
+      - name: WebKit version sync check
+        run: |
+          WK_HASH=$(grep "^export const WEBKIT_VERSION" scripts/build/deps/webkit.ts | grep -oE '[a-f0-9]{40}')
+          echo "scripts/build/deps/webkit.ts pins: $WK_HASH"
+          if git -C vendor/WebKit cat-file -e "${WK_HASH}" 2>/dev/null; then
+            echo "✅ vendor/WebKit already contains ${WK_HASH}"
+          else
+            echo "⚠️  vendor/WebKit missing ${WK_HASH} — trying to fetch..."
+            cd vendor/WebKit
+            git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
+            git fetch upstream main --depth=100 2>/dev/null || echo "⚠️  Fetch failed (network), continuing anyway"
+            if git cat-file -e "${WK_HASH}" 2>/dev/null; then
+              git push origin origin/main:ohos-aarch64 2>/dev/null || true
+              echo "✅ Fork synced to ${WK_HASH}"
+            else
+              echo "⚠️  Cannot verify commit ${WK_HASH} in fork. Build will continue."
+            fi
+          fi
+
+      - name: Setup environment
+        run: |
+          echo "OHOS_SDK_ROOT=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV
+          echo "OHOS_SYSROOT=${{ env.OHOS_SYSROOT }}" >> $GITHUB_ENV
+          echo "OHOS_CROSS_LIBS=${{ env.OHOS_CROSS_LIBS }}" >> $GITHUB_ENV
+          echo "OHOS_ICU_DIR=${{ env.OHOS_ICU_DIR }}" >> $GITHUB_ENV
+          test -d "$OHOS_SDK_ROOT" || { echo "OHOS SDK not found"; exit 1; }
+          mkdir -p build
+          [ -L build/ohos-cross-libs ] && [ "$(readlink build/ohos-cross-libs)" = "$OHOS_CROSS_LIBS" ] || ln -sfn "$OHOS_CROSS_LIBS" build/ohos-cross-libs
+          [ -L build/ohos-icu ] && [ "$(readlink build/ohos-icu)" = "$(dirname $OHOS_ICU_DIR)" ] || ln -sfn "$(dirname $OHOS_ICU_DIR)" build/ohos-icu
+          test -d build/ohos-cross-libs/libcxx/lib || { echo "Cross libs not found"; exit 1; }
+          test -d build/ohos-icu/target/lib || { echo "ICU not found"; exit 1; }
+
+      - name: Sync test files to shared directory
+        run: |
+          SHARE=/mnt/linux_share/ci-test/all-tests
+          mkdir -p $SHARE/test
+          find test/ -type f \( \
+            -name "*.test.ts" -o -name "*.test.tsx" -o -name "*.test.js" -o -name "*.test.jsx" \
+            -o -name "*.spec.ts" -o -name "*.spec.tsx" -o -name "*.spec.js" -o -name "*.spec.jsx" \
+            -o -name "*.test.mjs" -o -name "*.test.cjs" -o -name "*.spec.mjs" -o -name "*.spec.cjs" \
+            -o -name "*.test.mts" -o -name "*.test.cts" -o -name "*.spec.mts" -o -name "*.spec.cts" \) \
+            -exec sh -c 'd="$0/$(dirname "{}")"; mkdir -p "$d" && cp "{}" "$d/"' "$SHARE" \; 2>/dev/null || true
+          echo "✅ Test files synced"
+
+      - name: Restore ccache from persistent storage
+        run: |
+          CCACHE_DIR="$HOME/.cache/ccache-ohos"
+          mkdir -p "$CCACHE_DIR"
+          echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+          echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=4G" >> $GITHUB_ENV
+          # Link local build cache to speed up first run
+          if [ -d /home/user/.cache/ccache ] && [ ! -f "$CCACHE_DIR/initialized" ]; then
+            cp -a /home/user/.cache/ccache/* "$CCACHE_DIR/" 2>/dev/null || true
+            touch "$CCACHE_DIR/initialized"
+            echo "✅ Pre-seeded ccache from local build"
+          fi
+          ccache -s 2>&1 | grep -E "Cache size|Hits|Misses"
+
+      - name: Restore zig build cache from persistent storage
+        run: |
+          ZIG_CACHE="$HOME/.cache/zig-ohos"
+          mkdir -p "$ZIG_CACHE"
+          echo "ZIG_GLOBAL_CACHE_DIR=$ZIG_CACHE" >> $GITHUB_ENV
+          if [ -d /home/user/.bun/build-cache/zig/global ] && [ ! -f "$ZIG_CACHE/initialized" ]; then
+            cp -a /home/user/.bun/build-cache/zig/global/* "$ZIG_CACHE/" 2>/dev/null || true
+            touch "$ZIG_CACHE/initialized"
+            echo "✅ Pre-seeded zig cache from local build"
+          fi
+
+      - name: Configure Bun build (incremental — only regen build.ninja)
+        run: |
+          bun run build:release \
+            --os=ohos \
+            --arch=aarch64 \
+            --webkit=local \
+            --build-dir=build/release-ohos \
+            --ohos-sysroot=$OHOS_SYSROOT \
+            --configure-only
+        env:
+          CI: true
+
+      - name: Build Bun (incremental — ninja skips unchanged targets)
+        run: |
+          ninja -C build/release-ohos bun -j$NINJA_JOBS
+          echo "✅ Incremental build complete"
+
+      - name: Verify binary
+        run: |
+          file build/release-ohos/bun
+          ls -lh build/release-ohos/bun
+          file build/release-ohos/bun | grep -q "ELF.*ARM aarch64" || {
+            echo "ERROR: Not an ARM64 ELF binary"
+            exit 1
+          }
+          echo "✅ Binary validation passed"
+
+      - name: Package binary
+        run: |
+          VERSION=$(build/release-ohos/bun --version 2>/dev/null || python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d_%H%M%S)
+          NAME="bun-ohos-aarch64-incr-${VERSION}-${COMMIT}-${DATE}"
+          mkdir -p /tmp/bun-release/${NAME}
+          cp build/release-ohos/bun /tmp/bun-release/${NAME}/bun
+          cd /tmp/bun-release
+          tar czf ${NAME}.tar.gz ${NAME}/
+          echo "artifact_name=${NAME}" >> $GITHUB_ENV
+          echo "artifact_path=/tmp/bun-release/${NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: ${{ env.artifact_path }}
+          retention-days: 14
+
+      - name: Upload binary (raw)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}.bun
+          path: build/release-ohos/bun
+          retention-days: 14
+
+      - name: Copy to shared directory
+        run: |
+          SHARE=/mnt/linux_share/ci-test
+          mkdir -p $SHARE
+          cp build/release-ohos/bun $SHARE/bun-ohos-incr-${{ env.artifact_name }}.elf
+          echo "✅ Copied to $SHARE/bun-ohos-incr-${{ env.artifact_name }}.elf"
+
+      - name: Print ccache stats
+        run: ccache -s

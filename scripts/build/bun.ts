@@ -94,6 +94,14 @@ function systemLibs(cfg: Config): string[] {
     libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-lutil");
   }
 
+  if (cfg.ohos) {
+    libs.push("-lc", "-lpthread", "-ldl");
+    // Link ICU for local WebKit builds on OHOS (cross-compiled ICU at ohosIcuDir/lib).
+    if (cfg.webkit === "local" && cfg.ohosIcuDir) {
+      libs.push(`-L${cfg.ohosIcuDir}/lib`, "-licudata", "-licui18n", "-licuuc");
+    }
+  }
+
   if (cfg.windows) {
     // Explicit .lib: these go after /link so no auto-suffixing by the
     // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;
@@ -655,7 +663,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
   // Cross-compiled binaries can't run on the build host. Skip the smoke
   // test entirely — `ninja check` becomes a no-op alias for the exe.
-  if (cfg.crossTarget !== undefined) {
+  if (cfg.crossTarget !== undefined || cfg.ohos) {
     n.phony("check", [exe]);
     return;
   }

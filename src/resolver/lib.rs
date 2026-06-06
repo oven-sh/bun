@@ -289,7 +289,15 @@ pub mod fs {
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     let mut buf = bun_paths::PathBuffer::default();
-                    let n = bun_sys::getcwd(&mut buf[..])?;
+                    let n = match bun_sys::getcwd(&mut buf[..]) {
+                        Ok(n) => n,
+                        Err(_) => {
+                            // OHOS: getcwd can fail (e.g. current dir was
+                            // removed). Fall back to "/" like the Zig code did.
+                            buf[0] = b'/';
+                            1
+                        }
+                    };
                     DirnameStore::instance().append_slice(&buf[..n])?
                 }
             };
@@ -1096,10 +1104,10 @@ pub mod fs {
                 // RLIM_INFINITY; raising soft anywhere near INT_MAX breaks child processes
                 // that read the limit into an int.
                 let target = {
-                    // musl has extremely low defaults, so ensure at least 163840 there.
-                    #[cfg(target_env = "musl")]
+                    // musl/OHOS have extremely low defaults, so ensure at least 163840 there.
+                    #[cfg(any(target_env = "musl", target_env = "ohos"))]
                     let max = lim.max.max(163_840);
-                    #[cfg(not(target_env = "musl"))]
+                    #[cfg(not(any(target_env = "musl", target_env = "ohos")))]
                     let max = lim.max;
                     max.min(1 << 20)
                 };
@@ -1190,7 +1198,7 @@ pub mod fs {
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
             if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 let mut get_or_put_result = self.entries.get_or_put(dir)?;
-                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") {
+                if err == bun_core::err!("ENOENT") || err == bun_core::err!("FileNotFound") || err == bun_core::err!("PermissionDenied") || err == bun_core::err!("AccessDenied") || err == bun_core::err!("EPERM") || err == bun_core::err!("EACCES") {
                     self.entries.mark_not_found(get_or_put_result);
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {
@@ -2642,6 +2650,7 @@ pub mod cache {
 }
 
 pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
+
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.

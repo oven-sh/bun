@@ -336,11 +336,12 @@ pub const PosixSpawn = struct {
         const detached = if (attr) |a| a.detached else false;
 
         // Use posix_spawn_bun when:
-        // - Linux: always (uses vfork which is fast and safe)
+        // - Linux (non-OHOS): always (uses vfork which is fast and safe)
         // - macOS: only for PTY spawns (pty_slave_fd >= 0) because PTY setup requires
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
         //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
+        // - OHOS: forbidden — SELinux intercepts fork+execve but allows posix_spawn().
         const use_bun_spawn = Environment.isLinux or Environment.isFreeBSD or (Environment.isMac and pty_slave_fd >= 0);
 
         if (use_bun_spawn) {
@@ -462,35 +463,43 @@ pub const PosixSpawn = struct {
         }
 
         // Windows path (uses different mechanism)
-        var pid: pid_t = undefined;
-        const rc = system.posix_spawn(
-            &pid,
-            path,
-            if (actions) |a| &a.actions else null,
-            if (attr) |a| &a.attr else null,
-            argv,
-            envp,
-        );
-        if (comptime bun.Environment.allow_assert)
-            bun.sys.syslog("posix_spawn({s}) = {d} ({d})", .{
+        if (comptime !Environment.isPosix) {
+            var pid: pid_t = undefined;
+            const rc = system.posix_spawn(
+                &pid,
                 path,
-                rc,
-                pid,
-            });
+                if (actions) |a| &a.actions else null,
+                if (attr) |a| &a.attr else null,
+                argv,
+                envp,
+            );
+            if (comptime bun.Environment.allow_assert)
+                bun.sys.syslog("posix_spawn({s}) = {d} ({d})", .{
+                    path,
+                    rc,
+                    pid,
+                });
 
-        // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-        // That is why bun.sys.getErrno() is not used here, since that checks for -1.
-        if (rc == 0) {
-            return Maybe(pid_t){ .result = pid };
+            // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
+            // That is why bun.sys.getErrno() is not used here, since that checks for -1.
+            if (rc == 0) {
+                return Maybe(pid_t){ .result = pid };
+            }
+
+            return Maybe(pid_t){
+                .err = .{
+                    .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
+                    .syscall = .posix_spawn,
+                    .path = bun.asByteSlice(path),
+                },
+            };
         }
 
-        return Maybe(pid_t){
-            .err = .{
-                .errno = @as(bun.sys.Error.Int, @truncate(@intFromEnum(@as(std.c.E, @enumFromInt(rc))))),
-                .syscall = .posix_spawn,
-                .path = bun.asByteSlice(path),
-            },
-        };
+        // On POSIX (macOS, Linux, OHOS): should never reach here — one of the
+        // earlier blocks handles all POSIX spawns before reaching this point.
+        if (comptime Environment.isPosix) {
+            @panic("spawnZ: unreachable on POSIX");
+        }
     }
 
     /// Use this version of the `waitpid` wrapper if you spawned your child process using `posix_spawn`
@@ -552,7 +561,6 @@ pub const PosixSpawn = struct {
 };
 
 const std = @import("std");
-
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Maybe = bun.sys.Maybe;

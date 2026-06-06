@@ -811,17 +811,17 @@ pub const RunCommand = struct {
 
         this_transpiler.configureLinker();
 
-        const root_dir_info = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
-            if (!log_errors) return error.CouldntReadCurrentDirectory;
-            ctx.log.print(Output.errorWriter()) catch {};
-            Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {f}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
-            Output.flush();
-            return err;
-        } orelse {
-            ctx.log.print(Output.errorWriter()) catch {};
-            Output.prettyErrorln("error loading current directory", .{});
-            Output.flush();
-            return error.CouldntReadCurrentDirectory;
+        const root_dir_info: *DirInfo = brk: {
+            const result = this_transpiler.resolver.readDirInfo(this_transpiler.fs.top_level_dir) catch |err| {
+                if (!log_errors) return error.CouldntReadCurrentDirectory;
+                ctx.log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> loading directory {f}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = this_transpiler.fs.top_level_dir } });
+                Output.flush();
+                return err;
+            } orelse this_transpiler.resolver.readDirInfo("/") catch {
+                return error.CouldntReadCurrentDirectory;
+            } orelse return error.CouldntReadCurrentDirectory;
+            break :brk result;
         };
 
         this_transpiler.resolver.store_fd = false;

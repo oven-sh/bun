@@ -1,0 +1,252 @@
+# Bun OHOS Cross-Compilation CI
+#
+# Builds Bun for HarmonyOS (OHOS) on aarch64 using WebKit local build.
+# Requires a self-hosted runner with OHOS SDK pre-installed.
+#
+# Required runner environment:
+#   - OHOS SDK at /home/user/setup-ohos-sdk/
+#   - LLVM 22 toolchain (musl-compatible)
+#   - Cross-compiled ICU at bun/build/ohos-icu/
+#   - Cross-compiled libc++ at bun/build/ohos-cross-libs/
+#
+# Build directory: build/release-ohos/ (isolated from native release builds)
+#
+# WebKit sync: before building, checks scripts/build/deps/webkit.ts pinned
+#   commit against vendor/WebKit HEAD. If mismatch, fetches fork updates
+#   and fails if the commit still isn't found — prevents silent version drift.
+#
+# Trigger paths:
+#   - Changes to Bun's OHOS build config (scripts/build/)
+#   - Changes to Bun's OHOS runtime code (src/runtime/)
+#   - Changes to Bun's OHOS JSC bindings (src/jsc/bindings/)
+#   - Changes to WebKit fork (any file in vendor/WebKit/)
+#   - Manual trigger (workflow_dispatch)
+
+# DISABLED — use ohos-build-rust.yml instead (Rust-based build).
+name: OHOS Build (DISABLED)
+on: workflow_dispatch
+
+concurrency:
+  group: ohos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # OHOS SDK paths (self-hosted runner)
+  OHOS_SDK_ROOT: /home/user/setup-ohos-sdk
+  OHOS_SYSROOT: /home/user/setup-ohos-sdk/ohos/native/sysroot
+  OHOS_CROSS_LIBS: /home/user/sources/bun/build/ohos-cross-libs
+  OHOS_ICU_DIR: /home/user/sources/bun/build/ohos-icu/target
+  # Build parallelism
+  # NINJA_JOBS=4 still OOMs when zig codegen_threads=8 (8 zig threads
+  # × concurrent C++ edges exceed 11GB RAM). -j2 is safe.
+  NINJA_JOBS: 2
+  # WebKit fork
+  WEBKIT_FORK: springmin/WebKit
+  WEBKIT_REF: ohos-aarch64
+
+jobs:
+  build:
+    name: Build Bun for OHOS (aarch64)
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout Bun source (incremental)
+        run: |
+          LOCAL=/home/user/sources/bun
+          rm -rf bun
+          if [ -d "$LOCAL/.git" ]; then
+            # Use local repo objects to avoid download (~5s vs ~30s)
+            git clone --reference "$LOCAL/.git" \
+              https://github.com/springmin/bun.git bun 2>/dev/null || \
+              git clone --depth 1 --branch ohos-aarch64 \
+                https://github.com/springmin/bun.git bun
+            cd bun
+            git fetch origin ohos-aarch64 --depth=1
+            git checkout -f FETCH_HEAD
+            echo "✅ Cloned from local reference"
+          else
+            git clone --depth 1 --branch ohos-aarch64 \
+              https://github.com/springmin/bun.git bun
+            echo "⚠️  Full clone (no local reference)"
+          fi
+
+      - name: Restore zig from local build cache
+        run: |
+          mkdir -p bun/vendor
+          if [ -d /home/user/sources/bun/vendor/zig ]; then
+            cp -a /home/user/sources/bun/vendor/zig bun/vendor/zig
+            echo "✅ Copied zig from local build"
+          else
+            echo "⚠️  No local zig found, will download during build"
+          fi
+
+      - name: Checkout WebKit fork (incremental)
+        run: |
+          LOCAL_WK=/home/user/sources/bun/vendor/WebKit
+          WK_REPO=${{ env.WEBKIT_FORK }}
+          WK_REF=${{ inputs.webkit_ref || env.WEBKIT_REF }}
+          rm -rf bun/vendor/WebKit
+          if [ -d "$LOCAL_WK/.git" ]; then
+            git clone --reference "$LOCAL_WK/.git" --dissociate \
+              --depth 1 --branch "$WK_REF" \
+              "https://github.com/$WK_REPO.git" bun/vendor/WebKit 2>/dev/null || \
+            cp -a --link "$LOCAL_WK" bun/vendor/WebKit
+            cd bun/vendor/WebKit
+            git remote set-url origin "https://github.com/$WK_REPO.git"
+            git fetch origin "$WK_REF" --depth=1 2>/dev/null || true
+            git checkout -f "$WK_REF" 2>/dev/null || git checkout -f FETCH_HEAD
+            echo "✅ WebKit cloned from local reference"
+          else
+            git clone --depth 1 --branch "$WK_REF" \
+              "https://github.com/$WK_REPO.git" bun/vendor/WebKit
+            echo "⚠️  Full WebKit clone (no local reference)"
+          fi
+
+      - name: WebKit version sync check
+        run: |
+          WK_HASH=$(grep "^export const WEBKIT_VERSION" bun/scripts/build/deps/webkit.ts | grep -oE '[a-f0-9]{40}')
+          echo "scripts/build/deps/webkit.ts pins: $WK_HASH"
+          if git -C bun/vendor/WebKit cat-file -e "${WK_HASH}" 2>/dev/null; then
+            echo "✅ vendor/WebKit already contains ${WK_HASH}"
+          else
+            echo "⚠️  vendor/WebKit missing ${WK_HASH} — trying to fetch..."
+            cd bun/vendor/WebKit
+            git remote add upstream https://github.com/oven-sh/WebKit.git 2>/dev/null || true
+            git fetch upstream main --depth=100 2>/dev/null || echo "⚠️  Fetch failed (network), continuing anyway"
+            if git cat-file -e "${WK_HASH}" 2>/dev/null; then
+              git push origin origin/main:ohos-aarch64 2>/dev/null || true
+              echo "✅ Fork synced to ${WK_HASH}"
+            else
+              echo "⚠️  Cannot verify commit ${WK_HASH} in fork. Build will continue."
+            fi
+          fi
+
+      - name: Setup environment
+        run: |
+          echo "OHOS_SDK_ROOT=${{ env.OHOS_SDK_ROOT }}" >> $GITHUB_ENV
+          echo "OHOS_SYSROOT=${{ env.OHOS_SYSROOT }}" >> $GITHUB_ENV
+          echo "OHOS_CROSS_LIBS=${{ env.OHOS_CROSS_LIBS }}" >> $GITHUB_ENV
+          echo "OHOS_ICU_DIR=${{ env.OHOS_ICU_DIR }}" >> $GITHUB_ENV
+          # Verify SDK (fast — just directory check)
+          test -d "$OHOS_SDK_ROOT" || { echo "OHOS SDK not found"; exit 1; }
+          # Symlink cross-libs and ICU (skip if already correct)
+          mkdir -p bun/build
+          [ -L bun/build/ohos-cross-libs ] && [ "$(readlink bun/build/ohos-cross-libs)" = "$OHOS_CROSS_LIBS" ] || ln -sfn "$OHOS_CROSS_LIBS" bun/build/ohos-cross-libs
+          [ -L bun/build/ohos-icu ] && [ "$(readlink bun/build/ohos-icu)" = "$(dirname $OHOS_ICU_DIR)" ] || ln -sfn "$(dirname $OHOS_ICU_DIR)" bun/build/ohos-icu
+          test -d bun/build/ohos-cross-libs/libcxx/lib || { echo "Cross libs not found"; exit 1; }
+          test -d bun/build/ohos-icu/target/lib || { echo "ICU not found"; exit 1; }
+          echo "✅ Environment ready"
+
+      - name: Sync test files to shared directory
+        run: |
+          SHARE=/mnt/linux_share/ci-test/all-tests
+          mkdir -p $SHARE/test
+          find bun/test/ -type f \( \
+            -name "*.test.ts" -o -name "*.test.tsx" -o -name "*.test.js" -o -name "*.test.jsx" \
+            -o -name "*.spec.ts" -o -name "*.spec.tsx" -o -name "*.spec.js" -o -name "*.spec.jsx" \
+            -o -name "*.test.mjs" -o -name "*.test.cjs" -o -name "*.spec.mjs" -o -name "*.spec.cjs" \
+            -o -name "*.test.mts" -o -name "*.test.cts" -o -name "*.spec.mts" -o -name "*.spec.cts" \) \
+            -exec sh -c 'd="$0/$(dirname "{}")"; mkdir -p "$d" && cp "{}" "$d/"' "$SHARE" \; 2>/dev/null || true
+          echo "✅ Test files synced"
+
+      - name: Cache WebKit build
+        uses: actions/cache@v4
+        id: webkit-cache
+        with:
+          path: bun/build/release-ohos/deps/WebKit
+          # Use the WebKit ref + scripts hash as key. hashFiles on the full
+          # WebKit source tree is too expensive (hundreds of thousands of
+          # files) and times out after 120s.
+          key: webkit-ohos-${{ inputs.webkit_ref || env.WEBKIT_REF }}-${{ hashFiles('bun/scripts/build/deps/webkit.ts') }}
+
+      - name: Configure Bun build
+        working-directory: bun
+        run: |
+          bun run build:release \
+            --os=ohos \
+            --arch=aarch64 \
+            --webkit=local \
+            --build-dir=build/release-ohos \
+            --ohos-sysroot=$OHOS_SYSROOT \
+            --configure-only
+        env:
+          CI: true
+
+      - name: Build WebKit
+        if: steps.webkit-cache.outputs.cache-hit != 'true'
+        working-directory: bun
+        run: |
+          ninja -C build/release-ohos configure-WebKit -j1
+          ninja -C build/release-ohos/deps/WebKit jsc -j$NINJA_JOBS
+
+      - name: Build Bun
+        working-directory: bun
+        run: |
+          ninja -C build/release-ohos bun -j$NINJA_JOBS
+
+      - name: Verify binary
+        working-directory: bun
+        run: |
+          file build/release-ohos/bun
+          ls -lh build/release-ohos/bun
+          # OHOS PIE binaries now dynamically link system libc.so/libc++.so.
+          file build/release-ohos/bun | grep -q "ELF.*ARM aarch64" || {
+            echo "ERROR: Not an ARM64 ELF binary"
+            file build/release-ohos/bun
+            exit 1
+          }
+          # OHOS now dynamically links system libc.so (and optionally libc++.so).
+          NEEDED=$(readelf -d build/release-ohos/bun | grep "NEEDED" | sed 's/.*\[//;s/\]//')
+          echo "NEEDED libraries: $NEEDED"
+          for lib in $NEEDED; do
+            case "$lib" in
+              libc.so|libc++.so) echo "✅ Expected: $lib" ;;
+              *)
+                echo "ERROR: Unexpected dynamic dependency: $lib"
+                readelf -d build/release-ohos/bun | grep "NEEDED"
+                exit 1
+                ;;
+            esac
+          done
+          echo "✅ Binary validation passed"
+
+      - name: Package binary
+        working-directory: bun
+        run: |
+          VERSION=$(build/release-ohos/bun --version 2>/dev/null || python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d_%H%M%S)
+          NAME="bun-ohos-aarch64-${VERSION}-${COMMIT}-${DATE}"
+          mkdir -p /tmp/bun-release/${NAME}
+          cp build/release-ohos/bun /tmp/bun-release/${NAME}/bun
+          cat > /tmp/bun-release/${NAME}/README.md << 'EOF'
+          # Bun for HarmonyOS (OHOS)
+          Build from CI. See springmin/bun on GitHub for details.
+          EOF
+          cd /tmp/bun-release
+          tar czf ${NAME}.tar.gz ${NAME}/
+          echo "artifact_name=${NAME}" >> $GITHUB_ENV
+          echo "artifact_path=/tmp/bun-release/${NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: ${{ env.artifact_path }}
+          retention-days: 30
+
+      - name: Upload binary (raw)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}.bun
+          path: bun/build/release-ohos/bun
+          retention-days: 30
+
+      - name: Copy artifacts to shared directory
+        working-directory: bun
+        run: |
+          SHARE=/mnt/linux_share/ci-test
+          mkdir -p $SHARE
+          cp build/release-ohos/bun $SHARE/bun-ohos-${{ env.artifact_name }}.elf
+          echo "✅ 制品已复制到 $SHARE/bun-ohos-${{ env.artifact_name }}.elf"

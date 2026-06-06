@@ -294,7 +294,14 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+#if defined(__OHOS__)
+    // OHOS kernel sends uncatchable SIGSYS for unimplemented syscalls.
+    // Fall back to the caller's closeRangeLoop.
+    errno = ENOSYS;
+    return -1;
+#else
     return syscall(__NR_close_range, start, end, flags);
+#endif
 }
 #else // OS(FREEBSD)
 // FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
@@ -590,7 +597,7 @@ extern "C" void bun_initialize_process()
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
 
-#if OS(LINUX)
+#if OS(LINUX) && !defined(__OHOS__)
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
@@ -1020,11 +1027,62 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <paths.h>
 
+#if defined(__OHOS__)
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin:/system/bin";
+#else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#endif
 #elif OS(WINDOWS)
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
 #else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif
+
+// OHOS kernel sends uncatchable SIGSYS for unimplemented syscalls like
+// pidfd_open. Setting this flag to true makes the Zig pidfd_open stub
+// return ENOSYS, triggering bun's waiter-thread fallback for child exit
+// monitoring instead of calling the unimplemented syscall.
+#if defined(__OHOS__)
+extern "C" const bool BUN_OHOS_DISABLE_PIDFD = true;
+#else
+extern "C" const bool BUN_OHOS_DISABLE_PIDFD = false;
+#endif
+
+// OHOS SIGSYS handler — replaces uncatchable SIGSYS with a logged ENOSYS.
+#if defined(__OHOS__)
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <ucontext.h>
+
+static void ohos_sigsys_handler(int sig, siginfo_t* info, void* uctx) {
+    (void)sig;
+    (void)info;
+    // On OHOS, /proc/self/syscall may not be available.
+    // Instead, read the syscall number from the saved register state.
+    // On aarch64 Linux, the syscall number is in register x8 when `svc #0`
+    // is executed. The ucontext_t captures this before the signal.
+    int syscall_nr = -1;
+    if (uctx) {
+        ucontext_t* uc = (ucontext_t*)uctx;
+#if defined(__aarch64__)
+        syscall_nr = (int)uc->uc_mcontext.regs[8];
+#elif defined(__x86_64__)
+        syscall_nr = (int)uc->uc_mcontext.gregs[REG_RAX];
+#endif
+    }
+    fprintf(stderr, "\n*** SIGSYS: blocked syscall #%d ***\n", syscall_nr);
+    fflush(stderr);
+}
+
+extern "C" void ohos_setup_sigsys_handler() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = ohos_sigsys_handler;
+    sigaction(SIGSYS, &sa, nullptr);
+}
 #endif
 
 #if OS(DARWIN)

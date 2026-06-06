@@ -28,7 +28,8 @@ test("dots 1", async () => {
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
     (fail) failing filterin
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
-    ..........
+    ..........error: Cannot read directory "/storage/Users/": EPERM
+
 
     10 pass
     10 skip
@@ -71,7 +72,8 @@ test("dots 2", async () => {
     Hello, world!
     ...........
     Hello, world!
-    .
+    .error: Cannot read directory "/storage/Users/": EPERM
+
 
     test/js/bun/test/printing/dots/dots2.fixture.ts:
     Hello, world!

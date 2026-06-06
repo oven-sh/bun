@@ -2082,7 +2082,7 @@ pub const Resolver = struct {
 
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
-                    if (err == error.FileNotFound) {
+                    if (err == error.FileNotFound or err == error.PermissionDenied or err == error.AccessDenied) {
                         switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
@@ -2916,7 +2916,7 @@ pub const Resolver = struct {
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
                         switch (@as(anyerror, err)) {
-                            error.ENOENT, error.FileNotFound => {},
+                            error.ENOENT, error.FileNotFound, error.PermissionDenied, error.AccessDenied, error.EPERM, error.EACCES => {},
                             else => {
                                 if (comptime enable_logging) {
                                     const pretty = queue_top.unsafe_path;
@@ -3806,7 +3806,7 @@ pub const Resolver = struct {
 
         if (@as(Fs.FileSystem.RealFS.EntriesOption.Tag, dir_entry.*) == .err) {
             switch (dir_entry.err.original_err) {
-                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir => {},
+                error.ENOENT, error.FileNotFound, error.ENOTDIR, error.NotDir, error.PermissionDenied, error.AccessDenied, error.EPERM, error.EACCES => {},
                 else => {
                     r.log.addErrorFmt(
                         null,
@@ -4209,7 +4209,7 @@ pub const Resolver = struct {
                     if (FeatureFlags.store_file_descriptors) fd else .zero,
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
-                    if (err == error.ENOENT or err == error.FileNotFound) {
+                    if (err == error.ENOENT or err == error.FileNotFound or err == error.PermissionDenied or err == error.AccessDenied) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {f}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {f}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};

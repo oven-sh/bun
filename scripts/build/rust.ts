@@ -53,6 +53,7 @@ export function rustTarget(cfg: Config): string {
   // linux
   assert(cfg.abi !== undefined, "linux build missing abi");
   if (cfg.abi === "android") return `${arch}-linux-android`;
+  if (cfg.ohos) return `${arch}-unknown-linux-ohos`;
   if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
   return `${arch}-unknown-linux-gnu`;
 }
@@ -118,6 +119,7 @@ export const allRustTargets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
+  "aarch64-unknown-linux-ohos",
   "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",

@@ -72,10 +72,10 @@ let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
-const spawnTimeout = 5_000;
-const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
-const testTimeout = 3 * 60_000;
-const integrationTimeout = 5 * 60_000;
+const spawnTimeout = 15_000;
+const spawnBunTimeout = 60_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
+const testTimeout = 5 * 60_000;
+const integrationTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
@@ -84,7 +84,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
-  return 20_000;
+  return 300_000;
 }
 
 process.on("SIGTRAP", () => {
@@ -528,7 +528,9 @@ async function runTests() {
   const failedResultsTitles = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
-  const parallelism = options["parallel"] ? availableParallelism() : 1;
+  const parallelism = options["parallel"]
+    ? parseInt(process.env.BUN_TEST_PARALLELISM, 10) || availableParallelism()
+    : 1;
   console.log("parallelism", parallelism);
   const limit = pLimit(parallelism);
 

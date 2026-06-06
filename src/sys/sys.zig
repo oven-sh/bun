@@ -604,6 +604,13 @@ pub fn fstat(fd: bun.FD) Maybe(bun.Stat) {
 
         if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| {
             if (err.getErrno() == .INTR) continue;
+            // OHOS: socketpair and certain fd types return EACCES on fstat.
+            // Return zeroed stat instead of erroring out.
+            if (comptime Environment.isLinux) {
+                if (err.getErrno() == .ACCES) {
+                    return Maybe(bun.Stat){ .result = stat_ };
+                }
+            }
             return err;
         }
 
@@ -2389,7 +2396,14 @@ pub fn send(fd: bun.FD, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
+/// OHOS kernel sends uncatchable SIGSYS instead of -ENOSYS for
+/// unimplemented syscalls. Set in c-bindings.cpp based on __OHOS__.
+extern "C" const BUN_OHOS_DISABLE_PIDFD: bool;
+
 pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
+    if (BUN_OHOS_DISABLE_PIDFD) {
+        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
+    }
     while (true) {
         const rc = linux.pidfd_open(pid, flags);
 
@@ -2615,6 +2629,16 @@ pub fn renameat2(from_dir: bun.FD, from: [:0]const u8, to_dir: bun.FD, to: [:0]c
             return .{ .err = Error.fromCode(.NOSYS, .rename) };
         }
         return renameat(from_dir, from, to_dir, to);
+    }
+
+    // OHOS seccomp blocks renameat2 with uncatchable SIGSYS.
+    // Fall back to delete+rename path (non-atomic but correct).
+    // BUN_OHOS_DISABLE_PIDFD is true on OHOS (from c-bindings.cpp).
+    if (comptime Environment.isLinux) {
+        if (bun.c.BUN_OHOS_DISABLE_PIDFD) {
+            if (flags.int() != 0) return .{ .err = Error.fromCode(.NOSYS, .rename) };
+            return renameat(from_dir, from, to_dir, to);
+        }
     }
 
     while (true) {

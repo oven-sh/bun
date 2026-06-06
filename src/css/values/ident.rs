@@ -430,11 +430,7 @@ impl IdentOrRef {
             // `Ref::eql` (user-bit lane masked out) and — in debug builds —
             // ignores the `ptrbits` heap pointer that differs between
             // logically-equal refs constructed via separate `from_ref` calls.
-            //
-            // The Zig original (`slice_u8[0..2]`) hashed only 2 of the 16 bytes
-            // of the packed `u128`: in release builds `ptrbits` is 0 and those
-            // two bytes are always `[0x00, 0x00]`, so every ref-tagged value
-            // collided to the same hash regardless of which `Ref` it encoded.
+            // Deviates from the Zig reference's `slice_u8[0..2]` — see #30772.
             hasher.update(&r.as_u64().to_ne_bytes());
         }
     }

@@ -3,7 +3,8 @@
 // raster pipeline (no resize/crop) yet.
 
 import { existsSync, readFileSync } from "node:fs";
-import { cropRaw, decodePNG, encodePNG, resizeRaw } from "./png";
+import { cropRaw, decodePNG, encodePNG, resizeRaw, type RawImage } from "./png";
+import { decodeJPEG } from "./jpeg";
 
 interface Size {
   width: number;
@@ -100,7 +101,7 @@ export class NativeImage {
    * unchanged. `options.quality` is accepted for API compatibility (ignored).
    */
   resize(options: { width?: number; height?: number; quality?: string }): NativeImage {
-    const raw = decodePNG(this.bytes);
+    const raw = this.decode();
     if (!raw) return this;
     let width = options.width ?? 0;
     let height = options.height ?? 0;
@@ -111,11 +112,16 @@ export class NativeImage {
     return new NativeImage(encodePNG(resizeRaw(raw, width, height)));
   }
 
-  /** Returns a cropped copy (RGBA). Returns empty if the source isn't PNG. */
+  /** Returns a cropped copy (RGBA). Returns empty if the source can't decode. */
   crop(rect: { x: number; y: number; width: number; height: number }): NativeImage {
-    const raw = decodePNG(this.bytes);
+    const raw = this.decode();
     if (!raw) return NativeImage.createEmpty();
     return new NativeImage(encodePNG(cropRaw(raw, rect.x, rect.y, rect.width, rect.height)));
+  }
+
+  // Decode the backing bytes to RGBA, trying PNG then baseline JPEG.
+  private decode(): RawImage | null {
+    return decodePNG(this.bytes) ?? decodeJPEG(this.bytes);
   }
 }
 

@@ -215,8 +215,8 @@ clipboard), `globalShortcut` key capture.
 Not implemented (each blocked by a missing CEF API, no headless test surface,
 or hardware): real OS power-event delivery; OS-native rendering of
 menus/tray/notifications; window-source capture in `desktopCapturer` (needs an
-OS window-enumeration API CEF doesn't expose); JPEG decode for
-`nativeImage.resize`/`crop` (PNG is fully supported); and macOS/Windows
+OS window-enumeration API CEF doesn't expose); progressive-JPEG decode
+(baseline JPEG and all PNG variants are supported); and macOS/Windows
 execution (code paths exist, unverified without that hardware).
 
 Context isolation is implemented at the JS-scope level (observable Electron
@@ -236,8 +236,8 @@ carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`,
 `window-icon`, `safe-storage`, `clipboard`, `global-shortcut`,
 `tray-notification`, `net`, `message-channel`, `power-monitor`,
-`context-isolation`, `web-request`, `desktop-capturer`, and `png-decode` test
-files (193 tests total). App-lifecycle scenarios spawn fresh
+`context-isolation`, `web-request`, `desktop-capturer`, `png-decode`, and
+`jpeg-decode` test files (198 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

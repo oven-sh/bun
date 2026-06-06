@@ -922,8 +922,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 /// rules, declarations, selector components (recursing into selector-list
 /// arguments), and raw token lists (token count plus borrowed text length —
 /// the text is borrowed by the clone but re-emitted per clone when printed).
-/// Every token variant that stores its text inline is charged that text,
-/// including dimension units, dashed idents, and var()/env()/function names.
+/// Every variant that stores its text inline is charged that text: token
+/// payloads (including dimension units and dashed idents), var()/env()/
+/// function and pseudo-class names, custom-property names, and selector
+/// text (classes, ids, element and attribute names, attribute values).
 /// Parsed leaf values and `url()` (whose text lives in the stylesheet's
 /// import records, not reachable here) are charged a flat constant: their
 /// per-rule size is bounded by the input, and the number of clones is bounded
@@ -987,8 +989,15 @@ mod clone_weight {
     }
 
     fn property(property: &Property) -> u64 {
+        use css::properties::custom::CustomPropertyName;
         DECL.saturating_add(match property {
-            Property::Custom(c) => token_list(&c.value),
+            Property::Custom(c) => {
+                let name_len = match &c.name {
+                    CustomPropertyName::Custom(ident) => ident.v().len(),
+                    CustomPropertyName::Unknown(ident) => ident.v().len(),
+                };
+                (name_len as u64).saturating_add(token_list(&c.value))
+            }
             Property::Unparsed(u) => token_list(&u.value),
             _ => 0,
         })
@@ -1011,6 +1020,7 @@ mod clone_weight {
     }
 
     fn component(component: &Component) -> u64 {
+        use css::selectors::parser::attrs::ParsedAttrSelectorOperation;
         COMPONENT.saturating_add(match component {
             Component::Negation(list)
             | Component::Where(list)
@@ -1022,12 +1032,62 @@ mod clone_weight {
             Component::NthOf(data) => selector_slice(&data.selectors),
             Component::Slotted(sel) => selector_slice(core::slice::from_ref(sel)),
             Component::Host(Some(sel)) => selector_slice(core::slice::from_ref(sel)),
-            Component::NonTsPseudoClass(PseudoClass::CustomFunction { arguments, .. })
-            | Component::PseudoElement(PseudoElement::CustomFunction { arguments, .. }) => {
-                token_list(arguments)
+            Component::NonTsPseudoClass(pseudo) => pseudo_class(pseudo),
+            Component::PseudoElement(pseudo) => pseudo_element(pseudo),
+            // CSS-modules locals (`IdentOrRef::is_ref`) print a symbol-table
+            // name instead of inline text; they are charged the flat constant.
+            Component::Id(ident) | Component::Class(ident) => {
+                ident.as_ident().map_or(0, |i| i.v().len() as u64)
+            }
+            Component::LocalName(name) => name.name.v().len() as u64,
+            Component::Namespace { prefix, url } => {
+                (prefix.v().len() as u64).saturating_add(url.len() as u64)
+            }
+            Component::DefaultNamespace(url) => url.len() as u64,
+            Component::Part(idents) => idents
+                .iter()
+                .map(|i| i.v().len() as u64)
+                .fold(0u64, u64::saturating_add),
+            Component::AttributeInNoNamespaceExists { local_name, .. } => {
+                local_name.v().len() as u64
+            }
+            Component::AttributeInNoNamespace {
+                local_name, value, ..
+            } => (local_name.v().len() as u64).saturating_add(value.len() as u64),
+            Component::AttributeOther(attr) => {
+                (attr.local_name.v().len() as u64).saturating_add(match &attr.operation {
+                    ParsedAttrSelectorOperation::WithValue { expected_value, .. } => {
+                        expected_value.len() as u64
+                    }
+                    ParsedAttrSelectorOperation::Exists => 0,
+                })
             }
             _ => 0,
         })
+    }
+
+    fn pseudo_class(pseudo: &PseudoClass) -> u64 {
+        match pseudo {
+            PseudoClass::CustomFunction { name, arguments } => {
+                (name.len() as u64).saturating_add(token_list(arguments))
+            }
+            PseudoClass::Custom { name } => name.len() as u64,
+            PseudoClass::Lang { languages } => languages
+                .iter()
+                .map(|l| l.len() as u64)
+                .fold(0u64, u64::saturating_add),
+            _ => 0,
+        }
+    }
+
+    fn pseudo_element(pseudo: &PseudoElement) -> u64 {
+        match pseudo {
+            PseudoElement::CustomFunction { name, arguments } => {
+                (name.len() as u64).saturating_add(token_list(arguments))
+            }
+            PseudoElement::Custom { name } => name.len() as u64,
+            _ => 0,
+        }
     }
 
     fn token_list(tokens: &TokenList) -> u64 {

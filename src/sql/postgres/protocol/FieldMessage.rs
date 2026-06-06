@@ -29,6 +29,13 @@ pub enum FieldMessage {
 
 impl fmt::Display for FieldMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.payload())
+    }
+}
+
+impl FieldMessage {
+    /// Every variant carries a single `bun.String` payload.
+    pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
             | FieldMessage::LocalizedSeverity(s)
@@ -47,12 +54,10 @@ impl fmt::Display for FieldMessage {
             | FieldMessage::Constraint(s)
             | FieldMessage::File(s)
             | FieldMessage::Line(s)
-            | FieldMessage::Routine(s) => write!(f, "{s}"),
+            | FieldMessage::Routine(s) => s,
         }
     }
-}
 
-impl FieldMessage {
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {

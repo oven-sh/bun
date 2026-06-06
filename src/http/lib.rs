@@ -3630,6 +3630,126 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
+        self.send_progress_update_inner(|this| {
+            // is_done is response-driven. A server can reply early (HTTP 413)
+            // with keep-alive while request_stage is still .proxy_body or the
+            // tunnel still has buffered encrypted writes. Pooling that tunnel
+            // would leave the connection mid-request on the inner TLS stream;
+            // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
+            // boundary. Only pool a tunnel whose request side is fully drained.
+            //
+            // Also check wrapper liveness: a close-delimited body (no
+            // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
+            // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
+            // socket is still alive. Pooling that dead wrapper would hang the
+            // next request (proxy.write() → error.ConnectionClosed, swallowed).
+            let tunnel_poolable = if let Some(t) = this.proxy_tunnel.as_deref() {
+                this.state.request_stage == RequestStage::Done
+                    && t.write_buffer.is_empty()
+                    && t.wrapper
+                        .as_ref()
+                        .map(|w| !w.is_shutdown())
+                        .unwrap_or(false)
+            } else {
+                true
+            };
+
+            // The same early-reply hazard
+            // described above for tunnels applies to direct connections — a
+            // server may answer (200, Content-Length: 0) before a large PUT
+            // body has finished writing (e.g. S3 multipart UploadPart against
+            // a mock that ignores req.body). Pooling that socket lets the next
+            // request's bytes interleave with the previous body's tail on the
+            // wire, which the server then mis-parses. The redirect path
+            // (do_redirect) already gates on request_stage == Done for exactly
+            // this reason; mirror that gate here for the non-redirect
+            // completion path. `request_stage` alone is insufficient because
+            // a fully-sent small request parks at `.body` (see on_writable),
+            // so for byte-buffer bodies check the unsent slice instead.
+            // Stream/Sendfile are left as-is (they don't track an
+            // unsent slice here).
+            let request_side_drained = match &this.state.original_request_body {
+                HTTPRequestBody::Bytes(_) => this.state.request_body.is_empty(),
+                _ => true,
+            };
+
+            if this.is_keep_alive_possible()
+                && !socket.is_closed_or_has_error()
+                && tunnel_poolable
+                && request_side_drained
+            {
+                bun_core::scoped_log!(fetch, "release socket");
+                // Hand the client's strong ref straight to the pool: `release_socket`
+                // either stores this `RefPtr` in the parked `PooledSocket` or
+                // dereffs it if pooling fails.
+                let tunnel = this.proxy_tunnel.take();
+                if let Some(t) = &tunnel {
+                    proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*this);
+                }
+                let had_tunnel = tunnel.is_some();
+                // target_hostname = url.hostname (the CONNECT TCP target at
+                // writeProxyConnect line 346). The SNI override (hostname) is
+                // hashed into proxyAuthHash separately — both must match, but
+                // they're distinct values when a Host header override is set.
+                Self::ssl_ctx_mut(ctx).release_socket(
+                    socket,
+                    this.flags.did_have_handshaking_error && !this.flags.reject_unauthorized,
+                    this.flags.reject_unauthorized,
+                    this.connected_url.hostname,
+                    this.connected_url.get_port_auto(),
+                    this.tls_props.as_ref(),
+                    tunnel,
+                    if had_tunnel { this.url.hostname } else { b"" },
+                    if had_tunnel {
+                        this.url.get_port_auto()
+                    } else {
+                        0
+                    },
+                    if had_tunnel || (IS_SSL && this.http_proxy.is_none()) {
+                        // Direct TLS: the handshake verified the peer against
+                        // the Host-header override (get_tls_hostname), so the
+                        // override hash must be part of the pool key. Matches
+                        // the lookup in HTTPContext::connect.
+                        this.proxy_auth_hash()
+                    } else {
+                        0
+                    },
+                    None,
+                );
+            } else {
+                if this.proxy_tunnel.is_some() {
+                    bun_core::scoped_log!(fetch, "close the tunnel");
+                    this.close_proxy_tunnel(true);
+                }
+                GenHttpContext::<IS_SSL>::close_socket(socket);
+            }
+            bun_core::scoped_log!(fetch, "done");
+        });
+
+        if PRINT_EVERY != 0 {
+            let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
+            if i.is_multiple_of(PRINT_EVERY) {
+                bun_core::prettyln!("Heap stats for HTTP thread\n");
+                Output::flush();
+                // Per-thread allocator stats are no longer collected here.
+                PRINT_EVERY_I.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// `send_progress_update_without_stage_check` minus the per-request TCP socket
+    /// release/close. Used by HTTP/2 and HTTP/3, whose session owns the
+    /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
+    fn send_progress_update_multiplexed(&mut self) {
+        debug_assert!(self.flags.protocol != Protocol::Http1_1);
+        self.send_progress_update_inner(|_| {});
+    }
+
+    /// Shared tail of the two progress-update paths: snapshot the result,
+    /// run `release_transport` once the response is done (the HTTP/1.1 path
+    /// hands its socket back to the pool there), reset state, and deliver the
+    /// result to the callback.
+    fn send_progress_update_inner(&mut self, release_transport: impl FnOnce(&mut Self)) {
         // reshaped for borrowck — `to_result()` returns an
         // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
         // `body: &mut MutableString` borrow). Holding that result across the
@@ -3673,184 +3793,14 @@ impl<'a> HTTPClient<'a> {
 
         if is_done {
             self.unregister_abort_tracker();
-            // is_done is response-driven. A server can reply early (HTTP 413)
-            // with keep-alive while request_stage is still .proxy_body or the
-            // tunnel still has buffered encrypted writes. Pooling that tunnel
-            // would leave the connection mid-request on the inner TLS stream;
-            // adopt() resetting write_buffer doesn't restore a clean HTTP/1.1
-            // boundary. Only pool a tunnel whose request side is fully drained.
-            //
-            // Also check wrapper liveness: a close-delimited body (no
-            // Content-Length, no Transfer-Encoding — RFC 7230 §3.3.3 rule 7)
-            // ends on inner-TLS close; ProxyTunnel.onClose fires but the outer
-            // socket is still alive. Pooling that dead wrapper would hang the
-            // next request (proxy.write() → error.ConnectionClosed, swallowed).
-            let tunnel_poolable = if let Some(t) = self.proxy_tunnel.as_deref() {
-                self.state.request_stage == RequestStage::Done
-                    && t.write_buffer.is_empty()
-                    && t.wrapper
-                        .as_ref()
-                        .map(|w| !w.is_shutdown())
-                        .unwrap_or(false)
-            } else {
-                true
-            };
-
-            // The same early-reply hazard
-            // described above for tunnels applies to direct connections — a
-            // server may answer (200, Content-Length: 0) before a large PUT
-            // body has finished writing (e.g. S3 multipart UploadPart against
-            // a mock that ignores req.body). Pooling that socket lets the next
-            // request's bytes interleave with the previous body's tail on the
-            // wire, which the server then mis-parses. The redirect path
-            // (do_redirect) already gates on request_stage == Done for exactly
-            // this reason; mirror that gate here for the non-redirect
-            // completion path. `request_stage` alone is insufficient because
-            // a fully-sent small request parks at `.body` (see on_writable),
-            // so for byte-buffer bodies check the unsent slice instead.
-            // Stream/Sendfile are left as-is (they don't track an
-            // unsent slice here).
-            let request_side_drained = match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(_) => self.state.request_body.is_empty(),
-                _ => true,
-            };
-
-            if self.is_keep_alive_possible()
-                && !socket.is_closed_or_has_error()
-                && tunnel_poolable
-                && request_side_drained
-            {
-                bun_core::scoped_log!(fetch, "release socket");
-                // Hand the client's strong ref straight to the pool: `release_socket`
-                // either stores this `RefPtr` in the parked `PooledSocket` or
-                // dereffs it if pooling fails.
-                let tunnel = self.proxy_tunnel.take();
-                if let Some(t) = &tunnel {
-                    proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
-                }
-                let had_tunnel = tunnel.is_some();
-                // target_hostname = url.hostname (the CONNECT TCP target at
-                // writeProxyConnect line 346). The SNI override (hostname) is
-                // hashed into proxyAuthHash separately — both must match, but
-                // they're distinct values when a Host header override is set.
-                Self::ssl_ctx_mut(ctx).release_socket(
-                    socket,
-                    self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                    self.flags.reject_unauthorized,
-                    self.connected_url.hostname,
-                    self.connected_url.get_port_auto(),
-                    self.tls_props.as_ref(),
-                    tunnel,
-                    if had_tunnel { self.url.hostname } else { b"" },
-                    if had_tunnel {
-                        self.url.get_port_auto()
-                    } else {
-                        0
-                    },
-                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
-                        // Direct TLS: the handshake verified the peer against
-                        // the Host-header override (get_tls_hostname), so the
-                        // override hash must be part of the pool key. Matches
-                        // the lookup in HTTPContext::connect.
-                        self.proxy_auth_hash()
-                    } else {
-                        0
-                    },
-                    None,
-                );
-            } else {
-                if self.proxy_tunnel.is_some() {
-                    bun_core::scoped_log!(fetch, "close the tunnel");
-                    self.close_proxy_tunnel(true);
-                }
-                GenHttpContext::<IS_SSL>::close_socket(socket);
-            }
-
-            self.state.reset();
-            self.state.response_stage = ResponseStage::Done;
-            self.state.request_stage = RequestStage::Done;
-            self.state.stage = Stage::Done;
-            self.flags.proxy_tunneling = false;
-            bun_core::scoped_log!(fetch, "done");
-        }
-
-        // Restore the body bytes that `state.reset()` cleared.
-        body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
-
-        if PRINT_EVERY != 0 {
-            let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
-            if i.is_multiple_of(PRINT_EVERY) {
-                bun_core::prettyln!("Heap stats for HTTP thread\n");
-                Output::flush();
-                // Per-thread allocator stats are no longer collected here.
-                PRINT_EVERY_I.store(0, Ordering::Relaxed);
-            }
-        }
-    }
-
-    /// `send_progress_update_without_stage_check` minus the per-request TCP socket
-    /// release/close. Used by HTTP/2 and HTTP/3, whose session owns the
-    /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
-    fn send_progress_update_multiplexed(&mut self) {
-        debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // reshaped for borrowck — `to_result()` ties `result`'s
-        // lifetime to `&mut self`, so holding it across the `is_done` mutations
-        // would require a second live `&mut Self` (aliased UB). Instead snapshot
-        // every owned/Copy field out of the result, drop it, mutate `self`
-        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
-        // See send_progress_update_without_stage_check for the same pattern.
-        let body = self.state.body_out_str;
-        // Snapshot the body buffer's CONTENTS by value; restored below.
-        let body_snapshot = body_out::take_list(body);
-        let callback = self.result_callback;
-
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
-        let is_done = !has_more;
-        bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
-        if is_done {
-            self.unregister_abort_tracker();
+            release_transport(self);
             self.state.reset();
             self.state.response_stage = ResponseStage::Done;
             self.state.request_stage = RequestStage::Done;
             self.state.stage = Stage::Done;
             self.flags.proxy_tunneling = false;
         }
+
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
         let async_http = self.parent_async_http();
@@ -4364,6 +4314,44 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Shared tail of the `Location`-header arms in
+    /// `handle_response_metadata`: parse the rebuilt absolute href, compare
+    /// origins against the current URL, then swap the href into
+    /// `self.redirect`. Returns whether the redirect target is same-origin.
+    fn apply_redirect_url(&mut self, new_href: Vec<u8>) -> bool {
+        // SAFETY: self-borrow — `new_href` is moved into `self.redirect`
+        // below, which lives as long as `self` (≥ `'a`).
+        let new_url: URL<'a> = unsafe { URL::parse(&new_href).erase_lifetime() };
+        let is_same_origin = strings::eql_case_insensitive_ascii(
+            strings::without_trailing_slash(new_url.origin),
+            strings::without_trailing_slash(self.url.origin),
+            true,
+        );
+        self.url = new_url;
+        // connected_url still borrows from the previous hop's buffer until
+        // doRedirect releases the socket, so park it in prev_redirect for
+        // doRedirect to free instead of leaking it.
+        debug_assert!(self.prev_redirect.is_empty());
+        self.prev_redirect = core::mem::replace(&mut self.redirect, new_href);
+        is_same_origin
+    }
+
+    /// Normalize a fully-rebuilt redirect URL through the WHATWG parser and
+    /// apply it via [`Self::apply_redirect_url`].
+    fn normalize_and_apply_redirect_url(
+        &mut self,
+        mut string_builder: StringBuilder,
+    ) -> Result<bool, bun_core::Error> {
+        debug_assert!(string_builder.cap == string_builder.len);
+        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+        if normalized_url.tag() == BunStringTag::Dead {
+            // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
+            return Err(err!(RedirectURLInvalid));
+        }
+        Ok(self.apply_redirect_url(normalized_url.to_owned_slice()))
+    }
+
     pub fn handle_response_metadata(
         &mut self,
         response: &mut picohttp::Response,
@@ -4658,36 +4646,8 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
-
-                                let input =
-                                    BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
-                                if normalized_url.tag() == BunStringTag::Dead {
-                                    // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
-                                    return Err(err!(RedirectURLInvalid));
-                                }
-                                let normalized_url_str = normalized_url.to_owned_slice();
-
-                                // SAFETY: self-borrow — `normalized_url_str` is moved into
-                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                                let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(new_url.origin),
-                                    strings::without_trailing_slash(self.url.origin),
-                                    true,
-                                );
-                                self.url = new_url;
-                                // connected_url still borrows from the previous hop's buffer
-                                // until doRedirect releases the socket, so park it in
-                                // prev_redirect for doRedirect to free instead of leaking it.
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, normalized_url_str);
+                                is_same_origin =
+                                    self.normalize_and_apply_redirect_url(string_builder)?;
                             } else if location.starts_with(b"//") {
                                 let mut string_builder = StringBuilder::default();
 
@@ -4719,36 +4679,10 @@ impl<'a> HTTPClient<'a> {
 
                                 let _ = string_builder.append(location);
 
-                                if cfg!(debug_assertions) {
-                                    debug_assert!(string_builder.cap == string_builder.len);
-                                }
-
-                                let input =
-                                    BunString::borrow_utf8(string_builder.allocated_slice());
-                                let normalized_url =
-                                    OwnedString::new(bun_url::href_from_string(&input));
-                                if normalized_url.tag() == BunStringTag::Dead {
-                                    return Err(err!(RedirectURLInvalid));
-                                }
-                                let normalized_url_str = normalized_url.to_owned_slice();
-
-                                // SAFETY: self-borrow — `normalized_url_str` is moved into
-                                // `self.redirect` below, which lives as long as `self` (≥ `'a`).
-                                let new_url: URL<'a> =
-                                    unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(new_url.origin),
-                                    strings::without_trailing_slash(self.url.origin),
-                                    true,
-                                );
-                                self.url = new_url;
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, normalized_url_str);
+                                is_same_origin =
+                                    self.normalize_and_apply_redirect_url(string_builder)?;
                             } else {
-                                let original_url = self.url.clone();
-
-                                let base = BunString::borrow_utf8(original_url.href);
+                                let base = BunString::borrow_utf8(self.url.href);
                                 let rel = BunString::borrow_utf8(location);
                                 let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
 
@@ -4756,18 +4690,8 @@ impl<'a> HTTPClient<'a> {
                                     return Err(err!(InvalidRedirectURL));
                                 }
 
-                                let new_url = new_url_.to_owned_slice();
-                                // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
-                                // below, which lives as long as `self` (≥ `'a`).
-                                self.url = unsafe { URL::parse(&new_url).erase_lifetime() };
-                                is_same_origin = strings::eql_case_insensitive_ascii(
-                                    strings::without_trailing_slash(self.url.origin),
-                                    strings::without_trailing_slash(original_url.origin),
-                                    true,
-                                );
-                                debug_assert!(self.prev_redirect.is_empty());
-                                self.prev_redirect =
-                                    core::mem::replace(&mut self.redirect, new_url);
+                                is_same_origin =
+                                    self.apply_redirect_url(new_url_.to_owned_slice());
                             }
                         }
 

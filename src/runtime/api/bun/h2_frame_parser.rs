@@ -5325,6 +5325,32 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Shared prologue for host fns that take a stream id argument: validates
+    /// the JS value, optionally rejects id 0 / ids above `MAX_STREAM_ID`, and
+    /// resolves the live `Stream` pointer in `self.streams`. `not_number_msg`
+    /// preserves each call site's user-visible error for a non-number argument.
+    #[inline]
+    fn stream_from_js_arg<const CHECK_ZERO: bool, const CHECK_MAX: bool>(
+        &self,
+        global_object: &JSGlobalObject,
+        stream_arg: JSValue,
+        not_number_msg: &str,
+    ) -> JsResult<*mut Stream> {
+        if !stream_arg.is_number() {
+            return Err(global_object.throw(format_args!("{not_number_msg}")));
+        }
+
+        let stream_id = stream_arg.to_u32();
+        if (CHECK_ZERO && stream_id == 0) || (CHECK_MAX && stream_id > MAX_STREAM_ID) {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
+        }
+
+        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
+        };
+        Ok(stream)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn get_end_after_headers(
         this: &Self,
@@ -5335,20 +5361,11 @@ impl H2FrameParser {
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
-
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<true, false>(
+            global_object,
+            args_list.ptr[0],
+            "Invalid stream id",
+        )?;
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
         Ok(JSValue::from(unsafe { (*stream).end_after_headers }))
@@ -5364,20 +5381,11 @@ impl H2FrameParser {
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
-
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<true, false>(
+            global_object,
+            args_list.ptr[0],
+            "Invalid stream id",
+        )?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &*stream };
 
@@ -5400,20 +5408,11 @@ impl H2FrameParser {
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
-
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<true, false>(
+            global_object,
+            args_list.ptr[0],
+            "Invalid stream id",
+        )?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
         let state = JSValue::create_empty_object(global_object, 6);
@@ -5463,21 +5462,13 @@ impl H2FrameParser {
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and options arguments")));
         }
-        let stream_arg = args_list.ptr[0];
         let options = args_list.ptr[1];
 
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream_ptr = this.stream_from_js_arg::<true, false>(
+            global_object,
+            args_list.ptr[0],
+            "Invalid stream id",
+        )?;
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
@@ -5576,21 +5567,13 @@ impl H2FrameParser {
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and code arguments")));
         }
-        let stream_arg = args_list.ptr[0];
         let error_arg = args_list.ptr[1];
 
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<true, true>(
+            global_object,
+            args_list.ptr[0],
+            "Invalid stream id",
+        )?;
         if !error_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid ErrorCode")));
         }
@@ -5811,20 +5794,11 @@ impl H2FrameParser {
             )));
         }
 
-        let stream_arg = args_list.ptr[0];
-
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<true, true>(
+            global_object,
+            args_list.ptr[0],
+            "Expected stream to be a number",
+        )?;
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
 
@@ -5892,22 +5866,14 @@ impl H2FrameParser {
             )));
         }
 
-        let stream_arg = args_list.ptr[0];
         let headers_arg = args_list.ptr[1];
         let sensitive_arg = args_list.ptr[2];
 
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream_ptr = this.stream_from_js_arg::<true, true>(
+            global_object,
+            args_list.ptr[0],
+            "Expected stream to be a number",
+        )?;
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
 
@@ -6229,19 +6195,14 @@ impl H2FrameParser {
         let args = callframe.arguments_undef::<5>();
         let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg] = args.ptr;
 
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream to be a number")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 || stream_id > MAX_STREAM_ID {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
+        let stream_ptr = this.stream_from_js_arg::<true, true>(
+            global_object,
+            stream_arg,
+            "Expected stream to be a number",
+        )?;
+        // ToBoolean is side-effect free, so reading `close` after the stream
+        // lookup is observably identical to the previous ordering.
         let close = close_arg.to_boolean();
-
-        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
         if !stream.can_send_data() {
@@ -6378,14 +6339,11 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id argument")));
         }
 
-        let stream_id_arg = args_list.ptr[0];
-        if !stream_id_arg.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<false, false>(
+            global_object,
+            args_list.ptr[0],
+            "Expected stream_id to be a number",
+        )?;
 
         // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
         Ok(unsafe { (*stream).js_context.get() }.unwrap_or(JSValue::UNDEFINED))
@@ -6404,13 +6362,11 @@ impl H2FrameParser {
             );
         }
 
-        let stream_id_arg = args_list.ptr[0];
-        if !stream_id_arg.is_number() {
-            return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
-        }
-        let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
+        let stream = this.stream_from_js_arg::<false, false>(
+            global_object,
+            args_list.ptr[0],
+            "Expected stream_id to be a number",
+        )?;
         let context_arg = args_list.ptr[1];
         if !context_arg.is_object() {
             return Err(global_object.throw(format_args!("Expected context to be an object")));
@@ -6653,131 +6609,15 @@ impl H2FrameParser {
                     return Err(global_object.throw_value(exception));
                 }
 
-                if js_value.js_type().is_array() {
-                    bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
-                    let mut value_iter = js_value.array_iterator(global_object)?;
-
-                    if let Some(idx) = single_value_headers_index_of(validated_name) {
-                        if value_iter.len > 1 || single_value_headers[idx] {
-                            if !global_object.has_exception() {
-                                let exception = global_object.to_type_error(
-                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                    format_args!(
-                                        "Header field \"{}\" must only have a single value",
-                                        BStr::new(validated_name)
-                                    ),
-                                );
-                                return Err(global_object.throw_value(exception));
-                            }
-                            return Ok(JSValue::ZERO);
-                        }
-                        single_value_headers[idx] = true;
-                    }
-
-                    while let Some(item) = value_iter.next()? {
-                        if item.is_empty_or_undefined_or_null() {
-                            if !global_object.has_exception() {
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                            return Ok(JSValue::ZERO);
-                        }
-
-                        let value_str = match item.to_js_string(global_object) {
-                            Ok(s) => s,
-                            Err(_) => {
-                                global_object.clear_exception();
-                                return Err(global_object
-                                    .err(
-                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                        format_args!(
-                                            "Invalid value for header \"{}\"",
-                                            BStr::new(validated_name)
-                                        ),
-                                    )
-                                    .throw());
-                            }
-                        };
-
-                        let never_index =
-                            match sensitive_arg.get_truthy(global_object, validated_name)? {
-                                Some(_) => true,
-                                None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                            };
-
-                        let value_slice = value_str.to_slice(global_object);
-                        let value = value_slice.slice();
-                        if is_malformed_field_value(value) {
-                            return Err(global_object
-                                .err(
-                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                                    format_args!(
-                                        "Invalid value for header \"{}\"",
-                                        BStr::new(validated_name)
-                                    ),
-                                )
-                                .throw());
-                        }
-                        bun_output::scoped_log!(
-                            H2FrameParser,
-                            "encode header {} {}",
-                            BStr::new(validated_name),
-                            BStr::new(value)
-                        );
-
-                        if let Err(err) = this.encode_header_into_list(
-                            &mut encoded_headers,
-                            validated_name,
-                            value,
-                            never_index,
-                        ) {
-                            if err == bun_core::err!("OutOfMemory") {
-                                return Err(global_object
-                                    .throw(format_args!("Failed to allocate header buffer")));
-                            }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
-                            };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                                && stream_ctx_arg.is_object()
-                            {
-                                stream.set_context(stream_ctx_arg, global_object);
-                            }
-                            stream.state = StreamState::CLOSED;
-                            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                stream.get_identifier(),
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            return Ok(JSValue::UNDEFINED);
-                        }
-                    }
-                } else if !js_value.is_empty_or_undefined_or_null() {
-                    bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
-                    if let Some(idx) = single_value_headers_index_of(validated_name) {
-                        if single_value_headers[idx] {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
-                                format_args!(
-                                    "Header field \"{}\" must only have a single value",
-                                    BStr::new(validated_name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                        single_value_headers[idx] = true;
-                    }
-                    let value_str = match js_value.to_js_string(global_object) {
+                // closure shared by the array and single-value arms; `err_name`
+                // preserves each arm's user-visible message when string coercion
+                // fails, and `encode_err_return` its return value on a compression
+                // error (both match the reference implementation)
+                let mut encode_value = |item: JSValue,
+                                        err_name: &[u8],
+                                        encode_err_return: JSValue|
+                 -> JsResult<Option<JSValue>> {
+                    let value_str = match item.to_js_string(global_object) {
                         Ok(s) => s,
                         Err(_) => {
                             global_object.clear_exception();
@@ -6786,7 +6626,7 @@ impl H2FrameParser {
                                     JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
                                     format_args!(
                                         "Invalid value for header \"{}\"",
-                                        BStr::new(name)
+                                        BStr::new(err_name)
                                     ),
                                 )
                                 .throw());
@@ -6830,23 +6670,87 @@ impl H2FrameParser {
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
+                            return Ok(Some(JSValue::js_number(-1.0)));
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
+                        stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
                         this.dispatch_with_extra(
                             JSH2FrameParser::Gc::onStreamError,
                             stream.get_identifier(),
                             JSValue::js_number(stream.rst_code as f64),
                         );
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(Some(encode_err_return));
+                    }
+                    Ok(None)
+                };
+
+                if js_value.js_type().is_array() {
+                    bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
+                    let mut value_iter = js_value.array_iterator(global_object)?;
+
+                    if let Some(idx) = single_value_headers_index_of(validated_name) {
+                        if value_iter.len > 1 || single_value_headers[idx] {
+                            if !global_object.has_exception() {
+                                let exception = global_object.to_type_error(
+                                    bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                );
+                                return Err(global_object.throw_value(exception));
+                            }
+                            return Ok(JSValue::ZERO);
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
+                    while let Some(item) = value_iter.next()? {
+                        if item.is_empty_or_undefined_or_null() {
+                            if !global_object.has_exception() {
+                                return Err(global_object
+                                    .err(
+                                        JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                        format_args!(
+                                            "Invalid value for header \"{}\"",
+                                            BStr::new(validated_name)
+                                        ),
+                                    )
+                                    .throw());
+                            }
+                            return Ok(JSValue::ZERO);
+                        }
+
+                        if let Some(ret) = encode_value(item, validated_name, JSValue::UNDEFINED)? {
+                            return Ok(ret);
+                        }
+                    }
+                } else if !js_value.is_empty_or_undefined_or_null() {
+                    bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
+                    if let Some(idx) = single_value_headers_index_of(validated_name) {
+                        if single_value_headers[idx] {
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
+                        }
+                        single_value_headers[idx] = true;
+                    }
+                    if let Some(ret) =
+                        encode_value(js_value, name, JSValue::js_number(stream_id as f64))?
+                    {
+                        return Ok(ret);
                     }
                 }
             }

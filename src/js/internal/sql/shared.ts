@@ -716,6 +716,77 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   }
 }
 
+function closeNT(onClose: (err: Error) => void, err: Error | null) {
+  onClose(err as Error);
+}
+
+/**
+ * Resolves the password (which may be a function and/or a promise) and calls
+ * the driver's native createConnection with the normalized pool options.
+ * Extra trailing arguments past `useUnnamedPreparedStatements` (MySQL's
+ * `allowPublicKeyRetrieval`) are ignored by drivers that don't take them.
+ */
+async function createPooledConnectionHandle<ConnectionHandle>(
+  nativeCreateConnection: (...args: any[]) => ConnectionHandle,
+  options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
+  onConnected: (err: Error | null, connection: ConnectionHandle) => void,
+  onClose: (err: Error | null) => void,
+): Promise<ConnectionHandle | null> {
+  const {
+    hostname,
+    port,
+    username,
+    tls,
+    query,
+    database,
+    sslMode,
+    idleTimeout = 0,
+    connectionTimeout = 30 * 1000,
+    maxLifetime = 0,
+    prepare = true,
+    path,
+    allowPublicKeyRetrieval = false,
+  } = options;
+
+  let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
+
+  try {
+    if (typeof password === "function") {
+      password = password();
+    }
+
+    if (password && $isPromise(password)) {
+      password = await password;
+    }
+
+    return nativeCreateConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password || "",
+      database || "",
+      // > The default value for sslmode is prefer. As is shown in the table, this
+      // makes no sense from a security point of view, and it only promises
+      // performance overhead if possible. It is only provided as the default for
+      // backward compatibility, and is not recommended in secure deployments.
+      sslMode || SSLMode.disable,
+      tls || null,
+      query || "",
+      path || "",
+      onConnected,
+      onClose,
+      idleTimeout,
+      connectionTimeout,
+      maxLifetime,
+      !prepare,
+      !!allowPublicKeyRetrieval,
+    );
+  } catch (e) {
+    process.nextTick(closeNT, onClose, e);
+    return null;
+  }
+}
+
 abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, ConnectionHandle, QueryHandle>
   implements DatabaseAdapter<PooledConnection, ConnectionHandle, QueryHandle>
 {
@@ -1938,6 +2009,7 @@ export default {
   normalizeQuery,
   BasePooledConnection,
   BaseSQLAdapter,
+  createPooledConnectionHandle,
   // @ts-expect-error we're exporting a const enum which works in our builtins
   // generator but not in typescript officially
   SSLMode,

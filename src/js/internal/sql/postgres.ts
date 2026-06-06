@@ -2,11 +2,11 @@ import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
 const {
-  SSLMode,
   SQLResultArray,
   SQLArrayParameter,
   BasePooledConnection,
   BaseSQLAdapter,
+  createPooledConnectionHandle,
   getHelperCommandFromDetect,
   pushBindParam,
 } = require("internal/sql/shared");
@@ -348,66 +348,9 @@ export interface PostgresDotZig {
 }
 
 class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses.PostgresSQLConnection> {
-  private static async createConnection(
-    options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.PostgresSQLConnection) => void,
-    onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.PostgresSQLConnection | null> {
-    const {
-      hostname,
-      port,
-      username,
-      tls,
-      query,
-      database,
-      sslMode,
-      idleTimeout = 0,
-      connectionTimeout = 30 * 1000,
-      maxLifetime = 0,
-      prepare = true,
-      path,
-    } = options;
-
-    let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
-
-    try {
-      if (typeof password === "function") {
-        password = password();
-      }
-
-      if (password && $isPromise(password)) {
-        password = await password;
-      }
-
-      return createPostgresConnection(
-        hostname,
-        Number(port),
-        username || "",
-        password || "",
-        database || "",
-        // > The default value for sslmode is prefer. As is shown in the table, this
-        // makes no sense from a security point of view, and it only promises
-        // performance overhead if possible. It is only provided as the default for
-        // backward compatibility, and is not recommended in secure deployments.
-        sslMode || SSLMode.disable,
-        tls || null,
-        query || "",
-        path || "",
-        onConnected,
-        onClose,
-        idleTimeout,
-        connectionTimeout,
-        maxLifetime,
-        !prepare,
-      );
-    } catch (e) {
-      onClose(e as Error);
-      return null;
-    }
-  }
-
   protected async startConnection() {
-    this.connection = await PooledPostgresConnection.createConnection(
+    this.connection = await createPooledConnectionHandle(
+      createPostgresConnection,
       this.connectionInfo,
       this.handleConnected.bind(this),
       this.handleClose.bind(this),

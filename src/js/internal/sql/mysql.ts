@@ -2,10 +2,10 @@ import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SQLResultArray, SSLMode } from "./shared";
 const {
-  SSLMode,
   SQLResultArray,
   BasePooledConnection,
   BaseSQLAdapter,
+  createPooledConnectionHandle,
   getHelperCommandFromDetect,
 } = require("internal/sql/shared");
 const {
@@ -119,70 +119,7 @@ export interface MySQLDotZig {
   ) => $ZigGeneratedClasses.MySQLQuery;
 }
 
-function closeNT(onClose: (err: Error) => void, err: Error | null) {
-  onClose(err as Error);
-}
 class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.MySQLConnection> {
-  private static async createConnection(
-    options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
-    onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.MySQLConnection | null> {
-    const {
-      hostname,
-      port,
-      username,
-      tls,
-      query,
-      database,
-      sslMode,
-      idleTimeout = 0,
-      connectionTimeout = 30 * 1000,
-      maxLifetime = 0,
-      prepare = true,
-      path,
-      allowPublicKeyRetrieval = false,
-    } = options;
-
-    let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
-
-    try {
-      if (typeof password === "function") {
-        password = password();
-      }
-
-      if (password && $isPromise(password)) {
-        password = await password;
-      }
-
-      return createMySQLConnection(
-        hostname,
-        Number(port),
-        username || "",
-        password || "",
-        database || "",
-        // > The default value for sslmode is prefer. As is shown in the table, this
-        // makes no sense from a security point of view, and it only promises
-        // performance overhead if possible. It is only provided as the default for
-        // backward compatibility, and is not recommended in secure deployments.
-        sslMode || SSLMode.disable,
-        tls || null,
-        query || "",
-        path || "",
-        onConnected,
-        onClose,
-        idleTimeout,
-        connectionTimeout,
-        maxLifetime,
-        !prepare,
-        !!allowPublicKeyRetrieval,
-      );
-    } catch (e) {
-      process.nextTick(closeNT, onClose, e);
-      return null;
-    }
-  }
-
   protected handleConnected(err: any, connection?: $ZigGeneratedClasses.MySQLConnection) {
     if (!err) {
       this.connection = connection!;
@@ -191,7 +128,8 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
   }
 
   protected startConnection() {
-    PooledMySQLConnection.createConnection(
+    createPooledConnectionHandle(
+      createMySQLConnection,
       this.connectionInfo,
       this.handleConnected.bind(this),
       this.handleClose.bind(this),

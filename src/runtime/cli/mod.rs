@@ -392,6 +392,8 @@ pub mod multi_run;
 pub use multi_run as MultiRun;
 #[path = "run_processes_shared.rs"]
 pub(crate) mod run_processes_shared;
+#[path = "workspace_helpers.rs"]
+pub(crate) mod workspace_helpers;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),

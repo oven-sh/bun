@@ -33,7 +33,7 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
-use crate::cli::outdated_command;
+use crate::cli::workspace_helpers;
 
 pub(crate) struct TerminalHyperlink<'a> {
     link: &'a [u8],
@@ -472,13 +472,13 @@ impl UpdateInteractiveCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        outdated_command::load_lockfile_or_crash(ctx, manager);
+        workspace_helpers::load_lockfile_or_crash(ctx, manager);
 
         let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;
-            outdated_command::find_matching_workspaces(original_cwd, manager, filters)
+            workspace_helpers::find_matching_workspaces(original_cwd, manager, filters)
         } else if manager.options.do_.recursive() {
-            outdated_command::get_all_workspaces(manager)
+            workspace_helpers::get_all_workspaces(manager)
         } else {
             let root_pkg_id = manager
                 .root_package_id

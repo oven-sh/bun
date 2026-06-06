@@ -20,6 +20,8 @@ pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
 
+    pub mod connection_ctor_args;
+
     pub mod datetime_text;
 
     #[path = "ObjectIterator.rs"]

@@ -1337,31 +1337,7 @@ impl BlobExt for Blob {
                 }
                 if let Some(content_type) = options_object.get_truthy(global_this, "type")? {
                     // override the content type
-                    if !content_type.is_string() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.type",
-                            "string",
-                        ));
-                    }
-                    let content_type_str = content_type.to_slice(global_this)?;
-                    let slice = content_type_str.slice();
-                    if is_valid_blob_type(slice) {
-                        self.free_content_type();
-                        self.content_type_was_set.set(true);
-
-                        // SAFETY: bun_vm() never returns null for a Bun-owned global.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
-                    }
+                    set_content_type_from_js(global_this, self, content_type)?;
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
                 return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
@@ -1767,30 +1743,7 @@ impl BlobExt for Blob {
                 let options = arg0;
                 if let Some(content_type) = options.get_truthy(global_this, "type")? {
                     // override the content type
-                    if !content_type.is_string() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.type",
-                            "string",
-                        ));
-                    }
-                    let content_type_str = content_type.to_slice(global_this)?;
-                    let slice = content_type_str.slice();
-                    if is_valid_blob_type(slice) {
-                        self.free_content_type();
-                        self.content_type_was_set.set(true);
-                        // SAFETY: see other `mime_type` call sites.
-                        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
-                            self.content_type
-                                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
-                        } else {
-                            let mut buf = vec![0u8; slice.len()];
-                            strings::copy_lowercase(slice, &mut buf);
-                            self.content_type
-                                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
-                            self.content_type_allocated.set(true);
-                        }
-                    }
+                    set_content_type_from_js(global_this, self, content_type)?;
                 }
 
                 let content_disposition_str: Option<ZigStringSlice> =
@@ -5339,6 +5292,36 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
+    }
+    Ok(())
+}
+
+/// Overrides `blob`'s content type from a write-path `options.type` value.
+/// Throws if the value is not a string; silently ignores invalid blob types.
+fn set_content_type_from_js(
+    global_this: &JSGlobalObject,
+    blob: &Blob,
+    content_type: JSValue,
+) -> JsResult<()> {
+    if !content_type.is_string() {
+        return Err(global_this.throw_invalid_argument_type("write", "options.type", "string"));
+    }
+    let content_type_str = content_type.to_slice(global_this)?;
+    let slice = content_type_str.slice();
+    if is_valid_blob_type(slice) {
+        blob.free_content_type();
+        blob.content_type_was_set.set(true);
+        // SAFETY: bun_vm() never returns null for a Bun-owned global.
+        if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
+            blob.content_type
+                .set(std::ptr::from_ref::<[u8]>(mime.value.as_ref()));
+        } else {
+            let mut buf = vec![0u8; slice.len()];
+            strings::copy_lowercase(slice, &mut buf);
+            blob.content_type
+                .set(bun_core::heap::into_raw(buf.into_boxed_slice()));
+            blob.content_type_allocated.set(true);
+        }
     }
     Ok(())
 }

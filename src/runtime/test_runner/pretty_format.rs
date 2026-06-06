@@ -126,25 +126,6 @@ pub enum MessageLevel {
     Info = 4,
 }
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageType {
-    Log = 0,
-    Dir = 1,
-    DirXML = 2,
-    Table = 3,
-    Trace = 4,
-    StartGroup = 5,
-    StartGroupCollapsed = 6,
-    EndGroup = 7,
-    Clear = 8,
-    Assert = 9,
-    Timing = 10,
-    Profile = 11,
-    ProfileEnd = 12,
-    Image = 13,
-}
-
 #[derive(Copy, Clone, Default)]
 pub struct FormatOptions {
     pub enable_colors: bool,
@@ -398,12 +379,6 @@ impl Drop for Formatter<'_> {
             }
         }
     }
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WriteError {
-    #[error("UhOh")]
-    UhOh,
 }
 
 #[repr(u8)]

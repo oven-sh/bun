@@ -1188,6 +1188,7 @@ impl<'a> Repl<'a> {
             {
                 let state = runtime_state();
                 let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
+                // SAFETY: `loop_` is the live per-thread uws loop.
                 let quic_next_tick_us = unsafe {
                     let ild = &(*loop_).internal_loop_data;
                     if ild.quic_head.is_null() {
@@ -1254,17 +1255,13 @@ impl<'a> Repl<'a> {
                 let stdin_mask = libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL;
                 if fds[0].revents & stdin_mask != 0 {
                     let stdin = sys::File::stdin();
-                    return match stdin.read(&mut self.stdin_buf) {
-                        sys::Result::Ok(got) => Some(got),
-                        sys::Result::Err(_) => None,
-                    };
+                    return stdin.read(&mut self.stdin_buf).ok();
                 }
                 // Otherwise the loop fd fired (pending IPC / socket) or a
                 // timer is due — loop back and re-pump.
             }
             #[cfg(windows)]
             {
-                let _ = runtime_state;
                 // Windows: no single primitive covers console / pipe / loop
                 // fd; `windows_wait_for_stdin` slices the wait and branches
                 // on handle type.
@@ -1275,6 +1272,9 @@ impl<'a> Repl<'a> {
                     } else {
                         let mut ts = bun_core::Timespec { sec: 0, nsec: 0 };
                         let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
+                        // SAFETY: `state` is the live per-thread `RuntimeState`;
+                        // see PORT NOTE on `auto_tick` re: aliased-&mut across
+                        // `fire()`.
                         let have = unsafe {
                             timer::All::get_timeout(
                                 &mut (*state).timer,
@@ -2788,7 +2788,6 @@ const VERSION: &str = Environment::VERSION_STRING;
 #[cfg(windows)]
 fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
     const WAIT_OBJECT_0: u32 = 0x0000_0000;
-    const FILE_TYPE_CHAR: u32 = 0x0002;
     const FILE_TYPE_PIPE: u32 = 0x0003;
 
     let slice_ms: u32 = match next_ts {
@@ -2796,6 +2795,7 @@ fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
         Some(ts) => ts.ms().max(0).min(50) as u32,
     };
     let stdin_handle = Fd::stdin().native();
+    // SAFETY: FFI call; `stdin_handle` is valid while the REPL runs.
     let file_type = unsafe { GetFileType(stdin_handle) };
     if is_windows_console_input(stdin_handle) {
         // SAFETY: FFI call.

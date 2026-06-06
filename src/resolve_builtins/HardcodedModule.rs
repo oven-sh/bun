@@ -821,6 +821,19 @@ pub extern "C" fn Bun__streamIterEnabled() -> bool {
     stream_iter_enabled()
 }
 
+/// True when `name` is a stream/iter specifier that must stay invisible
+/// because `--experimental-stream-iter` was not passed. Consulted by every
+/// reader of the alias tables (`Alias::get` and `ModuleLoader`'s raw-table
+/// scan) so introspection APIs like `require.resolve.paths` agree with
+/// `require` about what is a builtin.
+pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
+    (name == b"stream/iter"
+        || name == b"node:stream/iter"
+        || name == b"zlib/iter"
+        || name == b"node:zlib/iter")
+        && !stream_iter_enabled()
+}
+
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
     let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
@@ -863,12 +876,7 @@ impl Alias {
         // the bare specifier falls through to filesystem resolution
         // ("Cannot find module") and the node:-prefixed one reports
         // "No such built-in module", matching node.
-        if (name == b"stream/iter"
-            || name == b"node:stream/iter"
-            || name == b"zlib/iter"
-            || name == b"node:zlib/iter")
-            && !stream_iter_enabled()
-        {
+        if stream_iter_alias_gated(name) {
             return None;
         }
         if target.is_bun() {

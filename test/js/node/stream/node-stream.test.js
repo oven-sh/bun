@@ -593,3 +593,27 @@ it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG
   expect(stderr).toContain("ExperimentalWarning");
   expect(exitCode).toBe(0);
 });
+
+it("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
+  // Without the flag the introspection APIs must not report stream/iter as
+  // a builtin (node returns a lookup-paths array there); with the flag they
+  // must (null, like any builtin).
+  const script = `
+    const r = require.resolve.paths("stream/iter");
+    console.log(Array.isArray(r) ? "array" : String(r));
+  `;
+  for (const [flags, expected] of [
+    [[], "array"],
+    [["--experimental-stream-iter"], "null"],
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  }
+});

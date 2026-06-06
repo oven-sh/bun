@@ -2,12 +2,7 @@
 // (compiled JS, not written for this tsconfig); see lazyMinimatch().
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0), backed by a vendored copy
 // of minimatch (Node's deps/minimatch/index.js) embedded at the bottom of this file.
-const {
-  validateObject,
-  validateString,
-  validateBoolean,
-  validateArray,
-} = require("internal/validators");
+const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
 const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
 

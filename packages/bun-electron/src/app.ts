@@ -7,6 +7,7 @@ import * as native from "./native";
 import { customSchemes, routeProtocolEvent } from "./protocol";
 import { routeCookiesEvent } from "./session";
 import { routeWebRequestEvent } from "./web-request";
+import { routeMenuCommand } from "./menu";
 import {
   hasSingleInstanceLock,
   releaseSingleInstanceLock,
@@ -234,6 +235,9 @@ class App extends EventEmitter {
       case "web-request-completed":
       case "web-request-error":
         routeWebRequestEvent(ev);
+        return;
+      case "menu-command":
+        routeMenuCommand(ev.commandId as number);
         return;
       default:
         if (typeof ev.windowId === "number") {

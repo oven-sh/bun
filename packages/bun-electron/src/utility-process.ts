@@ -7,6 +7,29 @@
 
 import { EventEmitter } from "node:events";
 
+// Loader/interpreter hijack variables are stripped from caller-supplied env
+// (not from the inherited process.env) so fork options can't be used to inject
+// a preloaded library or interpreter into the child.
+const BLOCKED_ENV_PREFIXES = [
+  "LD_",
+  "DYLD_",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "RUBYOPT",
+  "PERL5OPT",
+  "BASH_ENV",
+  "GIT_SSH_COMMAND",
+  "GCONV_PATH",
+];
+
+function sanitizeEnv(env: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([k]) => !BLOCKED_ENV_PREFIXES.some((p) => k.startsWith(p))),
+  );
+}
+
 export interface ForkOptions {
   env?: Record<string, string>;
   cwd?: string;
@@ -29,7 +52,7 @@ class UtilityProcess extends EventEmitter {
     this.proc = Bun.spawn({
       cmd: [process.execPath, modulePath, ...args],
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env ?? {}), BUN_ELECTRON_UTILITY_CHILD: "1" },
+      env: { ...process.env, ...sanitizeEnv(options.env ?? {}), BUN_ELECTRON_UTILITY_CHILD: "1" },
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",

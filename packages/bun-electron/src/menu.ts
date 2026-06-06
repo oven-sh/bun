@@ -113,6 +113,17 @@ export class MenuItem {
 
 let applicationMenu: Menu | null = null;
 
+// Maps native command ids to the MenuItem currently shown in a popup, so a
+// native menu-command event can dispatch the right MenuItem.click().
+const activeCommands = new Map<number, MenuItem>();
+
+/** @internal Routes a native "menu-command" event to the chosen MenuItem. */
+export function routeMenuCommand(commandId: number): void {
+  const item = activeCommands.get(commandId);
+  activeCommands.clear();
+  if (item) item.click();
+}
+
 export class Menu {
   readonly items: MenuItem[] = [];
 
@@ -161,11 +172,49 @@ export class Menu {
     return null;
   }
 
-  popup(_options?: { window?: BrowserWindow; x?: number; y?: number }): void {
-    // Native context-menu rendering is not implemented yet.
+  popup(options: { window?: BrowserWindow; x?: number; y?: number } = {}): void {
+    const win = options.window ?? this._popupWindow;
+    if (!win) {
+      throw new Error("Menu.popup requires a window (no focused window available)");
+    }
+    this._popupWindow = win;
+    activeCommands.clear();
+    const items = this._toTemplate();
+    (win as unknown as { _command(cmd: string, arg?: string): void })._command(
+      "popup_menu",
+      JSON.stringify({ x: options.x ?? 0, y: options.y ?? 0, items }),
+    );
   }
 
-  closePopup(): void {}
+  closePopup(window?: BrowserWindow): void {
+    const win = window ?? this._popupWindow;
+    if (win) {
+      (win as unknown as { _command(cmd: string, arg?: string): void })._command("cancel_menu");
+    }
+  }
+
+  private _popupWindow: BrowserWindow | null = null;
+
+  // Flat template for the native menu model (one level; submenus flattened to
+  // their labels for now). Registers each item's command id for dispatch.
+  private _toTemplate(): Array<Record<string, unknown>> {
+    const out: Array<Record<string, unknown>> = [];
+    for (const item of this.items) {
+      if (item.type === "separator") {
+        out.push({ type: "separator" });
+        continue;
+      }
+      activeCommands.set(item.commandId, item);
+      out.push({
+        id: item.commandId,
+        label: item.label,
+        type: item.type === "checkbox" ? "checkbox" : "normal",
+        enabled: item.enabled,
+        checked: item.checked,
+      });
+    }
+    return out;
+  }
 
   /** @internal Radio group handling: checking one unchecks its neighbors. */
   _selectRadio(selected: MenuItem): void {

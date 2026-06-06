@@ -24,6 +24,8 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_find_handler.h"
 #include "include/cef_image.h"
+#include "include/cef_menu_model.h"
+#include "include/cef_menu_model_delegate.h"
 #include "include/cef_request.h"
 #include "include/cef_request_context.h"
 #include "include/cef_request_handler.h"
@@ -1561,6 +1563,66 @@ void CreateWindowOnUI(int32_t window_id) {
       new WindowDelegate(window_id, browser_view, entry->options));
 }
 
+// Emits "menu-command" {windowId, commandId} when a native menu item is
+// chosen, so the JS Menu can dispatch the corresponding MenuItem.click().
+class MenuDelegate : public CefMenuModelDelegate {
+ public:
+  explicit MenuDelegate(int32_t window_id) : window_id_(window_id) {}
+  void ExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
+                      int command_id,
+                      cef_event_flags_t event_flags) override {
+    EmitEvent(JsonObj()
+                  .AddString("type", "menu-command")
+                  .AddInt("windowId", window_id_)
+                  .AddInt("commandId", command_id)
+                  .Build());
+  }
+
+ private:
+  const int32_t window_id_;
+  IMPLEMENT_REFCOUNTING(MenuDelegate);
+};
+
+// Builds a native CefMenuModel from a JSON template and shows it as a real
+// (OS-rendered) popup menu via the Views API.
+void ShowNativeMenu(int32_t window_id,
+                    CefRefPtr<CefWindow> window,
+                    const std::string& json) {
+  CefRefPtr<CefValue> root = CefParseJSON(json, JSON_PARSER_RFC);
+  if (!root || root->GetType() != VTYPE_DICTIONARY) return;
+  CefRefPtr<CefDictionaryValue> dict = root->GetDictionary();
+  int x = dict->HasKey("x") ? dict->GetInt("x") : 0;
+  int y = dict->HasKey("y") ? dict->GetInt("y") : 0;
+
+  CefRefPtr<CefMenuModelDelegate> delegate = new MenuDelegate(window_id);
+  CefRefPtr<CefMenuModel> model = CefMenuModel::CreateMenuModel(delegate);
+  CefRefPtr<CefListValue> items = dict->GetList("items");
+  if (items) {
+    for (size_t i = 0; i < items->GetSize(); i++) {
+      CefRefPtr<CefDictionaryValue> item = items->GetDictionary(i);
+      if (!item) continue;
+      std::string type = item->HasKey("type") ? item->GetString("type").ToString() : "normal";
+      if (type == "separator") {
+        model->AddSeparator();
+        continue;
+      }
+      int id = item->HasKey("id") ? item->GetInt("id") : static_cast<int>(i + 1);
+      std::string label = item->HasKey("label") ? item->GetString("label").ToString() : "";
+      if (type == "checkbox") {
+        model->AddCheckItem(id, label);
+        if (item->HasKey("checked") && item->GetBool("checked")) model->SetChecked(id, true);
+      } else {
+        model->AddItem(id, label);
+      }
+      if (item->HasKey("enabled") && !item->GetBool("enabled")) model->SetEnabled(id, false);
+    }
+  }
+  // Convert client point to screen coordinates relative to the window.
+  CefRect bounds = window->GetBoundsInScreen();
+  window->ShowMenu(model, CefPoint(bounds.x + x, bounds.y + y),
+                   CEF_MENU_ANCHOR_TOPLEFT);
+}
+
 void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
   CEF_REQUIRE_UI_THREAD();
   auto entry = FindWindow(window_id);
@@ -1645,6 +1707,10 @@ void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
     browser->GetHost()->Find(arg, true, false, true);
   } else if (cmd == "stop_find" && browser) {
     browser->GetHost()->StopFinding(true);
+  } else if (cmd == "popup_menu" && window) {
+    ShowNativeMenu(window_id, window, arg);
+  } else if (cmd == "cancel_menu" && window) {
+    window->CancelMenu();
   } else if (cmd == "set_resizable" || cmd == "set_minimizable" ||
              cmd == "set_maximizable") {
     SetWindowOpt(window_id, cmd.substr(4), arg == "1" ? "1" : "0");

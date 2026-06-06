@@ -1469,9 +1469,9 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
     }
 }
 
-/// When a member access, index, or tagged template is the direct callee of a
-/// `new` expression, the surrounding parentheses are only required when the
-/// chain contains a call or optional chain that `new` would otherwise capture.
+/// Decides, once per `ENew`, whether its callee must be printed inside
+/// parentheses: only when the callee chain contains a call or optional chain
+/// that `new` would otherwise capture.
 ///
 /// `new a.b.c()` is identical to `new (a.b.c)()` — a plain member chain binds
 /// into the `new` target — so those parens may be dropped. But `new (a().b)()`
@@ -1480,11 +1480,14 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 /// (`new (a?.b)()`) is a syntax error without the parens (`new` may not appear
 /// in an optional chain).
 ///
-/// Walks the `EDot`/`EIndex`/`ETemplate` (tagged) chain toward its base:
+/// Returning `false` routes the callee through the `Level::New` + `ForbidCall`
+/// path unchanged, where a call at the base of a member chain still wraps just
+/// itself (`new (require("m")).f`). Walks the `EDot`/`EIndex`/`ETemplate`
+/// (tagged) chain toward its base:
 ///
-/// - a non-optional call (`ECall`, `import(...)`, `require(...)`) always needs
-///   the parens — nothing isolates a plain call from the `new`
-///   (`new a().b()` → `(new a()).b()`);
+/// - a non-optional `ECall`, or `import(...)`/`require(...)` reached through a
+///   template tag (which drops `ForbidCall`), always needs the parens — nothing
+///   else isolates a plain call from the `new` (`new a().b()` → `(new a()).b()`);
 /// - an optional-chain link (including an optional call) needs the parens only
 ///   while it still reaches the top of the chain. Once a non-optional access (or
 ///   a tagged template) sits above it, the inner chain is already parenthesized
@@ -3540,7 +3543,16 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"new");
                     self.print_space();
-                    self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    // Deciding the callee's parens once here keeps it a single
+                    // O(depth) walk per `new`; leaving it to the member arms would
+                    // re-walk the chain at every level while `ForbidCall` forwards.
+                    if new_callee_needs_parens(&e.target) {
+                        self.print(b"(");
+                        self.print_expr(e.target, Level::Lowest, ExprFlag::none());
+                        self.print(b")");
+                    } else {
+                        self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
+                    }
                     let args = e.args.slice();
                     if !args.is_empty() || level.gte(Level::Postfix) {
                         self.print(b"(");
@@ -3753,17 +3765,7 @@ pub mod __gated_printer {
                 ExprData::EDot(e) => {
                     let is_optional_chain = e.optional_chain == Some(js_ast::OptionalChain::Start);
 
-                    // As the callee of `new`, wrap the whole member chain in parens when it
-                    // contains a call or optional chain; `new (a().b)()` must not reparse as
-                    // `(new a()).b()`. The parens then protect the inner call, so drop
-                    // `ForbidCall` before descending to avoid wrapping it a second time.
-                    let mut wrap = (level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall))
-                        && new_callee_needs_parens(&expr);
-                    if wrap {
-                        self.print(b"(");
-                        flags.remove(ExprFlag::ForbidCall);
-                    }
-
+                    let mut wrap = false;
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
@@ -3775,9 +3777,13 @@ pub mod __gated_printer {
                             return;
                         }
                     } else {
-                        if !wrap && flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // These parens isolate the whole optional chain, so a
+                            // call inside it no longer needs its own parens as a
+                            // `new` callee.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -3813,16 +3819,7 @@ pub mod __gated_printer {
                     }
                 }
                 ExprData::EIndex(e) => {
-                    // See `EDot`: wrap the whole chain in parens as a `new` callee when it
-                    // contains a call or optional chain, and drop `ForbidCall` so the inner
-                    // call isn't parenthesized on its own.
-                    let mut wrap = (level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall))
-                        && new_callee_needs_parens(&expr);
-                    if wrap {
-                        self.print(b"(");
-                        flags.remove(ExprFlag::ForbidCall);
-                    }
-
+                    let mut wrap = false;
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
@@ -3838,9 +3835,13 @@ pub mod __gated_printer {
                             }
                         }
                     } else {
-                        if !wrap && flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // These parens isolate the whole optional chain, so a
+                            // call inside it no longer needs its own parens as a
+                            // `new` callee.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -4256,17 +4257,6 @@ pub mod __gated_printer {
                         }
                     }
 
-                    // As the callee of `new`, a tagged template whose tag contains a call
-                    // must be wrapped as a whole: `new (a()`b`)()` must not reparse as
-                    // `(new a())`b``. A plain tag (`new (a`b`)()`) needs no parens since a
-                    // tagged template is itself a member expression.
-                    let new_wrap = e.tag.is_some()
-                        && (level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall))
-                        && new_callee_needs_parens(&expr);
-                    if new_wrap {
-                        self.print(b"(");
-                    }
-
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
                         // An optional chain may not directly tag a template literal
@@ -4314,10 +4304,6 @@ pub mod __gated_printer {
                         }
                     }
                     self.print(b"`");
-
-                    if new_wrap {
-                        self.print(b")");
-                    }
                 }
                 ExprData::ERegExp(e) => {
                     self.add_source_mapping(expr.loc);

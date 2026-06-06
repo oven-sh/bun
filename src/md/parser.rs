@@ -39,9 +39,6 @@ pub struct Parser<'a> {
     pub renderer: Renderer<'a>,
     pub image_nesting_level: u32,
     pub link_nesting_level: u32,
-    // Depth of link/image-label recursion, capped in process_label_content
-    // (links.rs) to keep nested-label rendering linear.
-    pub label_nesting_level: u32,
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
     pub code_indent_offset: u32,
@@ -65,6 +62,9 @@ pub struct Parser<'a> {
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
     pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Label-frame stack recycled by process_inline_content (inlines.rs) so
+    // blocks with links do not allocate a frame stack per block.
+    pub label_frames: Vec<crate::inlines::LabelFrame>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
@@ -183,7 +183,6 @@ impl<'a> Parser<'a> {
             renderer: rend,
             image_nesting_level: 0,
             link_nesting_level: 0,
-            label_nesting_level: 0,
             code_indent_offset: if flags.no_indented_code_blocks {
                 u32::MAX
             } else {
@@ -197,6 +196,7 @@ impl<'a> Parser<'a> {
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
+            label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,

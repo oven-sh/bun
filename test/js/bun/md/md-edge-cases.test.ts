@@ -680,45 +680,44 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(wiki(40), { wikiLinks: true })).not.toContain('data-target="t"');
   });
 
-  // Rendering a link/image label re-parses the label slice, so constructs
-  // nested inside their own labels used to cost O(label) per level: a flood
-  // of "![" openers closed by "](u)" repeats was O(n²) (fuzzer-found hang at
-  // ~256 KB). Label recursion is now capped at depth 32; deeper labels are
-  // emitted as plain text.
+  // Rendering a link/image label used to recurse: each nesting level
+  // re-tokenized its whole label (bracket map, emphasis state), so a flood
+  // of "![" openers closed by "](u)" repeats was O(n²) — a fuzzer-found
+  // ~256 KB input hung for ~30s and deeper inputs aborted with OOM. Label
+  // frames now share the slice's bracket map and are driven iteratively, so
+  // rendering is linear and nesting depth is unlimited. The exact-output
+  // assertions double as the regression check: only a full (non-truncated,
+  // non-capped) parse of the 250 KB nesting chain flattens to these strings.
   test("nested image/link labels render in linear time", async () => {
-    // The first case's alt="![ check fails deterministically on the unfixed
-    // build (a label was never emitted verbatim), independent of the 30s
-    // kill, so the sizes only need to be large enough to make the quadratic
-    // visible, not to outlast the timeout.
     await expectRendersQuickly(`
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
-          ["nested inline images", fill(10000, "![") + fill(10000, "](u)"), out => out.includes('<img src="u"') && out.includes('alt="![')],
-          ["link/image alternation", fill(9000, "[![") + fill(9000, "](u)"), out => out.includes('<a href="u"')],
-          ["nested reference images", "[r]: /u\\n\\n" + fill(10000, "![") + fill(10000, "][r]"), out => out.includes('<img src="/u"')],
-          ["nested images, unclosed tail", fill(15000, "![") + "x", out => out.includes("![![")],
+          ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
+          ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
         for (const [name, input, check] of cases) {
           const out = Bun.markdown.html(input);
           if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
           console.log("OK " + name);
         }
-        Bun.markdown.ansi(fill(10000, "![") + fill(10000, "](u)"), { colors: false });
+        const ansi = Bun.markdown.ansi(fill(43000, "![") + fill(43000, "](u)"), { colors: false });
+        if (ansi !== "[img] (image)\\n") throw new Error("unexpected ansi output: " + JSON.stringify(ansi.slice(0, 200)));
         console.log("OK ansi nested images");
         console.log("DONE");
       `);
   }, 90_000);
 
-  test("image and link label nesting within the cap is unchanged", () => {
-    const nest = (depth: number) => "![".repeat(depth) + "x" + "](u)".repeat(depth);
-    // Nested image alt text flattens to the innermost text.
+  test("deeply nested image/link labels flatten exactly at any depth", () => {
+    const nest = (depth: number) =>
+      Buffer.alloc(depth * 2, "![").toString() + "x" + Buffer.alloc(depth * 4, "](u)").toString();
+    // Nested image alt text flattens to the innermost text, regardless of
+    // depth: there is no nesting cap and no native-stack recursion.
     expect(Markdown.html(nest(2))).toBe('<p><img src="u" alt="x" /></p>\n');
-    expect(Markdown.html(nest(33))).toBe('<p><img src="u" alt="x" /></p>\n');
-    // Past the cap the construct is still an image, but the label at the cap
-    // is alt text verbatim instead of being flattened further.
-    const over = Markdown.html(nest(40));
-    expect(over).toContain('<img src="u"');
-    expect(over).toContain('alt="![');
+    expect(Markdown.html(nest(40))).toBe('<p><img src="u" alt="x" /></p>\n');
+    expect(Markdown.html(nest(20000))).toBe('<p><img src="u" alt="x" /></p>\n');
+    expect(Markdown.ansi(nest(5000), { colors: false })).toBe("[img] x\n");
     // Image inside a link, link inside an image alt: normal nesting depths.
     expect(Markdown.html("[![alt](i.png)](p)\n")).toBe('<p><a href="p"><img src="i.png" alt="alt" /></a></p>\n');
     expect(Markdown.html("![a ![b](u2) c](u1)\n")).toBe('<p><img src="u1" alt="a b c" /></p>\n');

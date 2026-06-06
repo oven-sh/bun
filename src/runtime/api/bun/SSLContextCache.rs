@@ -50,8 +50,6 @@ pub struct SSLContextCache {
     /// use-after-free window the mutex cannot close.
     #[cfg(debug_assertions)]
     owner_thread: std::thread::ThreadId,
-    #[cfg(not(debug_assertions))]
-    owner_thread: (),
 }
 
 impl Default for SSLContextCache {
@@ -62,8 +60,6 @@ impl Default for SSLContextCache {
             ops_since_compact: 0,
             #[cfg(debug_assertions)]
             owner_thread: std::thread::current().id(),
-            #[cfg(not(debug_assertions))]
-            owner_thread: (),
         }
     }
 }

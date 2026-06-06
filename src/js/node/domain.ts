@@ -153,6 +153,11 @@ ObjectDefineProperty(process, "domain", {
     return currentActive();
   },
   set: function (arg: any) {
+    // Enter the async callback's scheduling-time domain context first (and
+    // clear a stale adopted pairing): writing the box below would otherwise
+    // freshen the token while a previous tick's adopted entry is still on
+    // the global stack.
+    adopt();
     setActive(arg);
   },
 } as PropertyDescriptor);
@@ -176,6 +181,11 @@ ObjectDefineProperty(exports, "active", {
     return currentActive();
   },
   set: function (arg: any) {
+    // Enter the async callback's scheduling-time domain context first (and
+    // clear a stale adopted pairing): writing the box below would otherwise
+    // freshen the token while a previous tick's adopted entry is still on
+    // the global stack.
+    adopt();
     setActive(arg);
   },
 } as PropertyDescriptor);
@@ -357,6 +367,15 @@ class Domain extends EventEmitter {
       writable: true,
     } as PropertyDescriptor);
     ArrayPrototypePush.$call(this.members, ee);
+
+    // An emitter constructed with captureRejections before node:domain
+    // loaded carries the un-wrapped capture emit as an own property (the
+    // wrapped EventEmitter.init below only covers construction after
+    // load), which would shadow the domain-aware prototype emit. add() is
+    // how such an emitter acquires a domain, so wrap it here too.
+    if (ObjectHasOwn(ee, "emit") && typeof ee.emit === "function" && !ee.emit[kDomainAwareEmit]) {
+      ee.emit = makeDomainAwareEmit(ee.emit);
+    }
   }
 
   remove(ee: any) {

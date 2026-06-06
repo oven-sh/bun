@@ -949,6 +949,76 @@ describe("node:domain integration", () => {
     });
   });
 
+  test("d.add() routes 'error' from a captureRejections emitter constructed before domain loads", async () => {
+    // Such an emitter carries the un-wrapped capture emit as an own
+    // property; the wrapped EventEmitter.init never saw it, so add() must
+    // wrap it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const EventEmitter = require("node:events");
+        const ee = new EventEmitter({ captureRejections: true });
+        const domain = require("node:domain");
+        const d = domain.create();
+        d.on("error", e => {
+          console.log("caught", e.message, e.domainEmitter === ee, e.domainThrown);
+        });
+        d.add(ee);
+        setImmediate(() => ee.emit("error", new Error("boom")));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "caught boom true false",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a write-first callback does not observe a stale adopted pairing", async () => {
+    // The process.domain setter must clear the previous tick's adopted
+    // entry before it freshens the context token.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const domain = require("node:domain");
+        const d1 = domain.create();
+        const d2 = domain.create();
+        const d3 = domain.create();
+        let done = false;
+        d1.run(() => {
+          setTimeout(() => {
+            d2.run(() => {});
+            done = true;
+          }, 1);
+        });
+        // Scheduled outside any domain; its first domain operation is a write.
+        const check = () => {
+          if (!done) return void setTimeout(check, 5);
+          process.domain = d3;
+          console.log("stack:", domain._stack.length, "isD3:", process.domain === d3);
+        };
+        setTimeout(check, 5);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "stack: 0 isD3: true",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("domains entered inside async callbacks do not leak onto the global stack", async () => {
     // The async-context pairing is entered on the module-global stack when
     // domain state is touched inside a paired callback (node's before()

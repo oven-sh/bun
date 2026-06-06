@@ -16,8 +16,7 @@ use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 #[cfg(not(windows))]
 use crate::webcore::blob::FileCloser;
 use crate::webcore::blob::{
-    self, Blob, ClosingState, FileOpener, MkdirpTarget, Retry, SizeType,
-    mkdir_if_not_exists,
+    self, Blob, ClosingState, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
 };
 use crate::webcore::body;
 

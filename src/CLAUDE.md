@@ -361,18 +361,49 @@ bun run build:release --target=aarch64-linux-ohos \
   --sysroot=/path/to/ohos-sdk/sysroot
 ```
 
+### 构建配置
+
+- **链接方式**: PIE + 动态链接 `libc.so` + 静态 `libc++.a`
+- **链接 flag**: `["-pie", "-lc"]`
+- **交叉编译器**: `aarch64-linux-ohos-clang`
+- **sysroot**: `--sysroot=<SDK>/ohos/native/sysroot`
+
 ### 已知限制
 
-| 限制 | 原因 | 影响 |
-|------|------|------|
-| `spawnSync({stdout:'pipe'})` 不可用 | OHOS vfork fd 限制：子进程无法 dup2/close/open | spawnSync pipe 捕获为空，exitCode 正确 |
-| `async Bun.spawn({stdout:'pipe'})` 正常 | 不同内核路径 | ✅ 完整支持 |
-| `fstat()` 在 pipe/socket 上返回 EACCES | OHOS SELinux (E008) | 需要用 `fcntl(F_GETFD)` 代替 |
-| 二进制需签名 | SELinux 要求 | `binary-sign-tool sign -selfSign "1"` |
-| `/tmp` 只读 | 文件系统限制 | 用 `$HOME/tmp` 或 `$TMPDIR` |
-| `pidfd_open`/`close_range` 不可用 | 未实现 syscall (E051) | 使用 `BUN_OHOS_DISABLE_PIDFD` 标志跳过 |
-| 某些 POSIX syscall 未实现 | 内核限制 | 见 `BUN_OHOS_DISABLE_PIDFD` + close_range fallback |
-| 多线程 `fork()` 后 fd 不可用 | 内核限制 | 子进程无法访问父进程的 pipe/file fd |
+| 限制 | 原因 | 影响 | 应对 |
+|------|------|------|------|
+| `spawnSync({stdout:'pipe'})` 不可用 | OHOS vfork fd 限制：子进程无法 dup2/close/open | spawnSync pipe 输出为空，exitCode 正确 | 改用 `async Bun.spawn()` |
+| `async Bun.spawn({stdout:'pipe'})` 正常 | 不同内核路径 | ✅ 完整支持 | — |
+| `fstat()` 在 pipe/socket 上返回 EACCES | OHOS SELinux (E008) | fd 状态检查失败 | 用 `fcntl(F_GETFD)` 代替 |
+| `fchmodat2` syscall (#452) 被拦截 | seccomp 策略 | 每次 `bun add` 触发 30+ 次 SIGSYS | SIGSYS handler 捕获后返回 ENOSYS |
+| PTY (`Bun.Terminal()`) 创建成功 | SELinux 允许 openpty | 创建 ✅，spawn 输出为空 ❌ | vfork 限制 |
+| **`sys::dlopen()` / FFI** | ✅ **已修复** — 动态 libc | dlopen/dlsym 从系统 GLOBAL 实现工作 | `-lc` 动态链接 libc.so |
+| `process.dlopen` | ✅ **路径通** | 需 OHOS SDK 重编 .node（ABI 不匹配）| 当前仅支持系统库 FFI |
+| 二进制需签名 | SELinux 要求 | 启动前需 `binary-sign-tool sign` | L1/L2 自动签名 |
+| `/tmp` 只读 | 文件系统限制 | 临时文件创建失败 | 自动 fallback 到 `$TMPDIR` |
+| `pidfd_open`/`close_range` | 未实现 syscall | SIGSYS | `BUN_OHOS_DISABLE_PIDFD` 标志 |
+| `memfd_create` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
+| `copy_file_range` / `openat2` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
+| 多线程 `fork()` 后 fd 不可用 | 内核限制 | 子进程无法访问父进程 fd | — |
+| 全量测试通过率: 94.0%（去重后）| 见下方测试报告 | | |
+
+### 已拦截 syscall 列表
+
+以下 syscall 被 OHOS seccomp 拦截，由 SIGSYS handler 捕获或提前返回 ENOSYS：
+
+| syscall | 编号 | 处理方式 |
+|:--------|:-----|:---------|
+| `pidfd_open` | 434 | `BUN_OHOS_DISABLE_PIDFD` |
+| `close_range` | 436 | `bun_close_range()` 返回 ENOSYS |
+| `memfd_create` | 319 | `#[cfg(ohos)]` 提前返回 ENOSYS |
+| `copy_file_range` | 285 | `#[cfg(ohos)]` 提前返回 -1 |
+| `openat2` | 437 | `#[cfg(ohos)]` 提前返回 ENOSYS |
+| `fchmodat2` | 452 | SIGSYS handler |
+| `process_vm_readv/writev` | 310/311 | SIGSYS handler |
+| `name_to_handle_at` | 303 | SIGSYS handler |
+| `perf_event_open` / `kcmp` | 298/312 | SIGSYS handler |
+| `bpf` / `userfaultfd` | 357/388 | SIGSYS handler |
+| `pkey_*` | 394-396 | SIGSYS handler |
 
 ### spawn 实现说明
 
@@ -389,4 +420,16 @@ bun run build:release --target=aarch64-linux-ohos \
 // resolver (resolver.zig)：
 // PermissionDenied 在 readdir 时静默处理（不输出错误日志）
 ```
+
+### 测试结果
+
+全量测试（2026-06-05, 1,695 files, PARALLEL=6, RETRIES=3）:
+
+| 级别 | 通过 | 失败 |
+|:-----|:-----|:-----|
+| 文件级 | 1,352 (79.7%) | 343 |
+| 用例级（去重后） | 39,614 (94.0%) | 2,507 |
+| SIGSEGV | **0** | ✅ |
+
+主要失败原因：`spawnSync` pipe 为空、EPERM link（security scanner）、网络/git 环境。
 

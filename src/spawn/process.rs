@@ -2903,10 +2903,16 @@ mod spawn_process_body {
             safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(
+                any(target_os = "linux", target_os = "android", target_os = "macos"),
+                not(target_env = "ohos")
+            ))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(
+                any(target_os = "linux", target_os = "android", target_os = "macos"),
+                not(target_env = "ohos")
+            ))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -2916,7 +2922,10 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         impl JobControl {
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(
+                any(target_os = "linux", target_os = "android", target_os = "macos"),
+                not(target_env = "ohos")
+            ))]
             pub(crate) fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -2954,7 +2963,10 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(
+                any(target_os = "linux", target_os = "android", target_os = "macos"),
+                not(target_env = "ohos")
+            ))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3207,7 +3219,10 @@ mod spawn_process_body {
                     && (cfg!(any(target_os = "linux", target_os = "android"))
                         || cfg!(target_os = "macos"))
                 {
+                    #[cfg(not(target_env = "ohos"))]
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
+                    #[cfg(target_env = "ohos")]
+                    let _ppid = 0;
                     #[cfg(target_os = "macos")]
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
                         process.pid,
@@ -3619,7 +3634,10 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            not(target_env = "ohos")
+        ))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

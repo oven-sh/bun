@@ -619,8 +619,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-        let root_dir_info: bun_resolver::DirInfoRef =
+        let root_dir_info: Option<bun_resolver::DirInfoRef> =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
+                Err(err)
+                    if err == bun_core::err!("EPERM")
+                        || err == bun_core::err!("EACCES")
+                        || err == bun_core::err!("PermissionDenied") =>
+                {
+                    // Permission-denied directories (e.g. FUSE mounts where
+                    // `getcwd` / `openat` is blocked by SELinux) are not fatal.
+                    // Skip package.json env metadata, same as the resolver
+                    // handling at resolver.rs:4454 (EPERM/EACCES → Ok(None)).
+                    None
+                }
                 Err(err) => {
                     if !log_errors {
                         return Err(bun_core::err!("CouldntReadCurrentDirectory"));
@@ -641,16 +652,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     return Err(err);
                 }
                 Ok(None) => {
-                    // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ));
-                    pretty_errorln!("error loading current directory");
-                    Output::flush();
-                    return Err(bun_core::err!("CouldntReadCurrentDirectory"));
+                    // Directory not found or unreadable — not fatal.
+                    // The resolver already silences EPERM/EACCES internally;
+                    // this catches the remaining cases (ENOENT, ENOTDIR, etc.)
+                    // that propagate as Ok(None) from dir_info_cached_miss.
+                    None
                 }
-                Ok(Some(info)) => info,
+                Ok(Some(info)) => Some(info),
             };
+        // Fallback root DirInfo for callers that ignore the return value
+        // (filter_run.rs, pack_command.rs both discard it). Uses "/" which
+        // is always readable even when the cwd is on a restricted mount.
+        let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
+            .resolver
+            .read_dir_info_ignore_error(b"/")
+            .unwrap_or_oom();
 
         this_transpiler.resolver.store_fd = false;
 
@@ -729,40 +745,42 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
-            if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
+        if let Some(root_dir_info) = root_dir_info {
+            if let Some(package_json) = root_dir_info.enclosing_package_json {
+                if !package_json.name.is_empty() {
+                    if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
+                        env_loader
+                            .map
+                            .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                            .expect("unreachable");
+                    }
                 }
-            }
 
-            env_loader
-                .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
-                .expect("unreachable");
+                env_loader
+                    .map
+                    .put_default(b"npm_package_json", package_json.source.path.text)
+                    .expect("unreachable");
 
-            if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
+                if !package_json.version.is_empty() {
+                    if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
+                        env_loader
+                            .map
+                            .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                            .expect("unreachable");
+                    }
                 }
-            }
 
-            if let Some(config) = package_json.config.as_deref() {
-                env_loader.map.ensure_unused_capacity(config.count())?;
-                for (k, v) in config.keys().iter().zip(config.values().iter()) {
-                    let key = strings::concat(&[b"npm_package_config_", &k[..]]);
-                    env_loader.map.put_assume_capacity(&key, *v);
+                if let Some(config) = package_json.config.as_deref() {
+                    env_loader.map.ensure_unused_capacity(config.count())?;
+                    for (k, v) in config.keys().iter().zip(config.values().iter()) {
+                        let key = strings::concat(&[b"npm_package_config_", &k[..]]);
+                        env_loader.map.put_assume_capacity(&key, *v);
+                    }
                 }
             }
         }
 
-        Ok(root_dir_info)
+        Ok(root_dir_info_fallback)
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to

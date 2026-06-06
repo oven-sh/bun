@@ -454,9 +454,9 @@ pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     for (idx, full) in hashes.iter().enumerate() {
         // Fold the u64 wyhash output into the low 30 bits so the JS Number
         // return value stays in int32 range (no f64 precision loss above
-        // 2^53). XOR of high and low halves preserves distinctness for any
-        // distinct wyhash outputs whose two halves don't happen to agree —
-        // astronomically unlikely for wyhash over distinct 8-byte keys.
+        // 2^53). Per-pair collision probability after the fold is ~2^-30 for
+        // uniformly distributed wyhash output, and the test inputs are
+        // deterministic, so a passing run stays passing.
         let folded: i32 = (((full ^ (full >> 32)) as u32) & 0x3fff_ffff) as i32;
         arr.put_index(global, idx as u32, JSValue::js_number_from_int32(folded))?;
     }

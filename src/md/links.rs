@@ -626,12 +626,15 @@ impl Parser<'_> {
             {
                 p += 1;
             }
-            // Parse dest
+            // Parse dest (no line endings or unescaped '<' allowed, matching
+            // process_link: the lookahead and the parser must agree on what
+            // is a link or emphasis collection desyncs from rendering)
             if p < content.len() && content[p] == b'<' {
                 p += 1;
                 while p < content.len()
                     && content[p] != b'>'
                     && content[p] != b'\n'
+                    && content[p] != b'\r'
                     && content[p] != b'<'
                 {
                     if content[p] == b'\\' && p + 1 < content.len() {

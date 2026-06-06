@@ -596,3 +596,31 @@ test("failed construction restores an unreferenced transferred FileHandle intact
   expect(bytesRead).toBe(5);
   await fh.close();
 });
+
+test("FileHandles nested in Map and Set workerData are transferred", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "ms.mjs");
+  fs.writeFileSync(
+    script,
+    `import { workerData, parentPort } from "worker_threads";
+     const m = workerData.m.get("h");
+     const s = [...workerData.s][0];
+     const sameInstance = m === s;
+     const { buffer, bytesRead } = await m.read(Buffer.alloc(5), 0, 5, 0);
+     parentPort.postMessage({ sameInstance, text: buffer.toString("utf8", 0, bytesRead) });
+     await m.close();`,
+  );
+  const fh = await fs.promises.open(file, "r");
+  const worker = new Worker(script, {
+    workerData: { m: new Map([["h", fh]]), s: new Set([fh]) },
+    transferList: [fh as any],
+  } as any);
+  const [message] = await once(worker, "message");
+  await worker.terminate();
+  // parent side is neutered, worker read through the Map entry, and the Map
+  // and Set entries deserialized to the same single instance
+  expect(fh.fd).toBe(-1);
+  expect(message).toEqual({ sameInstance: true, text: "hello" });
+});

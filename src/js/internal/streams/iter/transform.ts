@@ -34,7 +34,7 @@ function makeStreamingTransformAsync(createStream, finalizeOnEmpty) {
       signal?.throwIfAborted();
 
       const stream = createStream();
-      const pending: Uint8Array[] = [];
+      let pending: Uint8Array[] = [];
       let streamError: Error | null = null;
       let streamEnded = false;
       let wake: (() => void) | null = null;
@@ -70,8 +70,15 @@ function makeStreamingTransformAsync(createStream, finalizeOnEmpty) {
 
       function* drainPending() {
         if (streamError !== null) throw streamError;
+        // Swap-and-iterate instead of shift() (O(N) total, not O(N^2));
+        // the outer loop picks up chunks pushed by "data" events that fire
+        // while a yield is suspended.
         while (pending.length > 0) {
-          yield pending.shift()!;
+          const batch = pending;
+          pending = [];
+          for (let i = 0; i < batch.length; i++) {
+            yield batch[i];
+          }
         }
       }
 
@@ -160,7 +167,7 @@ function makeStreamingTransformSync(createStream, finalizeOnEmpty) {
 
       let outBuf = Buffer.allocUnsafe(chunkSize);
       let outOffset = 0;
-      const pending: Uint8Array[] = [];
+      let pending: Uint8Array[] = [];
 
       function processSyncInput(input, flushFlag) {
         let inOff = 0;
@@ -216,8 +223,13 @@ function makeStreamingTransformSync(createStream, finalizeOnEmpty) {
       let wroteAny = false;
 
       function* drainPending() {
+        // Swap-and-iterate instead of shift() (O(N) total, not O(N^2)).
         while (pending.length > 0) {
-          yield pending.shift()!;
+          const batch = pending;
+          pending = [];
+          for (let i = 0; i < batch.length; i++) {
+            yield batch[i];
+          }
         }
       }
 

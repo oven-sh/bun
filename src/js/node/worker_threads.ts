@@ -162,10 +162,28 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
     return instance;
   }
   memo.set(value, value);
-  if (Array.isArray(value)) {
+  if ($isArray(value)) {
     for (let i = 0; i < value.length; i++) {
       value[i] = unpackJSTransferables(value[i], memo);
     }
+    return value;
+  }
+  // Structured clone walks Map/Set entries (keys included), so markers can
+  // arrive inside them; rebuild the entries with deserialized instances.
+  if (value instanceof Map) {
+    const entries: Array<[unknown, unknown]> = [];
+    for (const { 0: k, 1: v } of value) {
+      entries.push([unpackJSTransferables(k, memo), unpackJSTransferables(v, memo)]);
+    }
+    value.clear();
+    for (const { 0: k, 1: v } of entries) value.set(k, v);
+    return value;
+  }
+  if (value instanceof Set) {
+    const items: unknown[] = [];
+    for (const v of value) items.push(unpackJSTransferables(v, memo));
+    value.clear();
+    for (const v of items) value.add(v);
     return value;
   }
   const proto = Object.getPrototypeOf(value);
@@ -257,10 +275,25 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     }
     const cached = seen.get(value);
     if (cached !== undefined) return cached;
-    if (Array.isArray(value)) {
+    if ($isArray(value)) {
       const out = new Array(value.length);
       seen.set(value, out);
       for (let i = 0; i < value.length; i++) out[i] = replace(value[i]);
+      return out;
+    }
+    // Mirror structured clone: Map/Set entries (keys included) participate
+    // in the graph, so a transferred handle inside them must become its
+    // marker rather than being orphaned.
+    if (value instanceof Map) {
+      const out = new Map();
+      seen.set(value, out);
+      for (const { 0: k, 1: v } of value) out.set(replace(k), replace(v));
+      return out;
+    }
+    if (value instanceof Set) {
+      const out = new Set();
+      seen.set(value, out);
+      for (const v of value) out.add(replace(v));
       return out;
     }
     const proto = Object.getPrototypeOf(value);

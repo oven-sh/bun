@@ -61,6 +61,30 @@ describe.concurrent("import source (source phase imports)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("import.source() in a CommonJS file does not force ESM or strict mode", async () => {
+    // Like plain `import()`, `import.source()` belongs to the ImportCall
+    // production and is valid with the Script goal; only `import.meta`
+    // requires Module. A CJS file using it must keep sloppy-mode semantics
+    // (octal literals parse, top-level `this` is `module.exports`).
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.cjs": `
+          console.log("octal:", 010);
+          console.log("this:", this === module.exports);
+          module.exports.load = () => import.source("./add.wasm");
+          module.exports.load().then(mod => {
+            console.log("instanceof:", mod instanceof WebAssembly.Module);
+          });
+        `,
+        "add.wasm": ADD_WASM,
+      },
+      "main.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["octal: 8", "this: true", "instanceof: true"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("static and dynamic source imports of the same specifier are the same object", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.js": `

@@ -15,9 +15,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut phase = bun_ast::ImportPhase::Evaluation;
         // Parse an "import.meta" or "import.source" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
+                // Only `import.meta` implies the Module goal. `import.source(...)`
+                // belongs to the ImportCall production and, like plain
+                // `import(...)`, is also valid with the Script goal, so it must
+                // not mark the file as ESM.
+                p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
                 p.lexer.next()?;
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));

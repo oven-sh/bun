@@ -187,15 +187,21 @@ async function cp(src, dest, options) {
     !options.errorOnExist &&
     options.force
   ) {
-    if (await require("internal/fs/cp").tryNativeFastPath(src, dest, options)) {
+    const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
+    if (ok) {
       return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
     }
+    return require("internal/fs/cp").cpFn(src, dest, options, checked);
   }
   return require("internal/fs/cp").cpFn(src, dest, options);
 }
 
 async function opendir(dir: string, options) {
-  return new (require("node:fs").Dir)(1, dir, options);
+  // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
+  // open time, like node) runs on an async stat instead of blocking.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  require("node:fs").opendir(dir, options, (err, d) => (err ? reject(err) : resolve(d)));
+  return promise;
 }
 
 const private_symbols = {
@@ -900,7 +906,21 @@ function asyncWrap(fn: any, name: string) {
       }
 
       this[kLocked] = true;
-      handle[kRef]();
+      // Acquire the ref on first actual write (like pull/pullSync defer it to
+      // iteration) so an unused writer can't pin the handle and hang close().
+      let refAcquired = false;
+      const acquireRef = () => {
+        if (!refAcquired) {
+          refAcquired = true;
+          handle[kRef]();
+        }
+      };
+      const releaseRef = () => {
+        if (refAcquired) {
+          refAcquired = false;
+          handle[kUnref]();
+        }
+      };
 
       const fsSync = (nodeFsForIter ??= require("node:fs"));
 
@@ -1009,7 +1029,7 @@ function asyncWrap(fn: any, name: string) {
         if (closed) return;
         closed = true;
         handle[kLocked] = false;
-        handle[kUnref]();
+        releaseRef();
         if (autoClose) {
           await handle.close();
         }
@@ -1039,6 +1059,7 @@ function asyncWrap(fn: any, name: string) {
           if (bytesRemaining > 0) bytesRemaining -= chunk.byteLength;
           const position = pos;
           if (pos >= 0) pos += chunk.byteLength;
+          acquireRef();
           return writeAll(chunk, 0, chunk.byteLength, position, signal);
         },
 
@@ -1068,6 +1089,7 @@ function asyncWrap(fn: any, name: string) {
           if (bytesRemaining > 0) bytesRemaining -= totalSize;
           const position = pos;
           if (pos >= 0) pos += totalSize;
+          acquireRef();
           return writevAll(chunks, position, signal);
         },
 
@@ -1082,6 +1104,7 @@ function asyncWrap(fn: any, name: string) {
           // First attempt - if this fails, return false so pipeTo can
           // fall back to async write().
           let bytesWritten;
+          acquireRef();
           try {
             bytesWritten = fsSync.writeSync(fd, chunk, 0, length, position >= 0 ? position : null) || 0;
           } catch {
@@ -1118,6 +1141,7 @@ function asyncWrap(fn: any, name: string) {
           if (bytesRemaining >= 0 && totalSize > bytesRemaining) return false;
           const position = pos;
           let bytesWritten;
+          acquireRef();
           try {
             bytesWritten = fsSync.writevSync(fd, chunks, position >= 0 ? position : null) || 0;
           } catch {
@@ -1177,7 +1201,7 @@ function asyncWrap(fn: any, name: string) {
           if (asyncPending) return -1;
           closed = true;
           handle[kLocked] = false;
-          handle[kUnref]();
+          releaseRef();
           if (autoClose) {
             handle[kCloseSync]();
           }
@@ -1189,7 +1213,7 @@ function asyncWrap(fn: any, name: string) {
           error = reason ?? $ERR_INVALID_STATE("Failed");
           closed = true;
           handle[kLocked] = false;
-          handle[kUnref]();
+          releaseRef();
           if (autoClose) {
             handle[kCloseSync]();
           }

@@ -487,3 +487,40 @@ describe("getHeapSnapshot", () => {
     worker.postMessage(0);
   });
 });
+
+test("failed Worker construction restores transferred FileHandles", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  // Non-cloneable workerData makes the WebWorker constructor throw after the
+  // FileHandle has already been neutered by the transfer machinery; the fd
+  // must be restored so the handle stays usable.
+  expect(() => {
+    new Worker(file, { transferList: [fh as any], workerData: { fh, bad: () => {} } } as any);
+  }).toThrow();
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});
+
+test("partially transferred FileHandles are restored when a later transfer throws", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh1 = await fs.promises.open(file, "r");
+  const fh2 = await fs.promises.open(file, "r");
+  const pending = fh2.read(Buffer.alloc(5), 0, 5, 0); // fh2 is in use -> its transfer throws
+  expect(() => {
+    new Worker(file, { transferList: [fh1 as any, fh2 as any], workerData: { fh1, fh2 } } as any);
+  }).toThrow(expect.objectContaining({ name: "DataCloneError" }));
+  await pending;
+  const { bytesRead } = await fh1.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh1.close();
+  await fh2.close();
+});
+
+function tmpdirSync2() {
+  return fs.mkdtempSync(join(require("node:os").tmpdir(), "worker-fh-transfer-"));
+}

@@ -169,6 +169,8 @@ function unpackJSTransferables(value: unknown, seen?: Set<object>): unknown {
   return value;
 }
 
+const kRestoreJSTransferables = Symbol("kRestoreJSTransferables");
+
 function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   const transferList = options?.transferList;
   if (!transferList || !$isArray(transferList) || transferList.length === 0) return options;
@@ -188,22 +190,41 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   }
   if (!hasCandidate) return options;
 
-  const { kTransfer, kTransferList } = require("node:fs").promises.$data;
+  const { kTransfer, kTransferList, kDeserialize } = require("node:fs").promises.$data;
   let replacements: Map<object, object> | undefined;
   const nativeTransferList: unknown[] = [];
-  for (const item of transferList) {
-    if (item !== null && typeof item === "object" && typeof item[kTransfer] === "function") {
-      const extraTransfers = item[kTransferList]?.();
-      // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
-      const { data, deserializeInfo } = item[kTransfer]();
-      (replacements ??= new Map()).set(item, {
-        [kJSTransferableMarker]: deserializeInfo,
-        data,
-      });
-      if ($isArray(extraTransfers)) nativeTransferList.push(...extraTransfers);
-    } else {
-      nativeTransferList.push(item);
+  // kTransfer() neuters the handle (extracts the bare fd); if anything later
+  // in the pack/construct sequence throws, restore the already-neutered
+  // handles so their fds aren't orphaned.
+  const neutered: Array<[item: any, data: unknown]> = [];
+  const restoreNeutered = () => {
+    for (const { 0: item, 1: data } of neutered) {
+      try {
+        item[kDeserialize](data);
+      } catch {
+        // best effort - the handle may have been closed concurrently
+      }
     }
+  };
+  try {
+    for (const item of transferList) {
+      if (item !== null && typeof item === "object" && typeof item[kTransfer] === "function") {
+        const extraTransfers = item[kTransferList]?.();
+        // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
+        const { data, deserializeInfo } = item[kTransfer]();
+        neutered.push([item, data]);
+        (replacements ??= new Map()).set(item, {
+          [kJSTransferableMarker]: deserializeInfo,
+          data,
+        });
+        if ($isArray(extraTransfers)) nativeTransferList.push(...extraTransfers);
+      } else {
+        nativeTransferList.push(item);
+      }
+    }
+  } catch (e) {
+    restoreNeutered();
+    throw e;
   }
   if (!replacements) return options;
 
@@ -229,11 +250,13 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     }
     return value;
   }
-  return {
+  const packed = {
     ...options,
     workerData: replace(options.workerData),
     transferList: nativeTransferList,
   };
+  packed[kRestoreJSTransferables] = restoreNeutered;
+  return packed;
 }
 
 let workerData = unpackJSTransferables(_workerData);
@@ -372,6 +395,9 @@ class Worker extends EventEmitter {
     try {
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
     } catch (e) {
+      // Restore any transferList handles that were already neutered by
+      // packJSTransferables, so their fds aren't orphaned.
+      options[kRestoreJSTransferables]?.();
       if (this.#urlToRevoke) {
         URL.revokeObjectURL(this.#urlToRevoke);
       }

@@ -288,3 +288,12 @@ test("fs.promises async stack with Promise.all", async () => {
   // Promise.all uses combinator context — must not crash.
   expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
 });
+
+it("an unused FileHandle.writer() does not prevent close()", async () => {
+  const dir = tempDirWithFiles("unused-writer", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  fh.writer(); // never written to, never ended
+  // must not hang: the writer only refs the handle once a write happens
+  await fh.close();
+  expect(fh.fd).toBe(-1);
+});

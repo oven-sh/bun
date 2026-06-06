@@ -135,3 +135,36 @@ describe("fs.Dir", () => {
     }); // </when an empty directory is opened>
   }); // </given an empty temp directory>
 }); // </fs.Dir>
+
+describe("fs.opendir async validation", () => {
+  it("does not invoke the callback synchronously", async () => {
+    const dirname = path.join(os.tmpdir(), "opendir-async-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    try {
+      let sync = true;
+      const { promise, resolve } = Promise.withResolvers<boolean>();
+      fs.opendir(dirname, (err, dir) => {
+        resolve(sync);
+        dir?.close(() => {});
+      });
+      sync = false;
+      expect(await promise).toBe(false);
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+
+  it("reports ENOTDIR through the callback, not a synchronous throw", async () => {
+    const file = path.join(os.tmpdir(), "opendir-async-file-" + String(Math.random() * 100).substring(0, 6));
+    fs.writeFileSync(file, "x");
+    try {
+      const { promise, resolve } = Promise.withResolvers<any>();
+      fs.opendir(file, err => resolve(err));
+      const err = await promise;
+      expect(err?.code).toBe("ENOTDIR");
+      expect(err?.syscall).toBe("opendir");
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
+});

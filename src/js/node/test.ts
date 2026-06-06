@@ -3,7 +3,7 @@
 
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
-const { validateInteger, validateObject } = require("internal/validators");
+const { validateBoolean, validateInteger, validateObject } = require("internal/validators");
 
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
@@ -55,8 +55,11 @@ class MockFunctionContext {
     if (!$isCallable(implementation)) {
       throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
     }
-    const nextCall = onCall ?? this.#calls.length;
-    this.#onceImplementations.set(nextCall, implementation);
+    // node validates the call index: an integer no earlier than the next call
+    const nextCall = this.#calls.length;
+    const call = onCall ?? nextCall;
+    validateInteger(call, "onCall", nextCall);
+    this.#onceImplementations.set(call, implementation);
   }
 
   resetCalls() {
@@ -212,6 +215,8 @@ function mockMethod(
     setter?: boolean;
     times?: number;
   };
+  validateBoolean(getter, "options.getter");
+  validateBoolean(setter, "options.setter");
   validateTimes(times, "options.times");
   if (setter && getter) {
     throw $ERR_INVALID_ARG_VALUE("options.setter", setter, "cannot be used with 'options.getter'");

@@ -240,7 +240,8 @@ function checkParentPathsSync(src, srcStat, dest) {
 // node-correct validation before handing off to the native fast path
 // (which performs the copy but does not implement node's cp error codes).
 function tryNativeFastPathSync(src, dest, opts) {
-  const { srcStat, destStat } = checkPathsSync(src, dest, opts);
+  const checked = checkPathsSync(src, dest, opts);
+  const { srcStat, destStat } = checked;
   checkParentPathsSync(src, srcStat, dest);
   if (srcStat.isDirectory() && !opts.recursive) {
     throw fsEisdirError({
@@ -255,13 +256,15 @@ function tryNativeFastPathSync(src, dest, opts) {
   // (or missing dest). Symlinks (node resolves relative link targets),
   // directories (may contain symlinks), and special files (node-specific
   // error codes) must go through the ported implementation.
-  return srcStat.isFile() && (!destStat || destStat.isFile());
+  return { ok: srcStat.isFile() && (!destStat || destStat.isFile()), checked };
 }
 
-function cpSyncFn(src, dest, opts) {
-  const { srcStat, destStat, skipped } = checkPathsSync(src, dest, opts);
+function cpSyncFn(src, dest, opts, checked?) {
+  // `checked` carries the stats from a preceding tryNativeFastPathSync so the
+  // fallback doesn't re-run the same checkPaths/checkParentPaths syscalls.
+  const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
   if (skipped) return;
-  checkParentPathsSync(src, srcStat, dest);
+  if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
   return checkParentDir(destStat, src, dest, opts);
 }
 

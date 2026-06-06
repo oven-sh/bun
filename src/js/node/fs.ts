@@ -586,15 +586,22 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
     validateFunction(callback, "callback");
-    let result;
-    try {
-      result = new Dir(1, path, options);
-    } catch (err: any) {
-      if (err?.syscall !== "opendir") throw err; // validation errors are synchronous in node
-      callback(err);
-      return;
-    }
-    callback(null, result);
+    // Argument validation errors throw synchronously (node does the same);
+    // the eager path check runs on an async stat so the JS thread isn't
+    // blocked and the callback never fires synchronously.
+    const result = new Dir(1, path, options, kAlreadyValidated);
+    fs.stat(path).then(
+      stats => {
+        if (!stats.isDirectory()) {
+          callback(opendirNotDirError(path));
+          return;
+        }
+        callback(null, result);
+      },
+      err => {
+        callback(typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+      },
+    );
   };
 
 const { defineCustomPromisifyArgs } = require("internal/promisify");
@@ -941,9 +948,11 @@ function cpSync(src, dest, options) {
     !options.errorOnExist &&
     options.force
   ) {
-    if (tryNativeFastPathSync(src, dest, options)) {
+    const { ok, checked } = tryNativeFastPathSync(src, dest, options);
+    if (ok) {
       return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
     }
+    return cpSyncFn(src, dest, options, checked);
   }
   return cpSyncFn(src, dest, options);
 }
@@ -991,6 +1000,30 @@ function opendirSync(path, options) {
   return new Dir(1, path, options);
 }
 
+// Reshape a stat error as node's eager opendir error. Stat errors arrive as
+// "ECODE: <description>, stat '<path>'"; pull out just the description before
+// re-prefixing (avoids "EACCES: EACCES: ...").
+function opendirStatError(err, path) {
+  err.syscall = "opendir";
+  const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
+  err.message = `${err.code}: ${description}, opendir '${path}'`;
+  return err;
+}
+
+function opendirNotDirError(path) {
+  const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
+  err.code = "ENOTDIR";
+  // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
+  err.errno = process.platform === "win32" ? -4052 : -20;
+  err.syscall = "opendir";
+  err.path = path;
+  return err;
+}
+
+// Passed as the Dir constructor's 4th argument by the async opendir paths,
+// which run the eager path check with an async stat instead.
+const kAlreadyValidated = Symbol("kAlreadyValidated");
+
 class Dir {
   /**
    * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
@@ -1001,7 +1034,7 @@ class Dir {
   #options;
   #entries: DirentType[] | null = null;
 
-  constructor(handle, path: PathLike, options) {
+  constructor(handle, path: PathLike, options, validated?) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
     validateInteger(handle, "handle", 0);
     const encoding = options?.encoding;
@@ -1011,29 +1044,17 @@ class Dir {
     if (options?.bufferSize !== undefined) {
       validateInteger(options.bufferSize, "options.bufferSize", 1);
     }
-    if (handle === 1) {
+    if (handle === 1 && validated !== kAlreadyValidated) {
       // node's opendir opens the directory eagerly and reports ENOTDIR/ENOENT
       let stats;
       try {
         stats = fs.statSync(path);
       } catch (err: any) {
         if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
-        err.syscall = "opendir";
-        // Recompose the message around `opendir`: stat errors arrive as
-        // "ECODE: <description>, stat '<path>'", so pull out just the
-        // description before re-prefixing (avoids "EACCES: EACCES: ...").
-        const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
-        err.message = `${err.code}: ${description}, opendir '${path}'`;
-        throw err;
+        throw opendirStatError(err, path);
       }
       if (!stats.isDirectory()) {
-        const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
-        err.code = "ENOTDIR";
-        // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
-        err.errno = process.platform === "win32" ? -4052 : -20;
-        err.syscall = "opendir";
-        err.path = path;
-        throw err;
+        throw opendirNotDirError(path);
       }
     }
     this.#handle = $toLength(handle);

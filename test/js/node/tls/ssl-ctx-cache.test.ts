@@ -197,13 +197,16 @@ test("rebuilding a config after its SSL_CTX was reclaimed reuses the tombstoned 
     if (sslCtxLiveCount() <= before) break;
   }
   expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
+  // Re-capture after the loop: the sweeps above may also reclaim stragglers
+  // from earlier tests, so `before` is no longer the right baseline.
+  const drained = sslCtxLiveCount();
 
   // Same digest again: the cache must rebuild exactly one CTX (adopting the
   // tombstoned entry) and the follow-up create must dedupe onto it.
   sc = tls.createSecureContext(opts);
   const again = tls.createSecureContext({ ...opts });
   expect(again.context).toBe(sc.context);
-  expect(sslCtxLiveCount()).toBe(before + 1);
+  expect(sslCtxLiveCount()).toBe(drained + 1);
 });
 
 // https://github.com/oven-sh/bun/issues/31881: node:http2 churn (a new

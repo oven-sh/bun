@@ -412,9 +412,7 @@ pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     // SAFETY: bunVM() never returns null for a Bun-owned global.
     let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
-    // Inline instead of a closure so the `?` operator's trait resolution can see
-    // the enclosing return type. (A `-> JsResult<u32>` closure returns its own
-    // `JsResult`, not this fn's, so `?` on the outer Result has to adapt.)
+    // Macro instead of a closure so `return Err` early-exits the enclosing fn.
     macro_rules! eat_u32 {
         ($label:literal) => {{
             let Some(arg) = arguments.next_eat() else {

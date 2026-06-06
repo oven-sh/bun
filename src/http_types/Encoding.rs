@@ -20,5 +20,3 @@ impl Encoding {
         )
     }
 }
-
-// ported from: src/http_types/Encoding.zig

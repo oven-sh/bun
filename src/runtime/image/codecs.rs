@@ -56,11 +56,12 @@ pub enum Backend {
     System = 0,
     Bun = 1,
 }
-// PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → phf map keyed by lowercase variant name.
-pub(crate) static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
-    b"system" => Backend::System,
-    b"bun" => Backend::Bun,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static BACKEND_MAP: Backend = {
+        b"system" => Backend::System,
+        b"bun" => Backend::Bun,
+    };
+}
 
 impl bun_jsc::FromJsEnum for Backend {
     fn from_js_value(
@@ -72,8 +73,8 @@ impl bun_jsc::FromJsEnum for Backend {
     }
 }
 
-// PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
-// "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
+// Read from WorkPool threads + written from JS; a torn read of a 1-byte enum
+// is harmless, so a relaxed atomic is sufficient.
 pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(if HAS_SYSTEM_BACKEND {
         Backend::System as u8
@@ -81,10 +82,10 @@ pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
         Backend::Bun as u8
     });
 
-/// Runtime half of the dispatch check; the comptime half is the
+/// Runtime half of the dispatch check; the compile-time half is the
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
 /// can't be runtime-conditional, so the two stay separate). On platforms with
-/// no backend the cfg is comptime-dead and this is never referenced.
+/// no backend the cfg is compile-time dead and this is never referenced.
 #[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
@@ -197,12 +198,14 @@ impl Format {
     }
 }
 
-static EXT_MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
-    b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
-    b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
-    b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
-    b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
-};
+bun_core::comptime_string_map! {
+    static EXT_MAP: Format = {
+        b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
+        b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
+        b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
+        b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
+    };
+}
 
 #[derive(Default)]
 pub struct Decoded {
@@ -222,7 +225,6 @@ pub struct Decoded {
     /// colours. See issue #30197.
     pub icc_profile: Option<Vec<u8>>,
 }
-// PORT NOTE: `deinit` only freed owned fields → Drop is automatic via Vec/Option<Vec>.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
@@ -295,14 +297,11 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             };
             // GIF transparency is a binary palette-index flag — the RGB at
             // α=0 is whatever the colour-table slot happened to hold and has
-            // no defined meaning. The static decoder emits `[0,0,0,0]`
-            // (codec_gif.zig: `pal[t] = .{0,0,0,0}`) and ImageIO does the
+            // no defined meaning. The static decoder (codec_gif.rs) emits
+            // `[0,0,0,0]` and ImageIO does the
             // same, but WIC's indexed→32bppRGBA converter expands the palette
-            // entry verbatim, leaving the original RGB with α=0. Zig never
-            // hit this because `bun.windows.GetProcAddressA` widens the
-            // symbol to UTF-16 for the narrow-only Win32 `GetProcAddress`,
-            // so `WICConvertBitmapSource` was never resolved and WIC decode
-            // always fell through to the static path. Normalise here so
+            // entry verbatim, leaving the original RGB with α=0. Normalise
+            // here so
             // every backend yields identical bytes for the same GIF.
             for px in d.rgba.chunks_exact_mut(4) {
                 if px[3] == 0 {
@@ -316,8 +315,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
     }
 }
 
-// PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
-// reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
+// `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
 fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
@@ -453,15 +451,16 @@ pub struct EncodeOptions {
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
-    // TODO(port): lifetime — borrowed from caller for the duration of `encode()`;
-    // raw ptr per rule "never put a lifetime param on a struct".
+    // SAFETY invariant: borrowed from the caller and only valid for the
+    // duration of `encode()`; raw ptr instead of a lifetime param per the
+    // repo rule against lifetime params on structs.
     pub icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
-            format: Format::Png, // TODO(port): Zig has no default for `format`; pick at construction
+            format: Format::Png, // arbitrary; callers set it at construction
             quality: 80,
             lossless: false,
             compression_level: -1,
@@ -501,11 +500,10 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
+/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
 /// 2-arg JSC deallocator signature.
-// PORT NOTE: Zig `wrap(comptime f: anytype)` generated a distinct static fn per
-// call site. Rust cannot capture a runtime fn pointer in a non-capturing
-// `extern "C" fn`, so this is a macro that mints a static trampoline per call.
+// Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
+// so this is a macro that mints a static trampoline per call site.
 #[macro_export]
 macro_rules! encoded_wrap_free {
     ($f:path) => {{
@@ -610,23 +608,24 @@ pub enum Filter {
     Mks2021 = 8,
 }
 
-/// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
-/// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
-/// error message still lists only the canonical tags.
-pub(crate) static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
-    b"box" => Filter::Box,
-    b"bilinear" => Filter::Bilinear,
-    b"linear" => Filter::Bilinear,
-    b"lanczos3" => Filter::Lanczos3,
-    b"mitchell" => Filter::Mitchell,
-    b"nearest" => Filter::Nearest,
-    b"cubic" => Filter::Cubic,
-    b"lanczos2" => Filter::Lanczos2,
-    b"mks2013" => Filter::Mks2013,
-    b"mks2021" => Filter::Mks2021,
-};
+bun_core::comptime_string_map! {
+    /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
+    /// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
+    /// error message still lists only the canonical tags.
+    pub(crate) static FILTER_MAP: Filter = {
+        b"box" => Filter::Box,
+        b"bilinear" => Filter::Bilinear,
+        b"linear" => Filter::Bilinear,
+        b"lanczos3" => Filter::Lanczos3,
+        b"mitchell" => Filter::Mitchell,
+        b"nearest" => Filter::Nearest,
+        b"cubic" => Filter::Cubic,
+        b"lanczos2" => Filter::Lanczos2,
+        b"mks2013" => Filter::Mks2013,
+        b"mks2021" => Filter::Mks2021,
+    };
+}
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn bun_image_resize_scratch_size(
         src_w: i32,
@@ -666,7 +665,7 @@ pub(crate) fn resize(
     dh: u32,
     f: Filter,
 ) -> Result<Vec<u8>, Error> {
-    // Zig: `if (@hasDecl(b, "scale"))` — only `backend_coregraphics` provides
+    // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
@@ -712,7 +711,7 @@ pub(crate) fn resize(
     // fits the same block, so this is free.
     block.truncate(out_sz);
     block.shrink_to_fit();
-    // PERF(port): Zig used realloc directly; Vec::shrink_to_fit may not be in-place — profile if hot.
+    // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
 
@@ -778,5 +777,3 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     };
     Ok(out)
 }
-
-// ported from: src/runtime/image/codecs.zig

@@ -9,10 +9,10 @@ use bun_simdutf_sys::simdutf;
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
 /// point into the single backing buffer.
 ///
-// TODO(port): the `append*` methods return `&[u8]` borrowing `self.ptr` while
-// also taking `&mut self`. Zig hands out aliasing slices freely; in Rust this
-// needs either an explicit `'a` on the builder, interior mutability (`Cell<usize>`
-// for len), or callers must use `StringPointer` offsets instead.
+// Note: the `append*` methods return `&[u8]` borrowing `self.ptr` while also
+// taking `&mut self`, so callers cannot hold two returned slices at once.
+// Callers that need to interleave appends
+// use `StringPointer` offsets or the unsafe `append_raw` escape hatch below.
 #[derive(Default)]
 pub struct StringBuilder {
     pub len: usize,
@@ -48,17 +48,15 @@ impl StringBuilder {
     }
 
     pub fn count16_z(&mut self, slice: &[u16]) {
-        // PORT NOTE: WStr has no len method on its DST slice yet; callers pass &[u16].
-        // Zig's `elementLengthUTF16IntoUTF8` is the same simdutf length call when input
-        // is valid; for WTF-16 with lone surrogates the slow path overestimates by 0-1
-        // bytes which is fine for a capacity reservation.
+        // Callers pass &[u16] (WStr has no len method on its DST slice yet).
+        // For WTF-16 with lone surrogates the simdutf length estimate
+        // overestimates by 0-1 bytes, which is fine for a capacity reservation.
         self.cap += simdutf::length::utf8::from::utf16::le(slice) + 1;
     }
 
     pub fn append16(&mut self, slice: &[u16]) -> Option<&mut ZStr> {
-        // PORT NOTE: fallback_allocator param dropped (global mimalloc).
-        // PORT NOTE: borrowck — capture buf ptr, drop the &mut borrow before
-        // mutating self.len, then rebuild ZStr from the raw ptr.
+        // Borrowck: capture buf ptr, drop the &mut borrow before mutating
+        // self.len, then rebuild ZStr from the raw ptr.
         let buf = self.writable();
         let buf_ptr = buf.as_mut_ptr();
         if slice.is_empty() {
@@ -78,8 +76,7 @@ impl StringBuilder {
             Some(unsafe { ZStr::from_raw_mut(buf_ptr, count) })
         } else {
             // Fallback: WTF-16 → WTF-8 via the slow path that handles lone surrogates.
-            // Zig allocated from `fallback_allocator` and handed ownership to the
-            // caller; the Rust signature returns a borrow into `self`, so we copy
+            // The signature returns a borrow into `self`, so we copy
             // the WTF-8 bytes into the builder's reserved buffer (count16_z reserved
             // enough — simdutf's length estimate is an upper bound for WTF-16) and
             // drop the temporary Vec normally. No `mem::forget`.
@@ -135,9 +132,8 @@ impl StringBuilder {
     }
 
     /// Copy `slice` into the reserved buffer and return a borrow of the copied
-    /// bytes with an *unbound* lifetime. Mirrors Zig's untracked `[]const u8`
-    /// return so callers may interleave appends and stash both slices (e.g.
-    /// `picohttp::Header::clone`).
+    /// bytes with an *unbound* lifetime, so callers may interleave appends and
+    /// stash both slices (e.g. `picohttp::Header::clone`).
     ///
     /// # Safety
     /// The returned slice aliases `self.ptr` and is only valid until the
@@ -163,7 +159,6 @@ impl StringBuilder {
     }
 
     pub fn add_concat(&mut self, slices: &[&[u8]]) -> StringPointer {
-        // PORT NOTE: reshaped for borrowck — capture self.len before borrowing alloc.
         let start = self.len;
         let alloc = self.allocated_slice();
         let mut remain = &mut alloc[start..];
@@ -311,8 +306,8 @@ impl StringBuilder {
     /// After calling this, you are responsible for freeing the underlying memory.
     /// This StringBuilder should not be used after calling this function.
     pub fn move_to_slice(&mut self) -> Box<[u8]> {
-        // TODO(port): Zig wrote into `*[]u8` out-param and reset self. Here we
-        // reconstruct the Box (allocated in init_capacity/allocate) and hand it back.
+        // Reconstruct the Box (allocated in init_capacity/allocate) and hand
+        // it back.
         //
         // `take()` first: `*self = Self::default()` drops the old value, and
         // `Drop` frees the buffer when `ptr` is still `Some` — leaving it set
@@ -323,9 +318,9 @@ impl StringBuilder {
         };
         let cap = self.cap;
         *self = Self::default();
-        // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above;
-        // all `cap` bytes have been written iff caller appended everything counted.
-        // TODO(port): if not fully written this reads uninit bytes — Zig didn't care.
+        // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above.
+        // Caller contract: every counted byte must have been appended — if not
+        // fully written, the returned Box exposes uninit bytes (UB to read).
         unsafe { crate::heap::take(std::ptr::slice_from_raw_parts_mut(ptr.as_ptr(), cap)) }
     }
 }
@@ -345,5 +340,3 @@ impl Drop for StringBuilder {
         }
     }
 }
-
-// ported from: src/string/StringBuilder.zig

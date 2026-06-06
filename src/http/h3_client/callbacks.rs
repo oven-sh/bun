@@ -232,7 +232,6 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             session.fail(stream, err!(HTTP3ProtocolError));
             return;
         }
-        // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));
@@ -318,5 +317,3 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     );
     stream.session_mut().deliver(stream, true);
 }
-
-// ported from: src/http/h3_client/callbacks.zig

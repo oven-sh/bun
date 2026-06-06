@@ -26,8 +26,8 @@ pub struct ByteStream {
     pub pending: JsCell<streams::Pending>,
     pub done: Cell<bool>,
     /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // TODO(port): lifetime — raw fat slice ptr because the backing store is JS-heap-owned and
-    // rooted via `pending_value: Strong`. Never freed by Rust.
+    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
+    // `pending_value: Strong`. Never freed by Rust.
     pub pending_buffer: Cell<*mut [u8]>,
     pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
@@ -58,7 +58,7 @@ impl Default for ByteStream {
     }
 }
 
-/// `webcore.ReadableStream.NewSource(@This(), "Bytes", onStart, onPull, onCancel, deinit, null, drain, memoryCost, toBufferedValue)`
+/// ReadableStream source backed by a ByteStream.
 pub type Source = readable_stream::NewSource<ByteStream>;
 
 impl readable_stream::SourceContext for ByteStream {
@@ -109,11 +109,11 @@ impl ByteStream {
         core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
     }
 
-    /// Init-time reset (Zig: write into `undefined`). Runs before the JS
+    /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction (Zig
-        // wrote into `undefined`); the old value owns nothing the new one
+        // Called immediately after `ByteStream::default()` construction;
+        // the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
         drop(core::mem::take(self));
     }
@@ -176,8 +176,7 @@ impl ByteStream {
     pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
-            // PORT NOTE: Zig frees `stream.owned.slice()` / `stream.owned_and_done.slice()` here
-            // via `allocator.free` when the variant is owned. In Rust the owned `Vec<u8>`/`Vec`
+            // The owned `Vec<u8>`/`Vec`
             // payload drops implicitly at the `return` below — no explicit `drop` needed.
             self.has_received_last_chunk.set(stream.is_done());
 
@@ -210,8 +209,8 @@ impl ByteStream {
             // producer isn't throttled waiting for a pull that never comes.
             self.did_drain(stream.slice().len());
             if let streams::Result::Err(err) = &stream {
-                // PORT NOTE: Zig `defer { ... }` block — runs after `action.reject`. Reordered
-                // here as explicit post-reject cleanup since `?` would skip it.
+                // Explicit post-reject cleanup; runs after `action.reject`
+                // (`?` would skip it).
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
                 let global = self.parent_const().global_this();
@@ -253,8 +252,7 @@ impl ByteStream {
                             "ByteStream.onData owned_and_done and action.fulfill()"
                         );
 
-                        // Zig: `std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(chunk))`
-                        // PORT NOTE: reshaped for borrowck — move the owned Vec<u8> into `buffer`
+                        // Move the owned Vec<u8> into `buffer`
                         // directly instead of round-tripping through `chunk` (which would borrow
                         // `stream`).
                         self.buffer.set(owned.move_to_list_managed());
@@ -270,16 +268,16 @@ impl ByteStream {
 
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(stream.slice()));
-                // Zig `defer { if owned* allocator.free(stream.slice()) }` — owned `Vec<u8>`
+                // The owned `Vec<u8>`
                 // payload of `stream` is freed by its Drop glue at the explicit `drop` below
-                // (Temporary* variants are non-owning `RawSlice` and so are left alone, matching Zig).
+                // (Temporary* variants are non-owning `RawSlice` and so are left alone).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
                 return action.fulfill(self.parent_const().global_this(), &mut blob);
             } else {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(stream.slice()));
-                // Zig: `if owned* allocator.free(stream.slice())` — owned `Vec<u8>` payload of
+                // The owned `Vec<u8>` payload of
                 // `stream` is freed by its Drop glue (Temporary* are non-owning `RawSlice`, left alone).
                 drop(stream);
             }
@@ -343,8 +341,8 @@ impl ByteStream {
 
             let remaining = &chunk[to_copy_len..];
             if !remaining.is_empty() && !chunk.is_empty() {
-                // PORT NOTE: `chunk` borrows `stream`; passing both requires re-slicing inside
-                // `append`. Zig passes `base_address = chunk` for the free path.
+                // `chunk` borrows `stream`; passing both requires re-slicing inside
+                // `append`.
                 self.append(stream, to_copy_len)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
             }
@@ -373,21 +371,17 @@ impl ByteStream {
         &self,
         stream: streams::Result,
         offset: usize,
-        // PORT NOTE: Zig `base_address: []const u8` + `allocator` params dropped — `base_address`
-        // was only used for `allocator.free(@constCast(base_address))`, which is the Drop of the
-        // owned `stream` payload in Rust.
     ) -> Result<(), bun_alloc::AllocError> {
         if self.buffer.get().capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
-                    // Zig: `owned.moveToListManaged(allocator)` — moves the buffer, no copy.
+                    // `move_to_list_managed` moves the buffer, no copy.
                     self.buffer.set(owned.move_to_list_managed());
                     self.offset.set(self.offset.get() + offset);
                 }
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];
                     let mut buf = Vec::with_capacity(chunk.len());
-                    // PERF(port): was appendSliceAssumeCapacity.
                     buf.extend_from_slice(chunk);
                     self.buffer.set(buf);
                 }
@@ -409,7 +403,7 @@ impl ByteStream {
             streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
-                // Zig: `allocator.free(@constCast(base_address))` — `owned: Vec<u8>` drops here.
+                // `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
                 if self.buffer_action.get().is_some() {
@@ -481,15 +475,13 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // TODO(port): lifetime — storing a raw borrow of a JS-owned buffer; rooted by `set_value`.
+        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
-        // TODO(port): `streams::Result::Pending` carries `*streams.Result.Pending` in Zig (raw
-        // backref). TODO(refactor): decide on `NonNull<streams::Pending>` vs index.
     }
 
     pub(crate) fn on_cancel(&self) {
@@ -565,8 +557,8 @@ impl ByteStream {
             }
         }
         if let Some(action) = self.buffer_action.replace(None) {
-            // PORT NOTE: Zig `action.deinit()` only deinits the JSPromiseStrong payload of each
-            // variant; JSPromiseStrong implements Drop, so dropping the enum is equivalent.
+            // JSPromiseStrong implements Drop, so dropping the enum releases
+            // each variant's JSPromiseStrong payload.
             drop(action);
         }
         // Enclosing `Box<NewSource<ByteStream>>` is freed by the caller
@@ -652,5 +644,3 @@ impl ByteStream {
         Ok(self.buffer_action.get().as_ref().unwrap().value())
     }
 }
-
-// ported from: src/runtime/webcore/ByteStream.zig

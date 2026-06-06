@@ -1,8 +1,7 @@
 //! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first. See `src/http/H3Client.zig` for the module-level
-//! overview.
+//! checks `closed` first.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -211,7 +210,7 @@ impl ClientSession {
     }
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for borrowck — capture client ptr before detach() invalidates stream.
+        // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
         stream_mut(stream).abort();
         self.detach(stream);
@@ -228,7 +227,7 @@ impl ClientSession {
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
     pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for Stacked Borrows like `fail` below — `detach()`
+        // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
@@ -271,10 +270,9 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
-        // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
-        // `&mut self` while the iterator holds `&self.pending`, and only one
-        // entry can match — so locate first via raw-ptr reads, then act.
+        // `fail` mutates `pending`, so it cannot be called while the iterator
+        // holds `&self.pending`, and only one entry can match — so locate
+        // first via raw-ptr reads, then act.
         let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
@@ -512,5 +510,3 @@ impl Drop for ClientSession {
         // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
 }
-
-// ported from: src/http/h3_client/ClientSession.zig

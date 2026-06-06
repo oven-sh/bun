@@ -6,7 +6,7 @@ use crate::AssignTarget;
 // If you add a new token, remember to add it to "TABLE" too
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Enum, IntoStaticStr)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName output (e.g. "bin_add")
+#[strum(serialize_all = "snake_case")]
 pub enum Code {
     // Prefix
     UnPos, // +expr
@@ -150,7 +150,7 @@ impl Code {
     }
 }
 
-#[repr(u8)] // Zig: enum(u6) — Rust has no u6, u8 is the narrowest fit
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Level {
     Lowest,
@@ -214,8 +214,8 @@ impl Level {
     const fn from_raw(n: u8) -> Level {
         // Callers only pass values derived from a valid `Level` discriminant
         // ±1 (`sub`/`add_f`); decode by exhaustive match so an out-of-range
-        // shift traps in release too (matches Zig's safety-checked
-        // `@enumFromInt`) instead of fabricating an invalid discriminant.
+        // shift traps in release too instead of fabricating an invalid
+        // discriminant.
         match n {
             0 => Level::Lowest,
             1 => Level::Comma,
@@ -263,8 +263,6 @@ impl Default for Op {
 }
 
 impl Op {
-    // PORT NOTE: Zig `init(triple: anytype)` took an anonymous tuple .{text, level, is_keyword}
-    // and accessed .@"0"/.@"1"/.@"2". Flattened to positional params.
     pub const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
         Op {
             text,
@@ -274,24 +272,19 @@ impl Op {
     }
 }
 
-// Zig: `pub const TableType: std.EnumArray(Op.Code, Op) = undefined;`
-// This declared an `undefined` value (vestigial / used only for @TypeOf at callsites).
-// Ported as a type alias since Rust statics cannot be uninitialized.
 pub type TableType = Table;
 
-/// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes the
-/// Zig `std.EnumArray` surface (`getPtrConst`/`get`/`[]`) so downstream
-/// callers don't see the raw array.
+/// `.rodata` `[Op; Code::COUNT]` indexed by [`Code`] discriminant. Exposes
+/// `get_ptr_const`/`get`/`[]` accessors so downstream callers don't see the
+/// raw array.
 #[repr(transparent)]
 pub struct Table(pub [Op; <Code as Enum>::LENGTH]);
 
 impl Table {
-    /// Zig: `Op.Table.getPtrConst(code) -> *const Op`.
     #[inline]
     pub fn get_ptr_const(&'static self, code: Code) -> &'static Op {
         &self.0[code as usize]
     }
-    /// Zig: `Op.Table.get(code) -> Op`.
     #[inline]
     pub fn get(&self, code: Code) -> Op {
         self.0[code as usize]
@@ -307,7 +300,7 @@ impl core::ops::Index<Code> for Table {
 }
 
 // Built at const-eval time so it lives in `.rodata` with zero init code on the
-// startup path (matches the Zig `comptime` labeled block).
+// startup path.
 pub static TABLE: Table = Table({
     const NIL: Op = Op::init(b"", Level::Lowest, false);
     let mut t = [NIL; <Code as Enum>::LENGTH];
@@ -379,5 +372,3 @@ pub static TABLE: Table = Table({
 
     t
 });
-
-// ported from: src/js_parser/ast/Op.zig

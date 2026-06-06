@@ -1,5 +1,3 @@
-//! Port of `src/js_parser/ast/Expr.zig`.
-//!
 //! AST crate: arena-allocated nodes (`*mut E::*`) live in `Data::Store`
 //! (a typed slab) and are bulk-freed by `Store::reset()`. `Expr` and
 //! `Data` carry the arena lifetime.
@@ -14,8 +12,8 @@ use bun_core::{self};
 
 use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
 use bun_alloc::ArenaVecExt as _;
-// Re-export so downstream crates can name `ast::expr::StoreRef` (the Zig path
-// was `Expr.Data.Store` / `*E.Foo`; some callers route through `expr::`).
+// Re-export so downstream crates can name `ast::expr::StoreRef` (some callers
+// route through `expr::`).
 pub use crate::StoreRef;
 
 use crate::StoreStr as Str;
@@ -93,7 +91,7 @@ impl Expr {
         }
     }
 
-    /// Zig: `Expr.Data.Store.reset()`. Associated wrapper so downstream crates
+    /// Associated wrapper so downstream crates
     /// can call `crate::Expr::data_store_reset()` without naming the
     /// thread-local Store module path.
     #[inline]
@@ -101,22 +99,23 @@ impl Expr {
         data::Store::reset();
     }
 
-    /// Zig: `Expr.Data.Store.create()`.
+    /// Initializes the thread-local expression-data `Store` for the current
+    /// thread; counterpart of `data_store_reset()`.
     #[inline]
     pub fn data_store_create() {
         data::Store::create();
     }
 
-    /// Zig: `Expr.Data.Store.assert()` — debug-only re-entrancy guard.
+    /// Debug-only "Store must be init'd" guard. The re-entrancy `Disabler`
+    /// check lives in `Store::append`.
     #[inline]
     pub fn data_store_assert() {
-        crate::DebugOnlyDisabler::<Expr>::assert();
+        data::Store::assert();
     }
 }
 
 impl Expr {
     pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Expr {
             loc: self.loc,
             data: Data::clone_in(self.data, bump)?,
@@ -136,7 +135,6 @@ impl Expr {
     }
 
     pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
@@ -153,7 +151,7 @@ impl Expr {
         ))
     }
 
-    // `Expr::fromBlob` (Zig) is JSC-tier — it parses JSON via `bun_parsers` and
+    // `Expr::fromBlob` is JSC-tier — it parses JSON via `bun_parsers` and
     // reads `jsc::webcore::Blob`. Lives at its sole call site:
     // `bun_js_parser_jsc::macro_::expr_from_blob`.
 }
@@ -194,8 +192,7 @@ impl Expr {
         matches!(self.data, Data::EString(_))
     }
 
-    /// Making this comptime bloats the binary and doesn't seem to impact
-    /// runtime performance.
+    /// Look up `name` among the properties of an object-literal expression.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
         let Data::EObject(obj) = &self.data else {
             return None;
@@ -369,8 +366,8 @@ impl Expr {
     /// - `foo[123].bar[456].baz.qux` // etc.
     ///
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
-    // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
-    // explicitly because get_by_index allocates an E.String slice into &Bump.
+    // The arena is threaded explicitly because get_by_index allocates an
+    // E.String slice into &Bump.
     pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
         if name.is_empty() {
             return None;
@@ -387,7 +384,7 @@ impl Expr {
                     }
 
                     let index_str: &[u8] = &name[idx + 1..end_idx];
-                    // std.fmt.parseInt(u32, index_str, 10) — path segments are bytes, not UTF-8.
+                    // Path segments are bytes, not UTF-8.
                     let index: u32 = bun_core::parse_unsigned(index_str, 10).ok()?;
                     let rest: &[u8] = if name.len() > end_idx {
                         &name[end_idx + 1..]
@@ -568,7 +565,7 @@ impl Expr {
         }
     }
 
-    // PORT NOTE: `Query` holds `expr` by value (Copy). The iterator stores the
+    // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
     pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
@@ -668,7 +665,6 @@ impl Expr {
                 continue;
             }
 
-            // PERF(port): was assume_capacity
             map.insert(key, value);
         }
 
@@ -698,7 +694,7 @@ impl ArrayIterator {
     }
 }
 
-// PORT NOTE: earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
+// Earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
 // `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
 // raw-ptr returns). Those drafts were dropped; only the methods without a live
@@ -746,7 +742,7 @@ impl Expr {
                     return Ok(Some(hash_fn(&str.data)));
                 }
                 let utf8_str = str.string(bump)?;
-                // PERF(port): was arena alloc + free; bump-allocated, freed on reset
+                // bump-allocated, freed on reset
                 Ok(Some(hash_fn(utf8_str)))
             }
             _ => Ok(None),
@@ -769,9 +765,9 @@ impl Expr {
     /// associative. For example, the "-" operator is not associative for
     /// floating-point numbers.
     //
-    // PERF(port): Zig took `comptime op: Op.Code`. `Op::Code` does not derive
-    // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
-    // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
+    // PERF: `Op::Code` does not derive `ConstParamTy` (Op.rs owns the enum);
+    // pass at runtime here. Revisit once `Code` gains `ConstParamTy` — call
+    // sites are a handful of literal ops.
     pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
         Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
     }
@@ -827,9 +823,7 @@ impl Expr {
         )
     }
 
-    // PORT NOTE: Zig threaded `_: std.mem.Allocator` (unused) so the caller's
-    // arena reached `Expr.init`. The Rust port uses the thread-local
-    // `data::Store` and drops the parameter.
+    // Uses the thread-local `data::Store`, so no allocator parameter is needed.
     pub fn join_with_comma(self, b: Expr) -> Expr {
         if self.is_missing() {
             return b;
@@ -862,9 +856,8 @@ impl Expr {
         }
     }
 
-    // PORT NOTE: Zig threaded `ctx: anytype` and called `callback(ctx, ...)` on
-    // each element. Rust passes `ctx` by `&mut` so a single `&mut P` (the parser
-    // state) can be reborrowed for each callback invocation without `Copy`.
+    // `ctx` is passed by `&mut` so a single `&mut P` (the parser state) can be
+    // reborrowed for each callback invocation without `Copy`.
     pub fn join_all_with_comma_callback<C: ?Sized>(
         all: &[Expr],
         ctx: &mut C,
@@ -968,32 +961,24 @@ impl Expr {
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
 
-// Zig: `pub var icount: usize = 0;` — a plain non-atomic global, never read
-// (debug counter). Kept for parity but **debug-only**: in release the
-// `lock xadd` per node was a contended cache line bouncing across the bundler
-// worker pool on every Expr allocation. Zig's increment is a non-atomic store
-// (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
-// faithful than the old unconditional one.
+// Debug-only allocation counter: in release the `lock xadd` per node was a
+// contended cache line bouncing across the bundler worker pool on every Expr
+// allocation.
 #[cfg(debug_assertions)]
 pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-// PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
-// statics but never references them — `E.Boolean` is stored by value in
-// `Data.e_boolean` (both `allocate` and `init` arms), not as a pointer to a
-// pooled singleton. Dropped here; the comment "We don't need to dynamically
-// allocate booleans" already holds because `E::Boolean` is inline in `Data`.
+// We don't need to dynamically allocate booleans: `E::Boolean` is inline in
+// `Data`, not a pointer to a pooled singleton.
 
 // ───────────────────────────────────────────────────────────────────────────
-// Expr::allocate / Expr::init — comptime-type dispatch → trait
+// Expr construction via the IntoExprData trait
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait implemented by every `E::*` payload type to construct an `Expr`.
-///
-/// Replaces Zig's `comptime Type: type` switch in `Expr.init` / `Expr.allocate`.
 pub trait IntoExprData: Sized {
-    /// Construct `Data` using the thread-local `Data::Store` arena (Zig: `Expr.init`).
+    /// Construct `Data` using the thread-local `Data::Store` arena.
     fn into_data_store(self) -> Data;
-    /// Construct `Data` using a caller-supplied arena (Zig: `Expr.allocate`).
+    /// Construct `Data` using a caller-supplied arena.
     /// Be careful to free the memory (or use an arena that does it for you).
     fn into_data_alloc(self, bump: &Bump) -> Data;
 }
@@ -1068,8 +1053,8 @@ impl_into_expr_data_inline! {
     RequireString => ERequireString,
 }
 
-// E::Identifier — Zig copies fields explicitly (normalization). With the
-// packed-flag layout the struct is a single `Ref`, so the copy is trivial.
+// E::Identifier — with the packed-flag layout the struct is a single `Ref`,
+// so the copy is trivial.
 impl IntoExprData for E::Identifier {
     #[inline]
     fn into_data_store(self) -> Data {
@@ -1099,8 +1084,7 @@ impl IntoExprData for E::CommonJSExportIdentifier {
     }
     #[inline]
     fn into_data_alloc(self, _bump: &Bump) -> Data {
-        // Packed layout collapses Zig's init()/allocate() distinction — `base`
-        // rides inside `ref_`, so a single-word copy carries both regardless.
+        // `base` rides inside `ref_`, so a single-word copy carries both.
         Data::ECommonjsExportIdentifier(self)
     }
 }
@@ -1129,9 +1113,8 @@ impl IntoExprData for E::EString {
     }
 }
 
-// *E.String — Zig allows passing a pointer to copy from. `EString` derives no
-// `Clone` (rope `next` ptr); Zig copies the struct bytes. Mirror with a
-// shallow field-copy.
+// &E::EString — construct from a pointer to copy from. `EString` derives no
+// `Clone` (rope `next` ptr), so this is a shallow field-copy.
 impl IntoExprData for &E::EString {
     #[inline]
     fn into_data_store(self) -> Data {
@@ -1546,9 +1529,9 @@ impl Expr {
                 // For example, "!(a < b)" is not the same as "a >= b" if a and/or b are
                 // NaN (or undefined, or null, or possibly other problem cases too).
                 //
-                // PORT: Zig captured `*E.Binary` and wrote through it; `StoreRef` is a
-                // `Copy` `NonNull` handle, so copying it out of the (immutable) `Data`
-                // and `DerefMut`-ing reaches the same arena slot.
+                // `StoreRef` is a `Copy` `NonNull` handle, so copying it out of
+                // the (immutable) `Data` and `DerefMut`-ing reaches the same
+                // arena slot.
                 match ex.op {
                     crate::OpCode::BinLooseEq => {
                         // "!(a == b)" => "a != b"
@@ -1692,8 +1675,7 @@ impl PrimitiveType {
 /// Tagged union of expression payloads. Pointer variants are arena-allocated
 /// `StoreRef<E::*>` (thin `NonNull` into `expr::data::Store` / a bump arena);
 /// inline variants are stored by value. `StoreRef` is `Copy` + `Deref`, so
-/// `Data` is `Copy` and `let Data::EBinary(b) = data; b.op` works (matching
-/// Zig's `data.e_binary.op`).
+/// `Data` is `Copy` and `let Data::EBinary(b) = data; b.op` works.
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
 pub enum Data {
@@ -1756,12 +1738,10 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `bun.assert_eql(@sizeOf(Data), 24)` (Expr.zig:2189). Rust packs the
-// identifier-family flags into `Ref`'s spare bits (see `E::Identifier` doc),
-// so every inline payload is ≤ 8 bytes; with the repr(Rust) discriminant
-// that rounds to 16. `Expr` = `Data` (16, align 8) + `Loc` (i32) → 20 → 24
-// after tail padding — 25% smaller than the Zig layout, which is the
-// structural noalias-shrink win this port targets.
+// The identifier-family flags are packed into `Ref`'s spare bits (see
+// `E::Identifier` doc), so every inline payload is ≤ 8 bytes; with the
+// repr(Rust) discriminant that rounds to 16. `Expr` = `Data` (16, align 8) +
+// `Loc` (i32) → 20 → 24 after tail padding.
 //
 // The `Option<Data>` assert proves Rust's niche optimization fires: the enum
 // has spare discriminant values (47 variants < 256, and every pointer variant
@@ -1789,9 +1769,9 @@ const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
 
-// Zig field-style union accessors (`data.e_string`, `data.e_object`). The
-// match arms in this file use these heavily; keeping them as inherent methods
-// avoids rewriting ~25 sites. Returns `Option<StoreRef<T>>` (Copy).
+// Field-style accessors (`data.e_string()`, `data.e_object()`). The match arms
+// in this file use these heavily; keeping them as inherent methods avoids
+// rewriting ~25 sites. Returns `Option<StoreRef<T>>` (Copy).
 impl Data {
     #[inline]
     pub fn e_string(&self) -> Option<StoreRef<E::EString>> {
@@ -1845,33 +1825,32 @@ impl Data {
     pub fn as_e_string(&self) -> Option<StoreRef<E::EString>> {
         self.e_string()
     }
-    /// Zig: `data.e_array` field-access. Mirrors `e_array()`; provided under
-    /// the `as_*` name for downstream crates ported from `.e_array.*`.
+    /// Mirrors `e_array()`; provided under the `as_*` name for downstream
+    /// crates.
     #[inline]
     pub fn as_e_array(&self) -> Option<StoreRef<E::Array>> {
         self.e_array()
     }
-    /// Zig: `data.e_object` field-access. Panics if not an object — callers
-    /// gate with `is_object()` / `is_e_object()` first (mirrors Zig union
-    /// access).
+    /// Panics if not an object — callers gate with `is_object()` /
+    /// `is_e_object()` first.
     #[inline]
     pub fn as_e_object(&self) -> StoreRef<E::Object> {
         self.e_object()
             .expect("ExprData::as_e_object on non-object")
     }
-    /// Zig: `data.e_object` field-access (mutable).
+    /// Mutable counterpart of `as_e_object()`; panics if not an object.
     #[inline]
     pub fn as_e_object_mut(&mut self) -> &mut E::Object {
         self.e_object_mut()
             .expect("ExprData::as_e_object_mut on non-object")
     }
-    /// Zig: `data == .e_object`.
+    /// True if this is an `EObject`.
     #[inline]
     pub fn is_e_object(&self) -> bool {
         matches!(self, Data::EObject(_))
     }
-    /// Zig: `data.e_number` field-access. `E::Number` is an inline (non-Store)
-    /// payload, so this returns it by value.
+    /// `E::Number` is an inline (non-Store) payload, so this returns it by
+    /// value.
     #[inline]
     pub fn as_e_number(&self) -> Option<E::Number> {
         if let Data::ENumber(n) = *self {
@@ -1880,21 +1859,20 @@ impl Data {
             None
         }
     }
-    /// Zig: `data == .e_string`.
+    /// True if this is an `EString`.
     #[inline]
     pub fn is_e_string(&self) -> bool {
         matches!(self, Data::EString(_))
     }
-    /// Zig: `data == .e_number`.
+    /// True if this is an `ENumber`.
     #[inline]
     pub fn is_e_number(&self) -> bool {
         matches!(self, Data::ENumber(_))
     }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
-    // visitExpr / maybe.rs port from Zig's `data.e_dot.*` etc., which are
-    // unchecked union field reads. Rust callers `.unwrap()` (or pattern-match)
-    // — the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
+    // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
+    // sound encoding of a tag-mismatch precondition.
     #[inline]
     pub fn e_unary(&self) -> Option<StoreRef<E::Unary>> {
         if let Data::EUnary(v) = *self {
@@ -2276,9 +2254,8 @@ impl Data {
         self.tag().into()
     }
 
-    // Zig: `pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag))`
-    // Rust has no field-by-tag reflection. Per-variant `as_*` accessors live
-    // alongside the enum decl above (`e_string`/`e_object`/...).
+    // Per-variant `as_*` accessors live alongside the enum decl above
+    // (`e_string`/`e_object`/...).
     pub fn as_e_identifier(&self) -> Option<E::Identifier> {
         if let Data::EIdentifier(i) = self {
             Some(*i)
@@ -2300,20 +2277,18 @@ impl Data {
 
 impl Data {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
-    /// arena slot) but don't recurse into children. Zig: `Data.clone`.
+    /// arena slot) but don't recurse into children.
     ///
-    /// PORT NOTE: the `E::*` payloads do not derive `Clone` (they hold raw arena
-    /// pointers / `Vec`). Zig copied struct bytes (`el.*`); we mirror that
-    /// with a `core::ptr::read` of the payload, which is sound because every
+    /// The `E::*` payloads do not derive `Clone` (they hold raw arena
+    /// pointers / `Vec`), so this does a `core::ptr::read` of the payload,
+    /// which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
     pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
-        // TODO(port): narrow error set
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
-                // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy ==
-                // Zig's `el.*` struct copy.
+                // POD-shaped (no `Drop`). `ptr::read` performs a bitwise copy.
                 let copied = unsafe { core::ptr::read($el.as_ptr()) };
                 let item = bump.alloc(copied);
                 return Ok(Data::$variant(StoreRef::from_bump(item)));
@@ -2396,7 +2371,7 @@ impl Data {
                 Ok(Data::EBinary(StoreRef::from_bump(item)))
             }
             Data::EClass(el) => {
-                // `properties` is an arena-owned `StoreSlice<Property>` (Zig: `[]Property`).
+                // `properties` is an arena-owned `StoreSlice<Property>`.
                 let src_props: &[G::Property] = el.properties.slice();
                 let mut properties = bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
@@ -2529,8 +2504,8 @@ impl Data {
                         None => None,
                     },
                     parts: el.parts,
-                    // `TemplateContents` is POD-shaped; Zig copied `el.head` by
-                    // value. `shallow_clone` is the safe field-wise copy.
+                    // `TemplateContents` is POD-shaped; `shallow_clone` is the
+                    // safe field-wise copy.
                     head: el.head.shallow_clone(),
                 });
                 Ok(Data::ETemplate(StoreRef::from_bump(item)))
@@ -2605,11 +2580,9 @@ impl Data {
     /// `hasher` should be something with `fn update(&[u8])`;
     /// symbol table is passed to serialize `Ref` as identifier names instead of nondeterministic numbers.
     ///
-    /// Port of `Expr.Data.writeToHasher`. Zig fed raw bytes of anonymous tuples
-    /// (`std.mem.asBytes(&.{a, b, c})`) — including padding, which is undefined
-    /// in both languages. The Rust port hashes each scalar individually so the
-    /// output is deterministic (this is only consumed by React Refresh signature
-    /// generation; byte-for-byte parity with Zig is not required, only stability).
+    /// Hashes each scalar individually so the output is deterministic — no
+    /// padding bytes are fed to the hasher (this is only consumed by React
+    /// Refresh signature generation; only stability is required).
     pub fn write_to_hasher<H, S>(&self, hasher: &mut H, symbol_table: &mut S)
     where
         H: bun_core::Hasher + ?Sized,
@@ -2618,8 +2591,7 @@ impl Data {
         // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
         // we cannot extend that trait from this crate-file scope. `NoUninit`
-        // bound lets `bytemuck::bytes_of` view the value's bytes safely
-        // (mirrors Zig `hasher.update(std.mem.asBytes(&thing))`).
+        // bound lets `bytemuck::bytes_of` view the value's bytes safely.
         #[inline(always)]
         fn raw<H: bun_core::Hasher + ?Sized, T: bytemuck::NoUninit>(h: &mut H, v: T) {
             h.update(bytemuck::bytes_of(&v));
@@ -2689,9 +2661,7 @@ impl Data {
                 e.value.data.write_to_hasher(hasher, symbol_table);
             }
             Data::EYield(e) => {
-                // TODO(port): Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
-                // `?Expr` optional, including loc/data pointer). Rust `Option<Expr>` layout is
-                // not byte-compatible, so we hash the discriminant here and recurse below.
+                // Hash the `Option` discriminant, then recurse into the value.
                 raw(hasher, e.is_star);
                 raw(hasher, e.value.is_some());
                 if let Some(value) = &e.value {
@@ -2724,9 +2694,7 @@ impl Data {
                 hasher.update(&e.value);
             }
             Data::EString(e) => {
-                // PORT NOTE: Zig declared `var next: ?*E.String = e;` and tested `if (next)`
-                // — i.e. it only ever hashes the *first* rope segment (the `next = current.next`
-                // store is dead). Preserved here.
+                // Only the *first* rope segment is hashed.
                 let current: &E::String = e;
                 if current.is_utf8() {
                     hasher.update(&current.data);
@@ -3148,8 +3116,8 @@ impl EqlKindT for StrictEql {
     const STRICT: bool = true;
 }
 
-/// Minimal parser surface needed by `Data::eql` — Zig wrote `p: anytype` and
-/// touched only `p.arena` + `p.module_ref`. Kept separate from
+/// Minimal parser surface needed by `Data::eql` — only the arena and the
+/// module ref are touched. Kept separate from
 /// `ast::p::ParserLike` so this file does not grow that trait (out of scope);
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
@@ -3278,8 +3246,7 @@ impl Data {
             }
             Data::EString(l) => {
                 // `StoreRef<EString>` is a Copy pointer; rebind mutably so
-                // `DerefMut` gives `&mut EString` for in-place rope flattening
-                // (Zig wrote through `*E.String` here).
+                // `DerefMut` gives `&mut EString` for in-place rope flattening.
                 let mut l = *l;
                 match right {
                     Data::EString(r) => {
@@ -3352,8 +3319,6 @@ impl Data {
 // ───────────────────────────────────────────────────────────────────────────
 
 // `new_store!` emits `pub mod expr_store { pub struct Store; ... }`.
-// Type list mirrors Zig's `Data.Store = NewStore(&.{ E.Array, ... }, 512)`
-// (Expr.zig:2550-2580).
 crate::new_store!(
     expr_store,
     [
@@ -3397,13 +3362,8 @@ pub mod data {
 pub use data::Store;
 
 // ───────────────────────────────────────────────────────────────────────────
-// StoredData / helpers
+// Helpers
 // ───────────────────────────────────────────────────────────────────────────
-
-// Zig: `pub fn StoredData(tag: Tag) type` — comptime type-level function.
-// Rust cannot return types from runtime tags. Callers should match on `Data`
-// directly.
-// TODO(port): if needed, expose as a macro mapping Tag → payload type.
 
 fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // +"" -> 0
@@ -3413,7 +3373,6 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     if !bun_core::is_all_ascii(str) {
         return f64::NAN;
     }
-    // TODO(port): move to *_sys
     unsafe extern "C" {
         // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
         // guarantee the (ptr,len) pair is a valid readable range.
@@ -3424,5 +3383,3 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // only (no mutation, no retention past return).
     unsafe { JSC__jsToNumber(str.as_ptr(), str.len()) }
 }
-
-// ported from: src/js_parser/ast/Expr.zig

@@ -1,4 +1,5 @@
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 use crate::shared::Data;
 use bun_ptr::RawSlice;
 
@@ -53,35 +54,33 @@ impl Drop for Authentication {
 }
 
 impl Authentication {
-    // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, _>`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Self, AnyPostgresError> {
         let message_length = reader.length()?;
 
         match reader.int4()? {
             0 => {
                 if message_length != 8 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 Ok(Authentication::Ok)
             }
             2 => {
                 if message_length != 8 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 Ok(Authentication::KerberosV5)
             }
             3 => {
                 if message_length != 8 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 Ok(Authentication::ClearTextPassword)
             }
             5 => {
                 if message_length != 12 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let salt_data = reader.bytes(4)?;
                 // `defer salt_data.deinit()` — handled by Drop on `Data` at scope exit.
@@ -90,28 +89,28 @@ impl Authentication {
             }
             7 => {
                 if message_length != 8 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 Ok(Authentication::GSS)
             }
 
             8 => {
                 if message_length < 9 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let bytes = reader.read((message_length - 8) as usize)?;
                 Ok(Authentication::GSSContinue { data: bytes })
             }
             9 => {
                 if message_length != 8 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 Ok(Authentication::SSPI)
             }
 
             10 => {
                 if message_length < 9 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 reader.skip((message_length - 8) as usize)?;
                 Ok(Authentication::SASL)
@@ -119,10 +118,9 @@ impl Authentication {
 
             11 => {
                 if message_length < 9 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let bytes = reader.bytes((message_length - 8) as usize)?;
-                // errdefer { bytes.deinit(); } — `Data: Drop` frees on `?` early-return.
 
                 let mut r: Option<RawSlice<u8>> = None;
                 let mut i: Option<RawSlice<u8>> = None;
@@ -160,9 +158,9 @@ impl Authentication {
                     bun_core::scoped_log!(Postgres, "Missing i");
                 }
 
-                let r = r.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
-                let s = s.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
-                let i = i.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
+                let r = r.ok_or(AnyPostgresError::InvalidMessage)?;
+                let s = s.ok_or(AnyPostgresError::InvalidMessage)?;
+                let i = i.ok_or(AnyPostgresError::InvalidMessage)?;
 
                 Ok(Authentication::SASLContinue(SASLContinue {
                     data: bytes,
@@ -174,7 +172,7 @@ impl Authentication {
 
             12 => {
                 if message_length < 9 {
-                    return Err(bun_core::err!("InvalidMessageLength"));
+                    return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let remaining: usize = (message_length - 8) as usize;
 
@@ -186,12 +184,9 @@ impl Authentication {
         }
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/Authentication.zig

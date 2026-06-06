@@ -32,10 +32,9 @@ pub mod pending_connect;
 #[path = "h3_client/Stream.rs"]
 pub mod stream;
 
-// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree. Zig
-// comptime-deduplicates per tag, so the four submodules share one
-// `really_disable`/`is_visible_once`/lock; declaring it once here and importing
-// in each child preserves that behavior.
+// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree:
+// the submodules share one `really_disable`/`is_visible_once`/lock by
+// declaring it once here and importing it in each child.
 bun_core::declare_scope!(h3_client, hidden);
 
 pub use client_context::ClientContext;
@@ -46,10 +45,9 @@ pub use stream::Stream;
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
+// Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
+// submodules share one identifier; SCREAMING_SNAKE aliases preserved for the
+// existing internal references.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]
@@ -66,8 +64,5 @@ pub use live_streams as LIVE_STREAMS;
 pub static body_bytes_received: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
-// Zig: pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
-// Deleted per PORTING.md — *_jsc aliases are dropped; H3TestingAPIs lives in
-// bun_http_jsc and is accessed via the extension-trait pattern there.
-
-// ported from: src/http/H3Client.zig
+// H3TestingAPIs lives in bun_http_jsc and is accessed via the
+// extension-trait pattern there.

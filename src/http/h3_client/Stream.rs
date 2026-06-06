@@ -45,7 +45,6 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Zig: `pub const new = bun.TrivialNew(@This());`
     /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
     /// `heap::take`.
@@ -105,10 +104,6 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         // `decoded_headers` / `body_buffer` are Vec — freed automatically.
-        // Zig `.monotonic` == LLVM monotonic == Rust `Relaxed`.
         h3::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        // Zig: `bun.destroy(this)` — the Box deallocation happens at the drop site.
     }
 }
-
-// ported from: src/http/h3_client/Stream.zig

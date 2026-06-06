@@ -3,7 +3,7 @@
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module tree wired with explicit `#[path]` attrs (files use PascalCase
-// basenames, mirroring the Zig sources).
+// basenames).
 // ──────────────────────────────────────────────────────────────────────────
 
 // Local signature-compatible stubs for the JSC surface this crate names.

@@ -46,9 +46,7 @@ impl HashedString {
 
     pub fn str(&self) -> &[u8] {
         // SAFETY: ptr and len were set together from a valid slice in `init`/`init_no_hash`;
-        // caller is responsible for keeping the backing buffer alive (same invariant as Zig).
+        // caller is responsible for keeping the backing buffer alive.
         unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }
     }
 }
-
-// ported from: src/string/HashedString.zig

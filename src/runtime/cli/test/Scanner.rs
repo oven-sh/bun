@@ -27,9 +27,12 @@ pub struct Scanner<'a> {
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub test_files: Vec<Interned>,
-    // TODO(port): LIFETIMES.tsv classifies as &'a FileSystem, but several call
-    // sites (dirname_store.append, readDirectoryWithIterator) mutate. May need
-    // interior mutability on FileSystem or &'a mut.
+    // dirname_store appends are fine through `&self` (interior-mutable bss
+    // string list), but `read_dir_with_name`/`next` derive `&mut RealFS` from
+    // this `&FileSystem` via lint-silenced `&T` -> `&mut T` casts — that is
+    // UB-adjacent debt, not a settled design. This field should become
+    // `*mut FileSystem` (the shape `Transpiler.fs` already uses; init would
+    // store `transpiler.fs` directly) or RealFS needs interior mutability.
     pub fs: &'a FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,
@@ -38,13 +41,13 @@ pub struct Scanner<'a> {
     pub search_count: usize,
 }
 
-// std.fifo.LinearFifo(ScanEntry, .Dynamic) — ring buffer with readItem/writeItem.
-// VecDeque is the direct equivalent (pop_front / push_back).
+// FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
 pub struct ScanEntry {
     pub relative_dir: Fd,
-    // TODO(port): lifetime — borrows from FileSystem.dirname_store (process-lifetime arena)
+    // `'static` is sound here: borrows from FileSystem.dirname_store, a
+    // process-lifetime arena that is never reset.
     pub dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
@@ -67,15 +70,14 @@ impl PartialEq<bun_core::Error> for ScanError {
 }
 
 /// Newtype around `*mut Scanner` so it can satisfy [`DirEntryIterator`]
-/// (whose `next` takes `&self`). Zig passed `*Scanner` directly and called
-/// `.next()` mutably; the raw pointer reproduces that aliasing.
+/// (whose `next` takes `&self`) while still allowing mutable calls.
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
     fn next(&self, entry: &mut fs::Entry, fd: Fd) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
-        // while the resolver walks entries (Zig: `iterator.next(entry, fd)`).
+        // while the resolver walks entries.
         unsafe { (*self.0).next(entry, fd) }
     }
 }
@@ -92,8 +94,8 @@ impl<'a> Scanner<'a> {
             path_ignore_patterns: &[],
             dirs_to_scan: Fifo::new(),
             options: &transpiler.options,
-            // SAFETY: `Transpiler.fs` is the process-singleton `*mut FileSystem`
-            // (Zig `*FileSystem`); it outlives the scanner.
+            // SAFETY: `Transpiler.fs` is the process-singleton `*mut FileSystem`;
+            // it outlives the scanner.
             fs: unsafe { &*transpiler.fs },
             test_files: results,
             open_dir_buf: PathBuffer::uninit(),
@@ -111,7 +113,7 @@ impl<'a> Scanner<'a> {
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let parts: [&[u8]; 2] = [self.fs.top_level_dir, path_literal];
-        // PORT NOTE: reshaped for borrowck — abs_buf's return keeps a &mut borrow
+        // reshaped for borrowck — abs_buf's return keeps a &mut borrow
         // of scan_dir_buf alive across the &mut self calls below. Capture only the
         // length, then reconstruct a detached slice from the raw buffer pointer.
         let path_len = self.fs.abs_buf(&parts, &mut self.scan_dir_buf).len();
@@ -156,16 +158,14 @@ impl<'a> Scanner<'a> {
                 debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
                 // `entries.data` borrow.
-                // PORT NOTE: this branch is taken when the resolver already has
+                // this branch is taken when the resolver already has
                 // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
                 // cwd before the scanner runs), so `read_directory_with_iterator`
                 // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Zig walks `std.HashMapUnmanaged` slot order here, which is
-                // deterministic per its linear-probing layout; Rust's SwissTable
-                // iteration order differs even with the same wyhash seed. Sort by
-                // (lowercased) base name so test-file discovery order is stable
-                // across the port — regression/issue/26851 relies on `a_*.test`
-                // running before `b_*.test` under `--bail`.
+                // Hash-map iteration order is not stable. Sort by (lowercased)
+                // base name so test-file discovery order is deterministic —
+                // regression/issue/26851 relies on `a_*.test` running before
+                // `b_*.test` under `--bail`.
                 let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
                 entry_ptrs.sort_by(|a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
@@ -244,16 +244,18 @@ impl<'a> Scanner<'a> {
         name: &[u8],
         handle: Option<bun_sys::Dir>,
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
-        // PORT NOTE: Zig `readDirectoryWithIterator` takes `*RealFS` and a
-        // duck-typed `*Scanner` iterator. `self.fs` is `&FileSystem` here, but
+        // `read_directory_with_iterator` takes `*mut RealFS` and an
+        // iterator. `self.fs` is `&FileSystem` here, but
         // the underlying `RealFS` is the process singleton and is mutated
         // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
-        // cast away `&` to match the Zig calling convention. Serialised by
-        // `RealFS.entries_mutex` inside the callee.
+        // cast away `&` to call it. Serialised by
+        // `RealFS.entries_mutex` inside the callee. This `&T` -> `&mut T` cast
+        // is lint-silenced UB-adjacent debt; the real fix is storing
+        // `Scanner.fs` as `*mut FileSystem` (see the field doc).
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
-        // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
+        // SAFETY: see comment above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
         unsafe { &mut *real_fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
@@ -353,7 +355,7 @@ impl<'a> Scanner<'a> {
     pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
-        // `Entry::kind` takes `*mut RealFS` (Zig `*Implementation`); cast the
+        // `Entry::kind` takes `*mut RealFS`; cast the
         // shared singleton ref — `kind()` only stat()s through it.
         let real_fs = (&raw const self.fs.fs).cast_mut();
         // SAFETY: entries_mutex held; real_fs points at the process-global RealFS.
@@ -378,7 +380,7 @@ impl<'a> Scanner<'a> {
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
                     let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    // PORT NOTE: reshaped for borrowck — drop the &mut borrow from
+                    // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
                     let dir_path_len = self.fs.abs_buf(&parts, &mut self.open_dir_buf).len();
@@ -393,8 +395,7 @@ impl<'a> Scanner<'a> {
                 self.dirs_to_scan.push_back(ScanEntry {
                     relative_dir: fd,
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
-                    // no Drop; Zig copied it by value. Upstream type lacks
-                    // Clone/Copy, so bitwise-copy here to match Zig semantics.
+                    // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
                     name: unsafe { core::ptr::read(&raw const entry.base_) },
                     dir_path: entry.dir,
                 });
@@ -411,7 +412,7 @@ impl<'a> Scanner<'a> {
                 }
 
                 let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                // PORT NOTE: reshaped for borrowck — drop the &mut borrow from
+                // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
                 let path_len = self.fs.abs_buf(&parts, &mut self.open_dir_buf).len();
@@ -440,5 +441,3 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
-
-// ported from: src/cli/test/Scanner.zig

@@ -40,8 +40,7 @@ impl Stream {
         // connection shared by every stream on it* — two live &mut Stream on the
         // same conn calling .socket() (or a conn-level callback already holding
         // &mut Socket) would otherwise yield aliasing &mut Socket, which is UB.
-        // Mirrors Zig's `?*Socket`; callers reborrow locally under their own
-        // SAFETY proof.
+        // Callers reborrow locally under their own SAFETY proof.
         NonNull::new(us_quic_stream_socket(self))
     }
 
@@ -68,7 +67,7 @@ impl Stream {
 
     pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
         // SAFETY: self is a valid us_quic_stream_t; ext slot is pointer-sized & pointer-aligned,
-        // and Option<NonNull<T>> has the same layout as Zig's `?*T` (nullable pointer).
+        // and Option<NonNull<T>> has nullable-pointer layout.
         // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
         // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
         // so no second &mut to the slot can be obtained while this one is live.
@@ -111,5 +110,3 @@ impl Stream {
         }
     }
 }
-
-// ported from: src/uws_sys/quic/Stream.zig

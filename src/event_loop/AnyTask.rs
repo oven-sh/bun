@@ -11,7 +11,7 @@ use crate::Task;
 /// split exists only to keep call sites compiling.
 pub use bun_core::JsError as ErasedJsError;
 
-/// `bun.JSError!T` for tier-3 callbacks. Same type as `bun_jsc::JsResult<T>`; kept as a
+/// Result alias for tier-3 callbacks. Same type as `bun_jsc::JsResult<T>`; kept as a
 /// local alias so `AnyTask`/`ManagedTask` signatures don't take an upward dep.
 pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
 
@@ -22,8 +22,8 @@ pub struct AnyTask {
 
 impl Default for AnyTask {
     fn default() -> Self {
-        // Zig: field defaults to `= undefined`; provide a sentinel that panics
-        // if run before being overwritten.
+        // Provide a sentinel callback that panics if run before being
+        // overwritten.
         Self {
             ctx: None,
             callback: |_| unreachable!("AnyTask.callback was undefined"),
@@ -37,8 +37,6 @@ impl AnyTask {
     }
 
     pub fn run(&mut self) -> JsResult<()> {
-        // Zig: @setRuntimeSafety(false) — no Rust equivalent; bounds/overflow checks
-        // are already off in release and the body has none anyway.
         let callback = self.callback;
         let ctx = self.ctx;
         callback(ctx.expect("ctx").as_ptr())
@@ -46,11 +44,8 @@ impl AnyTask {
 }
 
 impl AnyTask {
-    /// Zig: `AnyTask.New(T, Callback).init(ctx)`.
-    ///
     /// Builds an [`AnyTask`] from a typed `*mut T` context and a typed
-    /// callback, erasing both to `c_void` in one place. This is the direct
-    /// stable-Rust analogue of Zig's `comptime Callback` generator: instead of
+    /// callback, erasing both to `c_void` in one place. Instead of
     /// monomorphising a `wrap` shim per `(Type, Callback)` pair, the typed
     /// `fn` pointer itself is reinterpreted as the erased one — `*mut T` and
     /// `*mut c_void` are ABI-identical for all `T: Sized`, so
@@ -72,5 +67,3 @@ impl AnyTask {
         }
     }
 }
-
-// ported from: src/event_loop/AnyTask.zig

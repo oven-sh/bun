@@ -21,10 +21,8 @@ use bun_url::URL;
 /// The intermediate `BunString` is `deref()`ed before return; the returned
 /// `ZigStringSlice` owns (or independently refs) its bytes.
 ///
-/// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`
-///   (credentials_jsc.zig behaviour).
-/// * `strict = false` — non-string is silently ignored (list_objects.zig
-///   behaviour).
+/// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
+/// * `strict = false` — non-string is silently ignored.
 pub(crate) fn get_truthy_string_utf8(
     opts: JSValue,
     global: &JSGlobalObject,
@@ -53,15 +51,13 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(Some(utf8))
 }
 
-// PORT NOTE: Zig stores `str.toUTF8()` results in `_*_slice` fields and then
-// borrows `.slice()` into `credentials.*` — a self-referential struct. The
-// Rust `S3Credentials` fields are owned `Box<[u8]>`, so for credential strings
-// we deep-copy into the `Box` directly and skip the `_*_slice` ownership
+// `S3Credentials` fields are owned `Box<[u8]>`, so credential strings are
+// deep-copied into the `Box` directly with no `_*_slice` ownership
 // indirection. For `content_disposition` / `content_type` / `content_encoding`
-// (typed `Option<*const [u8]>` in `S3CredentialsWithOptions`) we keep the Zig
-// shape: `_*_slice` owns the bytes, the raw fat-pointer borrows them. The
-// underlying heap allocation does not move when the struct is returned by
-// value, so the pointer remains valid for the struct's lifetime.
+// (typed `Option<*const [u8]>` in `S3CredentialsWithOptions`), `_*_slice` owns
+// the bytes and the raw fat-pointer borrows them. The underlying heap
+// allocation does not move when the struct is returned by value, so the
+// pointer remains valid for the struct's lifetime.
 
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
 \"authenticated-read\", \"bucket-owner-read\", \"bucket-owner-full-control\", \"log-delivery-write\"";
@@ -81,9 +77,9 @@ pub(crate) fn get_credentials_with_options(
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
     // get ENV config
-    // PORT NOTE: Zig takes `this` by value (struct copy). `S3Credentials`
-    // carries an intrusive ref-count and is not `Copy`; `Clone` performs the
-    // matching deep field copy with a fresh ref-count.
+    // `S3Credentials`
+    // carries an intrusive ref-count and is not `Copy`; `Clone` performs a
+    // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
         options: default_options,
@@ -297,5 +293,3 @@ pub(crate) fn get_credentials_with_options(
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
-
-// ported from: src/runtime/webcore/s3/credentials_jsc.zig

@@ -9,16 +9,16 @@ use core::sync::atomic::Ordering;
 use bun_core::Error;
 use bun_picohttp as picohttp;
 
-// `H2Client.zig` is the parent module of `h2_client/`; `live_streams` lives there.
+// `live_streams` lives in the parent module of `h2_client/`.
 use super::client_session::ClientSession;
 use crate::HTTPClient;
 
-// `pub const new = bun.TrivialNew(@This());` — see `Stream::new` below, which fills the
-// Zig field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
+// See `Stream::new` below, which fills the
+// field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
 // Drop runs when removed from the map.
 
 pub struct Stream {
-    // PORT NOTE: was u31 (HTTP/2 stream IDs are 31-bit); top bit must stay clear.
+    // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub id: u32,
     // BACKREF: this Stream is owned by `session.streams`; raw ptr per LIFETIMES class BACKREF.
     pub session: *mut ClientSession,
@@ -107,7 +107,7 @@ impl Stream {
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
 /// `.open`; `idle`/`reserved` are never represented as objects. END_STREAM
 /// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.
-#[repr(u8)] // PORT NOTE: was enum(u2)
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum State {
     Open,
@@ -120,17 +120,15 @@ pub enum State {
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // Zig .monotonic == LLVM monotonic == Rust Relaxed.
         let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
         // header_block / body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
-        // bun.destroy(this): freeing the Box is the caller's drop; nothing to do here.
+        // Freeing the Box is the caller's drop; nothing to do here.
     }
 }
 
 impl Stream {
-    /// Mirrors `bun.TrivialNew(@This())` + Zig struct field defaults: callers in Zig
-    /// write `Stream.new(.{ .id, .session, .client, .send_window })` and the rest
-    /// default to `.{}` / `0` / `false` / `""`.
+    /// Callers pass `id`, `session`, `client`, `send_window`; the rest of the
+    /// fields get their defaults.
     pub fn new(
         id: u32,
         session: *mut ClientSession,
@@ -160,8 +158,8 @@ impl Stream {
         })
     }
 
-    // PORT NOTE: Stream.zig:rst() re-entered the session via the `session`
-    // backref. In Rust that autorefs a second `&mut ClientSession` while
+    // No `rst()` here: re-entering the session via the `session` backref
+    // would autoref a second `&mut ClientSession` while
     // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),
     // so RST is routed through `ClientSession::rst_stream` instead — the
     // session `&mut` is already in scope at every call site.
@@ -195,5 +193,3 @@ impl Stream {
         self.state == State::HalfClosedRemote || self.state == State::Closed
     }
 }
-
-// ported from: src/http/h2_client/Stream.zig

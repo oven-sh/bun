@@ -36,8 +36,7 @@ pub struct Theme<'a> {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
-    // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
+    // LIFETIMES.tsv: BORROW_PARAM. Keys are URL bytes,
     // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
     /// Base directory used to resolve relative image `src` paths. When
@@ -78,7 +77,6 @@ impl ImageUrlCollector {
     }
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for ImageUrlCollector {
     fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
         Ok(())
@@ -271,8 +269,7 @@ impl OutputBuffer {
         if self.oom {
             return;
         }
-        // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator.
+        // Vec::extend aborts on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 
@@ -374,9 +371,9 @@ impl<'a> AnsiRenderer<'a> {
                     kind: BlockKind::Li,
                     ..Default::default()
                 };
-                // PORT NOTE: reshaped for borrowck — find_parent_list returns
-                // an index instead of `&mut BlockContext` so we can call
-                // self.write_styled() afterwards without an aliasing borrow.
+                // find_parent_list returns an index instead of
+                // `&mut BlockContext` so we can call self.write_styled()
+                // afterwards without an aliasing borrow.
                 let parent_list = self.find_parent_list();
                 let task_mark = types::task_mark_from_data(data);
                 if let Some(idx) = parent_list {
@@ -593,9 +590,8 @@ impl<'a> AnsiRenderer<'a> {
                     if self.theme.colors && self.theme.hyperlinks {
                         if let Some(href) = &self.link_href {
                             // OSC 8 hyperlink start
-                            // PORT NOTE: reshaped for borrowck — clone the
-                            // bytes so write_raw_no_color(&mut self) doesn't
-                            // alias `&self.link_href`.
+                            // Clone the bytes so write_raw_no_color(&mut self)
+                            // doesn't alias `&self.link_href`.
                             let href = href.clone();
                             self.write_raw_no_color(b"\x1b]8;;");
                             self.write_raw_no_color(&href);
@@ -1324,9 +1320,8 @@ impl<'a> AnsiRenderer<'a> {
 
     /// Find the nearest enclosing ul/ol in the block stack (walking
     /// from innermost outward, skipping the current li at the top).
-    // PORT NOTE: reshaped for borrowck — returns an index into
-    // block_stack instead of `&mut BlockContext` so callers can call
-    // other &mut self methods between accesses.
+    // Returns an index into block_stack instead of `&mut BlockContext`
+    // so callers can call other &mut self methods between accesses.
     fn find_parent_list(&self) -> Option<usize> {
         let len = self.block_stack.len();
         if len == 0 {
@@ -1354,8 +1349,8 @@ impl<'a> AnsiRenderer<'a> {
         // inside a blockquote the bold+color writes reach heading_buf and
         // may realloc its backing array, dangling the `content` slice below.
         self.heading_level = 0;
-        // PORT NOTE: reshaped for borrowck — take ownership of heading_buf
-        // so write_indent(&mut self) doesn't alias `content`.
+        // Take ownership of heading_buf so write_indent(&mut self)
+        // doesn't alias `content`.
         let content = core::mem::take(&mut self.heading_buf);
         self.write_indent();
         if self.theme.colors {
@@ -1417,8 +1412,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     fn flush_code_block(&mut self) {
-        // PORT NOTE: reshaped for borrowck — take ownership of code_buf so
-        // self.write_indent() etc. don't alias it.
+        // Take ownership of code_buf so self.write_indent() etc.
+        // don't alias it.
         let src = core::mem::take(&mut self.code_buf);
         // Strip exactly one trailing newline (parser adds one).
         let body: &[u8] = if !src.is_empty() && src[src.len() - 1] == b'\n' {
@@ -1622,8 +1617,8 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = true;
 
         let mut has_separated_header = false;
-        // PORT NOTE: reshaped for borrowck — take ownership of table_rows so
-        // self.write_row_cells(&mut self) doesn't alias it.
+        // Take ownership of table_rows so self.write_row_cells(&mut self)
+        // doesn't alias it.
         let rows = core::mem::take(&mut self.table_rows);
         for row in &rows {
             self.write_row_cells(row, &widths, &aligns);
@@ -1877,8 +1872,8 @@ impl<'a> AnsiRenderer<'a> {
         // Snapshot alt + link fields now — emitImage drops out of the
         // image context before writing, so image_alt / image_depth checks
         // in emitInline would otherwise still divert output.
-        // PORT NOTE: reshaped for borrowck — take ownership of buffered
-        // fields so &mut self methods below don't alias.
+        // Take ownership of the buffered fields so &mut self methods
+        // below don't alias.
         let alt = core::mem::take(&mut self.image_alt);
         let src = self.image_src.take();
         let title = self.image_title.take();
@@ -2535,7 +2530,6 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
     #[cfg(not(unix))]
     {
         return false;
@@ -2582,7 +2576,6 @@ fn probe_kitty_graphics() -> bool {
             events: bun_sys::posix::POLL_IN,
             revents: 0,
         }];
-        // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2698,7 +2691,6 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for AnsiRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         AnsiRenderer::enter_block(self, block_type, data, flags);
@@ -2742,5 +2734,3 @@ pub fn render_to_ansi<'a>(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
 }
-
-// ported from: src/md/ansi_renderer.zig

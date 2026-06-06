@@ -872,6 +872,9 @@ it.skipIf(isWindows)("bun upgrade pr <number> installs the pull request's build"
       ...env,
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
       GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      // Build links are pinned to Bun's Buildkite pipeline; point the pin at
+      // the mock server.
+      BUN_UPGRADE_TESTING_BUILDKITE_URL: `https://${server.hostname}:${server.port}/bun/bun/builds/`,
       BUN_TMPDIR: String(staging),
       ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     },

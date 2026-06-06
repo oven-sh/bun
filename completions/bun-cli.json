@@ -3594,6 +3594,18 @@
           "required": false,
           "multiple": false,
           "type": "string"
+        },
+        {
+          "name": "subcommand",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "pullRequest",
+          "required": false,
+          "multiple": false,
+          "type": "string"
         }
       ],
       "examples": ["bun upgrade", "bun upgrade --stable", "bun upgrade pr 12345"],

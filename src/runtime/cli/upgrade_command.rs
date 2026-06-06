@@ -1694,6 +1694,10 @@ impl UpgradeCommand {
 
     const RELEASES_DOWNLOAD_BASE: &'static str = "https://github.com/oven-sh/bun/releases/download";
 
+    /// Where `buildkite/bun` commit statuses are expected to point; builds
+    /// anywhere else are not Bun's CI.
+    const BUILDKITE_BUILDS_PREFIX: &'static str = "https://buildkite.com/bun/bun/builds/";
+
     /// zstd frame magic number — delta patches are zstd-compressed bsdiff
     /// streams. Raw bsdiff patches are accepted as well.
     const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
@@ -2132,6 +2136,14 @@ impl UpgradeCommand {
             }
         };
 
+        // Only follow links into Bun's own Buildkite pipeline: a status whose
+        // target points anywhere else is not the CI build (fail closed).
+        let allowed_build_prefix: Vec<u8> =
+            match env_loader.map.get(b"BUN_UPGRADE_TESTING_BUILDKITE_URL") {
+                Some(url) if !url.is_empty() => url.to_vec(),
+                _ => Self::BUILDKITE_BUILDS_PREFIX.as_bytes().to_vec(),
+            };
+
         let mut build_url: Option<Vec<u8>> = None;
         if let Some(statuses) = Self::parse_json_response(statuses_body) {
             if let Some(statuses) = statuses.data.e_array() {
@@ -2145,7 +2157,7 @@ impl UpgradeCommand {
                         continue;
                     }
                     if let Some(target_url) = Self::json_string_property(status, b"target_url") {
-                        if !target_url.is_empty() {
+                        if strings::starts_with(&target_url, &allowed_build_prefix) {
                             build_url = Some(target_url);
                             break;
                         }
@@ -2265,6 +2277,11 @@ impl UpgradeCommand {
                 }
 
                 let zip_url: Vec<u8> = if strings::has_prefix_comptime(&artifact_url, b"http") {
+                    // An absolute artifact URL must stay on the build's own
+                    // origin; anything else doesn't belong to this CI build.
+                    if !strings::starts_with(&artifact_url, &origin) {
+                        continue;
+                    }
                     artifact_url
                 } else {
                     // Always followed by `return`, so `origin` can be taken.

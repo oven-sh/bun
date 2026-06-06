@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunRun, isIPv6, isWindows, joinP, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -232,4 +232,72 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("code: EADDRINUSE");
   expect(stdout).not.toContain(":-1");
   expect(stdout).toContain("port: -1");
+});
+
+test.skipIf(isWindows)("SCHED_NONE pipe listen unlinks the socket file when the last worker leaves", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const SOCK = path.join(__dirname, "test.sock");
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork({ BUN_CLUSTER_SOCK: SOCK });
+  cluster.on("listening", () => {
+    console.log("exists while listening:", fs.existsSync(SOCK));
+    worker.disconnect();
+  });
+  cluster.on("exit", () => {
+    // removeHandlesForWorker (and SharedHandle.remove) runs before the
+    // primary emits 'exit', so the unlink must have happened by now.
+    console.log("exists after exit:", fs.existsSync(SOCK));
+    process.exit(0);
+  });
+} else {
+  net.createServer(() => {}).listen(process.env.BUN_CLUSTER_SOCK);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("exists while listening: true");
+  expect(stdout).toContain("exists after exit: false");
+});
+
+test.skipIf(!isIPv6())("SCHED_NONE listen with no host binds the IPv6 wildcard (dual-stack)", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  cluster.on("listening", (w, address) => {
+    // node's createServerHandle binds "::" when no address is given, so an
+    // IPv6 client must be able to reach the shared-handle server.
+    const c = net.connect({ host: "::1", port: address.port });
+    c.on("connect", () => {
+      console.log("ipv6 connect ok");
+      c.end();
+      worker.kill();
+      process.exit(0);
+    });
+    c.on("error", err => {
+      console.log("ipv6 connect error:", err.code);
+      worker.kill();
+      process.exit(1);
+    });
+  });
+} else {
+  net.createServer(s => s.end()).listen(0);
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("ipv6 connect ok");
 });

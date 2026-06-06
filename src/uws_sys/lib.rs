@@ -172,16 +172,6 @@ bun_core::opaque_extern!(
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
-// ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
-// The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
-// here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
-// upward dep, the opaque handle gets thin inherent methods that forward to
-// `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
-// This is the same link-time-dispatch pattern as other `*_sys` crates use for
-// their C backends — only here the "backend" is Rust in a higher tier.
-// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
-// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
-// via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 /// Cross-process socket transfer. On Windows this wraps WSADuplicateSocketW /
 /// WSASocketW(FROM_PROTOCOL_INFO): the exporter serializes the SOCKET for a
 /// target pid into an opaque blob that travels in-band over the IPC pipe; the
@@ -209,6 +199,16 @@ pub mod socket_transfer {
     }
 }
 
+// ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
+// The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
+// here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
+// upward dep, the opaque handle gets thin inherent methods that forward to
+// `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
+// This is the same link-time-dispatch pattern as other `*_sys` crates use for
+// their C backends — only here the "backend" is Rust in a higher tier.
+// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
+// SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
+// via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
 // scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
 unsafe extern "C" {

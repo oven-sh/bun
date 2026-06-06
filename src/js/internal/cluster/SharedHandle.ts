@@ -24,7 +24,12 @@ export default class SharedHandle {
     }
     const rval = clusterRawBind(addressType, address, typeof port === "number" ? port : 0, flags | 0);
     if (typeof rval === "number") this.errno = rval;
-    else this.handle = rval; // { fd, port }
+    else {
+      this.handle = rval; // { fd, port }
+      // A pipe bind created the socket file; keep the path so remove() can
+      // unlink it the way node's libuv pipe handle does on close.
+      if (addressType === -1) this.handle.path = address;
+    }
   }
 
   add(worker, send) {
@@ -42,6 +47,14 @@ export default class SharedHandle {
 
     if (this.handle) {
       closeRawHandle(this.handle.fd);
+      if (this.handle.path) {
+        // node: uv__pipe_close unlinks the bound path when the primary's
+        // handle closes; without this the next run's bind() EADDRINUSEs on
+        // the stale socket file.
+        try {
+          require("node:fs").unlinkSync(this.handle.path);
+        } catch {}
+      }
       this.handle = null;
     }
     return true;

@@ -620,11 +620,100 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             libc::SOCK_STREAM
         };
 
+        // Build the wildcard sockaddr for `family`. The all-zero in6_addr is
+        // in6addr_any by definition.
+        fn wildcard_sockaddr(family: c_int, port: i32) -> (libc::sockaddr_storage, libc::socklen_t) {
+            // SAFETY: sockaddr_storage is plain C data; all-zero is a valid
+            // value, and the casted family views only write within bounds.
+            unsafe {
+                let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+                let ss_len: libc::socklen_t;
+                if family == libc::AF_INET6 {
+                    let sin6: &mut libc::sockaddr_in6 =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
+                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    sin6.sin6_port = (port as u16).to_be();
+                    ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+                } else {
+                    let sin: &mut libc::sockaddr_in =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+                    sin.sin_port = (port as u16).to_be();
+                    sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
+                    ss_len = core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+                }
+                (ss, ss_len)
+            }
+        }
+
+        // socket() + the option set libuv applies + bind(). Returns the bound
+        // fd or the negative errno of the step that failed.
+        fn create_and_bind(
+            family: c_int,
+            socktype: c_int,
+            is_udp: bool,
+            flags: i32,
+            ss: &libc::sockaddr_storage,
+            ss_len: libc::socklen_t,
+        ) -> Result<c_int, i32> {
+            // SAFETY: socket/setsockopt/bind FFI on a freshly created fd with
+            // a properly sized sockaddr; the fd is closed on the error path
+            // and otherwise ownership transfers to the caller.
+            unsafe {
+                let fd = libc::socket(family, socktype, 0);
+                if fd < 0 {
+                    return Err(-bun_core::ffi::errno());
+                }
+                set_cloexec_nonblock(fd);
+
+                let one: c_int = 1;
+                let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
+                let one_len = core::mem::size_of::<c_int>() as libc::socklen_t;
+                if !is_udp {
+                    // libuv sets SO_REUSEADDR on every TCP server socket.
+                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                } else if flags & 0x4 != 0 {
+                    // UV_UDP_REUSEADDR: SO_REUSEPORT on BSD/macOS, SO_REUSEADDR on Linux.
+                    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+                    {
+                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, one_ptr, one_len);
+                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                    }
+                    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+                    {
+                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                    }
+                }
+                if family == libc::AF_INET6 {
+                    // Always set the option explicitly (0 or 1): some kernels
+                    // default to v6only=1 (FreeBSD, sysctl'd Linux), and node's
+                    // uv__tcp_bind always writes it for AF_INET6.
+                    let v6only: libc::c_int = if flags & 0x1 != 0 { 1 } else { 0 };
+                    libc::setsockopt(
+                        fd,
+                        libc::IPPROTO_IPV6,
+                        libc::IPV6_V6ONLY,
+                        (&raw const v6only).cast(),
+                        one_len,
+                    );
+                }
+
+                if libc::bind(fd, core::ptr::from_ref(ss).cast(), ss_len) != 0 {
+                    let e = -bun_core::ffi::errno();
+                    close_fd(fd);
+                    return Err(e);
+                }
+                Ok(fd)
+            }
+        }
+
         // Resolve the address. Cluster normally passes an IP literal or null;
         // a hostname (e.g. "localhost") falls back to getaddrinfo.
         // SAFETY: sockaddr_storage is plain C data; all-zero is a valid value.
         let mut ss: libc::sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
         let ss_len: libc::socklen_t;
+        let fd: c_int;
+        let bound_family: c_int;
         if address.is_string() {
             let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
             let addr_bytes = addr_slice.slice();
@@ -705,84 +794,49 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             } else {
                 core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
             };
+            match create_and_bind(family, socktype, is_udp, flags, &ss, ss_len) {
+                Ok(bound) => {
+                    fd = bound;
+                    bound_family = family;
+                }
+                Err(e) => return Ok(JSValue::js_number_from_int32(e)),
+            }
         } else {
-            // No address: any-address for the family.
-            // SAFETY: `ss` is a zeroed sockaddr_storage; the casted family
-            // views only write within its bounds. The all-zero in6_addr is
-            // in6addr_any by definition.
-            unsafe {
-                if family == libc::AF_INET6 {
-                    let sin6: &mut libc::sockaddr_in6 =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
-                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
-                    sin6.sin6_port = (port as u16).to_be();
-                    sin6.sin6_addr = bun_core::ffi::zeroed_unchecked(); // in6addr_any
-                    ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
-                } else {
-                    let sin: &mut libc::sockaddr_in =
-                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
-                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
-                    sin.sin_port = (port as u16).to_be();
-                    sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
-                    ss_len = core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+            // No address: node's createServerHandle binds the IPv6 wildcard
+            // (dual-stack) regardless of addressType, falling back to the
+            // IPv4 wildcard on machines without IPv6 — same as the Windows
+            // branch above. Unlike Windows, EADDRINUSE needs no carve-out
+            // from the fallback: a POSIX v4-wildcard bind conflicts with a
+            // live dual-stack listener, so the retry re-surfaces the same
+            // error instead of masking it.
+            let (ss6, len6) = wildcard_sockaddr(libc::AF_INET6, port);
+            match create_and_bind(libc::AF_INET6, socktype, is_udp, flags, &ss6, len6) {
+                Ok(bound) => {
+                    fd = bound;
+                    bound_family = libc::AF_INET6;
+                }
+                Err(_) => {
+                    let (ss4, len4) = wildcard_sockaddr(libc::AF_INET, port);
+                    match create_and_bind(libc::AF_INET, socktype, is_udp, flags, &ss4, len4) {
+                        Ok(bound) => {
+                            fd = bound;
+                            bound_family = libc::AF_INET;
+                        }
+                        Err(e) => return Ok(JSValue::js_number_from_int32(e)),
+                    }
                 }
             }
         }
 
-        // SAFETY: socket/setsockopt/bind/getsockname FFI on a freshly created
-        // fd with properly sized sockaddr buffers; the fd is closed on every
-        // error path and otherwise ownership transfers to the returned object.
+        // SAFETY: getsockname FFI on the bound fd with a properly sized
+        // buffer; ownership of the fd transfers to the returned object.
         unsafe {
-            let fd = libc::socket(family, socktype, 0);
-            if fd < 0 {
-                return Ok(last_neg_errno());
-            }
-            set_cloexec_nonblock(fd);
-
-            let one: c_int = 1;
-            let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
-            let one_len = core::mem::size_of::<c_int>() as libc::socklen_t;
-            if !is_udp {
-                // libuv sets SO_REUSEADDR on every TCP server socket.
-                libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
-            } else if flags & 0x4 != 0 {
-                // UV_UDP_REUSEADDR: SO_REUSEPORT on BSD/macOS, SO_REUSEADDR on Linux.
-                #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
-                {
-                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, one_ptr, one_len);
-                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
-                {
-                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
-                }
-            }
-            if family == libc::AF_INET6 {
-                // Always set the option explicitly (0 or 1): some kernels
-                // default to v6only=1 (FreeBSD, sysctl'd Linux), and node's
-                // uv__tcp_bind always writes it for AF_INET6.
-                let v6only: libc::c_int = if flags & 0x1 != 0 { 1 } else { 0 };
-                libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_V6ONLY,
-                    (&raw const v6only).cast(),
-                    one_len,
-                );
-            }
-
-            if libc::bind(fd, (&raw const ss).cast(), ss_len) != 0 {
-                let e = last_neg_errno();
-                close_fd(fd);
-                return Ok(e);
-            }
-
             // Report the kernel-assigned port for port-0 binds.
             let mut bound_port = port;
             let mut out: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
             let mut out_len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
             if libc::getsockname(fd, (&raw mut out).cast(), &raw mut out_len) == 0 {
-                bound_port = if family == libc::AF_INET6 {
+                bound_port = if bound_family == libc::AF_INET6 {
                     u16::from_be((*(&raw const out).cast::<libc::sockaddr_in6>()).sin6_port) as i32
                 } else {
                     u16::from_be((*(&raw const out).cast::<libc::sockaddr_in>()).sin_port) as i32

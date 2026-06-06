@@ -279,3 +279,52 @@ devTest("error report endpoint handles stack frames with very long absolute path
     await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
   },
 });
+
+// https://github.com/oven-sh/bun/issues/31908
+// A request for a route with bundling failures re-bundles the route's HTML
+// module into the hot update chunk. The update must be flagged as a route
+// update (List 1) so connected clients reload; the client can never apply an
+// HTML root module through `replaceModules`.
+devTest("connected client reloads when a broken route is re-bundled", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectMessage("v1");
+    await dev.write(
+      "script.ts",
+      `
+        import "./missing.ts";
+        console.log("v2");
+      `,
+      {
+        errors: ['script.ts:1:8: error: Could not resolve: "./missing.ts"'],
+      },
+    );
+    // Requesting the broken route re-bundles its HTML module; the hot update
+    // carrying that module must tell viewers to reload.
+    await c.expectReload(async () => {
+      expect((await dev.fetch("/")).status).toBe(500);
+    });
+    await dev.write(
+      "script.ts",
+      `
+        console.log("v2");
+      `,
+    );
+    // The client converges on the healthy page. Depending on when its reload
+    // request lands, it may pass through the bundling error page first and
+    // reload once more when the errors clear.
+    await c.output.waitForLine(/\[Bun\] (Live|Hot-module)-reloading socket connected/);
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+    await c.expectMessage("v2");
+  },
+});

@@ -915,6 +915,8 @@ impl<'a> Resolver<'a> {
         // handler).
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         if unsafe { (*pm.as_ptr()).on_wake_context() }.is_none() {
+            // SAFETY: as above — `pm` names the live singleton; no other
+            // reference is held across this call.
             unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         }
         self.package_manager = Some(pm);
@@ -1626,6 +1628,11 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
+                        // SAFETY: PORT — `path` borrows from the framework
+                        // config, which outlives the returned Result; copy the
+                        // reference out so the `&self.opts.framework` borrow
+                        // ends before `self.resolve_with_global_cache(&mut
+                        // self, ..)`. Matches `resolve_with_framework` below.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;

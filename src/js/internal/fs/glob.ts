@@ -5,7 +5,6 @@
 const {
   validateObject,
   validateString,
-  validateFunction,
   validateBoolean,
   validateArray,
 } = require("internal/validators");
@@ -970,7 +969,6 @@ function lazyMinimatch() {
   const exports: any = {};
   const module = { exports };
   // --- begin vendored minimatch (Node v26.3.0 deps/minimatch/index.js) ---
-  ("use strict");
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __commonJS = (cb, mod) =>
     function __require() {
@@ -1135,7 +1133,7 @@ function lazyMinimatch() {
         if (!m) return [str];
         const pre = m.pre;
         const post = m.post.length ? expand_(m.post, max, false) : [""];
-        if (/\$$/.test(m.pre)) {
+        if (m.pre.endsWith("$")) {
           for (let k = 0; k < post.length && k < max; k++) {
             const expansion = pre + "{" + m.body + "}" + post[k];
             expansions.push(expansion);

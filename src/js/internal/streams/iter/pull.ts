@@ -623,10 +623,24 @@ function pull(source, ...args) {
   if (signal !== undefined) {
     validateAbortSignal(signal, "options.signal");
     if (signal.aborted) {
+      // Not a generator: it would never yield (it only throws), so build the
+      // single-shot rejecting iterator explicitly.
       return {
         __proto__: null,
-        async *[SymbolAsyncIterator]() {
-          throw signal.reason;
+        [SymbolAsyncIterator]() {
+          let done = false;
+          return {
+            __proto__: null,
+            async next() {
+              if (done) return { value: undefined, done: true };
+              done = true;
+              throw signal.reason;
+            },
+            async return() {
+              done = true;
+              return { value: undefined, done: true };
+            },
+          };
         },
       };
     }

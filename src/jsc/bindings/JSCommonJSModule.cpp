@@ -178,8 +178,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RELEASE_AND_RETURN(scope, true);
     }
 
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
+    // Same out-param pattern as the eval-entry path above: the 3-arg
+    // overload would swallow the exception, leaving the misleading
+    // "function wrapper" TypeError below instead of the real error.
+    WTF::NakedPtr<JSC::Exception> wrapperException;
+    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    if (wrapperException) [[unlikely]] {
+        scope.throwException(globalObject, wrapperException.get());
+        return false;
+    }
     ASSERT(fnValue);
 
     JSObject* fn = fnValue.getObject();

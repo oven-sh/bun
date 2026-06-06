@@ -2497,8 +2497,9 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSArray* shareableBuiltins = JSC::constructEmptyArray(globalObject, nullptr);
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return JSC::jsUndefined();
     }
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s), JSC::jsNumber(1), 0);
@@ -2738,8 +2739,9 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        if (scope.exception()) [[unlikely]] {
+        if (auto* exception = scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
             return jsUndefined();
         }
         return result;
@@ -2939,8 +2941,9 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue env = globalObject->processEnvObject();
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return JSC::jsUndefined();
     }
     return env;
@@ -3795,8 +3798,9 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(processObject->globalObject(), exception);
         return JSC::jsUndefined();
     }
     return array;
@@ -3929,14 +3933,16 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     auto* bun = globalObject->bunObject();
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return JSC::jsUndefined();
     }
     auto* requireMap = globalObject->requireMap();
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return JSC::jsUndefined();
     }
     return mainModule;
@@ -3964,8 +3970,9 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     // reifyStaticProperty, which performs no exception check.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
-    if (scope.exception()) [[unlikely]] {
+    if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
         return JSC::jsUndefined();
     }
     if (nextTickFunction && nextTickFunction.isObject()) {

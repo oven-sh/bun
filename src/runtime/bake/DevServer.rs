@@ -2990,7 +2990,9 @@ impl DevServer {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
-                input_file_sources[import.source_index.get() as usize].path.pretty
+                input_file_sources[import.source_index.get() as usize]
+                    .path
+                    .pretty
             } else {
                 // Find the in-graph import.
                 let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {

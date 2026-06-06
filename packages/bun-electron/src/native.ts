@@ -71,6 +71,8 @@ interface Shim {
     be_run_file_dialog: (id: number, dialogId: number, kv: Buffer) => void;
     be_cookies_op: (opId: number, op: Buffer, kv: Buffer) => void;
     be_screen_info: () => bigint | number | null;
+    be_enumerate_windows: () => bigint | number | null;
+    be_capture_window: (xid: number) => bigint | number | null;
     be_ipc_send: (id: number, channel: Buffer, args: Buffer) => void;
     be_ipc_reply: (id: number, invokeId: number, result: Buffer, isError: number) => void;
     be_do_message_loop_work: () => void;
@@ -119,6 +121,8 @@ function loadShim(): Shim {
     be_run_file_dialog: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.void },
     be_cookies_op: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_screen_info: { args: [], returns: FFIType.ptr },
+    be_enumerate_windows: { args: [], returns: FFIType.ptr },
+    be_capture_window: { args: [FFIType.u32], returns: FFIType.ptr },
     be_ipc_send: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_ipc_reply: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.void },
     be_do_message_loop_work: { args: [], returns: FFIType.void },
@@ -295,6 +299,26 @@ export function screenInfo(): unknown[] {
     return JSON.parse(raw);
   } catch {
     return [];
+  }
+}
+
+export function enumerateWindows(): Array<{ xid: number; title: string; width: number; height: number }> {
+  const raw = takeCString(loadShim().symbols.be_enumerate_windows());
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function captureWindow(xid: number): { width: number; height: number; data: string } | null {
+  const raw = takeCString(loadShim().symbols.be_capture_window(xid));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
   }
 }
 

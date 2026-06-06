@@ -42,6 +42,10 @@ set(SHIM_SRCS shim.cpp shim.h)
 if(OS_MAC)
   list(APPEND SHIM_SRCS shim_mac.mm)
 endif()
+if(OS_LINUX)
+  # X11-backed window enumeration/capture (desktopCapturer window sources).
+  list(APPEND SHIM_SRCS x11_capture.cpp)
+endif()
 add_library(bun_electron_shim SHARED ${SHIM_SRCS})
 SET_LIBRARY_TARGET_PROPERTIES(bun_electron_shim)
 add_dependencies(bun_electron_shim libcef_dll_wrapper)
@@ -58,6 +62,7 @@ if(OS_LINUX)
   set_target_properties(bun_electron_shim PROPERTIES
     BUILD_RPATH "$ORIGIN"
     INSTALL_RPATH "$ORIGIN")
+  target_link_libraries(bun_electron_shim X11)
 endif()
 
 if(OS_MAC)

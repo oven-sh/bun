@@ -102,6 +102,17 @@ BE_EXPORT void be_quit(void);
 // Final CEF shutdown. Call once, after be_quit, right before process exit.
 BE_EXPORT void be_shutdown(void);
 
+// Enumerate native top-level windows for desktopCapturer's "window" sources.
+// Linux/X11 only; returns a malloc'd JSON array
+// [{"xid":N,"title":"...","width":W,"height":H}] (free with be_free), or NULL
+// where enumeration is unavailable.
+BE_EXPORT char *be_enumerate_windows(void);
+
+// Capture a native window's pixels by X11 id. Returns malloc'd JSON
+// {"width":W,"height":H,"data":"<base64 RGBA>"} (free with be_free), or NULL
+// on failure / unsupported platform.
+BE_EXPORT char *be_capture_window(uint32_t xid);
+
 // Version string of the shim + underlying CEF, malloc'd; free with be_free.
 BE_EXPORT char *be_version(void);
 

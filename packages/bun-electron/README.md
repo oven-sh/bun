@@ -18,7 +18,7 @@ await win.loadURL("https://bun.com");
 
 | Platform        | Build         | Runtime            | Tests                               |
 | --------------- | ------------- | ------------------ | ----------------------------------- |
-| Linux x64/arm64 | ✅            | ✅                 | ✅ 42 ported Electron tests passing |
+| Linux x64/arm64 | ✅            | ✅                 | ✅ 235 ported Electron tests passing |
 | macOS x64/arm64 | ✅ (untested) | needs verification | —                                   |
 | Windows x64     | ✅ (untested) | needs verification | —                                   |
 
@@ -214,8 +214,7 @@ clipboard), `globalShortcut` key capture.
 
 Not implemented (each blocked by a missing CEF API, no headless test surface,
 or hardware): real OS power-event delivery; OS-native rendering of
-menus/tray/notifications; window-source capture in `desktopCapturer` (needs an
-OS window-enumeration API CEF doesn't expose); progressive-JPEG decode
+menus/tray/notifications; progressive-JPEG decode
 (baseline JPEG and all PNG variants are supported); and macOS/Windows
 execution (code paths exist, unverified without that hardware).
 
@@ -238,7 +237,7 @@ carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `tray-notification`, `net`, `message-channel`, `power-monitor`,
 `context-isolation`, `web-request`, `desktop-capturer`, `png-decode`, and
 `jpeg-decode`, `native-theme`, `app-extras`, `power-save-blocker`, and
-`system-preferences` test files (233 tests total). App-lifecycle scenarios spawn fresh
+`system-preferences`, `power-save-blocker`, and `desktop-capturer` test files (235 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

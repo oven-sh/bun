@@ -2310,3 +2310,41 @@ it("ClientRequest.destroy(err) with no error listener does not throw and still t
     server.close();
   }
 });
+
+it("ClientRequest.destroy(err) with a throwing error listener still tears down; the throw surfaces async", async () => {
+  // node: a throwing 'error' handler becomes an async uncaught exception
+  // after socket.destroy(err) already ran; destroy() itself never throws.
+  const script = `
+    const http = require("node:http");
+    const server = http.createServer((req, res) => res.write("x"));
+    server.listen(0, "127.0.0.1", () => {
+      const req = http.get({ host: "127.0.0.1", port: server.address().port }, () => {
+        req.on("error", () => {
+          throw new Error("handler bug");
+        });
+        let sawClose = false;
+        req.on("close", () => (sawClose = true));
+        try {
+          req.destroy(new Error("boom"));
+          console.log("destroy-returned");
+        } catch (e) {
+          console.log("destroy-threw:" + e.message);
+        }
+        console.log("teardown-ran:" + sawClose);
+        process.on("uncaughtException", e => {
+          console.log("async-uncaught:" + e.message);
+          process.exit(0);
+        });
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:true", "async-uncaught:handler bug"]);
+  expect(exitCode).toBe(0);
+});

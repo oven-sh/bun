@@ -237,7 +237,16 @@ function ClientRequest(input, options, cb) {
     // asynchronously - all matching node, where destroy() never throws.
     if (err) {
       if (this.listenerCount("error") > 0) {
-        this.emit("error", err);
+        try {
+          this.emit("error", err);
+        } catch (listenerError) {
+          // A throwing 'error' handler must not skip the teardown below.
+          // Node surfaces it as an async uncaught exception after
+          // socket.destroy(err) has already run; re-throw on a fresh tick.
+          process.nextTick(thrown => {
+            throw thrown;
+          }, listenerError);
+        }
       } else {
         process.nextTick((self, e) => self.emit("error", e), this, err);
       }

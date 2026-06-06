@@ -76,28 +76,15 @@ async function build(
             buildMode == BuildMode.debug ? "--debug" : "--release",
             "-j",
             "max",
-            "--",
-            "-Denable_lto=false",
-            "-Denable_thin_lto=false",
-            "-Dlto_jobs=",
           ]
-        : // for node.js we don't bother with debug mode. The trailing gyp defines
-          // neutralize LTO flags that leak out of a clang-cl-built Node's
-          // process.config into MSVC addon builds (link.exe chokes on
-          // /opt:lldltojobs); they're no-ops elsewhere.
-          [
-            bunExe(),
-            "run",
-            "node-gyp",
-            "rebuild",
-            "--release",
-            "-j",
-            "max",
-            "--",
-            "-Denable_lto=false",
-            "-Denable_thin_lto=false",
-            "-Dlto_jobs=",
-          ],
+        : // for node.js we don't bother with debug mode. Run node-gyp under bun
+          // (--bun) here too: a clang-cl-built Node carries thin-LTO flags in
+          // process.config.target_defaults that node-gyp copies into
+          // config.gypi and MSVC's link.exe chokes on (/opt:lldltojobs) — gyp
+          // -D defines can't override target_defaults. Bun reports the same
+          // ABI (147) with clean target_defaults, so the module loads in
+          // node 26 all the same.
+          [bunExe(), "--bun", "run", "node-gyp", "rebuild", "--release", "-j", "max"],
     cwd: tmpDir,
     env: bunEnv,
     stdin: "inherit",

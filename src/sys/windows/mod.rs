@@ -69,6 +69,18 @@ pub mod kernel32 {
         // `WAIT_FAILED` + GetLastError, no UB.
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
+        // ── pipe readiness / thread sleep (`bun_runtime` repl stdin wait) ──
+        // safe: by-value `DWORD`; blocks the calling thread, no UB.
+        pub safe fn Sleep(dwMilliseconds: DWORD);
+        pub fn PeekNamedPipe(
+            hNamedPipe: HANDLE,
+            lpBuffer: *mut c_void,
+            nBufferSize: DWORD,
+            lpBytesRead: *mut DWORD,
+            lpTotalBytesAvail: *mut DWORD,
+            lpBytesLeftThisMessage: *mut DWORD,
+        ) -> BOOL;
+
         // ── file moves ──
         pub fn MoveFileExW(
             lpExistingFileName: LPCWSTR,
@@ -241,6 +253,8 @@ pub use bun_windows_sys::ULONG_PTR;
 pub type HRESULT = i32;
 /// `WaitForSingleObject` infinite timeout sentinel.
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
+/// `WaitForSingleObject` success value.
+pub use bun_windows_sys::WAIT_OBJECT_0;
 
 // ── SRWLOCK / CONDITION_VARIABLE (`bun_threading` windows arm) ────────────
 // Win32 defines both as `struct { PVOID Ptr; }`; static-init is all-zero

@@ -2798,19 +2798,16 @@ const VERSION: &str = Environment::VERSION_STRING;
 ///   - Disk file / NUL / COM* / anything else: treat as always ready.
 #[cfg(windows)]
 fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
-    const WAIT_OBJECT_0: u32 = 0x0000_0000;
-    const FILE_TYPE_PIPE: u32 = 0x0003;
+    use bun_sys::windows::{FILE_TYPE_PIPE, GetFileType, WAIT_OBJECT_0, kernel32};
 
     let slice_ms: u32 = match next_ts {
         None => 50,
         Some(ts) => ts.ms().max(0).min(50) as u32,
     };
     let stdin_handle = Fd::stdin().native();
-    // SAFETY: FFI call; `stdin_handle` is valid while the REPL runs.
-    let file_type = unsafe { GetFileType(stdin_handle) };
+    let file_type = GetFileType(stdin_handle);
     if is_windows_console_input(stdin_handle) {
-        // SAFETY: FFI call.
-        let wait = unsafe { WaitForSingleObject(stdin_handle, slice_ms) };
+        let wait = kernel32::WaitForSingleObject(stdin_handle, slice_ms);
         // WAIT_OBJECT_0: a console input event is ready — let the caller
         // consume it. Consoles signal for *any* input record, not just key
         // events; the caller treats a 0-byte return as a spurious wake and
@@ -2823,9 +2820,11 @@ fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
     }
     if file_type == FILE_TYPE_PIPE {
         let mut bytes_avail: u32 = 0;
-        // SAFETY: FFI call.
+        // SAFETY: `stdin_handle` is live while the REPL runs; the out-pointer
+        // is a valid local and the null buffer / optional out-params follow
+        // the documented PeekNamedPipe contract.
         let ok = unsafe {
-            PeekNamedPipe(
+            kernel32::PeekNamedPipe(
                 stdin_handle,
                 core::ptr::null_mut(),
                 0,
@@ -2842,8 +2841,7 @@ fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
         if bytes_avail > 0 {
             return false;
         }
-        // SAFETY: FFI call.
-        unsafe { Sleep(slice_ms) };
+        kernel32::Sleep(slice_ms);
         return true;
     }
     // Disk / NUL / COM* / unknown — stdin isn't interactive, so we don't
@@ -2857,32 +2855,13 @@ fn windows_wait_for_stdin(next_ts: Option<&bun_core::Timespec>) -> bool {
 /// semantics — the others behave like files that return EOF on read.
 #[cfg(windows)]
 fn is_windows_console_input(handle: *mut core::ffi::c_void) -> bool {
-    const FILE_TYPE_CHAR: u32 = 0x0002;
-    // SAFETY: FFI call; `handle` is the stdin handle, valid while the REPL runs.
-    if unsafe { GetFileType(handle) } != FILE_TYPE_CHAR {
+    use bun_sys::windows::{FILE_TYPE_CHAR, GetFileType, kernel32};
+
+    if GetFileType(handle) != FILE_TYPE_CHAR {
         return false;
     }
     let mut mode: u32 = 0;
-    // SAFETY: FFI call.
-    unsafe { GetConsoleMode(handle, &mut mode) != 0 }
-}
-
-// Win32 primitives declared here locally to avoid dragging extra dependency
-// surface into the REPL crate. `HANDLE` on Windows is `*mut c_void`
-// (`FdNative`); see `bun_core::util::FdNative` for the authoritative alias.
-#[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn WaitForSingleObject(hHandle: *mut core::ffi::c_void, dwMilliseconds: u32) -> u32;
-    fn Sleep(dwMilliseconds: u32);
-    fn GetFileType(hFile: *mut core::ffi::c_void) -> u32;
-    fn GetConsoleMode(hConsoleHandle: *mut core::ffi::c_void, lpMode: *mut u32) -> i32;
-    fn PeekNamedPipe(
-        hNamedPipe: *mut core::ffi::c_void,
-        lpBuffer: *mut core::ffi::c_void,
-        nBufferSize: u32,
-        lpBytesRead: *mut u32,
-        lpTotalBytesAvail: *mut u32,
-        lpBytesLeftThisMessage: *mut u32,
-    ) -> i32;
+    // SAFETY: `handle` is live while the REPL runs; `mode` is a valid
+    // out-pointer.
+    unsafe { kernel32::GetConsoleMode(handle, &mut mode) != 0 }
 }

@@ -507,7 +507,12 @@ impl Parser<'_> {
             }
         }
 
-        // Reference link: [text][ref] or [text][] or shortcut [text]
+        // Reference link: [text][ref] or [text][] or shortcut [text].
+        // A reference label must start immediately after the closing ']'; a
+        // failed inline-link parse above may have advanced `pos` onto a later
+        // '[' (e.g. "[foo](bar [ref])"), which must not be read as the
+        // reference (try_match_bracket_link checks the byte after ']' too).
+        pos = label_end + 1;
         if pos < content.len() && content[pos] == b'[' {
             pos += 1;
             let ref_start = pos;

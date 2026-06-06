@@ -739,6 +739,12 @@ describe("pathological bracket inputs", () => {
     );
     // Control: plain shortcut references still resolve.
     expect(Markdown.html("[foo]: /u\n\n[foo]\n")).toBe('<p><a href="/u">foo</a></p>\n');
+    // A reference label must start immediately after the closing ']': a
+    // failed inline-link parse must not leave the scan position on a later
+    // '[' and read it as the reference.
+    expect(Markdown.html("[ref]: /u\n\n[foo](bar [ref])\n")).toBe('<p>[foo](bar <a href="/u">ref</a>)</p>\n');
+    expect(Markdown.html("[ref]: /u\n\n[foo][ref]\n")).toBe('<p><a href="/u">foo</a></p>\n');
+    expect(Markdown.html("[ref]: /u\n\n[foo](/x)[ref]\n")).toBe('<p><a href="/x">foo</a><a href="/u">ref</a></p>\n');
   });
 });
 

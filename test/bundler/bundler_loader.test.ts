@@ -286,6 +286,26 @@ describe("bundler", async () => {
       },
     });
 
+    itBundled("bake-dev/loader-jsonc-default-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import data from "./data.jsonc";
+          console.log(data.value);
+        `,
+        "/data.jsonc": `{
+          // comment
+          "value": 1,
+        }`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.jsonc"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {");
+        expect(output).toContain("value: 1");
+      },
+    });
+
     itBundled("bake-dev/loader-toml-default-import", {
       format: "internal_bake_dev",
       files: {
@@ -301,6 +321,38 @@ describe("bundler", async () => {
         expect(output).toContain("module.exports = {");
         expect(output).toContain("value: 1");
         expect(output).toContain("import_data.default.value");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-cjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.cjs";
+          console.log(x);
+        `,
+        "/empty.cjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.cjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = {}");
+      },
+    });
+
+    itBundled("bake-dev/loader-empty-mjs-import", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.ts": /* js */ `
+          import x from "./empty.mjs";
+          console.log(x);
+        `,
+        "/empty.mjs": "",
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"empty.mjs"(hmr, module, exports) {');
+        expect(output).toContain("module.exports = undefined");
       },
     });
 

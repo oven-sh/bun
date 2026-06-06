@@ -4690,8 +4690,7 @@ impl<'a> HTTPClient<'a> {
                                     return Err(err!(InvalidRedirectURL));
                                 }
 
-                                is_same_origin =
-                                    self.apply_redirect_url(new_url_.to_owned_slice());
+                                is_same_origin = self.apply_redirect_url(new_url_.to_owned_slice());
                             }
                         }
 

@@ -2541,6 +2541,27 @@ describe("bundler", () => {
       `);
     },
   });
+  // https://github.com/oven-sh/bun/issues/31929
+  itBundled("edgecase/DecoratorLoweringTempsAcrossModules", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from './a.js';
+        import { B } from './b.js';
+        console.log(new A().a, new B().b);
+      `,
+      "/a.js": /* js */ `
+        function double(v, c) { return x => x * 2; }
+        export const A = class { @double a = 1; };
+      `,
+      "/b.js": /* js */ `
+        function triple(v, c) { return x => x * 3; }
+        export const B = class { @triple b = 1; };
+      `,
+    },
+    run: {
+      stdout: "2 3",
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

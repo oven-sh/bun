@@ -25,6 +25,10 @@ HandleScope::HandleScope(Isolate* isolate)
           isolate->globalInternals()->handleScopeBufferStructure(isolate->globalObject())))
 {
     m_isolate->globalInternals()->setCurrentHandleScope(this);
+    // Snapshot the isolate's HandleScopeData so the pop can restore it; see
+    // the comment on HandleScopeBuffer::saveHandleScopeData.
+    auto* data = shim::getHandleScopeData(isolate);
+    m_buffer->saveHandleScopeData(data->next, data->limit);
 }
 
 HandleScope::~HandleScope()
@@ -66,6 +70,15 @@ HandleScope::~HandleScope()
     // Escape reservations in this buffer belong to scopes that are dead or dying (their slots
     // are about to be cleared); purge them so stale stack-address keys can't alias new scopes.
     m_isolate->globalInternals()->purgeEscapeReservations(m_buffer);
+    // Restore HandleScopeData to its push-time snapshot. If Extend granted
+    // slots from this buffer while this scope was current, next/limit would
+    // otherwise keep pointing into the buffer we are about to clear, and the
+    // next inline v8::HandleScope would capture that stale limit as its
+    // prev_limit_ — its DeleteExtensions would then pop every grant in the
+    // (foreign) enclosing buffer, killing handles of still-open outer scopes.
+    auto* data = shim::getHandleScopeData(m_isolate);
+    data->next = m_buffer->savedNext();
+    data->limit = m_buffer->savedLimit();
     m_buffer->clear();
     m_buffer = nullptr;
 }

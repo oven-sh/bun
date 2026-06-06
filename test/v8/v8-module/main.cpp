@@ -671,6 +671,45 @@ void test_v8_escapable_handle_scope_inline_grants(
   LOG_EXPR(buf);
 }
 
+// Regression test: handles created through the headers' inline CreateHandle
+// must survive a Bun-internal HandleScope push/pop (Array::Iterate pushes one
+// around the iteration callback). If the pop leaves the isolate's
+// HandleScopeData pointing into the popped scope's buffer, a later inline
+// v8::HandleScope snapshots that stale limit and its DeleteExtensions sweeps
+// the enclosing buffer's grants — including `kept`.
+void test_v8_locals_survive_nested_call(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<String> value =
+      String::NewFromUtf8(isolate, "kept-across-call").ToLocalChecked();
+  // Inline grant before the nested scope push.
+  Local<Value> kept = Local<Value>::New(isolate, Local<Value>::Cast(value));
+  Local<Array> array = Array::New(isolate, 3);
+  // Array::Iterate pushes (and pops) a Bun-internal handle scope around the
+  // callback; the inline Local::New inside makes Extend run while that scope
+  // is current.
+  (void)array->Iterate(
+      context,
+      [](uint32_t index, Local<Value> element, void *data) {
+        Isolate *iso = static_cast<Isolate *>(data);
+        Local<Value> copy = Local<Value>::New(iso, element);
+        (void)copy;
+        return Array::CallbackResult::kContinue;
+      },
+      isolate);
+  // Inline scope after the pop: snapshots whatever HandleScopeData now holds.
+  {
+    HandleScope inner(isolate);
+    Local<Value> tmp = Local<Value>::New(isolate, kept);
+    (void)tmp;
+  } // ~HandleScope → DeleteExtensions
+  char buf[32];
+  Local<String>::Cast(kept)->WriteUtf8V2(isolate, buf, sizeof buf,
+                                         String::WriteFlags::kNullTerminate);
+  LOG_EXPR(buf);
+}
+
 void test_uv_os_getpid(const FunctionCallbackInfo<Value> &info) {
 #ifndef _WIN32
   assert(getpid() == uv_os_getpid());
@@ -1264,6 +1303,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope);
   NODE_SET_METHOD(exports, "test_v8_escapable_handle_scope_inline_grants",
                   test_v8_escapable_handle_scope_inline_grants);
+  NODE_SET_METHOD(exports, "test_v8_locals_survive_nested_call",
+                  test_v8_locals_survive_nested_call);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
   NODE_SET_METHOD(exports, "test_v8_object_get_by_key",

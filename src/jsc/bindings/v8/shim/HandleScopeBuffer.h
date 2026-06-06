@@ -62,6 +62,19 @@ public:
     // it); EscapeSlot() fills it via createHandleFromExistingObject(reuseHandle).
     Handle* reserveEscapeHandle();
 
+    // HandleScopeData::{next,limit} as they were when the owning Bun
+    // HandleScope was pushed. ~HandleScope writes them back when it pops so
+    // the isolate's HandleScopeData never dangles into this (cleared) buffer
+    // — otherwise the next inline v8::HandleScope would snapshot a stale
+    // limit and its DeleteExtensions would sweep a foreign buffer's grants.
+    void saveHandleScopeData(uintptr_t* next, uintptr_t* limit)
+    {
+        m_savedNext = next;
+        m_savedLimit = limit;
+    }
+    uintptr_t* savedNext() const { return m_savedNext; }
+    uintptr_t* savedLimit() const { return m_savedLimit; }
+
     // Given a tagged pointer from V8, create a handle around the same object or the same
     // numeric value
     //
@@ -87,6 +100,8 @@ private:
     // C++ destructors), tripping container-overflow on cell reuse. The heap
     // buffer is released in clear().
     WTF::Vector<std::pair<TaggedPointer*, size_t>> m_rawGrants;
+    uintptr_t* m_savedNext { nullptr };
+    uintptr_t* m_savedLimit { nullptr };
 
     Handle& createEmptyHandle();
 

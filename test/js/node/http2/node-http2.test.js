@@ -747,6 +747,30 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(req.aborted).toBeTrue(); // will be true in this case
         });
 
+        it("signal validation matches node: non-signal objects throw, duck-typed { aborted } is accepted", async () => {
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", () => {});
+          try {
+            // node's validateAbortSignal accepts any object with an 'aborted'
+            // property ('aborted' in signal), so a duck-typed { aborted: true }
+            // takes the pre-aborted fast path instead of throwing...
+            const { promise, resolve, reject } = Promise.withResolvers();
+            const req = client.request({ ":path": "/" }, { signal: { aborted: true } });
+            req.on("error", err => (err.name === "AbortError" ? resolve() : reject(err)));
+            await promise;
+            // ...while objects without 'aborted' (and non-objects) throw
+            // ERR_INVALID_ARG_TYPE synchronously, before the fast path.
+            expect(() => client.request({ ":path": "/" }, { signal: {} })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+            expect(() => client.request({ ":path": "/" }, { signal: 42 })).toThrow(
+              expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+            );
+          } finally {
+            client.close();
+          }
+        });
+
         it("state should work", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);

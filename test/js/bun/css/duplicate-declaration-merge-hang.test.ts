@@ -72,7 +72,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: [
       "OK:fuzzer-input",
       "OK:color-scheme-dark",
@@ -83,6 +83,7 @@ test("duplicate declarations across merged rules minify in linear time instead o
       "OK:distinct-selectors",
       "",
     ].join("\n"),
+    stderr: "",
     exitCode: 0,
   });
 }, 90_000);

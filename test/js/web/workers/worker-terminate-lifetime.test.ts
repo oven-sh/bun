@@ -105,9 +105,12 @@ test(
         for (let i = 0; i < ${n}; i++) {
           ws.push(new Worker("data:text/javascript,setInterval(() => {}, 1e9)"));
         }
-        // Wait for every worker to reach its VM (so live_workers::register
-        // has run for each) before exiting — otherwise the sweep might see
-        // an empty list and this test proves nothing.
+        // live_workers::register runs on the parent thread before each
+        // worker thread spawns, so the list is already fully populated here.
+        // Waiting for 'open' (dispatchOnline) ensures each worker has
+        // published its VM, so the sweep exercises the vm_ptr-non-null
+        // branch (vm_lock + notify_need_termination + wakeup) rather than
+        // just the pre-VM requested_terminate checkpoint.
         await Promise.all(ws.map(w => new Promise(r => w.addEventListener("open", r, { once: true }))));
         console.log("all-open");
         process.exit(0);

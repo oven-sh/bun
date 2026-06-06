@@ -1204,7 +1204,7 @@ describe.todoIf(isWindows)("Bun REPL IPC", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "repl"],
       env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "pipe",
       ipc(message) {
@@ -1213,6 +1213,10 @@ describe.todoIf(isWindows)("Bun REPL IPC", () => {
       },
       onExit(subprocess, exitCode) {
         resolveExited(exitCode);
+        // Unblock `await childReady` if the child dies before sending
+        // "ready" so the failure surfaces as an assertion diff with the
+        // child's stderr instead of an opaque test timeout.
+        resolveChildReady();
       },
     });
 
@@ -1230,6 +1234,10 @@ describe.todoIf(isWindows)("Bun REPL IPC", () => {
     proc.stdin.flush();
 
     await childReady;
+    if (fromChild !== "ready") {
+      // Child exited before the IIFE ran — put its stderr in the diff.
+      expect(await new Response(proc.stderr).text()).toBe("");
+    }
     expect(fromChild).toBe("ready");
 
     proc.send("hello-repl");

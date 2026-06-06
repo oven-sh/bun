@@ -1272,6 +1272,17 @@ impl<'a> Repl<'a> {
                     } else {
                         let mut ts = bun_core::Timespec { sec: 0, nsec: 0 };
                         let has_pending_immediate = !event_loop.immediate_tasks.is_empty();
+                        // Fold the QUIC deadline into the wait slice, same as
+                        // the POSIX branch and `auto_tick`.
+                        // SAFETY: `loop_` is the live per-thread uws loop.
+                        let quic_next_tick_us = unsafe {
+                            let ild = &(*loop_).internal_loop_data;
+                            if ild.quic_head.is_null() {
+                                None
+                            } else {
+                                Some(ild.quic_next_tick_us)
+                            }
+                        };
                         // SAFETY: `state` is the live per-thread `RuntimeState`;
                         // see PORT NOTE on `auto_tick` re: aliased-&mut across
                         // `fire()`.
@@ -1280,7 +1291,7 @@ impl<'a> Repl<'a> {
                                 &mut (*state).timer,
                                 &mut ts,
                                 has_pending_immediate,
-                                None,
+                                quic_next_tick_us,
                                 vm_ptr.cast(),
                             )
                         };

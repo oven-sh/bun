@@ -1003,11 +1003,18 @@ impl StyleRuleKeyMap {
             return None;
         };
         let pos = bucket.iter().position(|&other_idx| {
+            // `other_idx != key.index`: the merge-with-previous cascade pops
+            // rules without purging their indices from the buckets, so a
+            // stale entry can alias the slot the checked rule was just pushed
+            // into, and a rule trivially `is_duplicate` of itself. Erasing it
+            // silently dropped the rule. (A live entry can never equal
+            // `key.index`: the key is only inserted after this check.)
             // Bounds-check + Style tag-check + `is_duplicate`.
-            match rules.get(other_idx) {
-                Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
-                _ => false,
-            }
+            other_idx != key.index
+                && match rules.get(other_idx) {
+                    Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
+                    _ => false,
+                }
         })?;
         Some(bucket.swap_remove(pos))
     }

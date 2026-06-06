@@ -131,3 +131,14 @@ test("deferred merge re-minify keeps per-merge output", () => {
     cssInternals.minifyTest(".a,.b{color:red}.a{color:blue}.b{color:green}.b{color:blue}.c{font-style:italic}", ""),
   ).toBe(".a,.b{color:#00f}.c{font-style:italic}");
 });
+
+// The merge-with-previous cascade pops rules without purging their indices
+// from the duplicate-rule table, so a rule pushed into a reused slot could
+// match its own stale table entry and erase itself: this input used to
+// minify to ".a,.b{color:#00f}", silently dropping .a{color:purple} and
+// changing the computed color of .a elements.
+test("stale duplicate-rule entries do not erase a later rule", () => {
+  expect(
+    cssInternals.minifyTest(".a,.b{color:red}.a{color:blue}.b{color:green}.b{color:blue}.a{color:purple}", ""),
+  ).toBe(".a,.b{color:#00f}.a{color:purple}");
+});

@@ -83,10 +83,10 @@ test(
 );
 
 // Coverage for the `live_workers` intrusive list (`web_worker.rs`): the list
-// head is an `AtomicPtrCell<WebWorker>` that every worker spawn/exit CAS-
-// links/unlinks into, and `terminate_all_and_wait()` (run from `global_exit`
-// under `BUN_DESTRUCT_VM_ON_EXIT=1`) walks it on the main thread while worker
-// threads are still registering/unregistering. Spawn a burst of long-lived
+// head is an `AtomicPtrCell<WebWorker>` that every worker spawn/exit
+// links/unlinks under `live_workers::MUTEX`, and `terminate_all_and_wait()`
+// (run from `global_exit` under `BUN_DESTRUCT_VM_ON_EXIT=1`) walks it on the
+// main thread while worker threads are still registering/unregistering. Spawn a burst of long-lived
 // workers, then `process.exit()` mid-burst so the sweep sees a populated
 // list under contention. A broken head pointer would corrupt the intrusive
 // links and the sweep would deref garbage (ASAN / null-deref crash).

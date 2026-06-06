@@ -755,14 +755,19 @@ impl Parser<'_> {
             }
         }
 
-        // Shortcut reference
-        let inner_label = &content[start + 1..label_end];
-        if self.lookup_ref_def(inner_label).is_some() {
-            return BracketLinkMatch {
-                is_link: true,
-                label_end,
-                link_end: label_end + 1,
-            };
+        // Shortcut reference: like process_link, a shortcut must not be
+        // followed by '[' (the lookahead and the parser must agree on what
+        // is a link or label_contains_link rejects constructs the parser
+        // renders)
+        if content.get(label_end + 1) != Some(&b'[') {
+            let inner_label = &content[start + 1..label_end];
+            if self.lookup_ref_def(inner_label).is_some() {
+                return BracketLinkMatch {
+                    is_link: true,
+                    label_end,
+                    link_end: label_end + 1,
+                };
+            }
         }
 
         BracketLinkMatch {

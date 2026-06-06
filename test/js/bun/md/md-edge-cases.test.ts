@@ -725,6 +725,21 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html("![\\[escaped\\]](u)\n")).toBe('<p><img src="u" alt="[escaped]" /></p>\n');
     expect(Markdown.ansi("[[target|wiki *label*]]", { colors: false })).toBe("[[wiki label]]\n");
   });
+
+  test("link-validity lookahead agrees with the link parser", () => {
+    // [foo][x] with x undefined is not a link: the full reference fails and
+    // the shortcut form may not be followed by '['. The lookahead used by
+    // label_contains_link and the emphasis collector must agree, or the
+    // outer link is wrongly rejected as containing a link.
+    const doc = "[foo]: /u\n\n[outer [foo][x] text](dest)\n";
+    expect(Markdown.html(doc)).toBe('<p><a href="dest">outer [foo][x] text</a></p>\n');
+    // Control: a real inner link still rejects the outer candidate.
+    expect(Markdown.html("[foo]: /u\n\n[outer [foo] text](dest)\n")).toBe(
+      '<p>[outer <a href="/u">foo</a> text](dest)</p>\n',
+    );
+    // Control: plain shortcut references still resolve.
+    expect(Markdown.html("[foo]: /u\n\n[foo]\n")).toBe('<p><a href="/u">foo</a></p>\n');
+  });
 });
 
 // ============================================================================

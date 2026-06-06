@@ -352,6 +352,7 @@ const {
   validateInt32,
   validateBuffer,
   validateNumber,
+  validateAbortSignal,
 } = require("internal/validators");
 
 let utcCache;
@@ -4010,14 +4011,19 @@ class ClientHttp2Session extends Http2Session {
       // AbortError on the next tick (_destroy skips the RST for id-less
       // streams). Sending an RST for a stream the peer never saw is a
       // connection error that makes conforming servers reply with GOAWAY.
-      if ($isObject(options) && options.signal && options.signal.aborted) {
-        const req = new ClientHttp2Stream(undefined, this, headers);
-        const signal = options.signal;
-        // The request never started, so the stream counts as aborted but the
-        // 'aborted' event is not emitted — only the AbortError.
-        req[kAborted] = true;
-        process.nextTick(() => req.destroy($makeAbortError(undefined, { cause: signal.reason })));
-        return req;
+      if ($isObject(options) && options.signal) {
+        // Node validates the signal before reading .aborted — a duck-typed
+        // { aborted: true } must throw ERR_INVALID_ARG_TYPE, not short-circuit.
+        validateAbortSignal(options.signal, "options.signal");
+        if (options.signal.aborted) {
+          const req = new ClientHttp2Stream(undefined, this, headers);
+          const signal = options.signal;
+          // The request never started, so the stream counts as aborted but the
+          // 'aborted' event is not emitted — only the AbortError.
+          req[kAborted] = true;
+          process.nextTick(() => req.destroy($makeAbortError(undefined, { cause: signal.reason })));
+          return req;
+        }
       }
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {

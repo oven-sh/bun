@@ -41,7 +41,119 @@ function paeth(a: number, b: number, c: number): number {
   return c;
 }
 
-/** Decode an 8-bit RGB/RGBA PNG to RGBA. Returns null for unsupported input. */
+// Number of samples per pixel for each PNG color type.
+function channelsForColorType(colorType: number): number {
+  switch (colorType) {
+    case 0: return 1; // grayscale
+    case 2: return 3; // RGB
+    case 3: return 1; // palette index
+    case 4: return 2; // grayscale + alpha
+    case 6: return 4; // RGBA
+    default: return 0;
+  }
+}
+
+// Unfilter one image pass and emit RGBA. `raw` holds filtered scanlines.
+function unfilterToRGBA(
+  raw: Buffer,
+  width: number,
+  height: number,
+  bitDepth: number,
+  colorType: number,
+  palette: Buffer | null,
+  trns: Buffer | null,
+  out: Buffer,
+  outWidth: number,
+  destX: (i: number) => number,
+  destY: (j: number) => number,
+): void {
+  const channels = channelsForColorType(colorType);
+  const bitsPerPixel = channels * bitDepth;
+  const bpp = Math.max(1, bitsPerPixel >> 3); // bytes/pixel for filtering
+  const stride = Math.ceil((width * bitsPerPixel) / 8);
+  const prev = Buffer.alloc(stride);
+  const cur = Buffer.alloc(stride);
+  let pos = 0;
+
+  for (let j = 0; j < height; j++) {
+    const filter = raw[pos++];
+    raw.copy(cur, 0, pos, pos + stride);
+    pos += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? cur[x - bpp] : 0;
+      const b = prev[x];
+      const c = x >= bpp ? prev[x - bpp] : 0;
+      let value = cur[x];
+      switch (filter) {
+        case 1: value += a; break;
+        case 2: value += b; break;
+        case 3: value += (a + b) >> 1; break;
+        case 4: value += paeth(a, b, c); break;
+      }
+      cur[x] = value & 0xff;
+    }
+
+    const oy = destY(j);
+    for (let i = 0; i < width; i++) {
+      let r = 0, g = 0, b = 0, alpha = 255;
+      // Read `channels` samples at bitDepth precision, scaled to 8-bit.
+      const sample = (chan: number): number => {
+        if (bitDepth === 16) return cur[(i * channels + chan) * 2]; // high byte
+        if (bitDepth === 8) return cur[i * channels + chan];
+        // sub-byte (1/2/4) — palette/grayscale only, single channel
+        const bitsPerSample = bitDepth;
+        const samplesPerByte = 8 / bitsPerSample;
+        const byteIndex = Math.floor((i * channels + chan) / samplesPerByte);
+        const within = (i * channels + chan) % samplesPerByte;
+        const shift = 8 - bitsPerSample * (within + 1);
+        const mask = (1 << bitsPerSample) - 1;
+        return (cur[byteIndex] >> shift) & mask;
+      };
+
+      if (colorType === 0) {
+        const max = (1 << (bitDepth === 16 ? 8 : bitDepth)) - 1;
+        const v = bitDepth < 8 ? Math.round((sample(0) * 255) / max) : sample(0);
+        r = g = b = v;
+      } else if (colorType === 4) {
+        r = g = b = sample(0);
+        alpha = sample(1);
+      } else if (colorType === 2) {
+        r = sample(0); g = sample(1); b = sample(2);
+      } else if (colorType === 6) {
+        r = sample(0); g = sample(1); b = sample(2); alpha = sample(3);
+      } else if (colorType === 3 && palette) {
+        const idx = sample(0);
+        r = palette[idx * 3];
+        g = palette[idx * 3 + 1];
+        b = palette[idx * 3 + 2];
+        alpha = trns && idx < trns.length ? trns[idx] : 255;
+      }
+
+      const di = (oy * outWidth + destX(i)) * 4;
+      out[di] = r;
+      out[di + 1] = g;
+      out[di + 2] = b;
+      out[di + 3] = alpha;
+    }
+    cur.copy(prev);
+  }
+}
+
+// Adam7 interlace pass geometry.
+const ADAM7 = [
+  { x0: 0, y0: 0, dx: 8, dy: 8 },
+  { x0: 4, y0: 0, dx: 8, dy: 8 },
+  { x0: 0, y0: 4, dx: 4, dy: 8 },
+  { x0: 2, y0: 0, dx: 4, dy: 4 },
+  { x0: 0, y0: 2, dx: 2, dy: 4 },
+  { x0: 1, y0: 0, dx: 2, dy: 2 },
+  { x0: 0, y0: 1, dx: 1, dy: 2 },
+];
+
+/**
+ * Decode a PNG to RGBA. Supports color types 0/2/3/4/6, bit depths 1/2/4/8/16,
+ * and Adam7 interlacing. Returns null only for malformed/non-PNG input.
+ */
 export function decodePNG(png: Buffer): RawImage | null {
   if (png.length < 8 || !png.subarray(0, 8).equals(SIGNATURE)) return null;
   let offset = 8;
@@ -50,6 +162,8 @@ export function decodePNG(png: Buffer): RawImage | null {
   let bitDepth = 0;
   let colorType = 0;
   let interlace = 0;
+  let palette: Buffer | null = null;
+  let trns: Buffer | null = null;
   const idat: Buffer[] = [];
 
   while (offset + 8 <= png.length) {
@@ -62,51 +176,45 @@ export function decodePNG(png: Buffer): RawImage | null {
       bitDepth = png[dataStart + 8];
       colorType = png[dataStart + 9];
       interlace = png[dataStart + 12];
+    } else if (type === "PLTE") {
+      palette = png.subarray(dataStart, dataStart + length);
+    } else if (type === "tRNS") {
+      trns = png.subarray(dataStart, dataStart + length);
     } else if (type === "IDAT") {
       idat.push(png.subarray(dataStart, dataStart + length));
     } else if (type === "IEND") {
       break;
     }
-    offset = dataStart + length + 4; // skip data + CRC
+    offset = dataStart + length + 4;
   }
 
-  if (bitDepth !== 8 || interlace !== 0) return null;
-  const channels = colorType === 6 ? 4 : colorType === 2 ? 3 : 0;
-  if (channels === 0) return null;
+  if (channelsForColorType(colorType) === 0) return null;
+  if (![1, 2, 4, 8, 16].includes(bitDepth)) return null;
+  if (colorType === 3 && !palette) return null;
 
   const raw = inflateSync(Buffer.concat(idat));
-  const stride = width * channels;
   const out = Buffer.alloc(width * height * 4);
-  const prev = Buffer.alloc(stride);
-  const cur = Buffer.alloc(stride);
-  let pos = 0;
+  const channels = channelsForColorType(colorType);
 
-  for (let y = 0; y < height; y++) {
-    const filter = raw[pos++];
-    raw.copy(cur, 0, pos, pos + stride);
-    pos += stride;
-    for (let x = 0; x < stride; x++) {
-      const a = x >= channels ? cur[x - channels] : 0;
-      const b = prev[x];
-      const c = x >= channels ? prev[x - channels] : 0;
-      let value = cur[x];
-      switch (filter) {
-        case 1: value += a; break;
-        case 2: value += b; break;
-        case 3: value += (a + b) >> 1; break;
-        case 4: value += paeth(a, b, c); break;
-      }
-      cur[x] = value & 0xff;
+  if (interlace === 0) {
+    unfilterToRGBA(raw, width, height, bitDepth, colorType, palette, trns, out, width,
+      (i) => i, (j) => j);
+  } else if (interlace === 1) {
+    let pos = 0;
+    for (const pass of ADAM7) {
+      const pw = Math.ceil((width - pass.x0) / pass.dx);
+      const ph = Math.ceil((height - pass.y0) / pass.dy);
+      if (pw <= 0 || ph <= 0) continue;
+      const bitsPerPixel = channels * bitDepth;
+      const stride = Math.ceil((pw * bitsPerPixel) / 8);
+      const passBytes = (stride + 1) * ph;
+      const passRaw = raw.subarray(pos, pos + passBytes);
+      pos += passBytes;
+      unfilterToRGBA(passRaw, pw, ph, bitDepth, colorType, palette, trns, out, width,
+        (i) => pass.x0 + i * pass.dx, (j) => pass.y0 + j * pass.dy);
     }
-    for (let x = 0; x < width; x++) {
-      const si = x * channels;
-      const di = (y * width + x) * 4;
-      out[di] = cur[si];
-      out[di + 1] = cur[si + 1];
-      out[di + 2] = cur[si + 2];
-      out[di + 3] = channels === 4 ? cur[si + 3] : 255;
-    }
-    cur.copy(prev);
+  } else {
+    return null;
   }
 
   return { width, height, data: out };

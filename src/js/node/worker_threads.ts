@@ -178,6 +178,7 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
 }
 
 const kRestoreJSTransferables = Symbol("kRestoreJSTransferables");
+const kFinalizeJSTransferables = Symbol("kFinalizeJSTransferables");
 
 function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   const transferList = options?.transferList;
@@ -276,20 +277,25 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     workerData: replace(options.workerData),
     transferList: nativeTransferList,
   };
+  packed[kRestoreJSTransferables] = restoreNeutered;
   // A handle in transferList but never referenced from workerData is still
   // detached from this thread (fd === -1, like node), but no marker will
   // deserialize it on the worker side - close the orphaned fd instead of
-  // leaking it (node's worker-side instance is reclaimed by GC).
-  for (const { 0: item, 1: data } of neutered) {
-    if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
-      try {
-        require("node:fs").closeSync((data as any).fd);
-      } catch {
-        // already closed
+  // leaking it (node's worker-side instance is reclaimed by GC). This runs
+  // only after WebWorker construction succeeds: if construction throws, the
+  // rollback above must still find the fd open to restore the handle (node
+  // leaves the handle fully usable in that case).
+  packed[kFinalizeJSTransferables] = () => {
+    for (const { 0: item, 1: data } of neutered) {
+      if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
+        try {
+          require("node:fs").closeSync((data as any).fd);
+        } catch {
+          // already closed
+        }
       }
     }
-  }
-  packed[kRestoreJSTransferables] = restoreNeutered;
+  };
   return packed;
 }
 
@@ -437,6 +443,9 @@ class Worker extends EventEmitter {
       }
       throw e;
     }
+    // The transfer is committed - release fds that were transferred but are
+    // not referenced from workerData (nothing will deserialize them).
+    options[kFinalizeJSTransferables]?.();
     this.#worker.addEventListener("close", this.#onClose.bind(this), {
       once: true,
     });

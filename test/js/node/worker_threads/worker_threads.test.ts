@@ -580,3 +580,19 @@ test("a FileHandle in transferList but not in workerData is detached without lea
   // and closing the old number must not hit a still-open descriptor we own.
   expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
+
+test("failed construction restores an unreferenced transferred FileHandle intact", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const fh = await fs.promises.open(file, "r");
+  // workerData is non-cloneable, so WebWorker construction throws *after*
+  // the handle was neutered; the rollback must hand back a live fd, not a
+  // number that was already closed by the orphan-fd cleanup.
+  expect(() => {
+    new Worker(file, { workerData: () => {}, transferList: [fh as any] } as any);
+  }).toThrow();
+  const { bytesRead } = await fh.read(Buffer.alloc(5), 0, 5, 0);
+  expect(bytesRead).toBe(5);
+  await fh.close();
+});

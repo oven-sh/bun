@@ -33,6 +33,7 @@ const BLOCKED_ENV_PREFIXES = [
   "JAVA_TOOL_OPTIONS",
   "_JAVA_OPTIONS",
   "JDK_JAVA_OPTIONS",
+  "BUN_INSPECT", // covers BUN_INSPECT / BUN_INSPECT_CONNECT_TO (debugger attach)
 ];
 
 function sanitizeEnv(env: Record<string, string>): Record<string, string> {

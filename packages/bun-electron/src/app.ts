@@ -14,6 +14,38 @@ import {
   requestSingleInstanceLock,
 } from "./single-instance";
 
+// Pure, platform-parameterized app.getPath resolution. Exposed so the per-OS
+// userData/appData/cache bases are verifiable on any host.
+export function resolveAppPath(
+  platform: NodeJS.Platform,
+  name: string,
+  appName: string,
+  env: NodeJS.ProcessEnv,
+  execPath: string,
+): string {
+  switch (name) {
+    case "home":
+      return env.HOME ?? env.USERPROFILE ?? "/";
+    case "temp":
+      return env.TMPDIR ?? env.TEMP ?? "/tmp";
+    case "userData":
+    case "appData":
+    case "cache": {
+      const base =
+        platform === "darwin"
+          ? `${env.HOME}/Library/Application Support`
+          : platform === "win32"
+            ? (env.APPDATA ?? `${env.USERPROFILE}\\AppData\\Roaming`)
+            : (env.XDG_CONFIG_HOME ?? `${env.HOME}/.config`);
+      return name === "appData" ? base : `${base}/${appName}`;
+    }
+    case "exe":
+      return execPath;
+    default:
+      throw new Error(`app.getPath: unknown path name '${name}'`);
+  }
+}
+
 class CommandLine {
   readonly switches: string[] = [];
 
@@ -155,27 +187,7 @@ class App extends EventEmitter {
   }
 
   getPath(name: string): string {
-    switch (name) {
-      case "home":
-        return process.env.HOME ?? process.env.USERPROFILE ?? "/";
-      case "temp":
-        return process.env.TMPDIR ?? process.env.TEMP ?? "/tmp";
-      case "userData":
-      case "appData":
-      case "cache": {
-        const base =
-          process.platform === "darwin"
-            ? `${process.env.HOME}/Library/Application Support`
-            : process.platform === "win32"
-              ? (process.env.APPDATA ?? `${process.env.USERPROFILE}\\AppData\\Roaming`)
-              : (process.env.XDG_CONFIG_HOME ?? `${process.env.HOME}/.config`);
-        return name === "appData" ? base : `${base}/${this._name}`;
-      }
-      case "exe":
-        return process.execPath;
-      default:
-        throw new Error(`app.getPath: unknown path name '${name}'`);
-    }
+    return resolveAppPath(process.platform, name, this._name, process.env, process.execPath);
   }
 
   // -- internal ------------------------------------------------------------

@@ -13,15 +13,67 @@ export interface NativeEvent {
 
 const PKG_ROOT = path.join(import.meta.dir, "..");
 
+// Pure, platform-parameterized layout resolution. Exposed so the per-OS path
+// branches (dist dir, shim/helper names, mac framework bundle) can be verified
+// deterministically from any host, not just the one we're running on.
+export interface PlatformLayout {
+  distDir: string;
+  shimName: string;
+  /** Helper subprocess path, relative to distDir. */
+  helperRelPath: string;
+  /** mac framework bundle dir, relative to distDir (undefined off mac). */
+  frameworkRelPath?: string;
+  /** CEF resources dir for CefSettings.resources_dir (undefined on mac). */
+  resourcesDir?: string;
+  /** CEF locales dir (undefined on mac). */
+  localesDir?: string;
+}
+
+export function resolveLayout(
+  platform: NodeJS.Platform,
+  arch: string,
+  pkgRoot: string = PKG_ROOT,
+  distOverride?: string,
+): PlatformLayout {
+  const osName = platform === "darwin" ? "macos" : platform === "win32" ? "windows" : "linux";
+  const archName = arch === "arm64" ? "arm64" : "x64";
+  const dir = distOverride ?? path.join(pkgRoot, "dist", `${osName}-${archName}`);
+  const dylibSuffix = platform === "darwin" ? "dylib" : "so";
+  if (platform === "win32") {
+    return {
+      distDir: dir,
+      shimName: "bun_electron_shim.dll",
+      helperRelPath: "bun-electron-helper.exe",
+      resourcesDir: dir,
+      localesDir: path.join(dir, "locales"),
+    };
+  }
+  if (platform === "darwin") {
+    return {
+      distDir: dir,
+      shimName: "libbun_electron_shim.dylib",
+      helperRelPath: path.join("bun-electron Helper.app", "Contents", "MacOS", "bun-electron Helper"),
+      frameworkRelPath: "Chromium Embedded Framework.framework",
+      // mac reads resources/locales from inside the framework bundle.
+    };
+  }
+  return {
+    distDir: dir,
+    shimName: `libbun_electron_shim.${dylibSuffix}`,
+    helperRelPath: "bun-electron-helper",
+    resourcesDir: dir,
+    localesDir: path.join(dir, "locales"),
+  };
+}
+
 export function distDir(): string {
   if (process.env.BUN_ELECTRON_DIST) return process.env.BUN_ELECTRON_DIST;
-  const platform = process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux";
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  return path.join(PKG_ROOT, "dist", `${platform}-${arch}`);
+  return resolveLayout(process.platform, process.arch).distDir;
 }
 
 function shimPath(): string {
   const dir = distDir();
+  // suffix is correct for the *running* platform; resolveLayout covers others.
   const name = process.platform === "win32" ? "bun_electron_shim.dll" : `libbun_electron_shim.${suffix}`;
   const p = path.join(dir, name);
   if (!existsSync(p)) {
@@ -35,6 +87,35 @@ function shimPath(): string {
 
 function cstr(s: string): Buffer {
   return Buffer.from(s + "\0", "utf8");
+}
+
+// Build the be_init kv pairs for a platform. Pure (no FFI / no side effects)
+// so the per-OS init layout — mac framework dir, win/linux resources+locales,
+// helper subprocess path — can be verified on any host.
+export function buildInitKV(
+  platform: NodeJS.Platform,
+  arch: string,
+  options: InitOptions,
+  layout: PlatformLayout,
+  env: NodeJS.ProcessEnv = process.env,
+  pid: number = process.pid,
+): Record<string, string | number | boolean | string[] | undefined> {
+  const dir = layout.distDir;
+  const isMac = platform === "darwin";
+  const tempBase =
+    env.XDG_CACHE_HOME || env.TMPDIR || (platform === "win32" ? env.TEMP! : "/tmp");
+  return {
+    subprocess_path: path.join(dir, layout.helperRelPath),
+    resources_dir: layout.resourcesDir,
+    locales_dir: layout.localesDir,
+    framework_dir: layout.frameworkRelPath ? path.join(dir, layout.frameworkRelPath) : undefined,
+    cache_dir: options.cacheDir ?? path.join(tempBase, `bun-electron-${pid}`),
+    log_file: options.logFile,
+    log_severity: options.logSeverity,
+    remote_debugging_port: options.remoteDebuggingPort,
+    switch: options.switches ?? [],
+    custom_scheme: options.customSchemes ?? [],
+  };
 }
 
 // "key=value\n" lines with percent-encoded values (see shim.h).
@@ -185,41 +266,16 @@ export interface InitOptions {
 export function init(options: InitOptions = {}): void {
   if (initialized) return;
   const s = loadShim();
-  const dir = distDir();
+  const layout = resolveLayout(process.platform, process.arch, PKG_ROOT, distDir());
 
-  const isMac = process.platform === "darwin";
-  const frameworkDir = path.join(dir, "Chromium Embedded Framework.framework");
-  if (isMac) {
-    const lib = path.join(frameworkDir, "Chromium Embedded Framework");
+  if (process.platform === "darwin" && layout.frameworkRelPath) {
+    const lib = path.join(layout.distDir, layout.frameworkRelPath, "Chromium Embedded Framework");
     if (!s.symbols.be_load_library(cstr(lib))) {
       throw new Error(`Failed to load CEF framework from ${lib}`);
     }
   }
 
-  const helperName =
-    process.platform === "win32"
-      ? "bun-electron-helper.exe"
-      : isMac
-        ? path.join("bun-electron Helper.app", "Contents", "MacOS", "bun-electron Helper")
-        : "bun-electron-helper";
-
-  const kv = encodeKV({
-    subprocess_path: path.join(dir, helperName),
-    resources_dir: isMac ? undefined : dir,
-    locales_dir: isMac ? undefined : path.join(dir, "locales"),
-    framework_dir: isMac ? frameworkDir : undefined,
-    cache_dir:
-      options.cacheDir ??
-      path.join(
-        process.env.XDG_CACHE_HOME || process.env.TMPDIR || (process.platform === "win32" ? process.env.TEMP! : "/tmp"),
-        `bun-electron-${process.pid}`,
-      ),
-    log_file: options.logFile,
-    log_severity: options.logSeverity,
-    remote_debugging_port: options.remoteDebuggingPort,
-    switch: options.switches ?? [],
-    custom_scheme: options.customSchemes ?? [],
-  });
+  const kv = encodeKV(buildInitKV(process.platform, process.arch, options, layout));
 
   const rc = s.symbols.be_init(cstr(kv));
   if (rc !== 0) {
@@ -232,6 +288,7 @@ export function init(options: InitOptions = {}): void {
   // call. The interval also keeps Bun's event loop alive while the app runs.
   // (The shim exposes a notification pipe fd as well, but Bun currently has
   // no good primitive for sleeping on a raw pipe fd from JS.)
+  const isMac = process.platform === "darwin";
   pumpTimer = setInterval(() => {
     pollAndDispatch();
     if (isMac) s.symbols.be_do_message_loop_work();

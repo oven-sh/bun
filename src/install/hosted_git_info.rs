@@ -441,9 +441,9 @@ pub enum WellDefinedProtocol {
 // inherent associated types are unstable (E0658).
 pub(crate) type StringWithColonBuffer = [u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
 
-impl WellDefinedProtocol {
+bun_core::comptime_string_map! {
     /// Mapping from protocol string (without colon) to WellDefinedProtocol.
-    pub(crate) const STRINGS: phf::Map<&'static [u8], WellDefinedProtocol> = phf::phf_map! {
+    pub(crate) static PROTOCOL_STRINGS: WellDefinedProtocol = {
         b"bitbucket" => WellDefinedProtocol::Bitbucket,
         b"gist" => WellDefinedProtocol::Gist,
         b"git+file" => WellDefinedProtocol::GitPlusFile,
@@ -460,7 +460,9 @@ impl WellDefinedProtocol {
         b"sourcehut" => WellDefinedProtocol::Sourcehut,
         b"ssh" => WellDefinedProtocol::Ssh,
     };
+}
 
+impl WellDefinedProtocol {
     fn protocol_str(self) -> &'static [u8] {
         match self {
             Self::Bitbucket => b"bitbucket",
@@ -487,14 +489,14 @@ impl WellDefinedProtocol {
         if protocol_with_colon.is_empty() {
             None
         } else {
-            Self::STRINGS
+            PROTOCOL_STRINGS
                 .get(strings::trim_suffix(protocol_with_colon, b":"))
                 .copied()
         }
     }
 
     /// Maximum length of any protocol string in the strings map (computed at compile time).
-    // The longest keys in `STRINGS` ("git+https", "git+rsync", "sourcehut",
+    // The longest keys in `PROTOCOL_STRINGS` ("git+https", "git+rsync", "sourcehut",
     // "bitbucket") are 9 bytes.
     pub(crate) const MAX_PROTOCOL_LENGTH: usize = 9;
 

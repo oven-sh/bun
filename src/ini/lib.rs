@@ -192,14 +192,16 @@ impl fmt::Display for ConfigItem {
 
 use bun_install_types::NodeLinker::NodeLinker;
 
-static NODE_LINKER_MAP: phf::Map<&'static [u8], NodeLinker> = phf::phf_map! {
-    // yarn
-    b"pnpm" => NodeLinker::Isolated,
-    b"node-modules" => NodeLinker::Hoisted,
-    // pnpm
-    b"isolated" => NodeLinker::Isolated,
-    b"hoisted" => NodeLinker::Hoisted,
-};
+bun_core::comptime_string_map! {
+    static NODE_LINKER_MAP: NodeLinker = {
+        // yarn
+        b"pnpm" => NodeLinker::Isolated,
+        b"node-modules" => NodeLinker::Hoisted,
+        // pnpm
+        b"isolated" => NodeLinker::Isolated,
+        b"hoisted" => NodeLinker::Hoisted,
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ScopeError

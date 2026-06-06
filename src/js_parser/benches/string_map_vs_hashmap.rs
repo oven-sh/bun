@@ -1,5 +1,5 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PureGlobalIdentifierValue {
@@ -9,12 +9,8 @@ pub(crate) enum PureGlobalIdentifierValue {
     Other,
 }
 
-include!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../build/debug/codegen/defines_table_generated.rs"
-));
-
-pub(crate) static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobalIdentifierValue> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub(crate) static PURE_GLOBAL_IDENTIFIER_MAP: PureGlobalIdentifierValue = {
     b"NaN" => PureGlobalIdentifierValue::NaN,
     b"Infinity" => PureGlobalIdentifierValue::Infinity,
     b"undefined" => PureGlobalIdentifierValue::StrictUndefined,
@@ -691,7 +687,8 @@ pub(crate) static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobal
     b"webkitURL" => PureGlobalIdentifierValue::Other,
     b"window" => PureGlobalIdentifierValue::Other,
     b"crypto" => PureGlobalIdentifierValue::Other,
-};
+    };
+}
 
 fn load_corpus() -> Vec<Vec<u8>> {
     let candidates = [
@@ -750,6 +747,10 @@ fn bench(c: &mut Criterion) {
     let corpus = load_corpus();
     let keys = table_keys();
     let key_set: HashSet<Vec<u8>> = keys.iter().cloned().collect();
+    let hash_map: HashMap<&'static [u8], PureGlobalIdentifierValue> = PURE_GLOBAL_IDENTIFIER_MAP
+        .entries()
+        .map(|(k, v)| (k, *v))
+        .collect();
 
     let hits = corpus.iter().filter(|k| key_set.contains(*k)).count();
     eprintln!(
@@ -773,24 +774,24 @@ fn bench(c: &mut Criterion) {
     for (name, data) in cases {
         let mut g = c.benchmark_group(*name);
         g.throughput(criterion::Throughput::Elements(data.len() as u64));
-        g.bench_with_input(BenchmarkId::new("phf", data.len()), data, |b, data| {
-            b.iter(|| {
-                for k in data.iter() {
-                    black_box(PURE_GLOBAL_IDENTIFIER_MAP.get(black_box(k.as_slice())));
-                }
-            })
-        });
         g.bench_with_input(
-            BenchmarkId::new("generated", data.len()),
+            BenchmarkId::new("comptime_string_map", data.len()),
             data,
             |b, data| {
                 b.iter(|| {
                     for k in data.iter() {
-                        black_box(lookup_pure_global_identifier(black_box(k.as_slice())));
+                        black_box(PURE_GLOBAL_IDENTIFIER_MAP.get(black_box(k.as_slice())));
                     }
                 })
             },
         );
+        g.bench_with_input(BenchmarkId::new("hashmap", data.len()), data, |b, data| {
+            b.iter(|| {
+                for k in data.iter() {
+                    black_box(hash_map.get(black_box(k.as_slice())));
+                }
+            })
+        });
         g.finish();
     }
 }

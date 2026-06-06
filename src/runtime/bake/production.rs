@@ -942,25 +942,24 @@ pub(super) fn build_with_vm(
         ));
     }
 
-    let mut css_chunk_js_strings: Vec<JSValue> = vec![JSValue::ZERO; css_chunks_count];
-    debug_assert_eq!(
-        pt.bundled_outputs[css_chunks_first..][..css_chunks_count].len(),
-        css_chunk_js_strings.len()
-    );
-    for (output_file, str) in pt.bundled_outputs[css_chunks_first..][..css_chunks_count]
-        .iter()
-        .zip(css_chunk_js_strings.iter_mut())
-    {
+    // These strings live only in this heap Vec until the route arrays below
+    // store them; the conservative GC stack scan cannot see a heap buffer, so
+    // keep each one protected (module evaluation below can trigger GC).
+    let mut css_chunk_js_strings: Vec<jsc::ProtectedJSValue> = Vec::with_capacity(css_chunks_count);
+    for output_file in pt.bundled_outputs[css_chunks_first..][..css_chunks_count].iter() {
         debug_assert!(output_file.dest_path[0] != b'.');
         // CSS chunks must be in contiguous order!!
         debug_assert!(output_file.loader.is_css());
-        *str = BunString::create_format(format_args!(
-            "{}{}",
-            BStr::new(public_path),
-            BStr::new(&output_file.dest_path),
-        ))
-        .to_js(global)
-        .map_err(js_err)?;
+        css_chunk_js_strings.push(
+            BunString::create_format(format_args!(
+                "{}{}",
+                BStr::new(public_path),
+                BStr::new(&output_file.dest_path),
+            ))
+            .to_js(global)
+            .map_err(js_err)?
+            .protected(),
+        );
     }
 
     // Route URL patterns with parameter placeholders.
@@ -1075,7 +1074,7 @@ pub(super) fn build_with_vm(
                 .put_index(
                     global,
                     css_file_count,
-                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
+                    css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
                 )
                 .map_err(js_err)?;
             css_file_count += 1;
@@ -1093,7 +1092,7 @@ pub(super) fn build_with_vm(
                     .put_index(
                         global,
                         css_file_count,
-                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
+                        css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
                     )
                     .map_err(js_err)?;
                 css_file_count += 1;
@@ -1116,7 +1115,7 @@ pub(super) fn build_with_vm(
                         .put_index(
                             global,
                             css_file_count,
-                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first],
+                            css_chunk_js_strings[r#ref.get() as usize - css_chunks_first].value(),
                         )
                         .map_err(js_err)?;
                     css_file_count += 1;

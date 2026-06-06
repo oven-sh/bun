@@ -79,21 +79,23 @@ pub enum EventType {
     ErrorEvent,
     OpenEvent,
     // This variant absorbs any
-    // unrecognized event name. Values are only ever constructed via the MAP
-    // lookup below (never transmuted from a raw u8), so no other catch-all is
-    // needed.
+    // unrecognized event name. Values are only ever constructed via the
+    // EVENT_TYPE_MAP lookup below (never transmuted from a raw u8), so no
+    // other catch-all is needed.
     Unknown = 254,
 }
 
-impl EventType {
-    pub const MAP: phf::Map<&'static [u8], EventType> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static EVENT_TYPE_MAP: EventType = {
         b"event" => EventType::Event,
         b"message" => EventType::MessageEvent,
         b"close" => EventType::CloseEvent,
         b"error" => EventType::ErrorEvent,
         b"open" => EventType::OpenEvent,
     };
+}
 
+impl EventType {
     pub fn label(self) -> &'static [u8] {
         match self {
             Self::Event => b"event",
@@ -1992,7 +1994,7 @@ impl<'a> Formatter<'a> {
                         JSValue::UNDEFINED
                     };
 
-                    let event_type = match EventType::MAP
+                    let event_type = match EVENT_TYPE_MAP
                         .from_js(self.global_this, event_type_value)?
                         .unwrap_or(EventType::Unknown)
                     {

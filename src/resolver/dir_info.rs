@@ -10,7 +10,7 @@ use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
 
 pub use allocators::IndexType;
-use allocators::NOT_FOUND;
+use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
 
@@ -341,6 +341,44 @@ fn ref_at_index(index: Index) -> Option<DirInfoRef> {
     unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
+/// Slot pointer for `index`, derived from the raw singleton so its provenance
+/// is rooted in the `DIR_INFO_MAP` static — it survives later `&mut HashMap`
+/// retags that would pop a pointer projected through a transient borrow.
+/// Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
+///
+/// # Safety
+/// A non-sentinel `index` must have been assigned by `put` (slot initialized),
+/// and the caller must hold the resolver mutex.
+pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
+    if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+        return None;
+    }
+    let raw = hash_map_instance();
+    if index.is_overflow() {
+        // SAFETY: assigned overflow index; resolver mutex held.
+        Some(std::ptr::from_mut::<DirInfo>(unsafe {
+            (*raw).overflow_list.at_index_mut(index)
+        }))
+    } else {
+        // SAFETY: raw place read of a `Copy` scalar.
+        let used = u32::from(unsafe { (*raw).backing_buf_used });
+        // Unconditional assert: keep the inherent `at_index` panic-on-bad-index
+        // failure mode rather than handing out an out-of-bounds pointer.
+        assert!(
+            index.index() < used,
+            "dir cache slot index {} out of bounds (used: {used})",
+            index.index(),
+        );
+        // SAFETY: in-bounds initialized slot; raw place projection keeps the
+        // static's root provenance.
+        Some(unsafe {
+            core::ptr::addr_of_mut!((*raw).backing_buf)
+                .cast::<DirInfo>()
+                .add(index.index() as usize)
+        })
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub struct Flags: u8 {
@@ -389,21 +427,41 @@ impl DirInfo {
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
+/// Insert `value` at `result`'s slot and return a retag-durable slot pointer
+/// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a
+/// protected `&mut` receiver would be invalidated when `slot_ptr_at` goes
+/// through the singleton's root tag.
+///
+/// # Safety
+/// `map` must be the live `hash_map_instance()` singleton and the caller must
+/// hold the resolver mutex.
+pub(crate) unsafe fn put_slot(
+    map: *mut HashMap,
+    result: &mut allocators::Result,
+    value: DirInfo,
+) -> core::result::Result<*mut DirInfo, bun_core::Error> {
+    debug_assert!(core::ptr::eq(
+        map.cast_const(),
+        hash_map_instance().cast_const()
+    ));
+    // SAFETY: `map` is the live singleton; resolver mutex held. The auto-ref
+    // `&mut *map` ends when `put` returns, before `slot_ptr_at` runs.
+    unsafe { (*map).put(result, value) }.map_err(bun_core::Error::from)?;
+    // SAFETY: `put` just assigned a non-sentinel, initialized index.
+    Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
+}
+
 /// Resolver-side extension trait adapting `BSSMapInner`'s inherent surface to
 /// the resolver's error type (`bun_core::Error`) and pointer-return shape, plus
-/// `values_mut` which has no inherent equivalent. The four name-colliding
+/// `values_mut` which has no inherent equivalent. The name-colliding
 /// methods are shadowed by inherent methods under dot-syntax (Rust resolves
 /// inherent before trait), so the bodies below delegate without recursing.
+/// (`put` is NOT here: it must not take `&mut self` — see [`put_slot`].)
 pub trait HashMapExt {
     fn get_or_put(
         &mut self,
         key: &[u8],
     ) -> core::result::Result<allocators::Result, bun_core::Error>;
-    fn put(
-        &mut self,
-        result: &mut allocators::Result,
-        value: DirInfo,
-    ) -> core::result::Result<*mut DirInfo, bun_core::Error>;
     fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
@@ -416,24 +474,6 @@ impl HashMapExt for HashMap {
     ) -> core::result::Result<allocators::Result, bun_core::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
-    }
-    #[inline]
-    fn put(
-        &mut self,
-        result: &mut allocators::Result,
-        value: DirInfo,
-    ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
-        // `result.index` is written back, so `&mut`. Inherent returns `&mut DirInfo`;
-        // erase to `*mut` so callers can stash it past borrowck. NOTE (Stacked Borrows):
-        // this erasure does NOT make the pointer survive a sibling `&mut HashMap` Unique
-        // retag of the same `BSSMapInner` allocation — `backing_buf` is inline, so a fresh
-        // `&mut *dir_cache()` pops every tag derived here. Callers MUST derive all slot
-        // pointers from a single bound `&mut HashMap` (see resolver.rs `dir_info_cached_*`).
-        // TODO: derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
-        // provenance) so slot pointers survive sibling retags outright.
-        self.put(result, value)
-            .map(std::ptr::from_mut::<DirInfo>)
-            .map_err(Into::into)
     }
     #[inline]
     fn mark_not_found(&mut self, result: allocators::Result) {

@@ -6,8 +6,10 @@ pub enum OfflineMode {
     Offline,
 }
 
-pub static PREFER: phf::Map<&'static [u8], OfflineMode> = phf::phf_map! {
-    b"offline" => OfflineMode::Offline,
-    b"latest" => OfflineMode::Latest,
-    b"online" => OfflineMode::Online,
-};
+bun_core::comptime_string_map! {
+    pub static PREFER: OfflineMode = {
+        b"offline" => OfflineMode::Offline,
+        b"latest" => OfflineMode::Latest,
+        b"online" => OfflineMode::Online,
+    };
+}

@@ -755,34 +755,23 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-// Was a `phf::Map`
-// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
-// clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
-// compare rejects almost every miss before touching bytes, and hits resolve in
-// ≤3 slice compares with no hashing or static-init overhead.
+bun_core::comptime_string_map! {
+    static TAG_MAP: Tag = {
+        b"npm" => Tag::Npm,
+        b"git" => Tag::Git,
+        b"folder" => Tag::Folder,
+        b"github" => Tag::Github,
+        b"tarball" => Tag::Tarball,
+        b"symlink" => Tag::Symlink,
+        b"catalog" => Tag::Catalog,
+        b"dist_tag" => Tag::DistTag,
+        b"workspace" => Tag::Workspace,
+    };
+}
+
 #[inline]
 pub fn tag_from_bytes(bytes: &[u8]) -> Option<Tag> {
-    match bytes.len() {
-        3 => match bytes {
-            b"npm" => Some(Tag::Npm),
-            b"git" => Some(Tag::Git),
-            _ => None,
-        },
-        6 => match bytes {
-            b"folder" => Some(Tag::Folder),
-            b"github" => Some(Tag::Github),
-            _ => None,
-        },
-        7 => match bytes {
-            b"tarball" => Some(Tag::Tarball),
-            b"symlink" => Some(Tag::Symlink),
-            b"catalog" => Some(Tag::Catalog),
-            _ => None,
-        },
-        8 if bytes == b"dist_tag" => Some(Tag::DistTag),
-        9 if bytes == b"workspace" => Some(Tag::Workspace),
-        _ => None,
-    }
+    TAG_MAP.get(bytes).copied()
 }
 
 pub trait TagExt {

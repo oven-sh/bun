@@ -984,7 +984,10 @@ impl Listener {
                     // transfer). The internal transfer paths mark theirs with
                     // `fdIsRawSocket`; everything else keeps CRT semantics.
                     #[cfg(windows)]
-                    let fd = if opts.get_truthy(global, "fdIsRawSocket")?.is_some() {
+                    let fd = if opts
+                        .get_truthy(global, "fdIsRawSocket")?
+                        .is_some_and(|v| v.to_boolean())
+                    {
                         Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
                     } else {
                         Fd::from_uv(fd_.to_int32())

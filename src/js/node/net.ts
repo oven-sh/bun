@@ -888,9 +888,11 @@ Socket.prototype.connect = function connect(...args) {
       doConnect(this._handle, {
         data: this,
         fd: fd,
-        // Windows: distinguishes raw SOCKETs (cluster/IPC handle transfer)
-        // from CRT/libuv fds (child_process stdio pipes).
-        fdIsRawSocket: options.fdIsRawSocket === true,
+        // Windows: marks raw SOCKETs (cluster/IPC handle transfer) so they
+        // are not interpreted as CRT/libuv fds (child_process stdio pipes).
+        // Only added when set, so ordinary fd connects keep the exact
+        // pre-existing options shape.
+        ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
         socket: SocketHandlers,
         allowHalfOpen: this.allowHalfOpen,
       }).catch(error => {

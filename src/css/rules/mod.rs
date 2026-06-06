@@ -954,12 +954,27 @@ mod clone_weight {
             CssRule::Style(sty) => selector_list(&sty.selectors)
                 .saturating_add(decl_block(&sty.declarations))
                 .saturating_add(rule_list(&sty.rules)),
-            CssRule::Media(r) => rule_list(&r.rules),
-            CssRule::Supports(r) => rule_list(&r.rules),
-            CssRule::Container(r) => rule_list(&r.rules),
-            CssRule::LayerBlock(r) => rule_list(&r.rules),
+            CssRule::Media(r) => media_list(&r.query).saturating_add(rule_list(&r.rules)),
+            CssRule::Supports(r) => {
+                supports_condition(&r.condition).saturating_add(rule_list(&r.rules))
+            }
+            CssRule::Container(r) => (r.name.as_ref().map_or(0, |n| n.v.v().len() as u64))
+                .saturating_add(container_condition(&r.condition))
+                .saturating_add(rule_list(&r.rules)),
+            CssRule::LayerBlock(r) => r
+                .name
+                .as_ref()
+                .map_or(0, |n| {
+                    n.v.slice()
+                        .iter()
+                        .map(|segment| segment.len() as u64)
+                        .fold(0u64, u64::saturating_add)
+                })
+                .saturating_add(rule_list(&r.rules)),
             CssRule::MozDocument(r) => rule_list(&r.rules),
-            CssRule::Scope(r) => rule_list(&r.rules),
+            CssRule::Scope(r) => (r.scope_start.as_ref().map_or(0, selector_list))
+                .saturating_add(r.scope_end.as_ref().map_or(0, selector_list))
+                .saturating_add(rule_list(&r.rules)),
             CssRule::StartingStyle(r) => rule_list(&r.rules),
             CssRule::Nesting(r) => selector_list(&r.style.selectors)
                 .saturating_add(decl_block(&r.style.declarations))
@@ -969,14 +984,122 @@ mod clone_weight {
                 .iter()
                 .map(|k| decl_block(&k.declarations))
                 .fold(0u64, u64::saturating_add),
-            CssRule::Unknown(r) => {
-                token_list(&r.prelude).saturating_add(r.block.as_ref().map_or(0, token_list))
-            }
+            CssRule::Unknown(r) => (r.name.len() as u64)
+                .saturating_add(token_list(&r.prelude))
+                .saturating_add(r.block.as_ref().map_or(0, token_list)),
             // Remaining rules can't contain nested style rules; their payload
             // is bounded per rule by the input.
             _ => 0,
         };
         RULE.saturating_add(nested)
+    }
+
+    fn media_list(list: &css::media_query::MediaList) -> u64 {
+        use css::media_query::MediaType;
+        list.media_queries
+            .iter()
+            .map(|q| {
+                (match q.media_type {
+                    // SAFETY: arena-owned slice; only its length is read.
+                    MediaType::Custom(name) => name.len() as u64,
+                    _ => 0,
+                })
+                .saturating_add(q.condition.as_ref().map_or(0, media_condition))
+            })
+            .fold(0u64, u64::saturating_add)
+    }
+
+    fn media_condition(condition: &css::media_query::MediaCondition) -> u64 {
+        use css::media_query::MediaCondition;
+        match condition {
+            MediaCondition::Feature(feature) => query_feature(feature),
+            MediaCondition::Not(inner) => media_condition(inner),
+            MediaCondition::Operation { conditions, .. } => conditions
+                .iter()
+                .map(media_condition)
+                .fold(0u64, u64::saturating_add),
+        }
+    }
+
+    fn query_feature<F: css::media_query::FeatureIdTrait>(
+        feature: &css::media_query::QueryFeature<F>,
+    ) -> u64 {
+        use css::media_query::QueryFeature;
+        match feature {
+            QueryFeature::Plain { name, value } | QueryFeature::Range { name, value, .. } => {
+                feature_name(name).saturating_add(feature_value(value))
+            }
+            QueryFeature::Boolean { name } => feature_name(name),
+            QueryFeature::Interval {
+                name, start, end, ..
+            } => feature_name(name)
+                .saturating_add(feature_value(start))
+                .saturating_add(feature_value(end)),
+        }
+    }
+
+    fn feature_name<F: css::media_query::FeatureIdTrait>(
+        name: &css::media_query::MediaFeatureName<F>,
+    ) -> u64 {
+        use css::media_query::MediaFeatureName;
+        match name {
+            MediaFeatureName::Standard(_) => 0,
+            MediaFeatureName::Custom(ident) => ident.v().len() as u64,
+            MediaFeatureName::Unknown(ident) => ident.v().len() as u64,
+        }
+    }
+
+    fn feature_value(value: &css::media_query::MediaFeatureValue) -> u64 {
+        use css::media_query::MediaFeatureValue;
+        match value {
+            MediaFeatureValue::Ident(ident) => ident.v().len() as u64,
+            MediaFeatureValue::Env(env) => {
+                env_name_len(&env.name).saturating_add(env.fallback.as_ref().map_or(0, token_list))
+            }
+            _ => 0,
+        }
+    }
+
+    fn supports_condition(condition: &super::supports::SupportsCondition) -> u64 {
+        use super::supports::SupportsCondition;
+        match condition {
+            SupportsCondition::Not(inner) => supports_condition(inner),
+            SupportsCondition::And(conditions) | SupportsCondition::Or(conditions) => conditions
+                .iter()
+                .map(supports_condition)
+                .fold(0u64, u64::saturating_add),
+            SupportsCondition::Declaration(decl) => {
+                (decl.property_id.name().len() as u64).saturating_add(decl.value.len() as u64)
+            }
+            SupportsCondition::Selector(text) | SupportsCondition::Unknown(text) => {
+                text.len() as u64
+            }
+        }
+    }
+
+    fn container_condition(condition: &super::container::ContainerCondition) -> u64 {
+        use super::container::ContainerCondition;
+        match condition {
+            ContainerCondition::Feature(feature) => query_feature(feature),
+            ContainerCondition::Not(inner) => container_condition(inner),
+            ContainerCondition::Operation { conditions, .. } => conditions
+                .iter()
+                .map(container_condition)
+                .fold(0u64, u64::saturating_add),
+            ContainerCondition::Style(query) => style_query(query),
+        }
+    }
+
+    fn style_query(query: &super::container::StyleQuery) -> u64 {
+        use super::container::StyleQuery;
+        match query {
+            StyleQuery::Feature(feature) => property(feature),
+            StyleQuery::Not(inner) => style_query(inner),
+            StyleQuery::Operation { conditions, .. } => conditions
+                .iter()
+                .map(style_query)
+                .fold(0u64, u64::saturating_add),
+        }
     }
 
     pub(super) fn decl_block(decls: &css::DeclarationBlock) -> u64 {
@@ -1076,16 +1199,33 @@ mod clone_weight {
                 .iter()
                 .map(|l| l.len() as u64)
                 .fold(0u64, u64::saturating_add),
+            PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
+                selector_slice(core::slice::from_ref(&**selector))
+            }
             _ => 0,
         }
     }
 
     fn pseudo_element(pseudo: &PseudoElement) -> u64 {
+        use css::selectors::parser::ViewTransitionPartName;
         match pseudo {
             PseudoElement::CustomFunction { name, arguments } => {
                 (name.len() as u64).saturating_add(token_list(arguments))
             }
             PseudoElement::Custom { name } => name.len() as u64,
+            PseudoElement::CueFunction { selector }
+            | PseudoElement::CueRegionFunction { selector } => {
+                selector_slice(core::slice::from_ref(&**selector))
+            }
+            PseudoElement::ViewTransitionGroup { part_name }
+            | PseudoElement::ViewTransitionImagePair { part_name }
+            | PseudoElement::ViewTransitionOld { part_name }
+            | PseudoElement::ViewTransitionNew { part_name } => match part_name {
+                ViewTransitionPartName::All => 0,
+                ViewTransitionPartName::Name(ident) | ViewTransitionPartName::Class(ident) => {
+                    ident.v().len() as u64
+                }
+            },
             _ => 0,
         }
     }

@@ -287,16 +287,24 @@ test.each([
   ["class-selector", ".PAD { color: red }"],
   ["type-selector", "PAD { color: red }"],
   ["attribute-value", '[d="PAD"] { color: red }'],
+  ["view-transition-part-name", "::view-transition-group(PAD) { color: red }"],
+  ["cue-selector", '::cue([d="PAD"]) { color: red }'],
+  ["unknown-at-rule-name", "@PAD;"],
+  ["media-feature-name", "@media (PAD: 1) { color: red }"],
+  ["supports-condition", "@supports (PAD: PAD) { color: red }"],
+  ["layer-name", "@layer PAD { color: red }"],
+  ["scope-selector", "@scope (.PAD) { color: red }"],
+  ["container-name", "@container PAD (width > 1px) { color: red }"],
 ])("the clone weight counts %s text, not just plain idents", (_name, body) => {
   // Every construct that carries input-sized borrowed text must be charged its
-  // text length. E.g. prepending a digit to the padding turns the ident into a
-  // dimension token whose unit is the full 2 KB text, and moving the padding
-  // into the property name or a nested rule's selector stores the same bytes
-  // outside any token list; if only plain idents were counted, each of these
-  // one-character moves would bypass the budget and restore the multi-gigabyte
-  // amplification.
+  // text length: raw-token payloads, property names, selector text, wrapped
+  // pseudo-element selectors and part names, and the names/preludes/conditions
+  // of every at-rule that can nest inside a style rule. If any of them were
+  // charged only the flat constant, moving the padding there would bypass the
+  // budget and restore the multi-gigabyte amplification (each of these shapes
+  // produced a 33+ MB output from ~30 KB of input before it was counted).
   const pad = Buffer.alloc(2048, "a").toString();
-  const src = `.a, .b { ${body.replace("PAD", pad)}\n`.repeat(14) + "color: red;\n" + "}".repeat(14);
+  const src = `.a, .b { ${body.replace(/PAD/g, pad)}\n`.repeat(14) + "color: red;\n" + "}".repeat(14);
   expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(CLONE_LIMIT_ERROR);
 });
 

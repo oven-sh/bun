@@ -2252,3 +2252,34 @@ it("http.request rejects an options.port that is not a valid port number", async
     server.close();
   }
 });
+
+it("ClientRequest.destroy(err) emits 'error' before the terminal 'close'", async () => {
+  // Node: socketErrorListener forwards the error to the request before
+  // socketCloseListener emits 'close'. Code treating 'close' as terminal
+  // (e.g. removing listeners there) must still observe the error.
+  const server = http.createServer((req, res) => {
+    res.write("x"); // keep the response incomplete
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const events = await new Promise<string[]>((resolve, reject) => {
+      const req = http.get({ host: "127.0.0.1", port }, () => {
+        const seen: string[] = [];
+        req.on("error", () => seen.push("error"));
+        req.on("close", () => {
+          seen.push("close");
+          resolve(seen);
+        });
+        req.destroy(new Error("boom"));
+      });
+      req.on("error", () => {}); // swallow pre-response errors
+      setTimeout(() => reject(new Error("timed out waiting for close")), 5000);
+    });
+    expect(events).toEqual(["error", "close"]);
+  } finally {
+    server.close();
+  }
+});

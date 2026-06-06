@@ -225,6 +225,16 @@ function ClientRequest(input, options, cb) {
 
     this.finished = true;
 
+    // Node routes destroy(err) through the socket 'error' event back to the
+    // request (socketErrorListener) and only then emits 'close'
+    // (socketCloseListener). Our teardown below emits 'close' synchronously
+    // via the abort chain, so surface the error first to keep 'close' the
+    // terminal event. Re-entry from an error handler is a no-op via the
+    // this.destroyed guard above.
+    if (err) {
+      this.emit("error", err);
+    }
+
     // Node tears the in-flight response down via the socket 'close' path
     // (socketCloseListener): an incomplete response is destroyed with
     // ECONNRESET so consumers (e.g. async iteration) observe the reset.
@@ -235,12 +245,6 @@ function ClientRequest(input, options, cb) {
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
-
-    // Node routes destroy(err) through the socket 'error' event back to the
-    // request; our socket teardown does not, so emit it here directly.
-    if (err) {
-      process.nextTick((self, e) => self.emit("error", e), this, err);
-    }
 
     return this;
   };

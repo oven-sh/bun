@@ -951,31 +951,34 @@ it.skipIf(isWindows).each(prInstallVariants)(
 // GitHub API proves the number was parsed out of each spelling (the error
 // echoes it back) without running a full install.
 describe.concurrent("bun upgrade pr argument spellings", () => {
-  it.each(["#4321", "https://github.com/oven-sh/bun/pull/4321"])("accepts %s", async spelling => {
-    using cwd = tempDir("bun-upgrade-pr-spelling", {});
-    using server = Bun.serve({
-      tls,
-      port: 0,
-      fetch: () => new Response("not found", { status: 404 }),
-    });
+  it.each(["#4321", "https://github.com/oven-sh/bun/pull/4321", "http://github.com/oven-sh/bun/pull/4321"])(
+    "accepts %s",
+    async spelling => {
+      using cwd = tempDir("bun-upgrade-pr-spelling", {});
+      using server = Bun.serve({
+        tls,
+        port: 0,
+        fetch: () => new Response("not found", { status: 404 }),
+      });
 
-    await using proc = spawn({
-      cmd: [bunExe(), "upgrade", "pr", spelling],
-      cwd: String(cwd),
-      stdout: null,
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        NODE_TLS_REJECT_UNAUTHORIZED: "0",
-        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
-      },
-    });
+      await using proc = spawn({
+        cmd: [bunExe(), "upgrade", "pr", spelling],
+        cwd: String(cwd),
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          NODE_TLS_REJECT_UNAUTHORIZED: "0",
+          GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        },
+      });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Pull request #4321 was not found");
-    expect(exitCode).toBe(1);
-  });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Pull request #4321 was not found");
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 describe.concurrent("bun upgrade pr argument validation", () => {

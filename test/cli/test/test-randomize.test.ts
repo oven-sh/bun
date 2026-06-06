@@ -81,7 +81,10 @@ test.concurrent("--randomize and --seed work", async () => {
 test("--randomize: files whose u32-truncated path hashes collide get distinct per-file orders", async () => {
   // Find two filenames under an unpredictable tempDir prefix whose full
   // wyhash differs but whose lower 32 bits match. Birthday collision on
-  // u32 is ~77k filenames at 50% probability, ~200k at 99%.
+  // u32 is ~77k filenames at 50% probability; at the 400k cap the miss
+  // probability is exp(-400000^2 / 2^33) ~= 8e-9, so the search is
+  // effectively guaranteed to succeed. The typical hit still lands around
+  // 77k, so the cap only costs time in the astronomically rare tail.
   const tmpRoot = tempDirWithFiles("randomize-hash-collision", {});
   // macOS: /tmp is a symlink to /private/tmp; the test runner resolves
   // the real path, so the collision has to be found on that form.
@@ -91,7 +94,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   let bIdx = -1;
   const seen = new Map<number, number>();
   const mask = 0xffffffffn;
-  for (let i = 0; i < 200_000; i++) {
+  for (let i = 0; i < 400_000; i++) {
     const h = Number(Bun.hash(join(realRoot, `f${i}.test.ts`)) & mask);
     if (seen.has(h)) {
       aIdx = seen.get(h)!;
@@ -100,7 +103,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
     }
     seen.set(h, i);
   }
-  if (aIdx < 0) throw new Error("no u32 hash collision found in 200k filenames");
+  if (aIdx < 0) throw new Error("no u32 hash collision found in 400k filenames");
 
   // 20 items: two independent Fisher–Yates shuffles collide by chance
   // with probability 1/20! (~4e-19), so `orderA != orderB` is effectively

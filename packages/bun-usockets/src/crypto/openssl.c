@@ -360,7 +360,8 @@ static void ssl_flush_pending_session(struct us_socket_t *s) {
 
 /* Defined in `src/runtime/api/bun/SSLContextCache.rs`: tombstones the cache entry on
  * SSL_CTX refcount→0 so the per-VM weak SSL_CTX cache learns the pointer is
- * dead without holding a ref of its own. */
+ * dead without holding a ref of its own. Runs on whichever thread dropped the
+ * last ref; the Rust side asserts that is the cache's owning JS thread. */
 extern void bun_ssl_ctx_cache_on_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
                                       int index, long argl, void *argp);
 

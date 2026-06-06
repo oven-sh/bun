@@ -10,9 +10,18 @@
 //! thread: every consumer's `SSL_CTX_free` (socket close, `owned_ssl_ctx`
 //! deinit, `SecureContext.finalize`) runs there — JSC sweeps destructible
 //! objects on the mutator, not heap-helper, thread. The mutex makes the
-//! tombstone-write / `get_or_create`-load+`up_ref` ordering explicit and
-//! protects against any future caller that does free off-thread; the lock is
-//! uncontended in practice.
+//! tombstone-write / `get_or_create`-load+`up_ref` ordering explicit; the
+//! lock is uncontended in practice.
+//!
+//! The mutex can NOT make an off-thread `SSL_CTX_free` safe: BoringSSL drops
+//! `references` to 0 *before* `CRYPTO_free_ex_data` reaches
+//! `bun_ssl_ctx_cache_on_free`, so between the decrement and the tombstone
+//! write a concurrent `get_or_create` would still see `entry.ctx != null` and
+//! `SSL_CTX_up_ref` 0→1, resurrecting a ctx whose destruction already
+//! committed (use-after-free). Keeping every last-ref free on the owning JS
+//! thread is therefore a hard invariant, enforced by `debug_assert` in
+//! `get_or_create_digest` / `bun_ssl_ctx_cache_on_free`; a consumer that
+//! ships a cache-descended ref to another thread must marshal the free back.
 //!
 //! This subsumes the per-consumer `createSSLContext` calls (Postgres, MySQL,
 //! Valkey, `Bun.connect`, `upgradeTLS`, WebSocket client) and the JS-side
@@ -31,11 +40,32 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
-#[derive(Default)]
 pub struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
     mutex: Mutex,
     ops_since_compact: u32,
+    /// The owning VM's JS thread, captured at construction
+    /// (`init_runtime_state` runs on it). See the module doc: last-ref
+    /// `SSL_CTX_free` of a cache-managed ctx off this thread is a
+    /// use-after-free window the mutex cannot close.
+    #[cfg(debug_assertions)]
+    owner_thread: std::thread::ThreadId,
+    #[cfg(not(debug_assertions))]
+    owner_thread: (),
+}
+
+impl Default for SSLContextCache {
+    fn default() -> Self {
+        Self {
+            map: ArrayHashMap::default(),
+            mutex: Mutex::default(),
+            ops_since_compact: 0,
+            #[cfg(debug_assertions)]
+            owner_thread: std::thread::current().id(),
+            #[cfg(not(debug_assertions))]
+            owner_thread: (),
+        }
+    }
 }
 
 pub type Digest = [u8; 32];
@@ -99,6 +129,7 @@ impl SSLContextCache {
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<*mut boringssl::SSL_CTX> {
+        self.debug_assert_owner_thread();
         {
             let _guard = self.mutex.lock_guard();
             if let Some(entry) = self.map.get(&d) {
@@ -189,6 +220,21 @@ impl SSLContextCache {
         Some(ctx)
     }
 
+    /// Enforces the module-doc invariant. Meaningful for the *free* side:
+    /// `bun_ssl_ctx_cache_on_free` runs on whichever thread dropped the last
+    /// ref, and an off-thread drop races `get_or_create`'s `up_ref` into a
+    /// resurrection use-after-free regardless of the mutex.
+    #[inline]
+    fn debug_assert_owner_thread(&self) {
+        #[cfg(debug_assertions)]
+        assert!(
+            std::thread::current().id() == self.owner_thread,
+            "SSLContextCache touched off its owning JS thread; an off-thread \
+             SSL_CTX_free of a cache-managed ctx can resurrect a dying SSL_CTX \
+             (see module doc). Marshal the free back to the owning thread."
+        );
+    }
+
     /// Reclaim tombstoned entries. Locked variant — callers hold `self.mutex`.
     fn compact_locked(&mut self) {
         let mut i: usize = 0;
@@ -237,6 +283,7 @@ pub extern "C" fn bun_ssl_ctx_cache_on_free(
     // SAFETY: non-null ptr is the *Entry we stored via SSL_CTX_set_ex_data; the
     // owning cache outlives every SSL_CTX it hands out (Drop clears ex_data first).
     let entry: &mut Entry = unsafe { bun_ptr::callback_ctx::<Entry>(ptr) };
+    entry.owner.debug_assert_owner_thread();
     let _guard = entry.owner.mutex.lock_guard();
     entry.ctx = ptr::null_mut();
 }
@@ -247,6 +294,7 @@ impl Drop for SSLContextCache {
     /// dereference the freed `Entry`/map. Map itself holds no refs, so no
     /// `SSL_CTX_free` here.
     fn drop(&mut self) {
+        self.debug_assert_owner_thread();
         let _guard = self.mutex.lock_guard();
         for &entry in self.map.values() {
             // SAFETY: map values are live heap Entries; we hold the mutex.

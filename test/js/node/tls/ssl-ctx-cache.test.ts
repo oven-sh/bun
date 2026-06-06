@@ -5,6 +5,7 @@
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
 import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
@@ -170,6 +171,95 @@ test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
       },
     });
     await promise;
+  }
+});
+
+// Tombstone-adopt path: after the last owner drops and the entry is
+// tombstoned (ctx nulled, digest still mapped), the next get_or_create for
+// the same digest must adopt the rebuilt CTX into the existing slot: one
+// allocation, and subsequent identical configs are cache hits again.
+test("rebuilding a config after its SSL_CTX was reclaimed reuses the tombstoned slot", async () => {
+  // Drain leftovers so `before` is stable (same preamble as the weak-cache test).
+  Bun.gc(true);
+  await new Promise<void>(r => setImmediate(r));
+  Bun.gc(true);
+  const before = sslCtxLiveCount();
+
+  // Unique digest via a distinctive cipher list so nothing else shares it.
+  const opts = { ciphers: "ECDHE-RSA-AES256-GCM-SHA384" };
+  let sc: any = tls.createSecureContext(opts);
+  expect(sslCtxLiveCount()).toBe(before + 1);
+  sc = undefined;
+
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    await new Promise<void>(r => setImmediate(r));
+    if (sslCtxLiveCount() <= before) break;
+  }
+  expect(sslCtxLiveCount()).toBeLessThanOrEqual(before);
+
+  // Same digest again: the cache must rebuild exactly one CTX (adopting the
+  // tombstoned entry) and the follow-up create must dedupe onto it.
+  sc = tls.createSecureContext(opts);
+  const again = tls.createSecureContext({ ...opts });
+  expect(again.context).toBe(sc.context);
+  expect(sslCtxLiveCount()).toBe(before + 1);
+});
+
+// https://github.com/oven-sh/bun/issues/31881: node:http2 churn (a new
+// session per request, firebase-admin's pattern) over the weak cache, with GC
+// pressure interleaved so reclaim/tombstone/rebuild overlap the session
+// lifecycle on the event loop. Debug builds additionally assert (in
+// bun_ssl_ctx_cache_on_free) that every last-ref SSL_CTX_free stays on the
+// owning JS thread, the invariant that keeps getOrCreate's up_ref from
+// resurrecting a dying ctx.
+test("node:http2 session churn with GC shares one SSL_CTX and completes every request", async () => {
+  const server = http2.createSecureServer({ ...tlsCerts });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+
+  const clientOpts = { ca: tlsCerts.cert, rejectUnauthorized: false };
+
+  async function oneSession() {
+    const session = http2.connect(`https://localhost:${port}`, clientOpts);
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    session.on("error", reject);
+    const req = session.request({ ":path": "/" });
+    req.on("error", reject);
+    req.on("response", headers => resolve(headers[":status"] as number));
+    req.resume();
+    req.end();
+    const status = await promise;
+    session.close();
+    await once(session, "close");
+    return status;
+  }
+
+  try {
+    // Warm: server CTX + first client CTX + any lazy defaults.
+    expect(await oneSession()).toBe(200);
+    Bun.gc(true);
+    await new Promise<void>(r => setImmediate(r));
+    const before = sslCtxLiveCount();
+
+    for (let round = 0; round < 6; round++) {
+      const statuses = await Promise.all([oneSession(), oneSession(), oneSession(), oneSession(), oneSession()]);
+      expect(statuses).toEqual([200, 200, 200, 200, 200]);
+      Bun.gc(true);
+      await new Promise<void>(r => setImmediate(r));
+    }
+
+    // 30 sessions later: same client config = same digest = no per-session
+    // CTX growth (headroom for defaults lazily built mid-run).
+    expect(sslCtxLiveCount() - before).toBeLessThanOrEqual(2);
+  } finally {
+    server.close();
+    await once(server, "close");
   }
 });
 

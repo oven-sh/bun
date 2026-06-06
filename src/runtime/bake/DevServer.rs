@@ -2981,10 +2981,16 @@ impl DevServer {
         w.extend_from_slice(b": [ [");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
-            if import.source_index.is_valid() {
+            // The emitted key must match the target module's own key, which
+            // the printer derives from the source's `pretty` path. The
+            // record's `pretty` is not rewritten when the import target is
+            // also an entry point of this bundle, leaving the raw specifier
+            // or an absolute path behind (#31923).
+            let key: &[u8] = if import.source_index.is_valid() {
                 if !loaders[import.source_index.get() as usize].is_javascript_like() {
                     continue; // ignore non-JavaScript imports
                 }
+                input_file_sources[import.source_index.get() as usize].path.pretty
             } else {
                 // Find the in-graph import.
                 let Some(file) = self.client_graph.bundled_files.get(import.path.text) else {
@@ -2993,16 +2999,14 @@ impl DevServer {
                 if !matches!(file.content, incremental_graph::Content::Js(_)) {
                     continue;
                 }
-            }
+                import.path.pretty
+            };
             if !any {
                 any = true;
                 w.extend_from_slice(b"\n");
             }
             w.extend_from_slice(b"    ");
-            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                import.path.pretty,
-                w,
-            )?;
+            bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(key, w)?;
             w.extend_from_slice(b", 0,\n");
         }
         if any {

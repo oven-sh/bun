@@ -241,10 +241,15 @@ class AsyncLocalStorage {
             set(context2);
           }
         }
+        // With no previous entry the storage is absent from the context after
+        // restoration, so getStore() falls through to #defaultValue — unless a
+        // disable() during the callback left the storage disabled, in which
+        // case getStore() short-circuits to undefined.
+        const expectedStore = hasPrevious ? previous_value : this.#disabled ? undefined : this.#defaultValue;
         $assert(
-          this.getStore() === previous_value,
+          this.getStore() === expectedStore,
           "run: previous_value",
-          Bun.inspect(previous_value),
+          Bun.inspect(expectedStore),
           "was not restored, i see",
           this.getStore(),
         );

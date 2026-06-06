@@ -3043,6 +3043,7 @@ mod spawn_process_body {
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
                 // SAFETY: prctl
+                #[cfg(not(target_env = "ohos"))]
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3055,6 +3056,7 @@ mod spawn_process_body {
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
                     // SAFETY: prctl
+                    #[cfg(not(target_env = "ohos"))]
                     let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
                 }
             }
@@ -3216,7 +3218,10 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    #[cfg(all(
+                        any(target_os = "linux", target_os = "android"),
+                        not(target_env = "ohos")
+                    ))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
@@ -3226,6 +3231,12 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
+                    // OHOS: wait_linux_signalfd is incompatible (prctl triggers SIGSYS,
+                    // pidfd_open blocked). Fall through to the plain poll()+wait4() loop
+                    // which uses socketpair + drain_fd + wait4 — all confirmed working
+                    // on OHOS via C diagnostic tests (spawnsync_pipe_test.c).
+                    #[cfg(target_env = "ohos")]
+                    let r: Option<Maybe<Status>> = None;
                     #[cfg(not(any(
                         target_os = "linux",
                         target_os = "android",

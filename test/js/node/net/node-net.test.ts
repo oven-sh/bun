@@ -3,6 +3,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import {
   BlockList,
   connect,
@@ -932,7 +933,6 @@ it.skipIf(isWindows)(
 
 describe("Socket fd adoption", () => {
   it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
-    const fs = require("node:fs");
     const path = join(tmpdirSync(), "adopted-fd.txt");
     const fd = fs.openSync(path, "w");
     const socket = new Socket({ fd, readable: false, writable: true });

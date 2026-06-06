@@ -1,3 +1,4 @@
+import { cssInternals } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -87,3 +88,38 @@ test("duplicate declarations across merged rules minify in linear time instead o
     exitCode: 0,
   });
 }, 90_000);
+
+// The deferred re-minify must keep producing the same output the per-merge
+// re-minify did for merge runs that interact with the handler context or the
+// merge-with-previous cascade.
+test("deferred merge re-minify keeps per-merge output", () => {
+  // The merged-in rule stages dark-mode fallback vars; its re-minify stages
+  // them again, and both sets belong in this rule's @media extras. The
+  // deferred flush must run before the extras are collected (and must not
+  // assert or leak the re-staged entries into a later rule's extras).
+  expect(cssInternals._test(".a{color:red}.a{color-scheme:light dark}", "", { chrome: 80 << 16 })).toBe(
+    ".a {\n" +
+      "  color: red;\n" +
+      "  --buncss-light: initial;\n" +
+      "  --buncss-dark: ;\n" +
+      "  --buncss-light: initial;\n" +
+      "  --buncss-dark: ;\n" +
+      "  color-scheme: light dark;\n" +
+      "}\n" +
+      "\n" +
+      "@media (prefers-color-scheme: dark) {\n" +
+      "  .a {\n" +
+      "    --buncss-light: ;\n" +
+      "    --buncss-dark: initial;\n" +
+      "    --buncss-light: ;\n" +
+      "    --buncss-dark: initial;\n" +
+      "  }\n" +
+      "}\n",
+  );
+
+  // A merge run ended by a non-merging style rule still cascades: after the
+  // .a rules merge and re-minify to [color:blue], .a collapses into .x.
+  expect(cssInternals.minifyTest(".x{color:blue}.a{color:red}.a{color:blue}.b{font-style:italic}", "")).toBe(
+    ".x,.a{color:#00f}.b{font-style:italic}",
+  );
+});

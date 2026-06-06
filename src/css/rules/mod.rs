@@ -775,6 +775,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
     let mut sty_compat: Option<bool> = None;
+    let had_pending = merge_state.pending_minify;
     if let Some(CssRule::Style(last_style_rule)) = rules.last_mut()
         && merge_style_rules(
             sty,
@@ -794,6 +795,30 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             cascade_merge_with_previous(rules, merge_state, context);
         }
         merged = true;
+    }
+
+    if !merged && had_pending {
+        // The failed merge settled the previous run's pending declarations
+        // (merge_style_rules re-minifies before its declaration comparison);
+        // run the merge-with-previous cascade that settling enables, which the
+        // per-merge re-minify used to drive at the end of that run.
+        debug_assert!(!merge_state.pending_minify);
+        cascade_merge_with_previous(rules, merge_state, context);
+    }
+
+    // If this iteration staged handler-context rules (e.g. the merged-in rule
+    // carried a `color-scheme` declaration needing dark-mode fallback vars),
+    // settle the pending merge before collecting those rules below: the
+    // re-minify re-runs the staging declarations and stages their rules
+    // again, and the per-merge re-minify this replaces also ran before
+    // collection, so the re-staged entries belong in this rule's extras.
+    if merge_state.pending_minify
+        && !(context.handler_context.supports.is_empty()
+            && context.handler_context.ltr.is_empty()
+            && context.handler_context.rtl.is_empty()
+            && context.handler_context.dark.is_empty())
+    {
+        flush_pending_style_merge(rules, merge_state, context);
     }
 
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
@@ -1036,35 +1061,19 @@ pub(crate) fn flush_pending_style_merge<R>(
             debug_assert!(false, "pending declaration merge without a style rule last");
             return;
         };
-        // Re-minifying already-minified declarations cannot stage additional
-        // @supports/:dir/@media-dark rules: @supports staging is gated on
-        // `DeclarationContext::StyleRule` (we run under `None`, exactly like
-        // the previous per-merge re-minify), and any declaration that stages
-        // logical or dark rules did so when its rule was first minified,
-        // which appended those rules and ended the merge run before this
-        // rule could be merged into.
-        #[cfg(debug_assertions)]
-        let staged = (
-            context.handler_context.supports.len(),
-            context.handler_context.ltr.len(),
-            context.handler_context.rtl.len(),
-            context.handler_context.dark.len(),
-        );
+        // The re-minify can re-stage handler-context rules: `color-scheme`
+        // re-emits itself and pushes its dark-mode fallback vars on every
+        // pass. `minify_style_arm` therefore settles a pending merge before
+        // collecting extras whenever the handler context has staged entries,
+        // so re-staged entries land in the same iteration's extras exactly as
+        // the per-merge re-minify produced. At every other flush point the
+        // handler context has already been drained and the merged block
+        // cannot contain a staging declaration (its own iteration's extras
+        // would have ended the merge run right after it).
         last.declarations.minify(
             dc::decl_handler_static(&mut *context.handler),
             dc::decl_handler_static(&mut *context.important_handler),
             &mut context.handler_context,
-        );
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            staged,
-            (
-                context.handler_context.supports.len(),
-                context.handler_context.ltr.len(),
-                context.handler_context.rtl.len(),
-                context.handler_context.dark.len(),
-            ),
-            "deferred merge re-minify staged handler-context rules"
         );
         cascade_merge_with_previous(rules, state, context);
     }

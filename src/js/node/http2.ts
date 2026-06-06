@@ -3310,11 +3310,16 @@ class ServerHttp2Session extends Http2Session {
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
   // If specified, the callback function is registered as a handler for the 'close' event.
   close(callback?: Function) {
+    if (this.closed || this.destroyed) return;
     this.#closed = true;
 
     if (typeof callback === "function") {
-      this.on("close", callback);
+      this.once("close", callback);
     }
+    // Like Node, a graceful close sends GOAWAY immediately so the peer stops
+    // routing new work to this session; the session is destroyed once the
+    // existing streams finish.
+    this.goaway();
     if (this.#connections === 0) {
       this.destroy();
     }
@@ -3740,7 +3745,7 @@ class ClientHttp2Session extends Http2Session {
     parser.ping(payload);
     return true;
   }
-  goaway(errorCode, lastStreamId, opaqueData) {
+  goaway(errorCode = NGHTTP2_NO_ERROR, lastStreamId = 0, opaqueData) {
     return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
   }
 
@@ -3889,11 +3894,15 @@ class ClientHttp2Session extends Http2Session {
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
   // If specified, the callback function is registered as a handler for the 'close' event.
   close(callback: Function) {
+    if (this.closed || this.destroyed) return;
     this.#closed = true;
 
     if (typeof callback === "function") {
       this.once("close", callback);
     }
+    // Like Node, a graceful close sends GOAWAY immediately so the peer stops
+    // routing new work to this session.
+    this.goaway();
     if (this.#connections === 0) {
       this.destroy();
     }

@@ -2857,6 +2857,11 @@ describe("subshell", () => {
       .stdout("hi\n")
       .runAsTest("subshell fd-dup inside command substitution");
 
+    TestBuilder.command /* sh */ `(cat) < in.txt`
+      .file("in.txt", "hello\n")
+      .stdout("hello\n")
+      .runAsTest("subshell stdin redirect");
+
     // test_oE 'subshell ending with semicolon'
     TestBuilder.command /* sh */ `
 (echo foo;)

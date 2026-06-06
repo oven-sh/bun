@@ -2127,6 +2127,9 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
   <b><green>bun upgrade<r> <cyan>pr 12345<r>
 
 <b>Flags:<r>
+  <cyan>--canary<r>    Install the most recent canary build
+  <cyan>--stable<r>    Switch back to the latest stable release
+  <cyan>--profile<r>   Install a build with debug symbols
   <cyan>--no-delta<r>  Always download the full release instead of delta patches
 
 Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>

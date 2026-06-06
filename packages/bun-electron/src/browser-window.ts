@@ -50,6 +50,7 @@ let nextFileDialogId = 1;
 const pendingFileDialogs = new Map<number, (result: { canceled: boolean; filePaths: string[] }) => void>();
 let nextDevtoolsId = 1;
 const pendingDevtools = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+let nextFindId = 1;
 
 // Compute the origin of a URL for the sendSync CORS allowlist. data: URLs
 // have a "null" origin (always allowed natively); others contribute their
@@ -237,6 +238,23 @@ export class WebContents extends EventEmitter {
     return this._audioMuted;
   }
 
+  /** Starts a text search; returns a request id. Results arrive via the
+   * 'found-in-page' event on this webContents. */
+  findInPage(text: string, options: { findNext?: boolean } = {}): number {
+    if (typeof text !== "string" || text.length === 0) {
+      throw new TypeError("text must be a non-empty string");
+    }
+    const requestId = nextFindId++;
+    this.win._lastFindRequestId = requestId;
+    this.win._command(options.findNext ? "find_next" : "find", text);
+    return requestId;
+  }
+
+  stopFindInPage(action: "clearSelection" | "keepSelection" | "activateSelection" = "clearSelection"): void {
+    void action;
+    this.win._command("stop_find");
+  }
+
   canGoBack(): boolean {
     return this.win._canGoBack;
   }
@@ -279,6 +297,8 @@ export class BrowserWindow extends EventEmitter {
   _canGoForward = false;
   private _documentEdited = false;
   private _menuBarVisible = true;
+  /** @internal */
+  _lastFindRequestId = 0;
 
   constructor(options: BrowserWindowOptions = {}) {
     super();
@@ -651,6 +671,14 @@ export class BrowserWindow extends EventEmitter {
         }
         break;
       }
+      case "found-in-page":
+        this.webContents.emit("found-in-page", {}, {
+          requestId: this._lastFindRequestId,
+          matches: ev.matches as number,
+          activeMatchOrdinal: ev.activeMatchOrdinal as number,
+          finalUpdate: Boolean(ev.finalUpdate),
+        });
+        break;
       case "devtools-result": {
         const pending = pendingDevtools.get(ev.callId as number);
         if (pending) {

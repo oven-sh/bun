@@ -22,6 +22,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_cookie.h"
 #include "include/cef_devtools_message_observer.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_image.h"
 #include "include/cef_request.h"
 #include "include/cef_request_context.h"
@@ -303,6 +304,7 @@ class Client : public CefClient,
                public CefLifeSpanHandler,
                public CefLoadHandler,
                public CefDisplayHandler,
+               public CefFindHandler,
                public CefRequestHandler,
                public CefResourceRequestHandler {
  public:
@@ -311,7 +313,25 @@ class Client : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // CefFindHandler
+  void OnFindResult(CefRefPtr<CefBrowser> browser,
+                    int identifier,
+                    int count,
+                    const CefRect& selectionRect,
+                    int activeMatchOrdinal,
+                    bool finalUpdate) override {
+    EmitEvent(JsonObj()
+                  .AddString("type", "found-in-page")
+                  .AddInt("windowId", WindowId(browser))
+                  .AddInt("requestId", identifier)
+                  .AddInt("matches", count)
+                  .AddInt("activeMatchOrdinal", activeMatchOrdinal)
+                  .AddBool("finalUpdate", finalUpdate)
+                  .Build());
+  }
 
   // CefRequestHandler -> resource request handler (only when a webRequest
   // listener is active, to avoid per-request overhead otherwise).
@@ -1614,6 +1634,12 @@ void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
     browser->GetHost()->SetZoomLevel(atof(arg.c_str()));
   } else if (cmd == "set_audio_muted" && browser) {
     browser->GetHost()->SetAudioMuted(arg == "1");
+  } else if (cmd == "find" && browser) {
+    browser->GetHost()->Find(arg, true, false, false);
+  } else if (cmd == "find_next" && browser) {
+    browser->GetHost()->Find(arg, true, false, true);
+  } else if (cmd == "stop_find" && browser) {
+    browser->GetHost()->StopFinding(true);
   } else if (cmd == "set_resizable" || cmd == "set_minimizable" ||
              cmd == "set_maximizable") {
     SetWindowOpt(window_id, cmd.substr(4), arg == "1" ? "1" : "0");

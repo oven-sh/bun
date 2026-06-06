@@ -31,6 +31,8 @@ export { powerMonitor } from "./power-monitor";
 export { desktopCapturer } from "./desktop-capturer";
 export { Session } from "./session";
 export { nativeTheme } from "./native-theme";
+export { powerSaveBlocker } from "./power-save-blocker";
+export { systemPreferences } from "./system-preferences";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -52,6 +54,8 @@ import { MessageChannelMain, MessagePortMain } from "./message-channel";
 import { powerMonitor } from "./power-monitor";
 import { desktopCapturer } from "./desktop-capturer";
 import { nativeTheme } from "./native-theme";
+import { powerSaveBlocker } from "./power-save-blocker";
+import { systemPreferences } from "./system-preferences";
 
 export default {
   app,
@@ -70,10 +74,12 @@ export default {
   net,
   Notification,
   powerMonitor,
+  powerSaveBlocker,
   protocol,
   safeStorage,
   screen,
   session,
   shell,
+  systemPreferences,
   Tray,
 };

@@ -178,6 +178,34 @@ describe("webContents module", () => {
     });
   });
 
+  describe("webContents.findInPage", () => {
+    test("reports the number of matches", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body>hello hello hello world</body>"));
+      const result = await new Promise<{ matches: number }>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no final find result")), 8000);
+        w.webContents.on("found-in-page", (_event, r) => {
+          if (r.finalUpdate) {
+            clearTimeout(timer);
+            resolve(r);
+          }
+        });
+        w.webContents.findInPage("hello");
+      });
+      expect(result.matches).toBe(3);
+      w.webContents.stopFindInPage("clearSelection");
+    });
+
+    test("returns a request id and rejects empty queries", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body>text</body>"));
+      const id = w.webContents.findInPage("text");
+      expect(typeof id).toBe("number");
+      w.webContents.stopFindInPage();
+      expect(() => w.webContents.findInPage("")).toThrow(TypeError);
+    });
+  });
+
   describe("console-message event", () => {
     test("is emitted for console.log in the page", async () => {
       const w = createWindow();

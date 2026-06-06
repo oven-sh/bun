@@ -237,8 +237,8 @@ carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `window-icon`, `safe-storage`, `clipboard`, `global-shortcut`,
 `tray-notification`, `net`, `message-channel`, `power-monitor`,
 `context-isolation`, `web-request`, `desktop-capturer`, `png-decode`, and
-`jpeg-decode`, `native-theme`, and `app-extras` test files (219 tests
-total). App-lifecycle scenarios spawn fresh
+`jpeg-decode`, `native-theme`, `app-extras`, `power-save-blocker`, and
+`system-preferences` test files (233 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

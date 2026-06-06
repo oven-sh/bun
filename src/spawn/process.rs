@@ -7,7 +7,10 @@ use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "android", target_os = "macos"),
+    not(target_env = "ohos")
+))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -1745,10 +1748,16 @@ mod spawn_process_body {
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android", target_os = "macos"),
+        not(target_env = "ohos")
+    ))]
     struct AutoCloseFd(Fd);
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android", target_os = "macos"),
+        not(target_env = "ohos")
+    ))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -1764,7 +1773,10 @@ mod spawn_process_body {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android", target_os = "macos"),
+        not(target_env = "ohos")
+    ))]
     impl Drop for AutoCloseFd {
         fn drop(&mut self) {
             if self.0 != Fd::INVALID {

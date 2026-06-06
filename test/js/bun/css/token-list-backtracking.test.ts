@@ -58,7 +58,7 @@ async function expectBounded(css: string, expectedThrew: boolean) {
 
 const filler = Buffer.alloc(4000, "0 ").toString();
 
-test("deeply nested light-dark() without a top-level comma parses in bounded time", async () => {
+test.concurrent("deeply nested light-dark() without a top-level comma parses in bounded time", async () => {
   // The attempt consumed the whole argument range before failing on the
   // missing comma, then the fallback re-parsed it: 2^depth. Depth 16 already
   // took ~15s before the fix; depth 96 did not finish.
@@ -67,7 +67,7 @@ test("deeply nested light-dark() without a top-level comma parses in bounded tim
   await expectBounded(css, false);
 });
 
-test("deeply nested rgb() with a bad-string token in the alpha parses in bounded time", async () => {
+test.concurrent("deeply nested rgb() with a bad-string token in the alpha parses in bounded time", async () => {
   // The alpha token list fails on the unterminated string; that range fails
   // identically when re-parsed as a plain function, once per nesting level.
   const depth = 96;
@@ -75,7 +75,7 @@ test("deeply nested rgb() with a bad-string token in the alpha parses in bounded
   await expectBounded(css, true);
 });
 
-test("deeply nested rgb() with an invalid var() in the alpha parses in bounded time", async () => {
+test.concurrent("deeply nested rgb() with an invalid var() in the alpha parses in bounded time", async () => {
   // Same shape, but the doomed token is an inner var() with an invalid name
   // rather than a tokenizer-level error token.
   const depth = 96;

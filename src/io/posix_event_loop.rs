@@ -2,7 +2,6 @@
 use core::ffi::c_int;
 use core::ffi::c_void;
 use core::fmt;
-#[cfg(unix)]
 use core::ptr;
 
 #[cfg(not(windows))]
@@ -1349,25 +1348,66 @@ impl fmt::Display for FlagsFormatter {
 // `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
 // heap-breakdown builds, so the 128-slot hive is unconditional here (same
 // choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
-#[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
-#[cfg(not(windows))]
-type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
-/// We defer freeing FilePoll until the end of the next event loop iteration
-/// This ensures that we don't free a FilePoll before the next callback is called
-#[cfg(not(windows))]
-pub struct Store {
-    hive: FilePollHive,
-    pending_free_head: *mut FilePoll,
-    pending_free_tail: *mut FilePoll,
+/// Raw-pointer field accessors implemented by the platform `FilePoll` types so
+/// the deferred-free [`PollStore`] can link slots intrusively.
+///
+/// Every method shares one contract: `p` is a live, fully-initialized hive
+/// slot, and the body performs raw-pointer field ops only — materializing a
+/// `&mut Self` would alias the `&mut PollStore` borrow that covers the inline
+/// hive buffer (Stacked Borrows UB).
+pub trait PollSlot: Sized {
+    /// # Safety
+    /// See the trait-level contract.
+    unsafe fn next_to_free(p: *mut Self) -> *mut Self;
+    /// # Safety
+    /// See the trait-level contract.
+    unsafe fn set_next_to_free(p: *mut Self, next: *mut Self);
+    /// Insert `Flags::IgnoreUpdates`.
+    /// # Safety
+    /// See the trait-level contract.
+    unsafe fn ignore_updates(p: *mut Self);
 }
 
 #[cfg(not(windows))]
-impl Store {
-    pub fn init() -> Store {
-        Store {
-            hive: FilePollHive::init(),
+pub type Store = PollStore<FilePoll>;
+
+#[cfg(not(windows))]
+impl PollSlot for FilePoll {
+    #[inline]
+    unsafe fn next_to_free(p: *mut Self) -> *mut Self {
+        // SAFETY: caller upholds the trait-level contract (`p` is a live hive
+        // slot; raw-pointer field op only).
+        unsafe { (*p).next_to_free }
+    }
+    #[inline]
+    unsafe fn set_next_to_free(p: *mut Self, next: *mut Self) {
+        // SAFETY: caller upholds the trait-level contract.
+        unsafe { (*p).next_to_free = next }
+    }
+    #[inline]
+    unsafe fn ignore_updates(p: *mut Self) {
+        // SAFETY: caller upholds the trait-level contract.
+        unsafe { (*p).flags.insert(Flags::IgnoreUpdates) };
+    }
+}
+
+/// We defer freeing FilePoll until the end of the next event loop iteration
+/// This ensures that we don't free a FilePoll before the next callback is called
+pub struct PollStore<P: PollSlot> {
+    hive: bun_collections::hive_array::Fallback<P, HIVE_SIZE>,
+    pending_free_head: *mut P,
+    pending_free_tail: *mut P,
+}
+
+impl<P: PollSlot> PollStore<P> {
+    pub fn init() -> Self {
+        // `hive.put` recycles slots without honoring drop glue on the deferred
+        // path's assumptions; the store requires plain-old-data slots.
+        const { assert!(!core::mem::needs_drop::<P>()) };
+        PollStore {
+            hive: bun_collections::hive_array::Fallback::init(),
             pending_free_head: ptr::null_mut(),
             pending_free_tail: ptr::null_mut(),
         }
@@ -1375,7 +1415,7 @@ impl Store {
 
     /// Claim a hive slot and move `value` into it. Infallible (heap fallback).
     #[inline]
-    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+    pub fn get_init(&mut self, value: P) -> ptr::NonNull<P> {
         self.hive.get_init(value)
     }
 
@@ -1384,13 +1424,14 @@ impl Store {
         while !next.is_null() {
             let current = next;
             // SAFETY: intrusive list; nodes were allocated by this hive. Walk via
-            // raw-pointer reads/writes only — materializing a `&mut FilePoll`
+            // raw-pointer reads/writes only — materializing a `&mut P`
             // here would alias the `&mut self.hive` borrow taken by `put()`
             // below (the slot may live inside the inline hive array).
             unsafe {
-                next = (*current).next_to_free;
-                (*current).next_to_free = ptr::null_mut();
-                // FilePoll has no drop glue; `put` is a no-op drop + recycle.
+                next = P::next_to_free(current);
+                P::set_next_to_free(current, ptr::null_mut());
+                // `P` has no drop glue (asserted in `init`); `put` is a no-op
+                // drop + recycle.
                 self.hive.put(current);
             }
         }
@@ -1399,29 +1440,29 @@ impl Store {
     }
 
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
-    /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
-    /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
+    /// *inside* `self.hive`'s inline `[P; 128]` buffer, so accepting it
+    /// as `&mut P` while `&mut self` is live would retag overlapping
     /// storage under Stacked Borrows (UB). Take it as a raw pointer and
     /// touch fields only through raw pointer ops — same
     /// rationale as `process_deferred_frees` above.
-    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+    pub fn put(&mut self, poll: ptr::NonNull<P>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
         if !ever_registered {
-            // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
+            // SAFETY: `poll` is a fully-initialized hive slot; `P` has no
             // drop glue, so `put` is a no-op drop + recycle.
             unsafe { self.hive.put(poll) };
             return;
         }
 
         // SAFETY: `poll` is a live hive slot (see fn-level comment); raw read of a POD field.
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
+        debug_assert!(unsafe { P::next_to_free(poll) }.is_null());
 
         if !self.pending_free_tail.is_null() {
             debug_assert!(!self.pending_free_head.is_null());
             // SAFETY: tail is non-null and points into the hive.
             unsafe {
-                debug_assert!((*self.pending_free_tail).next_to_free.is_null());
-                (*self.pending_free_tail).next_to_free = poll;
+                debug_assert!(P::next_to_free(self.pending_free_tail).is_null());
+                P::set_next_to_free(self.pending_free_tail, poll);
             }
         }
 
@@ -1431,7 +1472,7 @@ impl Store {
         }
 
         // SAFETY: see fn-level comment — raw-pointer field access only.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
+        unsafe { P::ignore_updates(poll) };
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
@@ -1441,16 +1482,16 @@ impl Store {
         );
         vm.set_after_event_loop_callback(
             Some(callback),
-            core::ptr::NonNull::new(std::ptr::from_mut::<Store>(self).cast::<c_void>()),
+            core::ptr::NonNull::new(std::ptr::from_mut::<Self>(self).cast::<c_void>()),
         );
     }
 
     // Safe fn item: module-private thunk, only coerced to the C-ABI
     // `OpaqueCallback` fn-pointer type — never callable by name outside
-    // `Store`. Body wraps its raw-ptr op explicitly.
+    // the store. Body wraps its raw-ptr op explicitly.
     extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
-        // SAFETY: ctx was set to `self as *mut Store` in `put` above.
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
+        // SAFETY: ctx was set to `self as *mut Self` in `put` above.
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
         this.process_deferred_frees();
     }
 }

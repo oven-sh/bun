@@ -18,6 +18,7 @@ use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecE
 use bun_core::MutableString;
 use bun_core::String as BunString;
 use bun_http::lshpack;
+use bun_http_types::h2::{is_lower_tchar, is_malformed_field_value};
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
@@ -604,45 +605,13 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
 }
 
 #[inline]
-fn is_valid_header_value(value: &[u8]) -> bool {
-    !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
-}
-
-#[inline]
 fn is_malformed_field_name(name: &[u8]) -> bool {
     let rest = match name.split_first() {
         None => return true,
         Some((b':', rest)) => rest,
         Some(_) => name,
     };
-    rest.is_empty()
-        || !rest.iter().all(|&c| {
-            matches!(
-                c,
-                b'a'..=b'z'
-                    | b'0'..=b'9'
-                    | b'!'
-                    | b'#'
-                    | b'$'
-                    | b'%'
-                    | b'&'
-                    | b'\''
-                    | b'*'
-                    | b'+'
-                    | b'-'
-                    | b'.'
-                    | b'^'
-                    | b'_'
-                    | b'`'
-                    | b'|'
-                    | b'~'
-            )
-        })
-}
-
-#[inline]
-fn is_malformed_field_value(value: &[u8]) -> bool {
-    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+    rest.is_empty() || !rest.iter().all(|&c| is_lower_tchar(c))
 }
 
 bun_core::comptime_string_set! {
@@ -5889,23 +5858,7 @@ impl H2FrameParser {
                         any = true;
                         continue 'begin;
                     }
-                    b'a'..=b'z'
-                    | b'0'..=b'9'
-                    | b'!'
-                    | b'#'
-                    | b'$'
-                    | b'%'
-                    | b'&'
-                    | b'\''
-                    | b'*'
-                    | b'+'
-                    | b'-'
-                    | b'.'
-                    | b'^'
-                    | b'_'
-                    | b'`'
-                    | b'|'
-                    | b'~' => {}
+                    c if is_lower_tchar(c) => {}
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
@@ -6034,7 +5987,7 @@ impl H2FrameParser {
                                      value: &[u8],
                                      never_index: bool|
              -> JsResult<Option<JSValue>> {
-                if !is_valid_header_value(value) {
+                if is_malformed_field_value(value) {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
                         format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)),
@@ -6761,7 +6714,7 @@ impl H2FrameParser {
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
-                        if !is_valid_header_value(value) {
+                        if is_malformed_field_value(value) {
                             return Err(global_object
                                 .err(
                                     JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
@@ -6848,7 +6801,7 @@ impl H2FrameParser {
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
-                    if !is_valid_header_value(value) {
+                    if is_malformed_field_value(value) {
                         return Err(global_object
                             .err(
                                 JscErrorCode::HTTP2_INVALID_HEADER_VALUE,

@@ -42,11 +42,12 @@ pub mod whatwg {
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
-    #[repr(C)]
-    pub struct URL {
-        _opaque: [u8; 0],
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
+        /// Construct via `from_string`/`from_utf8`; free via `deinit`.
+        /// `!Send`/`!Sync` per the macro: WTF::URL holds non-atomically-refcounted
+        /// WTF::Strings, so the handle must stay on the thread that created it.
+        pub struct URL;
     }
 
     // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the

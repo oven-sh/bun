@@ -13,8 +13,10 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, Sys
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
+#[cfg(not(windows))]
+use crate::webcore::blob::FileCloser;
 use crate::webcore::blob::{
-    self, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType,
+    self, Blob, ClosingState, FileOpener, MkdirpTarget, Retry, SizeType,
     mkdir_if_not_exists,
 };
 use crate::webcore::body;

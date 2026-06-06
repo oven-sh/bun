@@ -1532,6 +1532,11 @@ pub trait AutoInstaller {
     /// against overwriting a pre-registered VM-side handler when the bundler
     /// worker thread first reaches the PM singleton.
     fn on_wake_context(&self) -> Option<NonNull<c_void>>;
+    /// Repoint the PM's error log. The PM is a process singleton shared by
+    /// every resolver; a previous caller's log (e.g. a `Bun.build()`
+    /// completion's per-task log) may have been freed since, so each resolver
+    /// refreshes the log to its own live instance before use.
+    fn set_log(&mut self, log: *mut bun_ast::Log);
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

@@ -885,6 +885,13 @@ impl<'a> Resolver<'a> {
         &mut self,
     ) -> core::result::Result<*mut dyn AutoInstaller, bun_core::Error> {
         if let Some(pm) = self.package_manager {
+            // The PM is a process singleton shared by every resolver; another
+            // caller (e.g. a Bun.build() completion whose per-task log has
+            // since been freed) may have installed a stale log. Refresh so
+            // error paths always write through this resolver's live log.
+            // SAFETY: `pm` names the process-lifetime singleton; `self.log`
+            // outlives this resolver's use of it.
+            unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
             return Ok(pm.as_ptr());
         }
         // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;

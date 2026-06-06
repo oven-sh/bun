@@ -318,6 +318,10 @@ impl hooks::AutoInstaller for PackageManager {
         self.on_wake.context
     }
 
+    fn set_log(&mut self, log: *mut bun_ast::Log) {
+        self.log = log;
+    }
+
     fn path_for_resolution<'b>(
         &mut self,
         package_id: PackageID,

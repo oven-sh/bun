@@ -1,0 +1,99 @@
+name: bun-electron
+
+permissions:
+  contents: read
+
+# Builds the bun-electron native shim + CEF helper and runs the ported
+# Electron test suite on Linux, macOS, and Windows runners. This is where the
+# macOS/Windows CEF runtime gets exercised — the platforms a Linux dev box
+# can't execute locally.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "packages/bun-electron/**"
+      - ".github/workflows/bun-electron.yml"
+  pull_request:
+    paths:
+      - "packages/bun-electron/**"
+      - ".github/workflows/bun-electron.yml"
+
+env:
+  BUN_VERSION: "canary"
+
+jobs:
+  typecheck:
+    name: "Type check"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/bun-electron
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: tsc --noEmit
+        run: bunx tsc --noEmit
+
+  test:
+    name: "Test (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    defaults:
+      run:
+        working-directory: packages/bun-electron
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      # --- build toolchain + CEF runtime deps -----------------------------
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build \
+            libgtk-3-0 libnss3 libasound2t64 libxss1 libxtst6 \
+            libgbm1 xvfb dbus-x11 || \
+          sudo apt-get install -y cmake ninja-build \
+            libgtk-3-0 libnss3 libasound2 libxss1 libxtst6 libgbm1 xvfb dbus-x11
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Install build tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y
+
+      # --- fetch CEF + build the shim/helper, assembling dist/ ------------
+      - name: Fetch CEF
+        run: bun run fetch-cef
+
+      - name: Build native shim + helper
+        run: bun run build
+
+      # --- run the ported Electron test suite ----------------------------
+      - name: Test (Linux, headless)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a bun test test/
+
+      - name: Test (macOS)
+        if: runner.os == 'macOS'
+        run: bun test test/
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: bun test test/

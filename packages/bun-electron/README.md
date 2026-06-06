@@ -255,3 +255,19 @@ shares one CEF instance across the suite.
 - `BUN_ELECTRON_DEBUG_PORT=9222` — Chrome DevTools protocol on a port.
 - `BUN_ELECTRON_LOG_FILE=/tmp/cef.log` — CEF log destination.
 - `win.webContents.openDevTools()` — DevTools window.
+
+
+## Continuous cross-platform testing
+
+`ci/github-actions.yml` is a ready-to-use GitHub Actions workflow that builds
+the native shim + helper and runs the ported Electron suite on
+**ubuntu-latest, macos-14, and windows-latest** runners (fetching the pinned
+CEF distribution, building, and testing — headless via Xvfb on Linux). It is
+how the macOS/Windows CEF runtime gets exercised on real OSes.
+
+To enable it, copy it into the repo's workflow directory (pushing files under
+`.github/workflows/` requires a token with the `workflow` scope):
+
+```sh
+cp packages/bun-electron/ci/github-actions.yml .github/workflows/bun-electron.yml
+```

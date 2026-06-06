@@ -1910,7 +1910,11 @@ impl napi_async_work {
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
         if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = vm.uncaught_exception(global, exception, false);
+            let _ = vm.uncaught_exception(
+                global,
+                exception,
+                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+            );
         } else if global.has_exception() {
             global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
         }
@@ -2349,7 +2353,7 @@ impl Finalizer {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
                 env_ref.to_js(),
                 exception,
-                false,
+                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
             );
         }
 
@@ -2357,7 +2361,7 @@ impl Finalizer {
             let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
                 env_ref.to_js(),
                 exception,
-                false,
+                bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
             );
         }
     }

@@ -1025,10 +1025,11 @@ impl JSGlobalObject {
     pub fn report_active_exception_as_unhandled(&self, err: JsError) {
         let exception = self.take_exception(err);
         if !exception.is_termination_exception() {
-            let _ = self
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(self, exception, false);
+            let _ = self.bun_vm().as_mut().uncaught_exception(
+                self,
+                exception,
+                crate::virtual_machine::UncaughtExceptionOrigin::Exception,
+            );
         }
     }
 

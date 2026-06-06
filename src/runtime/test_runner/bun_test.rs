@@ -824,7 +824,11 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(
+                    global_this,
+                    value,
+                    bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
+                );
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.

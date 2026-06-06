@@ -1511,7 +1511,11 @@ impl Run {
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(
+                        unsafe { &*global },
+                        result,
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection,
+                    );
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 

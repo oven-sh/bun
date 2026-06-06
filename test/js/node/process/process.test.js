@@ -806,6 +806,45 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(42);
   });
 
+  it("--abort-on-uncaught-exception does not abort a rejection handled by an uncaughtException listener", async () => {
+    // node consults 'uncaughtException' listeners before aborting for the
+    // promise rejection path (unlike synchronous throws, which abort at
+    // throw time regardless of listeners).
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "--abort-on-uncaught-exception",
+        "--unhandled-rejections=strict",
+        "-e",
+        `process.on("uncaughtException", () => console.log("listener handled it")); Promise.reject(new Error("x"));`,
+      ],
+      { env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("listener handled it");
+    // Like node, strict mode still emits the rejection warning when no
+    // 'unhandledRejection' listener claimed it, even though the
+    // 'uncaughtException' listener handled the error itself.
+    expect(stderr).toContain("UnhandledPromiseRejectionWarning");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
+    const proc = Bun.spawn(
+      [
+        bunExe(),
+        "--abort-on-uncaught-exception",
+        "--unhandled-rejections=strict",
+        "-e",
+        `Promise.reject(new Error("x"));`,
+      ],
+      { env: bunEnv, stdout: "ignore", stderr: "ignore" },
+    );
+    const exitCode = await proc.exited;
+    // SIGABRT on POSIX; _exit(134) on Windows.
+    expect(proc.signalCode === "SIGABRT" || exitCode === 134).toBe(true);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

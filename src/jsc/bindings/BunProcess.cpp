@@ -1233,8 +1233,15 @@ static bool shouldAbortOnUncaughtException()
 #endif
 }
 
-extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
+// `origin` mirrors bun_jsc::virtual_machine::UncaughtExceptionOrigin:
+// 0 = synchronous uncaught exception, 1 = unhandled promise rejection,
+// 2 = rejected entry-point module promise (how a synchronous throw from the
+// main module surfaces; treated like 0 for the abort ordering below, like 1
+// for the origin string listeners observe).
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int origin)
 {
+    constexpr int OriginRejection = 1;
+
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
         return false;
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1244,7 +1251,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     MarkedArgumentBuffer args;
     args.append(exception);
-    if (isRejection) {
+    if (origin != 0) {
         args.append(jsString(vm, String("unhandledRejection"_s)));
     } else {
         args.append(jsString(vm, String("uncaughtException"_s)));
@@ -1293,8 +1300,13 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // with an 'error' handler (which returned true above). This mirrors
     // V8/node, where the abort happens at throw time, before
     // 'uncaughtException' listeners are consulted: listeners do not suppress
-    // the abort, only a capture callback does.
-    if (shouldAbortOnUncaughtException() && (capture.isEmpty() || capture.isUndefinedOrNull())) {
+    // the abort, only a capture callback does. True promise rejections are
+    // excluded: there is no throw-time abort for those — node routes them
+    // through process._fatalException first and aborts only if it returns
+    // unhandled (TriggerUncaughtException in node_errors.cc), so their abort
+    // lives in the no-handler branch at the bottom.
+    if (origin != OriginRejection && shouldAbortOnUncaughtException()
+        && (capture.isEmpty() || capture.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));
         abortOnUncaughtException();
     }
@@ -1319,6 +1331,15 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
     } else {
+        // Nothing handled the error. For a true promise rejection this is
+        // where node's abort fires — after process._fatalException returned
+        // unhandled — unlike synchronous throws, which aborted before the
+        // listener checks above. (Non-rejection origins with the flag set
+        // already aborted there, so this only triggers for rejections.)
+        if (shouldAbortOnUncaughtException()) {
+            Bun__logUnhandledException(JSValue::encode(exception));
+            abortOnUncaughtException();
+        }
         return false;
     }
 

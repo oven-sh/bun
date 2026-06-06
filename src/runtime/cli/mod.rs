@@ -2113,7 +2113,7 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
 
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags]<r>
+<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[flags] [pr \\<number\\>]<r>
   Upgrade Bun
 
 <b>Examples:<r>

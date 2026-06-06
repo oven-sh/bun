@@ -51,11 +51,7 @@ test("multi-argument :lang() downlevel output stays small", () => {
 /** Unclosed nested rules with two fat selectors per level: the selector count
  * stays under MAX_SELECTOR_EXPANSION (2^15 leaves), but each expanded
  * selector repeats its ancestor chain of `identLength`-byte identifiers. */
-function fatNestedList(
-  depth: number,
-  identLength: number,
-  selector: (ident: string, i: number) => string,
-): string {
+function fatNestedList(depth: number, identLength: number, selector: (ident: string, i: number) => string): string {
   const ident = Buffer.alloc(identLength, "x").toString();
   let css = "";
   for (let i = 0; i < depth; i++) {

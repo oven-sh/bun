@@ -716,6 +716,7 @@ impl<'a> Parser<'a> {
             || cmd == CommandTag::RunCommand
             || cmd == CommandTag::AutoCommand
             || cmd == CommandTag::TestCommand
+            || cmd == CommandTag::BuildCommand
         {
             if let Some(install_obj) = json.get_object(b"install") {
                 // Ensure ctx.install is allocated so later passes can write into it

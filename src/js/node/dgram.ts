@@ -223,6 +223,8 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
   const state = this[kStateSymbol];
 
+  healthCheck(this);
+
   if (state.bindState !== BIND_STATE_UNBOUND) {
     this.emit("error", $ERR_SOCKET_ALREADY_BOUND());
     return;
@@ -663,6 +665,8 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     validateString(address, "address");
   }
 
+  healthCheck(this);
+
   if (state.bindState === BIND_STATE_UNBOUND) this.bind({ port: 0, exclusive: true }, null);
 
   if (list.length === 0) list.push(Buffer.alloc(0));
@@ -787,11 +791,12 @@ Socket.prototype.close = function (callback) {
     return this;
   }
 
+  healthCheck(this);
   state.receiving = false;
   state.handle.socket?.close();
   state.handle = null;
-  // node resets the bind state on close: a later send() re-binds an
-  // ephemeral socket instead of dereferencing the null handle.
+  // Take post-close use back through the UNBOUND path; send()/bind() throw
+  // ERR_SOCKET_DGRAM_NOT_RUNNING via healthCheck() before re-binding.
   state.bindState = BIND_STATE_UNBOUND;
   // Tell the primary to drop us from the shared-handle refcount.
   if (state.clusterHandle) {

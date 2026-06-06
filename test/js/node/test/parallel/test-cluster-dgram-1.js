@@ -23,6 +23,12 @@
 const common = require('../common');
 if (common.isWindows)
   common.skip('dgram clustering is currently not supported on Windows.');
+// Upstream skips this test on macOS: kernels since 15.7 no longer distribute
+// datagrams evenly across processes sharing the fd, so the strict
+// 10-packets-per-worker assertion stalls forever and the test times out.
+// https://github.com/nodejs/node/issues/60050
+if (common.isMacOS)
+  common.skip('dgram packet distribution is uneven on macOS >= 15.7');
 
 const NUM_WORKERS = 4;
 const PACKETS_PER_WORKER = 10;

@@ -4,8 +4,8 @@ import type {
   ArrayType,
   DatabaseAdapter,
   OnConnected,
-  SQLArrayParameter,
   SQLCommand as SharedSQLCommand,
+  SQLArrayParameter,
   SQLResultArray,
 } from "./shared";
 

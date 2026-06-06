@@ -809,4 +809,148 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31917
+  describe("relocated static initializers", () => {
+    test("static field initializer sees the class expression's inner name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class Foo {
+          static #m = function (tag) { return { tag }; };
+          @dec static s = Foo.#m("s").tag;
+        };
+        console.log(C.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("s\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("this in a static field initializer is the class (class expression)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        function pick(x) { return x; }
+        const C = class Foo {
+          static #m = function (tag) { return { tag }; };
+          @dec static s = pick(this).#m("s").tag;
+        };
+        console.log(C.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("s\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("this in a static field initializer is the class (class declaration)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        class Foo {
+          @dec static s = this.name;
+        }
+        console.log(Foo.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Foo\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("this in an anonymous class expression's static field initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class {
+          @dec static s = this;
+        };
+        console.log(C.s === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated static accessor initializer sees the inner name and this", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class Foo {
+          @dec static accessor a = [Foo, this];
+        };
+        console.log(C.a[0] === C, C.a[1] === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated static accessor initializer sees the inner name and this", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const C = class Foo {
+          static accessor a = [Foo, this];
+        };
+        console.log(C.a[0] === C, C.a[1] === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static block sees the class expression's inner name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        let captured;
+        const C = class Foo {
+          @dec static s = 1;
+          static { captured = Foo; }
+        };
+        console.log(captured === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("this inside a nested function is not rewritten", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class Foo {
+          @dec static s = function () { return this; };
+        };
+        const obj = {};
+        console.log(C.s.call(obj) === obj);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a shadowing binding in the initializer is not rewritten", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const C = class Foo {
+          @dec static s = (function Foo() { return Foo; })();
+        };
+        console.log(typeof C.s === "function" && C.s !== C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static field initializer sees the class replaced by a class decorator", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        function swap(v, c) {
+          return class extends v { static extra = 1; };
+        }
+        @swap class D {
+          @dec static s = this.extra;
+        }
+        const E = @swap class Foo {
+          @dec static s = Foo.extra;
+        };
+        console.log(D.s, E.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 1\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

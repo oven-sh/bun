@@ -1226,8 +1226,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // For named class expressions: swap to expr_class_ref for suffix ops
+        // For named class expressions: swap to expr_class_ref for suffix ops.
+        // The inner class name binding only exists inside the class body, so
+        // static initializers relocated into the suffix chain must reference
+        // the hoisted `_class` temp instead (class declarations keep their
+        // module-level binding, so no replacement is needed there).
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
+        let mut relocated_name_rewrite: Option<RewriteKind> = None;
         if is_expr
             && !expr_class_is_anonymous
             && let Some(ecr) = expr_class_ref
@@ -1238,6 +1243,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .original_name
                     .slice(),
             );
+            relocated_name_rewrite = Some(RewriteKind::ReplaceRef {
+                old: class_name_ref,
+                new: ecr,
+            });
             class_name_ref = ecr;
             class_name_loc = loc;
         }
@@ -1534,7 +1543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     });
 
-                    let init_val = prop
+                    let mut init_val = prop
                         .initializer
                         .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                     if !prop.flags.contains(Flags::Property::IsStatic) {
@@ -1549,6 +1558,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                         ));
                     } else {
+                        // Relocated out of the class body: `this` and the
+                        // inner class name must become the class reference.
+                        p.rewrite_expr(
+                            &mut init_val,
+                            RewriteKind::ReplaceThis {
+                                ref_: class_name_ref,
+                                loc: class_name_loc,
+                            },
+                        );
+                        if let Some(rk) = relocated_name_rewrite {
+                            p.rewrite_expr(&mut init_val, rk);
+                        }
                         let cn_e = p.use_ref(class_name_ref, class_name_loc);
                         let wm_e3 = p.use_ref(wm_ref, loc);
                         suffix_exprs.push(p.call_rt(
@@ -2021,6 +2042,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 loc: class_name_loc,
                             },
                         );
+                        if let Some(rk) = relocated_name_rewrite {
+                            p.rewrite_stmts(stmts_slice, rk);
+                        }
 
                         let all_exprs = stmts_slice
                             .iter()
@@ -2078,7 +2102,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                         ));
                         run_args.push(p.use_ref(class_name_ref, class_name_loc));
-                        if let Some(init_val) = entry.prop.initializer {
+                        if let Some(mut init_val) = entry.prop.initializer {
+                            // Relocated out of the class body: `this` and the
+                            // inner class name must become the class reference.
+                            p.rewrite_expr(
+                                &mut init_val,
+                                RewriteKind::ReplaceThis {
+                                    ref_: class_name_ref,
+                                    loc: class_name_loc,
+                                },
+                            );
+                            if let Some(rk) = relocated_name_rewrite {
+                                p.rewrite_expr(&mut init_val, rk);
+                            }
                             run_args.push(init_val);
                         }
                         let run_args_list = ExprNodeList::from_bump_vec(run_args);

@@ -1175,9 +1175,11 @@ impl Task {
 
                                     // Stale-GVS-symlink detachment. The `continue` at
                                     // the bottom of this override block bypasses the
-                                    // detachment in the else-branch at lines ~1244-1310
-                                    // below; without this an entry that was GVS-
-                                    // eligible on the previous install would still have
+                                    // post-switch detachment further down (the
+                                    // `append_local_store_entry_path` / `is_stale_link`
+                                    // block after the cache-backend switch); without
+                                    // this an entry that was GVS-eligible on the
+                                    // previous install would still have
                                     // `node_modules/.bun/<storepath>` as a symlink into
                                     // `<cache>/links/<hash>/`, and FileCopier's writes
                                     // would land IN the shared cache under every

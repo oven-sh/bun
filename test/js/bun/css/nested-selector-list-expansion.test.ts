@@ -276,6 +276,23 @@ test("the mixed vendor-prefix fuzzer shape with large payloads is bounded too", 
   expect(() => minifyTest(src, "", { safari: (13 << 16) | (2 << 8) })).toThrow(CLONE_LIMIT_ERROR);
 });
 
+test.each([
+  ["dimension-unit", "--p: 1PAD"],
+  ["dashed-ident", "--p: --PAD"],
+  ["var-name", "--p: var(--PAD)"],
+  ["env-name", "--p: env(--PAD)"],
+  ["function-name", "--p: PAD(x)"],
+])("the clone weight counts %s text, not just plain idents", (_name, body) => {
+  // Every raw-token variant that carries input-sized text must be charged its
+  // text length. E.g. prepending a digit to the padding turns the ident into a
+  // dimension token whose unit is the full 2 KB text; if only idents were
+  // counted, that one-character change would bypass the budget and restore the
+  // multi-gigabyte amplification.
+  const pad = Buffer.alloc(2048, "a").toString();
+  const src = `.a, .b { ${body.replace("PAD", pad)};\n`.repeat(14) + "color: red;\n" + "}".repeat(14);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(CLONE_LIMIT_ERROR);
+});
+
 test("nested rules with payloads below the clone limit still compile byte-for-byte", () => {
   // Two levels below the throwing depth: the split path runs and its output is
   // unchanged by the budget.

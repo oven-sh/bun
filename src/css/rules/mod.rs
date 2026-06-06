@@ -922,7 +922,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 /// rules, declarations, selector components (recursing into selector-list
 /// arguments), and raw token lists (token count plus borrowed text length —
 /// the text is borrowed by the clone but re-emitted per clone when printed).
-/// Parsed leaf values are charged a flat constant per declaration: their
+/// Every token variant that stores its text inline is charged that text,
+/// including dimension units, dashed idents, and var()/env()/function names.
+/// Parsed leaf values and `url()` (whose text lives in the stylesheet's
+/// import records, not reachable here) are charged a flat constant: their
 /// per-rule size is bounded by the input, and the number of clones is bounded
 /// by [`MAX_SELECTOR_EXPANSION`]. The walk runs once per split rule, so its
 /// own cost stays proportional to the weight it charges.
@@ -1034,14 +1037,40 @@ mod clone_weight {
             .map(|t| {
                 TOKEN.saturating_add(match t {
                     TokenOrValue::Token(token) => token_text_len(token),
-                    TokenOrValue::Var(var) => var.fallback.as_ref().map_or(0, token_list),
-                    TokenOrValue::Env(env) => env.fallback.as_ref().map_or(0, token_list),
-                    TokenOrValue::Function(f) => token_list(&f.arguments),
+                    TokenOrValue::Var(var) => (var.name.ident.v().len() as u64)
+                        .saturating_add(var.fallback.as_ref().map_or(0, token_list)),
+                    TokenOrValue::Env(env) => env_name_len(&env.name)
+                        .saturating_add(env.fallback.as_ref().map_or(0, token_list)),
+                    TokenOrValue::Function(f) => {
+                        (f.name.v().len() as u64).saturating_add(token_list(&f.arguments))
+                    }
                     TokenOrValue::UnresolvedColor(color) => unresolved_color(color),
+                    TokenOrValue::DashedIdent(ident) => ident.v().len() as u64,
+                    TokenOrValue::AnimationName(name) => animation_name_len(name),
+                    // `Url` stores only an import-record index; see the module
+                    // doc. Remaining variants are fixed-size parsed values.
                     _ => 0,
                 })
             })
             .fold(0u64, u64::saturating_add)
+    }
+
+    fn env_name_len(name: &css::properties::custom::EnvironmentVariableName) -> u64 {
+        use css::properties::custom::EnvironmentVariableName;
+        match name {
+            EnvironmentVariableName::Ua(_) => 0,
+            EnvironmentVariableName::Custom(reference) => reference.ident.v().len() as u64,
+            EnvironmentVariableName::Unknown(ident) => ident.v().len() as u64,
+        }
+    }
+
+    fn animation_name_len(name: &css::properties::animation::AnimationName) -> u64 {
+        use css::properties::animation::AnimationName;
+        match name {
+            AnimationName::None => 0,
+            AnimationName::Ident(ident) => ident.v().len() as u64,
+            AnimationName::String(s) => s.len() as u64,
+        }
     }
 
     fn unresolved_color(color: &css::properties::custom::UnresolvedColor) -> u64 {
@@ -1070,6 +1099,9 @@ mod clone_weight {
             | Token::BadUrl(v)
             | Token::Whitespace(v)
             | Token::Comment(v) => v.len() as u64,
+            // The unit of an unknown dimension is arbitrary-length ident text
+            // (e.g. `1aaaa...`), kept as a raw token.
+            Token::Dimension(d) => d.unit.len() as u64,
             _ => 0,
         }
     }

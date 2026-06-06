@@ -45,10 +45,6 @@ pub(crate) struct OptionDefinition {
 
     pub multiple: bool,
 
-    /// Bare `JSValue` is safe here: the Zig spec keeps the options slice on the
-    /// stack for the lifetime of `parseArgs`, so JSC's conservative stack scan
-    /// roots these values. The Rust caller (`parse_args.rs`) must mirror that
-    /// invariant — keep the backing storage stack-reachable or otherwise rooted.
     pub default_value: Option<JSValue>,
 }
 
@@ -130,9 +126,9 @@ pub(crate) fn is_option_like_value(value: &String) -> bool {
 /// Find the long option associated with a short option. Looks for a configured
 /// `short` and returns the short option itself if a long option is not found.
 /// Example:
-/// ```zig
-/// findOptionByShortName('a', {}) // returns 'a'
-/// findOptionByShortName('b', {
+/// ```text
+/// find_option_by_short_name('a', {}) // returns 'a'
+/// find_option_by_short_name('b', {
 ///   options: { bar: { short: 'b' } }
 /// }) // returns "bar"
 /// ```
@@ -151,5 +147,3 @@ pub(crate) fn find_option_by_short_name(
     }
     long_option_index
 }
-
-// ported from: src/runtime/node/util/parse_args_utils.zig

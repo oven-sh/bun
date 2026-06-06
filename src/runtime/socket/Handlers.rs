@@ -52,16 +52,14 @@ pub struct Handlers {
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
-    // Zig: gated on `bun.Environment.ci_assert`.
     #[cfg(debug_assertions)]
     pub protection_count: u32,
 }
 
-// PORT NOTE: bare JSValue fields are heap-stored here, but Zig keeps them alive via
-// JSC protect()/unprotect() (GC roots), not stack scanning — so this is sound.
+// Bare JSValue fields are heap-stored here, but they are kept alive via JSC
+// protect()/unprotect() (GC roots), not stack scanning — so this is sound.
 
 /// Expands `$body` once per callback field with `$f` bound to the field ident.
-/// Mirrors Zig `inline for (callback_fields) |field| { @field(x, field) ... }`.
 macro_rules! for_each_callback_field {
     ($self:expr, |$f:ident| $body:block) => {{
         {
@@ -147,7 +145,6 @@ impl Handlers {
 
     // corker: Corker = .{},
 
-    // TODO(port): bun.JSTerminated!void — mapping to JsResult<()> (JsError::Terminated covers it)
     pub fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let vm = self.vm;
         if vm.is_shutting_down() {
@@ -164,7 +161,6 @@ impl Handlers {
         Ok(())
     }
 
-    // TODO(port): bun.JSTerminated!bool — mapping to JsResult<bool>
     pub fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let vm = self.vm;
         if vm.is_shutting_down() {
@@ -226,14 +222,13 @@ impl Handlers {
                     listen_socket
                         .poll_ref
                         .with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                    // `deinit` empties the Strong slot in place; the field stays valid.
                     listen_socket.strong_self.with_mut(|s| s.deinit());
-                    // PORT NOTE: Zig `strong_self.deinit()` → StrongOptional::deinit; field stays valid (empty)
                 }
             } else {
                 // Client-mode Handlers is heap-allocated per-connection
-                // (Listener::connect_inner via `heap::alloc`). Zig does
-                // `this.deinit(); vm.allocator.destroy(this);` here — match
-                // that: free in place so callers that only hold a `*mut`
+                // (Listener::connect_inner via `heap::alloc`).
+                // Free in place so callers that only hold a `*mut`
                 // (and thus can't `drop(Box)`) don't leak the allocation or
                 // its `protect()`ed JSValues. Caller must still null its
                 // field when this returns true.
@@ -279,7 +274,6 @@ impl Handlers {
         is_server: bool,
     ) -> JsResult<Handlers> {
         let generated = GeneratedSocketConfigHandlers::from_js(global_object, opts)?;
-        // PORT NOTE: `defer generated.deinit()` — Drop handles it
         Self::from_generated(global_object, &generated, is_server)
     }
 
@@ -403,7 +397,6 @@ impl Handlers {
 
 impl Drop for Handlers {
     fn drop(&mut self) {
-        // Zig deinit: unprotect() + promise.deinit() + this.* = undefined
         self.unprotect();
         if self.vm.is_shutting_down() {
             // `~VM` may have already torn down the HandleSet that
@@ -441,7 +434,6 @@ impl Scope {
     }
 }
 
-// TODO(port): GeneratedBinaryType is the enum in jsc.generated.SocketConfigHandlers.binary_type
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 /// `handlers` is always `protect`ed in this struct.
@@ -459,15 +451,14 @@ pub struct SocketConfig {
 }
 
 impl SocketConfig {
-    // PORT NOTE: Zig `deinit()` → Drop is automatic (all owned fields impl Drop).
-    // Zig `deinitExcludingHandlers()` preserves `handlers` at the same address so
-    // outstanding `*Handlers` stay valid. Kept as explicit method.
+    // Full teardown is handled by Drop (all owned fields impl Drop).
+    // `deinit_excluding_handlers` preserves `handlers` at the same address so
+    // outstanding `*Handlers` stay valid.
 
     /// Deinitializes everything except `handlers`.
     pub fn deinit_excluding_handlers(&mut self) {
-        // TODO(port): in Zig this writes `undefined` to all non-handlers fields after
-        // freeing them, then restores `handlers`. In Rust we drop the owned non-handlers
-        // fields in place; `handlers` is left untouched so pointers into it remain valid.
+        // Drops the owned non-handlers fields in place; `handlers` is left
+        // untouched so pointers into it remain valid.
         self.hostname_or_unix = ZigStringSlice::empty();
         self.ssl = None;
         // other scalar fields need no cleanup
@@ -515,7 +506,6 @@ impl SocketConfig {
                     SSLConfig::from_generated(vm_mut, global, ssl)?
                 }
             };
-            // PORT NOTE: `errdefer bun.memory.deinit(&ssl)` — ssl drops on `?`
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
@@ -533,7 +523,8 @@ impl SocketConfig {
                 ipv6_only: false,
             };
         };
-        // PORT NOTE: `errdefer result.deinit()` — result drops on `?` (Handlers::Drop unprotects)
+        // On any `?` below, `result` drops and `Handlers::Drop` unprotects its
+        // JSValues — no manual error-path cleanup needed.
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
@@ -549,7 +540,6 @@ impl SocketConfig {
                 || slice.starts_with(b"sock://")
             {
                 let without_prefix = slice[7..].to_vec();
-                // PORT NOTE: reshaped for borrowck — drop borrow of slice before reassigning
                 result.hostname_or_unix = ZigStringSlice::init_owned(without_prefix);
             }
         } else if let Some(hostname) = generated.hostname.get() {
@@ -559,10 +549,14 @@ impl SocketConfig {
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();
+            if slice.contains(&0) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"hostname\" must not contain null bytes"
+                )));
+            }
             result.port = Some(match generated.port {
                 Some(p) => p,
                 None => match bun_url::URL::parse(slice).get_port() {
-                    // TODO(port): bun.URL.parse — confirm crate path
                     Some(p) => p,
                     None => {
                         return Err(
@@ -590,12 +584,8 @@ impl SocketConfig {
         is_server: bool,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
-        // PORT NOTE: `defer generated.deinit()` — Drop handles it
         Self::from_generated(vm, global_object, &generated, is_server)
     }
 }
 
-// TODO(port): GeneratedTls is the union(enum) at jsc.generated.SocketConfig.tls
 use bun_jsc::generated::SocketConfigTls as GeneratedTls;
-
-// ported from: src/runtime/socket/Handlers.zig

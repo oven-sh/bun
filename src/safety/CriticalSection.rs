@@ -34,9 +34,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(debug_assertions)]
 use bun_core::StoredTrace;
 
-// TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
-// `src/safety/thread_id.zig` port + Zig's `std.Thread`. TODO(port): confirm the concrete integer
-// width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
 #[cfg(debug_assertions)]
 use super::thread_id::{
     AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,
@@ -46,7 +43,7 @@ use super::thread_id::{
 pub struct CriticalSection {
     #[cfg(debug_assertions)]
     internal_state: State,
-    // When not enabled, this is a zero-sized type (Zig: `void`).
+    // When not enabled, this is a zero-sized type.
 }
 
 #[cfg(debug_assertions)]
@@ -83,7 +80,7 @@ struct State {
     /// the owner).
     #[cfg(debug_assertions)]
     owner_trace: StoredTrace,
-    // When traces are disabled, this is a zero-sized type (Zig: `void`).
+    // When traces are disabled, this is a zero-sized type.
     /// Number of nested calls to `lockShared`/`lockExclusive` performed on the owner thread.
     /// Only accessed on the owner thread.
     owned_count: u32,
@@ -125,8 +122,7 @@ impl State {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 {
-                    // PORT NOTE: Zig passes `@returnAddress()` here; no stable Rust
-                    // equivalent. `None` lets capture() use the current frame.
+                    // `None` lets capture() use the current frame.
                     self.owner_trace = StoredTrace::capture(None);
                 }
                 current_id
@@ -262,5 +258,3 @@ impl CriticalSection {
         self.internal_state.unlock();
     }
 }
-
-// ported from: src/safety/CriticalSection.zig

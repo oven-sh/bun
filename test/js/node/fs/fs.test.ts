@@ -1224,6 +1224,44 @@ it.skipIf(isWindows)(
 );
 
 describe("readSync", () => {
+  it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    try {
+      // A plain numeric length still works.
+      const ok = new Uint8Array(4);
+      expect(readSync(fd, ok, 0, 4, 0)).toBe(4);
+
+      // Coercing a non-numeric length argument re-enters JavaScript. If that
+      // re-entry detaches the destination buffer, the call must be rejected
+      // instead of reading into the previously captured backing store.
+      const ab = new ArrayBuffer(65536);
+      const buf = new Uint8Array(ab);
+      // Keep the transferred ArrayBuffer reachable so its memory stays alive
+      // for the duration of the call.
+      let moved: ArrayBuffer | undefined;
+      expect(() =>
+        readSync(
+          fd,
+          buf,
+          0,
+          {
+            valueOf() {
+              moved = ab.transfer();
+              return 65536;
+            },
+          } as any,
+          0,
+        ),
+      ).toThrow();
+      // The coercion side effect really ran: the destination view is detached
+      // and its bytes now live in the transferred ArrayBuffer.
+      expect(buf.byteLength).toBe(0);
+      expect(moved?.byteLength).toBe(65536);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
 
   it("works on large files", () => {
@@ -4185,4 +4223,132 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     closeSync(fd);
   }
   expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+});
+
+it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-write-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool and reads the source bytes
+    // through a raw pointer; the backing store must not be detachable out
+    // from under it while the write is pending.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
+});
+
+it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
+  const pending = fs.promises.writeFile(file, buf);
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await pending;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("EEEEEEEE");
+});
+
+it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+  using dir = tempDir("fs-realpath-too-long", {});
+
+  // The relative path argument is within the per-argument limit, but joining
+  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // Both realpath variants must surface this as a clean ENAMETOOLONG error
+  // instead of aborting the process.
+  const script = `
+    const fs = require("node:fs");
+    const longPath = "a".repeat(4090);
+    for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
+      try {
+        impl(longPath);
+        console.log("resolved");
+      } catch (err) {
+        console.log(err.code);
+      }
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(exitCode).toBe(0);
+});
+
+it("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writefile-cb-pin", {});
+  const file = join(String(dir), "out.bin");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x46);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  fs.writeFile(file, buf, err => (err ? reject(err) : resolve(null)));
+
+  // The native write runs on the thread pool and reads the source bytes
+  // through a raw pointer; the backing store must not be detachable out
+  // from under it while the write is pending.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(false);
+
+  await promise;
+
+  // Released once the write completes.
+  buf.buffer.transfer();
+  expect(buf.buffer.detached).toBe(true);
+
+  expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
+});
+
+it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
+  using dir = tempDir("fs-writefile-path-pin", {});
+  const file = join(String(dir), "out.txt");
+  const pathBytes = new TextEncoder().encode(file);
+  // Standalone ArrayBuffer (not the shared Buffer pool) so detaching it would
+  // only affect this path argument.
+  const pathBuf = new Uint8Array(new ArrayBuffer(pathBytes.byteLength));
+  pathBuf.set(pathBytes);
+
+  let detachedDuringOptions: boolean | undefined;
+  await fs.promises.writeFile(pathBuf as any, "hello world", {
+    // Reading the options object re-enters JavaScript after the native call
+    // captured a pointer into the path buffer; the backing store must not be
+    // detachable out from under it.
+    get flag() {
+      pathBuf.buffer.transfer();
+      detachedDuringOptions = pathBuf.buffer.detached;
+      return "w";
+    },
+  });
+
+  expect(detachedDuringOptions).toBe(false);
+  expect(readFileSync(file, "utf8")).toBe("hello world");
 });

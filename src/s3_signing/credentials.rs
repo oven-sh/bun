@@ -15,7 +15,7 @@ bun_core::declare_scope!(AWS, visible);
 
 use bun_core::fmt::buf_print;
 
-/// `std.fmt.allocPrint` equivalent: build into a fresh Vec<u8>.
+/// Format into a fresh `Vec<u8>` and return it.
 macro_rules! alloc_print {
     ($($arg:tt)*) => {{
         let mut v: Vec<u8> = Vec::new();
@@ -31,8 +31,6 @@ fn pico_header_empty() -> PicoHeader {
     PicoHeader::ZERO
 }
 
-// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
-// repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
     PicoHeader::new(name, value)
@@ -42,7 +40,7 @@ fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
 // MultiPartUploadOptions
 // Moved from bun_runtime::webcore::s3::multipart_options.
 // Pure config (no JSC deps), so it lives here at the signing tier; runtime
-// re-exports it. Source of truth: src/runtime/webcore/s3/multipart_options.zig
+// re-exports it.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug)]
@@ -87,10 +85,7 @@ impl Default for MultiPartUploadOptions {
 // ──────────────────────────────────────────────────────────────────────────
 // AWSSignatureCache — storage moved DOWN from `bun_jsc::rare_data`.
 //
-// Zig (`credentials.zig:485`) reached `jsc.VirtualMachine.getMainThreadVM()
-// orelse get()).rareData().awsCache` inline. The "per-VM" placement was
-// nominal: the lookup always picked the *main-thread* VM, so the cache was
-// process-global in practice. Hosting it here as a `static` makes the
+// The cache is process-global. Hosting it here as a `static` makes the
 // layering honest — `bun_s3_signing` reads its own data, no upward hook.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -98,9 +93,8 @@ use bun_collections::StringArrayHashMap;
 use bun_core::Mutex;
 
 /// Memoised SigV4 derived signing key, keyed by `(numeric_day,
-/// region+service+secret)`. PORTING.md §Concurrency: lock owns the data — Zig
-/// had a sidecar `bun.Mutex` next to `cache`/`date`; here the mutex wraps
-/// both.
+/// region+service+secret)`. The lock owns the data — the mutex wraps both
+/// `cache` and `date`.
 #[derive(Default)]
 pub struct AWSSignatureCache(Mutex<AWSSignatureCacheInner>);
 
@@ -114,11 +108,8 @@ impl AWSSignatureCache {
     /// Returns the cached 32-byte derived signing key for `key` if it was set
     /// for `numeric_day`.
     ///
-    /// PORT NOTE: Zig returned `cache.getKey(key)` (a borrow into map storage)
-    /// past `lock.unlock()` — racy against a concurrent `set` rehashing the
-    /// map. Return the 32-byte *value* by copy instead; the only consumer
-    /// (`sign` below) wants the digest, and a fixed-size copy avoids handing
-    /// out a guard.
+    /// Returns the 32-byte *value* by copy; the only consumer (`sign` below)
+    /// wants the digest, and a fixed-size copy avoids handing out a guard.
     pub fn get(&self, numeric_day: u64, key: &[u8]) -> Option<[u8; DIGESTED_HMAC_256_LEN]> {
         let inner = self.0.lock();
         if inner.date == 0 || inner.date != numeric_day {
@@ -132,8 +123,7 @@ impl AWSSignatureCache {
         if inner.date == 0 {
             inner.cache = StringArrayHashMap::new();
         } else if inner.date != numeric_day {
-            // day changed so we clean the old cache
-            // PORT NOTE: Zig freed each key explicitly; StringArrayHashMap with
+            // day changed so we clean the old cache; StringArrayHashMap with
             // owned Box<[u8]> keys drops them on clear.
             inner.cache.clear();
         }
@@ -142,11 +132,9 @@ impl AWSSignatureCache {
     }
 }
 
-// Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically;
-// Zig's `deinit { date = 0; clean(); cache.deinit() }` is fully covered.
+// Drop: `StringArrayHashMap` drops its owned `Box<[u8]>` keys automatically.
 
-/// Process-global instance. Zig hung this off `RareData` but always reached it
-/// via `getMainThreadVM()`, so it was a singleton in practice.
+/// Process-global instance.
 /// `StringArrayHashMap::new` is not `const`, so lazy-init the inner on first
 /// use; the outer `Mutex` itself is const-constructible.
 static AWS_SIGNATURE_CACHE: std::sync::LazyLock<AWSSignatureCache> =
@@ -162,11 +150,10 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
     AWS_SIGNATURE_CACHE.set(day, key, digest)
 }
 
-/// BoringSSL `ENGINE*` for `EVP_Digest`. Zig lazily `ENGINE_new()`'d one per
-/// VM via `RareData::boringEngine`; BoringSSL's `EVP_Digest` ignores the
+/// BoringSSL `ENGINE*` for `EVP_Digest`. BoringSSL's `EVP_Digest` ignores the
 /// `impl` argument entirely (it's an OpenSSL-compat shim — see
 /// `vendor/boringssl/include/openssl/digest.h`: "BoringSSL does not support
-/// engines"). Passing null is bit-identical, so the upward hook is dropped.
+/// engines"), so passing null is fine.
 #[inline]
 fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
     core::ptr::null_mut()
@@ -177,8 +164,7 @@ fn boring_engine() -> *mut bun_sha_hmac::sha::ffi::ENGINE {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `bun.ptr.RefCount(...)` mixin → IntrusiveRc handles ref/deref; when count hits
-// zero the boxed allocation is dropped, which drops the Box<[u8]> fields. The
-// Zig `deinit` body only freed those fields + `bun.destroy(this)`, so no
+// zero the boxed allocation is dropped, which drops the Box<[u8]> fields, so no
 // explicit Drop body is needed here.
 #[derive(bun_ptr::RefCounted)]
 pub struct S3Credentials {
@@ -197,8 +183,7 @@ pub struct S3Credentials {
     pub virtual_hosted_style: bool,
 }
 
-// PORT NOTE: Zig `S3Credentials` is a value type with `[]const u8` fields and is
-// freely copied (e.g. `default_credentials.*`). The Rust port owns its bytes via
+// `S3Credentials` owns its bytes via
 // `Box<[u8]>`, so a manual `Clone` deep-copies them and resets `ref_count` — the
 // intrusive count only applies to heap (`IntrusiveRc`) instances; a fresh value
 // must start at 1.
@@ -274,11 +259,8 @@ impl S3Credentials {
             + self.bucket.len()
     }
 
-    // `hash_const` DELETED — dead code (no callers in Rust or Zig). If
+    // `hash_const` DELETED — dead code (no callers). If
     // resurrected: `bun_wyhash::hash_ascii_lowercase(0, acl)`.
-
-    // Zig: `pub const getCredentialsWithOptions = @import("../runtime/webcore/s3/credentials_jsc.zig").getCredentialsWithOptions;`
-    // Deleted per PORTING.md — *_jsc alias; the JS-facing fn lives in the *_jsc crate.
 
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {
@@ -445,8 +427,8 @@ impl S3Credentials {
                 break 'brk_host v.into_boxed_slice();
             }
         };
-        let _ = endpoint_owned; // PORT NOTE: in Zig `endpoint` was reassigned for later reuse; not read after this point.
-        // errdefer free(host) — Box<[u8]> drops on `?`.
+        let _ = endpoint_owned; // not read after this point.
+        // `host` (Box<[u8]>) drops on `?`.
 
         let normalized_path: &[u8] = 'brk: {
             if self.virtual_hosted_style {
@@ -471,7 +453,7 @@ impl S3Credentials {
 
         let date_result = get_amz_date();
         let amz_date: Box<[u8]> = date_result.date;
-        // errdefer free(amz_date) — Box<[u8]> drops on `?`.
+        // `amz_date` (Box<[u8]>) drops on `?`.
 
         let amz_day = &amz_date[0..8];
         let request_payer = sign_options.request_payer;
@@ -512,7 +494,7 @@ impl S3Credentials {
                     ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
-                // PORT NOTE: was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
+                // was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
                 // Storage moved DOWN — `AWS_SIGNATURE_CACHE` is a process static here.
                 if let Some(cached) = aws_cache_get(date_result.numeric_day, key) {
                     break 'brk_sign cached;
@@ -556,11 +538,9 @@ impl S3Credentials {
                     [0..DIGESTED_HMAC_256_LEN]
                     .try_into()
                     .expect("infallible: size matches");
-                // PORT NOTE: intentionally diverges from Zig. In Zig, `key` is a slice into
-                // `tmp_buffer` which has since been overwritten by the `AWS4{secret}` bufPrint,
-                // so Zig passes corrupted bytes to `cache.set` (latent bug → cache never hits).
-                // We recompute the correct `{region}{service}{secret}` key here.
-                // TODO(port): fix the overwritten-key bug in credentials.zig as well.
+                // The earlier `key` was a slice into `tmp_buffer`, which has since been
+                // overwritten by the `AWS4{secret}` buf_print, so recompute the correct
+                // `{region}{service}{secret}` key here before caching.
                 let key = buf_print(
                     &mut tmp_buffer,
                     format_args!(
@@ -682,7 +662,7 @@ impl S3Credentials {
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
+                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 // SAFETY: `boring_engine()` returns null (default engine).
                 unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
@@ -790,7 +770,7 @@ impl S3Credentials {
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
-                // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
+                // was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
                 // SAFETY: `boring_engine()` returns null (default engine).
                 unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
@@ -828,11 +808,11 @@ impl S3Credentials {
                 .into_boxed_slice();
             }
         };
-        // errdefer free(authorization) — Box<[u8]> drops on `?`.
+        // `authorization` (Box<[u8]>) drops on `?`.
 
         if sign_query {
             // defer free(host); defer free(amz_date); — drop at scope exit.
-            // PORT NOTE: SignResult implements Drop, so struct-update `..default()`
+            // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
             r.acl = sign_options.acl;
@@ -842,6 +822,7 @@ impl S3Credentials {
         }
 
         if contains_newline_or_cr(aws_content_hash)
+            || search_params.is_some_and(contains_newline_or_cr)
             || acl.is_some_and(contains_newline_or_cr)
             || storage_class.is_some_and(contains_newline_or_cr)
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)
@@ -864,7 +845,7 @@ impl S3Credentials {
         )
         .into_boxed_slice();
 
-        // PORT NOTE: SignResult implements Drop, so struct-update `..default()` is forbidden.
+        // SignResult implements Drop, so struct-update `..default()` is forbidden.
         let mut result = SignResult::default();
         result.amz_date = amz_date;
         result.host = host;
@@ -874,7 +855,7 @@ impl S3Credentials {
         result.request_payer = request_payer;
         result.url = url;
         result._headers_len = 4;
-        // TODO(port): self-referential — _headers borrows from owned Box<[u8]> fields on SignResult.
+        // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
         // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
         // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
         // after the corresponding header is written.
@@ -953,9 +934,7 @@ fn get_amz_date() -> DateResult {
     // the code below is the same as new Date(Date.now()).toISOString()
     // Date.now() ISO string via JS removed; uses libc gmtime_r
 
-    // Create UTC timestamp
-    // TODO(port): Zig used std.time.milliTimestamp() + std.time.epoch helpers. Could move to
-    // bun_core::time equivalents; using std::time here is OK (not banned).
+    // Create UTC timestamp.
     let secs: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -977,10 +956,8 @@ fn get_amz_date() -> DateResult {
     }
 }
 
-// Port of Zig std.time.epoch.{EpochSeconds, EpochDay, YearAndDay} → Gregorian Y/M/D from
-// Unix-epoch seconds. Uses Howard Hinnant's `civil_from_days` algorithm (public domain),
-// which is what Zig's stdlib derives from. Matches credentials.zig:116-123 exactly for the
-// fields getAMZDate consumes.
+// Gregorian Y/M/D from Unix-epoch seconds, using Howard Hinnant's
+// `civil_from_days` algorithm (public domain).
 fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     // returns (year, month(1-based), day(1-based), hours, minutes, seconds, seconds_into_day)
     let day_seconds = secs % 86_400;
@@ -1022,7 +999,7 @@ pub struct SignResult {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
-    // TODO(port): self-referential — entries borrow from the Box<[u8]> fields above. PicoHeader
+    // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
     // must be a raw (ptr,len) pair; see note in sign_request.
     pub _headers: [PicoHeader; Self::MAX_HEADERS],
     pub _headers_len: u8,
@@ -1072,7 +1049,7 @@ impl Default for SignResult {
 
 impl Drop for SignResult {
     fn drop(&mut self) {
-        // Zig used bun.freeSensitive (zero-before-free) for secrets.
+        // Zero-before-free for secrets.
         zero_sensitive(&mut self.amz_date);
         zero_sensitive(&mut self.session_token);
         zero_sensitive(&mut self.content_disposition);
@@ -1080,7 +1057,7 @@ impl Drop for SignResult {
         zero_sensitive(&mut self.host);
         zero_sensitive(&mut self.authorization);
         zero_sensitive(&mut self.url);
-        // content_md5 was a plain free in Zig; Box drop handles it.
+        // content_md5 is not sensitive; Box drop handles it.
     }
 }
 
@@ -1105,7 +1082,7 @@ impl Default for SignQueryOptions {
     }
 }
 
-// PORT NOTE: transient param-pack struct; lifetime added because every field is a caller-owned
+// transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]
 pub struct SignOptions<'a> {
@@ -1186,7 +1163,7 @@ pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
     input: &[u8],
     buffer: &'b mut [u8],
 ) -> Result<&'b [u8], EncodeError> {
-    // PORT NOTE: returns a borrow into `buffer`; caller must not reuse buffer while result is live.
+    // returns a borrow into `buffer`; caller must not reuse buffer while result is live.
     let mut written: usize = 0;
 
     for &c in input {
@@ -1285,8 +1262,8 @@ pub struct S3CredentialsWithOptions {
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
-    // Self-referential views: these `?[]const u8` fields are NOT freed in Zig
-    // `deinit`; they borrow into the sibling `_*_slice: ZigStringSlice` fields
+    // Self-referential views: these fields are non-owning;
+    // they borrow into the sibling `_*_slice: ZigStringSlice` fields
     // below. `RawSlice` encodes that non-owning contract (and gives callers
     // `.as_deref()` instead of an open-coded `unsafe { &*p }`).
     pub content_disposition: Option<RawSlice<u8>>,
@@ -1309,17 +1286,13 @@ pub struct S3CredentialsWithOptions {
     pub _content_encoding_slice: Option<bun_core::ZigStringSlice>,
 }
 
-// `deinit` only called .deinit() on each Option<ZigStringSlice>; ZigStringSlice impls Drop, so
-// the body is empty — no explicit Drop needed.
+// ZigStringSlice impls Drop, so no explicit Drop needed.
 
 // ──────────────────────────────────────────────────────────────────────────
-// SignedHeaders — runtime port of Zig comptime lookup table
+// SignedHeaders
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
-// TODO(port): Zig `packed struct(u7)` (all-bool fields). Kept as a plain struct for
-// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; could move to
-// bitflags!/`#[repr(transparent)] u8`. `bits()` below preserves the u7 layout.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
@@ -1334,8 +1307,7 @@ pub(crate) struct SignedHeadersKey {
 struct SignedHeaders;
 
 impl SignedHeaders {
-    // PERF(port): Zig builds a comptime [128]&'static str table via string concatenation.
-    // Rust cannot concat &str in a const loop, so we build at runtime into a caller buffer.
+    // Built at runtime into a caller buffer.
     // Could switch to a build.rs-generated static table if profiling shows this matters.
     fn get(key: SignedHeadersKey, buf: &mut [u8; 256]) -> &[u8] {
         let mut n = 0usize;
@@ -1375,15 +1347,13 @@ impl SignedHeaders {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CanonicalRequest — runtime port of Zig comptime format-string dispatch
+// CanonicalRequest
 // ──────────────────────────────────────────────────────────────────────────
 
 struct CanonicalRequest;
 
 impl CanonicalRequest {
-    // PERF(port): Zig generates 128 monomorphized format strings and dispatches via
-    // `switch (bits) { inline 0..127 => |idx| ... }`. We build the canonical request at
-    // runtime with conditional writes. Same output bytes; profile if hot.
+    // Builds the canonical request at runtime with conditional writes; profile if hot.
     pub(crate) fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,
@@ -1468,5 +1438,3 @@ impl CanonicalRequest {
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
-
-// ported from: src/s3_signing/credentials.zig

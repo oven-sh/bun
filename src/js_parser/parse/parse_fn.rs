@@ -12,16 +12,9 @@ use bun_ast as js_ast;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
-// TODO(port): narrow error set
 type Error = bun_core::Error;
 
-// Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
-    // (PORT NOTE: P.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
-
     /// This assumes the "function" token has already been parsed
     pub fn parse_fn_stmt(
         &mut self,
@@ -81,7 +74,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             if_stmt_scope_index = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         }
-        let _ = if_stmt_scope_index;
 
         let scope_index: usize =
             p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, p.lexer.loc())?;
@@ -118,9 +110,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.pop_and_discard_scope(scope_index);
 
-                // Balance the fake block scope introduced above
+                // Discard the fake block scope introduced above. A forward declaration
+                // emits nothing (`S::TypeScript`), so the block must be removed from
+                // `scopes_in_order` too — a plain `pop_scope()` only updates
+                // `current_scope` and would leave the block orphaned in the scope order,
+                // desyncing the visit pass (scope mismatch / pop past the topmost scope).
                 if has_if_scope {
-                    p.pop_scope();
+                    p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
                 if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {
@@ -150,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         func.name = name;
 
-        // Zig: func.flags.setPresent(.has_if_scope, hasIfScope) — flags is freshly built so unset → only insert when true
+        // flags is freshly built so unset → only insert when true
         if has_if_scope {
             func.flags.insert(Flags::Function::HasIfScope);
         }
@@ -176,7 +172,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //     p.markSyntaxFeature(compat.AsyncGenerator, data.asyncRange)
         // }
 
-        // Zig: Flags.Function.init(.{ .has_rest_arg = false, .is_async = ..., .is_generator = ... })
         let mut initial_flags = Flags::FunctionSet::empty();
         if opts.allow_await == AwaitOrYield::AllowExpr {
             initial_flags.insert(Flags::Function::IsAsync);
@@ -195,8 +190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
-        // PORT NOTE: Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
-        // in Rust `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
+        // `FnOrArrowDataParse` is `Clone`, so save/restore is a clone.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
@@ -220,7 +214,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
-        // PERF(port): Zig used ArrayListUnmanaged backed by p.arena (arena).
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
@@ -326,7 +319,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 default_value = Some(p.parse_expr(Level::Comma)?);
             }
 
-            // PERF(port): was appendAssumeCapacity-style (catch unreachable on alloc)
             args.push(G::Arg {
                 ts_decorators,
                 binding: arg,
@@ -378,7 +370,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TCloseParen)?;
-        // PORT NOTE: Zig restored via `std.mem.bytesToValue`; plain copy is equivalent.
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
@@ -567,25 +558,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
-        // PORT NOTE: Zig `defer p.popScope();` — moved to explicit call before each return below.
-        // TODO(port): consider scopeguard if more early-returns are added.
+        // `pop_scope` is called explicitly before each return below.
 
-        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {
-                // PORT NOTE: Zig `try` returns here without restoring fn_or_arrow_data_parse;
-                // only the `defer p.popScope()` fires on the error path.
+                // The error path returns without restoring fn_or_arrow_data_parse;
+                // only the scope pop runs.
                 p.pop_scope();
                 return Err(err);
             }
         };
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
-        // PERF(port): Zig used `p.arena.alloc(Stmt, 1)` (arena bulk-free).
         let ret_stmt = p.s(S::Return { value: Some(expr) }, expr.loc);
         let stmts: &'a mut [Stmt] = p.arena.alloc_slice_copy(&[ret_stmt]);
 
@@ -601,5 +589,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/parseFn.zig

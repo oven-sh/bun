@@ -18,11 +18,10 @@ pub struct EmphDelim {
     pub open_count: usize,  // total chars consumed as opener
     pub close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
-    // TODO(port): Zig used u2 element type; Rust uses u8 — values are always 0..=2.
     pub open_sizes: [u8; MAX_EMPH_MATCHES],
-    pub open_num: u8, // number of open matches (Zig: u4)
+    pub open_num: u8, // number of open matches
     pub close_sizes: [u8; MAX_EMPH_MATCHES],
-    pub close_num: u8, // number of close matches (Zig: u4)
+    pub close_num: u8, // number of close matches
     pub active: bool,  // false if deactivated between matched pairs
 }
 
@@ -146,10 +145,13 @@ impl Parser<'_> {
                 merged_len -= 1;
             }
         }
-        // PORT NOTE: reshaped for borrowck — Zig passes self.buffer.items directly into a
-        // &self method; Rust take()s the Vec out so process_inline_content (and any recursive
-        // call via process_link) gets a fresh self.buffer to scribble on without aliasing.
-        // TODO(port): verify recursive calls (via process_link) do not need the parent buffer.
+        // take() the Vec out so process_inline_content (and any recursive
+        // call via process_link) gets a fresh self.buffer to scribble on without
+        // aliasing. Verified: nothing reachable from process_inline_content
+        // (including recursive process_link -> process_inline_content calls, which
+        // operate solely on the `content`/label slices) touches `self.buffer`; its
+        // other users (ref-def merging in blocks.rs/ref_defs.rs) run during the
+        // block phase, never re-entrantly from here.
         let merged = core::mem::take(&mut self.buffer);
         let ret = self.process_inline_content(&merged[..merged_len], block_lines[0].beg);
         self.buffer = merged;
@@ -184,7 +186,6 @@ impl Parser<'_> {
         self.resolve_emphasis_delimiters();
 
         // Copy resolved delimiters locally (recursive calls may modify emph_delims)
-        // PORT NOTE: Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
         let resolved: Vec<EmphDelim> = self.emph_delims.clone();
 
         // Phase 2: Emit content using resolved emphasis info
@@ -673,7 +674,7 @@ impl Parser<'_> {
 
     /// Resolve emphasis delimiters using the CommonMark algorithm.
     pub fn resolve_emphasis_delimiters(&mut self) {
-        // PORT NOTE: reshaped for borrowck — index directly into self.emph_delims
+        // reshaped for borrowck — index directly into self.emph_delims
         // instead of binding `delims` + `opener` aliases.
         let len = self.emph_delims.len();
         if len == 0 {
@@ -690,6 +691,7 @@ impl Parser<'_> {
             ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
+        let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
@@ -705,24 +707,31 @@ impl Parser<'_> {
             let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
             let mut found_match = false;
             if closer_idx > opener_bottom {
-                let mut oi: usize = closer_idx;
-                while oi > opener_bottom {
-                    oi -= 1;
-                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
-                        continue;
-                    }
+                let mut from = closer_idx;
+                let mut oi = prev_candidate[closer_idx];
+                while oi != usize::MAX && oi >= opener_bottom {
                     if !self.emph_delims[oi].can_open
                         || self.emph_delims[oi].remaining == 0
                         || !self.emph_delims[oi].active
                     {
+                        let next = prev_candidate[oi];
+                        prev_candidate[from] = next;
+                        oi = next;
+                        continue;
+                    }
+                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
                     // Strikethrough: exact count match required
-                    if self.emph_delims[oi].emph_char == b'~' {
-                        if self.emph_delims[oi].count != self.emph_delims[closer_idx].count {
-                            continue;
-                        }
+                    if self.emph_delims[oi].emph_char == b'~'
+                        && self.emph_delims[oi].count != self.emph_delims[closer_idx].count
+                    {
+                        from = oi;
+                        oi = prev_candidate[oi];
+                        continue;
                     }
 
                     // Rule of three: if closer can also open OR opener can also close,
@@ -734,6 +743,8 @@ impl Parser<'_> {
                         && !self.emph_delims[oi].count.is_multiple_of(3)
                         && !self.emph_delims[closer_idx].count.is_multiple_of(3)
                     {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
@@ -766,11 +777,12 @@ impl Parser<'_> {
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
-                    let mut k = oi + 1;
-                    while k < closer_idx {
+                    let mut k = prev_candidate[closer_idx];
+                    while k != usize::MAX && k > oi {
                         self.emph_delims[k].active = false;
-                        k += 1;
+                        k = prev_candidate[k];
                     }
+                    prev_candidate[closer_idx] = oi;
 
                     found_match = true;
 
@@ -1155,5 +1167,3 @@ pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_e
     !lf || (run_end < content.len()
         && helpers::is_unicode_punctuation(helpers::decode_utf8(content, run_end).codepoint))
 }
-
-// ported from: src/md/inlines.zig

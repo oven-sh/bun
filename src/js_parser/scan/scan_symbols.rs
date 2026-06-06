@@ -4,14 +4,6 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-// PORT NOTE: Zig's `fn Symbols(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// is the file-split mixin pattern: a fieldless namespace whose associated fns all take `*P` as the
-// first arg, where `P = js_parser.NewParser_(ts, jsx, scan_only)`. In Rust this is a plain
-// `impl<const ...> P<...> { }` block — multiple impl blocks on the same type across files in one
-// crate are allowed.
-//
-// adt_const_params: lowered `const JSX: JSXTransformType` → `J: JsxT` (sealed trait + ZST).
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn find_symbol(
         &mut self,
@@ -79,9 +71,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // If this is an identifier from a sibling TypeScript namespace, then we're
                                 // going to have to generate a property access instead of a simple reference.
                                 // Lazily-generate an identifier that represents this property access.
-                                // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key/value
-                                // pointers while we also call self.new_symbol (&mut self). Split into
-                                // get-then-insert so the &mut self borrow does not overlap the map borrow.
+                                // Split into get-then-insert so the &mut self borrow
+                                // (self.new_symbol) does not overlap the map borrow.
                                 if let Some(existing) = ts.property_accesses.get(name) {
                                     break 'brk *existing;
                                 }
@@ -126,8 +117,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break 'brk existing.ref_;
             }
 
-            // PORT NOTE: reshaped for borrowck — gpe borrows self.module_scope while
-            // self.new_symbol needs &mut self. Drop gpe, allocate, then re-insert.
+            // gpe borrows self.module_scope while self.new_symbol needs &mut self.
+            // Drop gpe, allocate, then re-insert.
             let new_ref = self
                 .new_symbol(js_ast::symbol::Kind::Unbound, name)
                 .expect("unreachable");
@@ -136,9 +127,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .module_scope_mut()
                 .get_or_put_member_with_hash(name, hash)
                 .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
-            // TODO(port): the line above conflates key_ptr/value_ptr writes from Zig's
-            // `gpe.key_ptr.* = name; gpe.value_ptr.* = Scope.Member{...}` — verify
-            // get_or_put_member_with_hash's Rust API shape.
 
             declare_loc = loc;
 
@@ -165,5 +153,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/symbols.zig

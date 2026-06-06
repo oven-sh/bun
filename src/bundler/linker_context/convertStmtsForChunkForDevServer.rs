@@ -49,7 +49,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
 ) -> Result<(), AllocError> {
-    // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
@@ -184,7 +183,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             },
                             default_value: None,
                         });
-                        // PERF(port): was assume_capacity-adjacent (arena append)
                         esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
                     } else {
                         let binding = Binding::alloc(
@@ -277,7 +275,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 Loc::EMPTY,
             ))?;
         // hmr.onUpdate = [ ... ];
-        // PORT NOTE: reshaped for borrowck — capture len before moving esm_callbacks
+        // Capture len before moving `esm_callbacks` (borrowck).
         let callbacks_len = esm_callbacks.len();
         stmts
             .inside_wrapper_prefix
@@ -318,5 +316,3 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/convertStmtsForChunkForDevServer.zig

@@ -11,23 +11,29 @@ use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
-// PORT NOTE: `lockfile.packages.slice()` returns
+// `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
-// column accessors are an extension trait (Zig's `slice.items(.field)` is
-// comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
+// column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
-// TODO(port): narrow error set (only writer + alloc errors are produced)
 pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
-    {
-        // TODO(port): std.process.hasEnvVarConstant("JSON") + std.json.Stringify
-        // have no direct equivalent here; wire up bun_core::env_var + a JSON
-        // serializer for Lockfile if this debug path is still wanted.
-        let _ = &this.lockfile;
+    if bun_core::getenv_z(bun_core::zstr!("JSON")).is_some() {
+        use crate::lockfile_real::lockfile_json_stringify_for_debugging::{
+            WriteStream, WriteStreamOptions,
+        };
+        let mut stream = WriteStream::new(WriteStreamOptions {
+            indent: 2,
+            emit_null_optional_fields: true,
+            emit_nonportable_numbers_as_strings: true,
+        });
+        crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
+        writer.write_all(&stream.into_bytes())?;
+        writer.write_all(b"\n")?;
+        return Ok(());
     }
 
     writer.write_all(
@@ -52,14 +58,12 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 
-    // Zig: std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80)
-    // PORT NOTE: reshaped for borrowck — store (start, len) into
-    // `all_requested_versions_buf` instead of overlapping &mut [Version] slices.
+    // Store (start, len) into `all_requested_versions_buf` instead of
+    // overlapping &mut [Version] slices.
     let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
 
-    // PERF(port): Zig was raw `allocator.alloc(Dependency.Version, resolutions_buffer.len)` of
-    // uninit memory + cursor slicing. We push into a pre-reserved Vec instead — set_len would
-    // drop uninit tail elements (and index-assign would drop uninit old values). Profile if hot.
+    // We push into a pre-reserved Vec — set_len would drop uninit tail elements
+    // (and index-assign would drop uninit old values). Profile if hot.
     let mut all_requested_versions_buf: Vec<dependency::Version> =
         Vec::with_capacity(resolutions_buffer.len());
 
@@ -91,7 +95,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
             let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
-                // PERF(port): was std.sort.insertion — profile if it shows up on a hot path.
                 dependency_versions.sort_by(|a, b| {
                     if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
                         Ordering::Less
@@ -114,7 +117,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
             buf: string_buf.into(),
             resolutions: resolved.into(),
         };
-        // PERF(port): std.sort.pdq → sort_unstable_by (Rust uses pdqsort internally)
         alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));
     }
 
@@ -149,18 +151,35 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                 }
                 let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
-                    || strings::index_of_any(version_name, b" |\t-/!:").is_some()
+                    || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");
 
                 if needs_quote {
                     writer.write_all(b"\"")?;
+                    write!(
+                        writer,
+                        "{}",
+                        bun_core::fmt::format_json_string_utf8(
+                            name,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
+                    )?;
+                } else {
+                    writer.write_all(name)?;
                 }
-
-                writer.write_all(name)?;
                 writer.write_all(b"@")?;
                 if version_name.is_empty() {
                     writer.write_all(b"^")?;
                     version_formatter.write_to(writer)?;
+                } else if needs_quote {
+                    write!(
+                        writer,
+                        "{}",
+                        bun_core::fmt::format_json_string_utf8(
+                            version_name,
+                            bun_core::fmt::JSONFormatterUTF8Options { quote: false }
+                        ),
+                    )?;
                 } else {
                     writer.write_all(version_name)?;
                 }
@@ -176,21 +195,30 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
         }
 
         {
+            let mut quoted_buf: Vec<u8> = Vec::new();
+
             writer.write_all(b"  version ")?;
 
             // Version is always quoted
-            writer.write_all(b"\"")?;
-            version_formatter.write_to(writer)?;
-            writer.write_all(b"\"\n")?;
+            version_formatter.write_to(&mut quoted_buf)?;
+            writeln!(
+                writer,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+            )?;
 
             writer.write_all(b"  resolved ")?;
 
             let url_formatter = resolution.fmt_url(string_buf);
 
             // Resolved URL is always quoted
-            writer.write_all(b"\"")?;
-            url_formatter.write_to(writer)?;
-            writer.write_all(b"\"\n")?;
+            quoted_buf.clear();
+            url_formatter.write_to(&mut quoted_buf)?;
+            writeln!(
+                writer,
+                "{}",
+                bun_core::fmt::format_json_string_utf8(&quoted_buf, Default::default()),
+            )?;
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
@@ -235,15 +263,25 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                     let needs_quote = strings::must_escape_yaml_string(dependency_name);
 
                     if needs_quote {
-                        writer.write_all(b"\"")?;
+                        write!(
+                            writer,
+                            "{}",
+                            bun_core::fmt::format_json_string_utf8(
+                                dependency_name,
+                                Default::default()
+                            ),
+                        )?;
+                    } else {
+                        writer.write_all(dependency_name)?;
                     }
-                    writer.write_all(dependency_name)?;
-                    if needs_quote {
-                        writer.write_all(b"\"")?;
-                    }
-                    writer.write_all(b" \"")?;
-                    writer.write_all(dep.version.literal.slice(string_buf))?;
-                    writer.write_all(b"\"\n")?;
+                    writeln!(
+                        writer,
+                        " {}",
+                        bun_core::fmt::format_json_string_utf8(
+                            dep.version.literal.slice(string_buf),
+                            Default::default()
+                        ),
+                    )?;
                 }
                 let _ = dependency_behavior_change_count;
             }
@@ -252,5 +290,3 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
     Ok(())
 }
-
-// ported from: src/install/lockfile/printer/Yarn.zig

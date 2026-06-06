@@ -3,8 +3,8 @@ use crate::inlines;
 use crate::parser::{self, Parser};
 use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
-// PORT NOTE: aliases for the real `SpanType` / `SpanDetail` types (the Zig
-// original named them `Span` / `SpanAttrs`).
+// Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
+// `SpanAttrs` in the original implementation).
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 type Off = OFF;
@@ -22,14 +22,14 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 /// wiki links are enabled, e.g. via `Bun.markdown.ansi`).
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
-/// Result of `try_match_bracket_link` — Zig anonymous return struct.
+/// Result of `try_match_bracket_link`.
 pub struct BracketLinkMatch {
     pub is_link: bool,
     pub label_end: usize,
     pub link_end: usize,
 }
 
-/// Result of `find_autolink` — Zig anonymous return struct.
+/// Result of `find_autolink`.
 pub struct Autolink {
     pub end_pos: usize,
     pub is_email: bool,
@@ -496,8 +496,8 @@ impl Parser<'_> {
                 };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
-                    // PORT NOTE: reshaped for borrowck — clone owned dest/title so the
-                    // &self borrow from lookup_ref_def is dropped before &mut self calls.
+                    // Clone the owned dest/title so the &self borrow from
+                    // lookup_ref_def is dropped before &mut self calls.
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                     // Link nesting prohibition
@@ -523,7 +523,8 @@ impl Parser<'_> {
         };
         if char_after_label != b'[' {
             if let Some(ref_def) = self.lookup_ref_def(label) {
-                // PORT NOTE: reshaped for borrowck — clone owned dest/title.
+                // Clone the owned dest/title so the &self borrow from
+                // lookup_ref_def is dropped before &mut self calls.
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                 // Link nesting prohibition
@@ -927,6 +928,7 @@ impl Parser<'_> {
                 let mut uri_end = scheme_end + 1;
                 while uri_end < content.len()
                     && content[uri_end] != b'>'
+                    && content[uri_end] != b'<'
                     && !helpers::is_whitespace(content[uri_end])
                 {
                     uri_end += 1;
@@ -1013,5 +1015,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/links.zig

@@ -2,7 +2,7 @@ use core::ptr;
 
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
-// PORT NOTE: `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
+// `bun.SmallList` lives in `bun_css` (higher tier). Semantically it
 // is `smallvec::SmallVec` (inline-N, heap-spill). PORTING.md §Collections.
 use self::StringEncoding as Encoding;
 use bun_alloc::ArenaVec as BumpVec;
@@ -10,7 +10,7 @@ use bun_core::SmolStr;
 use smallvec::SmallVec;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Moved from `bun_shell` (src/shell/shell.zig):
+// Moved from `bun_shell`:
 //   StringEncoding, SrcAscii, SrcUnicode, ShellCharIter, CharIter, has_eq_sign
 // These live here so `bun_shell` (higher tier) can depend on `shell_parser`
 // without a back-edge. `bun_shell` re-exports these under its old paths.
@@ -20,7 +20,7 @@ use bun_core::immutable::CodePoint; // i32
 use bun_core::immutable::{CodepointIterator, Cursor};
 use bun_core::strings;
 
-/// Zig: `pub const StringEncoding = enum { ascii, wtf8, utf16 };`
+/// Encoding of the shell input bytes being expanded.
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum StringEncoding {
     Ascii,
@@ -33,12 +33,11 @@ pub enum StringEncoding {
 // Copy: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
 #[derive(Copy, Clone)]
 struct SrcAscii {
-    bytes: *const [u8], // PORT NOTE: raw slice ptr — Zig held a borrowed `[]const u8`; lifetime erased (BACKREF).
+    bytes: *const [u8], // raw slice ptr — borrowed caller input; lifetime erased (BACKREF).
     i: usize,
 }
 
-/// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
-// PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
+// PERF: `char` is u32 so ascii/unicode share one `InputChar` shape and
 // `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
 // encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
@@ -49,7 +48,7 @@ pub struct InputChar {
 
 #[derive(Copy, Clone)]
 struct AsciiIndexValue {
-    char: u32, // u7 in Zig
+    char: u32,
     escaped: bool,
 }
 
@@ -63,7 +62,7 @@ impl SrcAscii {
     }
     #[inline]
     fn bytes(&self) -> &[u8] {
-        // SAFETY: `bytes` outlives the iter by construction (caller contract, same as Zig).
+        // SAFETY: `bytes` outlives the iter by construction (caller contract).
         unsafe { &*self.bytes }
     }
     #[inline]
@@ -97,7 +96,7 @@ impl SrcAscii {
 // ─── SrcUnicode ────────────────────────────────────────────────────────────
 
 struct SrcUnicode {
-    iter: CodepointIterator<'static>, // PORT NOTE: lifetime erased; see SrcAscii.bytes note.
+    iter: CodepointIterator<'static>, // lifetime erased; see SrcAscii.bytes note.
     cursor: Cursor,
     next_cursor: Cursor,
 }
@@ -119,7 +118,7 @@ impl SrcUnicode {
         }
     }
     fn init(bytes: &[u8]) -> Self {
-        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter (same as Zig).
+        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter.
         let bytes: &'static [u8] =
             unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let iter = CodepointIterator::init(bytes);
@@ -177,7 +176,7 @@ pub enum ShellCharIterState {
     Double,
 }
 
-// PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
+// PERF: Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
 // store both arms in a small enum and branch at runtime. Could split into three
 // `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
@@ -219,7 +218,7 @@ impl<const E: StringEncoding> ShellCharIter<E> {
 }
 
 impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
-    // PERF(port): Zig used `u7` for ascii; unified to u32 (see InputChar note).
+    // PERF: unified to u32 for ascii and unicode (see InputChar note).
     type CodepointType = u32;
     type InputChar = InputChar;
 
@@ -341,7 +340,7 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
                 }
             }
             // We checked `self.state == .Single` above so this is impossible.
-            // PORT NOTE: was `unreachable_unchecked()`; the lexer is on a
+            // was `unreachable_unchecked()`; the lexer is on a
             // cold path so trade the elided check for a defined panic.
             ShellCharIterState::Single => unreachable!(),
         }
@@ -355,7 +354,8 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
 
 // ─── has_eq_sign ───────────────────────────────────────────────────────────
 
-/// Zig: `pub fn hasEqSign(str: []const u8) ?u32`.
+/// Returns the index of the first `=` in the string, if any
+/// (codepoint-aware for non-ASCII input).
 pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
     if strings::is_all_ascii(str_) {
         return bun_core::immutable::index_of_char(str_, b'=');
@@ -378,7 +378,7 @@ bun_core::declare_scope!(BRACES, visible);
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
 /// amount of brace expansion (like around 32k variants to expand)
-// PORT NOTE: Zig `packed struct(u32)` — two u16 fields packed into a u32.
+// Two u16 fields packed into a u32.
 #[repr(transparent)]
 #[derive(Default, Copy, Clone)]
 struct ExpansionVariant(u32);
@@ -399,7 +399,7 @@ impl ExpansionVariant {
     }
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ExpansionVariants {
     pub idx: u16,
     pub end: u16,
@@ -415,9 +415,39 @@ pub enum Token {
     Eof,
 }
 
-// PORT NOTE: Zig copied the union by value (bitwise SmolStr copy with shared
-// heap backing). The Rust port deep-copies via `from_slice` so the parser can
-// own its token. PERF(port): extra alloc on heap-backed SmolStr — profile if hot.
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Token::Open(a), Token::Open(b)) => a == b,
+            (Token::Comma, Token::Comma) => true,
+            // Compare text content; content comparison is the intended semantics.
+            (Token::Text(a), Token::Text(b)) => a.slice() == b.slice(),
+            (Token::Close, Token::Close) => true,
+            (Token::Eof, Token::Eof) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for Token {}
+
+impl core::fmt::Debug for Token {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Token::Open(v) => f
+                .debug_struct("Open")
+                .field("idx", &v.idx)
+                .field("end", &v.end)
+                .finish(),
+            Token::Comma => f.write_str("Comma"),
+            Token::Text(s) => write!(f, "Text({:?})", bstr::BStr::new(s.slice())),
+            Token::Close => f.write_str("Close"),
+            Token::Eof => f.write_str("Eof"),
+        }
+    }
+}
+
+// Deep-copies via `from_slice` so the parser can own
+// its token. PERF: extra alloc on heap-backed SmolStr — profile if hot.
 impl Clone for Token {
     fn clone(&self) -> Self {
         match self {
@@ -446,7 +476,6 @@ impl Token {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
-            // TODO(port): bun_core::SmolStr — see Clone for Token above.
             Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
             Token::Close => SmolStr::from_char(b'}'),
             Token::Eof => SmolStr::empty(),
@@ -455,11 +484,11 @@ impl Token {
 }
 
 // ─── JSON debug formatters ───────────────────────────────────────────────────
-// Port of Zig's `std.json.fmt(tokens)` / `std.json.fmt(ast_node)` used by
-// `Bun.$.braces(str, {tokenize:true})` / `{parse:true}` (debug-only). Zig's
-// reflection-driven JSON encoder emits tagged unions as `{"<tag>": <payload>}`
-// and bare-payload structs by field; reproduce that shape so the JS-visible
-// output is byte-compatible.
+// Used by
+// `Bun.$.braces(str, {tokenize:true})` / `{parse:true}` (debug-only). The
+// encoder emits tagged unions as `{"<tag>": <payload>}`
+// and bare-payload structs by field, so the JS-visible
+// output shape stays stable.
 
 fn json_escape_into(out: &mut Vec<u8>, s: &[u8]) {
     // debug-only path; canonical's run-batched write_str preserves verbatim
@@ -531,7 +560,7 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
     if group.bubble_up.is_null() {
         out.extend_from_slice(b"null");
     } else {
-        // Zig's std.json.fmt encodes `?*T` as the pointer address.
+        // Optional pointers are encoded as the pointer address.
         let _ = write!(out, "{}", group.bubble_up as usize);
     }
     out.extend_from_slice(b",\"bubble_up_next\":");
@@ -574,7 +603,7 @@ pub mod ast {
 
     pub enum GroupAtoms {
         Single(Atom),
-        // PORT NOTE: bump-owned slice; raw because Group has raw backrefs (see bubble_up).
+        // bump-owned slice; raw because Group has raw backrefs (see bubble_up).
         Many(*mut [Atom]),
     }
 
@@ -596,7 +625,7 @@ pub mod ast {
     }
 
     pub struct Expansion {
-        // PORT NOTE: bump-owned mutable slice; raw because expand_nested writes
+        // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
         pub variants: *mut [Group],
     }
@@ -604,12 +633,27 @@ pub mod ast {
 
 const MAX_NESTED_BRACES: usize = 10;
 
+const MAX_BRACE_GROUPS: usize = 256;
+
+fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
+    let opens = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::Open(_)))
+        .count();
+    if opens > MAX_BRACE_GROUPS {
+        return Err(ParserError::TooManyBraces);
+    }
+    Ok(())
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParserError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
+    #[error("TooManyBraces")]
+    TooManyBraces,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -619,6 +663,7 @@ impl From<ParserError> for bun_core::Error {
         match e {
             ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
             ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
+            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
         }
     }
 }
@@ -632,6 +677,7 @@ pub fn expand(
     out: &mut [Vec<u8>],
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
+    check_brace_group_count(tokens)?;
     let mut out_key_counter: u16 = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;
@@ -660,9 +706,17 @@ pub fn expand(
 // `expansion.variants` slices are bump-owned and outlive this call. The function
 // writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
 // parent through them; raw-pointer access is used throughout to avoid creating
-// overlapping `&mut` borrows. Mirrors Zig pointer semantics 1:1.
-// TODO(port): audit aliasing soundness (no long-lived `&mut` is held across
-// recursion, only raw derefs).
+// overlapping `&mut` borrows.
+//
+// Aliasing audit: no reference is held across a recursive call. The shared
+// borrows created from raw pointers (`&(*root).atoms` match scrutinees,
+// `&(*many)[i_]`, `expansion`) are consumed before recursion — `variants` is
+// hoisted to a raw pointer copy ahead of the variant loop, and every arm that
+// recurses either tail-returns or returns immediately after its loop. Writes
+// during recursion target only `Group` structs (the stack root or bump-owned
+// `variants` elements), never the `[Atom]` slices a caller frame borrowed
+// from, and bubble-up re-entry always resumes past the caller's in-progress
+// atom index, so no frame's expansion is mutated while it is on the stack.
 unsafe fn expand_nested(
     root: *mut ast::Group,
     out: &mut [Vec<u8>],
@@ -670,7 +724,7 @@ unsafe fn expand_nested(
     out_key_counter: &mut u16,
     start: u32,
 ) -> Result<(), ExpandError> {
-    // SAFETY: see fn doc comment — raw-pointer derefs mirror Zig pointer semantics;
+    // SAFETY: see fn doc comment —
     // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
     unsafe {
         if let ast::GroupAtoms::Single(_) = (*root).atoms {
@@ -707,9 +761,8 @@ unsafe fn expand_nested(
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
                     let length = out[usize::from(out_key)].len();
-                    // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
-                    // out[out_key].items[0..length] each iteration (same bytes).
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
+                    // reshaped for borrowck — snapshot prefix once.
+                    // PERF: extra Vec alloc for prefix snapshot — profile if hot.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -758,8 +811,7 @@ unsafe fn expand_nested(
                 }
                 ast::Atom::Expansion(expansion) => {
                     let length = out[usize::from(out_key)].len();
-                    // PORT NOTE: reshaped for borrowck — see above.
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
+                    // reshaped for borrowck — see above.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -830,8 +882,7 @@ fn expand_flat(
                 let skip_over_idx = variants[variants.len() - 1].end();
 
                 let starting_len = out[usize::from(out_key)].len();
-                // PORT NOTE: reshaped for borrowck — snapshot prefix once.
-                // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
+                // reshaped for borrowck — snapshot prefix once.
                 let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
@@ -872,7 +923,7 @@ fn expand_flat(
 }
 
 // FIXME error location
-// PORT NOTE: lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
+// lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
 // for the parse() call only — not an AST node.
 pub struct Parser<'a> {
     current: usize,
@@ -890,7 +941,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
-        // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
+        check_brace_group_count(self.tokens)?;
         let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
@@ -934,7 +985,6 @@ impl<'a> Parser<'a> {
             if self.r#match(TokenTag::Eof) {
                 break;
             }
-            // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
             let mut close = false;
             while !self.r#match(TokenTag::Eof) {
@@ -1002,7 +1052,6 @@ impl<'a> Parser<'a> {
 
     fn match_any(&mut self, toktags: &[TokenTag]) -> bool {
         let peeked = self.peek().tag();
-        // PERF(port): was `inline for` — profile if hot.
         for &tag in toktags {
             if peeked == tag {
                 let _ = self.advance();
@@ -1066,8 +1115,8 @@ pub fn calculate_expanded_amount(tokens: &[Token]) -> u32 {
 }
 
 fn build_expansion_table_alloc(tokens: &mut [Token]) -> Result<Vec<ExpansionVariant>, ParserError> {
-    // PERF(port): was arena bulk-free — Zig fed the same allocator to Parser and this
-    // table; table is local POD dropped at end of expand(), so global Vec is logic-neutral.
+    // PERF: the table is local POD dropped at the end of expand(), so a
+    // plain global-allocator Vec is logic-neutral here.
     let mut table: Vec<ExpansionVariant> = Vec::new();
     build_expansion_table(tokens, &mut table)?;
     Ok(table)
@@ -1205,7 +1254,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             let escaped = input.escaped;
 
             if !escaped {
-                // PORT NOTE: `char` is u32 (CodepointType unified across encodings).
+                // `char` is u32 (CodepointType unified across encodings).
                 match char {
                     c if c == u32::from(b'{') => {
                         brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
@@ -1259,8 +1308,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         let mut i: u32 = 0;
         let mut j: u32 = 1;
         while (i as usize) < self.tokens.len() && (j as usize) < self.tokens.len() {
-            // PORT NOTE: reshaped for borrowck — Zig held two `&mut` into self.tokens
-            // simultaneously. We branch on tags first, then borrow once.
+            // reshaped for borrowck — branch on tags first, then borrow once.
             let itok_is_text = matches!(self.tokens[i as usize], Token::Text(_));
             let jtok_is_text = matches!(self.tokens[j as usize], Token::Text(_));
 
@@ -1403,10 +1451,7 @@ mod tests {
             let TestCase(src, expected) = test_case;
             // NOTE: don't use arena here so that we can test for memory leaks
             let result = Lexer::tokenize(src).unwrap();
-            // TODO(port): Token needs PartialEq for this assertion (SmolStr: PartialEq).
-            assert_eq!(result.tokens.len(), expected.len());
+            assert_eq!(result.tokens, expected);
         }
     }
 }
-
-// ported from: src/shell_parser/braces.zig

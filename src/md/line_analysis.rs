@@ -4,9 +4,7 @@ use super::types;
 use super::types::{Align, Container, OFF};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Result types for the anonymous-struct returns in the Zig source.
-// Kept as named structs (not tuples) so field names line up with the .zig
-// for side-by-side diffing.
+// Result types, kept as named structs (not tuples) for readable field access.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
@@ -355,7 +353,6 @@ impl Parser<'_> {
             return false;
         }
         pos += u32::try_from(tag.len()).expect("int cast");
-        // TODO(port): if OFF != u32, adjust the cast above.
         if pos >= self.size {
             return true;
         }
@@ -637,6 +634,12 @@ impl Parser<'_> {
             }
 
             col_count += 1;
+            if col_count > types::TABLE_MAXCOLCOUNT {
+                return TableUnderlineResult {
+                    is_underline: false,
+                    col_count: 0,
+                };
+            }
 
             // Skip whitespace
             while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
@@ -840,5 +843,3 @@ impl Parser<'_> {
         }
     }
 }
-
-// ported from: src/md/line_analysis.zig

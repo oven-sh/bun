@@ -209,6 +209,28 @@ describe("Bun.Transpiler", () => {
       err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
     });
 
+    it("scope tracking stays balanced for a forward-declared function inside an if", () => {
+      const exp = ts.expectPrinted_;
+
+      // A function declaration in a single-statement `if`/`else` body gets a fake
+      // block scope so it can be wrapped when it has a body. A TypeScript forward
+      // declaration (no body) emits nothing, so that fake block scope must be
+      // discarded from the scope order; otherwise the next statement's scope is
+      // read out of sync and the parser pops past the topmost scope.
+      exp("if(l)function f(ag): g;\nfor (g in {}) {}", "if (l)\n  ;\nfor (g in {}) {}");
+      exp("if (x) function f(): void;\nfor (y in {}) {}", "if (x)\n  ;\nfor (y in {}) {}");
+      exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
+
+      // A function declaration with a body in the same position is still wrapped.
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+
+      // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
+      const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
+      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe(
+        "if (l)\n  ;\nfor (g in {}) {}\n",
+      );
+    });
+
     it("export default interface that is not an interface declaration does not crash", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -1683,6 +1705,34 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("JSX bare key prop followed by key with a value does not crash", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "jsx",
+            define: { "process.env.NODE_ENV": JSON.stringify("development") },
+            logLevel: "error",
+          });
+          process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
+          process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'console.log(jsxDEV_7x81h0kn("div", {}, "duplicate", false, undefined, this));\n' +
+        'console.log(jsxDEV_7x81h0kn("div", {\n  className: "x"\n}, "duplicate", false, undefined, this));\n',
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("parses TSX arrow functions correctly", () => {
     var transpiler = new Bun.Transpiler({
       loader: "tsx",
@@ -2050,6 +2100,30 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("!x ** 0", "Unexpected **");
       expectParseError("await x ** 0", "Unexpected **");
       expectParseError("await -x ** 0", "Unexpected **");
+    });
+
+    it("for-of loop variable named async", () => {
+      // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
+      // variable, but printing it as the raw token sequence `async of` is a
+      // syntax error, so the printer must parenthesize it.
+      expectPrinted_("for (\\u0061sync of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_("for ((async) of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_(
+        "async function f() { for await (\\u0061sync of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+
+      // The same identifier needs no parentheses when it is not directly followed by `of`
+      expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync[0] of [7]);", "for (async[0] of [7])\n  ;\n");
+      expectPrinted_("for (x[\\u0061sync] of [7]);", "for (x[async] of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync in x);", "for (async in x)\n  ;\n");
+
+      // `let` as a for-of loop variable keeps its parentheses too
+      expectPrinted_("for ((let) of [7]);", "for ((let) of [7])\n  ;\n");
+
+      // The keyword spelling is a syntax error, which is why the parentheses matter
+      expect(() => parsed("for (async of [7]);", false, false)).toThrow();
     });
 
     it("await", () => {
@@ -3824,6 +3898,23 @@ console.log("boop");
     expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
   });
 
+  it("await of the identifier 'using' is not an await using declaration", () => {
+    // "await using" only starts a declaration when followed by an identifier on
+    // the same line. Otherwise it's an "await" expression of the identifier "using".
+    expectPrinted_(
+      "async function f() { await using instanceof o }",
+      "async function f() {\n  await using instanceof o;\n}",
+    );
+    expectPrinted_("async function f() { await using }", "async function f() {\n  await using;\n}");
+    expectPrinted_("async function f() { await using\n x = 1 }", "async function f() {\n  await using;\n  x = 1;\n}");
+    expectPrinted_("async function f() { await using.foo() }", "async function f() {\n  await using.foo();\n}");
+    expectPrinted_(
+      "async function f() { for (await using instanceof o;;); }",
+      "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",
+    );
+    expectBunPrinted_("await using instanceof o", "await using instanceof o");
+  });
+
   it("using top level", () => {
     expectPrintedSnapshot(`
       using a = b;
@@ -3980,13 +4071,13 @@ it("Bun.Transpiler.transformSync stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("deeply nested expressions error instead of crashing the process", () => {
   const script = `
@@ -4043,6 +4134,89 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+it("deeply nested TypeScript types error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      // TSX generic arrow function whose "extends" constraint is a deeply nested tuple type
+      { loader: "tsx", code: n => "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" },
+      // same shape nested inside array literals (matches the fuzzer-found input)
+      {
+        loader: "tsx",
+        code: n =>
+          repeat("[", 1000) + "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" + repeat("]", 1000),
+      },
+      // deeply nested tuple type in a type alias
+      { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
+      // deeply nested destructuring pattern in a function type's arguments
+      { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
+    ];
+    for (const { loader, code } of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        const transpiler = new Bun.Transpiler({
+          loader,
+          target: "bun",
+          minifyWhitespace: true,
+          deadCodeElimination: true,
+        });
+        try {
+          transpiler.transformSync(code(n));
+        } catch (e) {
+          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+        }
+      }
+    }
+    console.log("type-depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("type-depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("deeply nested statement blocks error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("{", n) + 'class Test1 { static "prop1" = 0; }' + repeat("}", n),
+      n => repeat("{", n) + "let x = 1;" + repeat("}", n),
+      n => repeat("if (x) {", n) + "y();" + repeat("}", n),
+      n => "if (x) { y(); }" + repeat(" else if (x) { y(); }", n),
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [600, 800, 990]) {
+        check(
+          new Bun.Transpiler({ loader: "tsx", target: "bun", minifyWhitespace: true, deadCodeElimination: true }),
+          shape(n),
+        );
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+});
 
 it("running a file with deeply nested unary operators does not crash the process", () => {
   const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
@@ -4364,5 +4538,229 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
 
   it("between a numeric literal and 'in'", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
+  });
+});
+
+it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {
+  // The async transform parses the input on a work-pool thread. The input bytes
+  // must be copied before the thread hop so that detaching the ArrayBuffer from
+  // the JS thread mid-parse cannot change or free the memory being read.
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 20;
+    const source = "export const original = 12345;";
+    const bytes = new Uint8Array(size).fill(0x20);
+    new TextEncoder().encodeInto(source, bytes);
+    const expected = transpiler.transformSync(new TextDecoder().decode(bytes), "js");
+
+    const promise = transpiler.transform(bytes, "js");
+    // Detach the backing store while the worker thread may still be parsing it.
+    bytes.buffer.transfer(0);
+    // Recycle similarly-sized allocations holding different valid JS so a stale
+    // read of the old backing store would produce observably different output.
+    const decoys = [];
+    for (let i = 0; i < 8; i++) {
+      const decoy = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto("export const replaced" + i + " = " + i + ";", decoy);
+      decoys.push(decoy);
+    }
+    const out = await promise;
+    if (out === expected && !out.includes("replaced")) {
+      console.log("OK");
+    } else {
+      console.log("MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+// A numeric literal property name like `1e999` overflows to the number Infinity, which the
+// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
+// keys must be printed as computed properties instead.
+describe("numeric property keys that overflow to Infinity", () => {
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+  const plain = new Bun.Transpiler({ loader: "ts" });
+
+  it("are printed as computed properties when minifying whitespace", () => {
+    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
+    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
+    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
+    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set[1/0](v){}};");
+    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{[1/0](){}};");
+    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static[1/0](){}};");
+    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{[1/0]=1};");
+    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static[1/0]=1};");
+    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{[1/0]:y}=x;");
+    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
+  });
+
+  it("are printed as computed properties without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  });
+
+  it("handles a method name with hundreds of digits", () => {
+    const digits = Buffer.alloc(325, "9").toString();
+    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{[1/0](){}});");
+  });
+
+  it("still refers to the same property at runtime", () => {
+    const out = minifier.transformSync(`
+      const obj = { 1e999: "object" };
+      const { 1e999: destructured } = { 1e999: "destructured" };
+      class C {
+        1e999() { return "method"; }
+        static 1e999 = "static";
+      }
+      var result = [obj[Infinity], destructured, new C()[Infinity](), C[Infinity]];
+    `);
+    expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
+  });
+});
+
+describe("parse error flood", () => {
+  it("reports duplicate-binding floods in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const transpiler = new Bun.Transpiler({
+            loader: "js",
+            target: "browser",
+            minifyWhitespace: true,
+            deadCodeElimination: true,
+          });
+          const check = (label, statement, repeats) => {
+            const input = Buffer.alloc(statement.length * repeats, statement).toString();
+            let threw;
+            try {
+              transpiler.transformSync(input);
+            } catch (e) {
+              threw = e;
+            }
+            if (threw?.name !== "AggregateError") throw new Error("expected AggregateError, got " + threw);
+            if (!threw.errors.some(e => String(e.message).includes("has already been declared"))) {
+              throw new Error("expected duplicate-declaration errors");
+            }
+            console.log("OK " + label);
+          };
+          const bindings = Buffer.alloc(420, "a,").toString();
+          check("template catch flood", "try {} catch ([" + bindings + "a, \`]) {}\\n", 800);
+          check("duplicate catch flood", "try {} catch ([" + bindings + "a]) {}\\n", 400);
+          console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("OK template catch flood");
+    expect(stdout).toContain("OK duplicate catch flood");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});
+
+describe("multi-line comment scanning", () => {
+  // The lexer's block-comment scanner switches to a SIMD skip
+  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // least 512 bytes of input remain, so cover sizes on both sides of that
+  // threshold and around vector-width boundaries, plus every byte class the
+  // skip has to stop at ('*', '\r', '\n', non-ASCII).
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const xPad = Buffer.alloc(8193, "x").toString();
+  const pad600 = xPad.slice(0, 600);
+
+  const expectParseError = (code, message) => {
+    try {
+      transpiler.transformSync(code);
+    } catch (er) {
+      let err = er;
+      if (er instanceof AggregateError) {
+        err = er.errors[0];
+      }
+      expect(err.message).toBe(message);
+      return;
+    }
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
+  it("strips block comments of every size around the SIMD threshold", () => {
+    const sizes = [];
+    for (let size = 480; size <= 576; size++) sizes.push(size);
+    sizes.push(1000, 4095, 4096, 4097, 8193);
+    for (const size of sizes) {
+      const out = transpiler.transformSync(`/*${xPad.slice(0, size)}*/ pass();`);
+      expect({ size, out }).toEqual({ size, out: "pass();\n" });
+    }
+  });
+
+  it("handles a lone '*' at every offset inside a large comment", () => {
+    const aPad = Buffer.alloc(80, "a").toString();
+    const bPad = Buffer.alloc(700, "b").toString();
+    for (let offset = 0; offset < 80; offset++) {
+      const body = aPad.slice(0, offset) + "*" + bPad.slice(0, 700 - offset);
+      const out = transpiler.transformSync(`/*${body}*/ pass();`);
+      expect({ offset, out }).toEqual({ offset, out: "pass();\n" });
+    }
+  });
+
+  it("handles comments made entirely of '*'", () => {
+    const stars = Buffer.alloc(600, "*").toString();
+    expect(transpiler.transformSync(`/*${stars}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${stars}/ pass();`)).toBe("pass();\n");
+  });
+
+  it("treats newlines inside a large block comment as line terminators (ASI)", () => {
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      const out = transpiler.transformSync(`function f() { return /*${pad600}${newline}${pad600}*/ 1 }`);
+      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n}\n" });
+    }
+    // control: no newline anywhere inside the comment, so no ASI
+    expect(transpiler.transformSync(`function f() { return /*${pad600}${pad600}*/ 1 }`)).toBe(
+      "function f() {\n  return 1;\n}\n",
+    );
+  });
+
+  it("scans large comments containing non-ASCII text", () => {
+    expect(transpiler.transformSync(`/*${"é".repeat(400)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${"🦊".repeat(200)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/* ${pad600} 日本語のコメント ${pad600} */ pass();`)).toBe("pass();\n");
+  });
+
+  it("does not corrupt code around a large comment", () => {
+    const dashes = Buffer.alloc(700, "-").toString();
+    const out = transpiler.transformSync(`const a = "before";/*${dashes}*/const b = "after"; console.log(a, b);`);
+    expect(out).toBe('const a = "before";\nconst b = "after";\nconsole.log(a, b);\n');
+  });
+
+  it("handles a large comment that ends exactly at EOF", () => {
+    expect(transpiler.transformSync(`pass(); /*${pad600}*/`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`pass(); /*${pad600}**/`)).toBe("pass();\n");
+  });
+
+  it("reports unterminated large block comments", () => {
+    const message = 'Expected "*/" to terminate multi-line comment';
+    expectParseError(`/*${pad600}`, message);
+    expectParseError(`/*${pad600}*`, message);
+    expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
+    expectParseError(`/*${pad600}🦊`, message);
   });
 });

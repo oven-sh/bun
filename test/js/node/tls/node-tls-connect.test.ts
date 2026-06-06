@@ -115,6 +115,26 @@ const tests = [
   },
 ];
 
+// Some tests connect to the live bun.sh host. Skip them when the network (or
+// DNS) is unavailable so the suite still passes offline instead of failing
+// with DNSException/getaddrinfo errors unrelated to what is under test. The
+// probe is bounded by a hard timer so a stalled handshake or black-holed
+// connection can't hang module load (per-test timeouts don't apply yet).
+const canReachBunSh = await (async () => {
+  const socket = tlsConnect({ host: "bun.sh", servername: "bun.sh", port: 443, rejectUnauthorized: false });
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const timer = setTimeout(() => resolve(false), 5000);
+  socket.once("secureConnect", () => resolve(true));
+  socket.once("error", () => resolve(false));
+  try {
+    return await promise;
+  } finally {
+    clearTimeout(timer);
+    socket.destroy();
+  }
+})();
+const itNetwork = it.skipIf(!canReachBunSh);
+
 it("should have checkServerIdentity", async () => {
   expect(checkServerIdentity).toBeFunction();
   expect(tls.checkServerIdentity).toBeFunction();
@@ -145,7 +165,7 @@ it("should be able to grab the JSStreamSocket constructor", () => {
 });
 for (const { name, connect } of tests) {
   describe(name, () => {
-    it("should work with alpnProtocols", done => {
+    itNetwork("should work with alpnProtocols", done => {
       try {
         let socket: TLSSocket | null = connect({
           ALPNProtocols: ["http/1.1"],
@@ -239,7 +259,7 @@ for (const { name, connect } of tests) {
         expect(cert.ca).toBe(true);
         expect(cert.bits).toBe(2048);
         expect(cert.modulus).toBe(
-          "e5633a2c8118171cbeaf321d55d0444586cbe566bb51a234b0ead69faf7490069854efddffac68986652ff949f472252e4c7d24c6ee4e3366e54d9e4701e24d021e583e1a088112c0f96475a558b42f883a3e796c937cc4d6bb8791b227017b3e73deb40b0ac84f033019f580a3216888acec71ce52d938fcadd8e29794e38774e33d323ede89b58e526ef8b513ba465fa4ffd9cf6c1ec7480de0dcb569dec295d7b3cce40256b428d5907e90e7a52e77c3101f4ad4c0e254ab03d75ac42ee1668a5094bc4521b264fb404b6c4b17b6b279e13e6282e1e4fb6303540cb830ea8ff576ca57b7861e4ef797af824b0987c870718780a1c5141e4f904fd0c5139f5",
+          "E5633A2C8118171CBEAF321D55D0444586CBE566BB51A234B0EAD69FAF7490069854EFDDFFAC68986652FF949F472252E4C7D24C6EE4E3366E54D9E4701E24D021E583E1A088112C0F96475A558B42F883A3E796C937CC4D6BB8791B227017B3E73DEB40B0AC84F033019F580A3216888ACEC71CE52D938FCADD8E29794E38774E33D323EDE89B58E526EF8B513BA465FA4FFD9CF6C1EC7480DE0DCB569DEC295D7B3CCE40256B428D5907E90E7A52E77C3101F4AD4C0E254AB03D75AC42EE1668A5094BC4521B264FB404B6C4B17B6B279E13E6282E1E4FB6303540CB830EA8FF576CA57B7861E4EF797AF824B0987C870718780A1C5141E4F904FD0C5139F5",
         );
         expect(cert.exponent).toBe("0x10001");
         expect(cert.pubkey).toBeInstanceOf(Buffer);
@@ -252,14 +272,14 @@ for (const { name, connect } of tests) {
         expect(cert.fingerprint512).toBe(
           "CE:00:17:97:29:5E:1C:7E:59:86:8D:1F:F0:F4:AF:A0:B0:10:F2:2E:0E:79:D1:32:D0:44:F9:B4:3A:DE:D5:83:A9:15:0E:E4:47:24:D4:2A:10:FB:21:BE:3A:38:21:FC:40:20:B3:BC:52:64:F7:38:93:EF:C9:3F:C8:57:89:31",
         );
-        expect(cert.serialNumber).toBe("71a46ae89fd817ef81a34d5973e1de42f09b9d63");
+        expect(cert.serialNumber).toBe("71A46AE89FD817EF81A34D5973E1DE42F09B9D63");
         expect(cert.raw).toBeInstanceOf(Buffer);
       } finally {
         socket.end();
       }
     });
 
-    it("should have peer certificate", async () => {
+    itNetwork("should have peer certificate", async () => {
       const socket = (await new Promise((resolve, reject) => {
         const instance = connect(
           {
@@ -307,68 +327,71 @@ for (const { name, connect } of tests) {
       }
     });
 
-    it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work", async () => {
-      const allowedCipherObjects = [
-        {
-          name: "TLS_AES_128_GCM_SHA256",
-          standardName: "TLS_AES_128_GCM_SHA256",
-          version: "TLSv1/SSLv3",
-        },
-        {
-          name: "TLS_AES_256_GCM_SHA384",
-          standardName: "TLS_AES_256_GCM_SHA384",
-          version: "TLSv1/SSLv3",
-        },
-        {
-          name: "TLS_CHACHA20_POLY1305_SHA256",
-          standardName: "TLS_CHACHA20_POLY1305_SHA256",
-          version: "TLSv1/SSLv3",
-        },
-      ];
-      const socket = (await new Promise((resolve, reject) => {
-        connect({
-          ALPNProtocols: ["http/1.1"],
-          host: "bun.sh",
-          servername: "bun.sh",
-          port: 443,
-          rejectUnauthorized: false,
-          requestCert: true,
-        })
-          .on("secure", resolve)
-          .on("error", reject);
-      })) as TLSSocket;
+    itNetwork(
+      "getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work",
+      async () => {
+        const allowedCipherObjects = [
+          {
+            name: "TLS_AES_128_GCM_SHA256",
+            standardName: "TLS_AES_128_GCM_SHA256",
+            version: "TLSv1/SSLv3",
+          },
+          {
+            name: "TLS_AES_256_GCM_SHA384",
+            standardName: "TLS_AES_256_GCM_SHA384",
+            version: "TLSv1/SSLv3",
+          },
+          {
+            name: "TLS_CHACHA20_POLY1305_SHA256",
+            standardName: "TLS_CHACHA20_POLY1305_SHA256",
+            version: "TLSv1/SSLv3",
+          },
+        ];
+        const socket = (await new Promise((resolve, reject) => {
+          connect({
+            ALPNProtocols: ["http/1.1"],
+            host: "bun.sh",
+            servername: "bun.sh",
+            port: 443,
+            rejectUnauthorized: false,
+            requestCert: true,
+          })
+            .on("secure", resolve)
+            .on("error", reject);
+        })) as TLSSocket;
 
-      try {
-        const cipher = socket.getCipher();
-        let hadMatch = false;
-        for (const allowedCipher of allowedCipherObjects) {
-          if (cipher.name === allowedCipher.name) {
-            expect(cipher).toMatchObject(allowedCipher);
-            hadMatch = true;
-            break;
+        try {
+          const cipher = socket.getCipher();
+          let hadMatch = false;
+          for (const allowedCipher of allowedCipherObjects) {
+            if (cipher.name === allowedCipher.name) {
+              expect(cipher).toMatchObject(allowedCipher);
+              hadMatch = true;
+              break;
+            }
           }
-        }
-        if (!hadMatch) {
-          throw new Error(`Unexpected cipher ${cipher.name}`);
-        }
-        expect(socket.getProtocol()).toBe("TLSv1.3");
-        expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
-        expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);
-        expect(socket.getSession()).toBeInstanceOf(Buffer);
-        expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
-        expect(socket.isSessionReused()).toBe(false);
+          if (!hadMatch) {
+            throw new Error(`Unexpected cipher ${cipher.name}`);
+          }
+          expect(socket.getProtocol()).toBe("TLSv1.3");
+          expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
+          expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);
+          expect(socket.getSession()).toBeInstanceOf(Buffer);
+          expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
+          expect(socket.isSessionReused()).toBe(false);
 
-        // BoringSSL does not support these methods for >= TLSv1.3
-        expect(socket.getFinished()).toBeUndefined();
-        expect(socket.getPeerFinished()).toBeUndefined();
-      } finally {
-        socket.end();
-      }
-    });
+          // BoringSSL does not support these methods for >= TLSv1.3
+          expect(socket.getFinished()).toBeUndefined();
+          expect(socket.getPeerFinished()).toBeUndefined();
+        } finally {
+          socket.end();
+        }
+      },
+    );
 
     // Test using only options
     // prettier-ignore
-    it.skipIf(connect === duplexProxy)("should process options correctly when connect is called with only options", done => {
+    it.skipIf(connect === duplexProxy || !canReachBunSh)("should process options correctly when connect is called with only options", done => {
       let socket = connect({
         port: 443,
         host: "bun.sh",
@@ -389,7 +412,7 @@ for (const { name, connect } of tests) {
     });
 
     // Test using port and host
-    it("should process port and host correctly", done => {
+    itNetwork("should process port and host correctly", done => {
       let socket = connect(443, "bun.sh", {
         rejectUnauthorized: false,
       });
@@ -410,7 +433,7 @@ for (const { name, connect } of tests) {
     });
 
     // Test using port, host, and callback
-    it("should process port, host, and callback correctly", done => {
+    itNetwork("should process port, host, and callback correctly", done => {
       let socket = connect(
         443,
         "bun.sh",
@@ -431,7 +454,7 @@ for (const { name, connect } of tests) {
     });
 
     // Additional tests to ensure the callback is optional and handled correctly
-    it("should handle the absence of a callback gracefully", done => {
+    itNetwork("should handle the absence of a callback gracefully", done => {
       let socket = connect(443, "bun.sh", {
         rejectUnauthorized: false,
       });
@@ -451,35 +474,31 @@ for (const { name, connect } of tests) {
       });
     });
 
-    it("should timeout", done => {
-      const socket = connect(
-        {
-          port: 443,
-          host: "bun.sh",
-        },
-        () => {
-          socket.setTimeout(1000, () => {
-            clearTimeout(timer);
-            done();
-            socket.end();
-          });
-        },
-      );
+    itNetwork(
+      "should timeout",
+      done => {
+        const socket = connect(
+          {
+            port: 443,
+            host: "bun.sh",
+          },
+          () => {
+            socket.setTimeout(1000, () => {
+              done();
+              socket.end();
+            });
+          },
+        );
 
-      const timer = setTimeout(() => {
-        socket.end();
-        done(new Error("timeout did not trigger"));
-      }, 8000);
+        socket.on("error", err => {
+          socket.end();
+          done(err);
+        });
+      },
+      10_000,
+    ); // 10 seconds because uWS sometimes is not that precise with timeouts
 
-      socket.on("error", err => {
-        clearTimeout(timer);
-
-        socket.end();
-        done(err);
-      });
-    }, 10_000); // 10 seconds because uWS sometimes is not that precise with timeouts
-
-    it("should be able to transfer data", done => {
+    itNetwork("should be able to transfer data", done => {
       const socket = connect(
         {
           port: 443,

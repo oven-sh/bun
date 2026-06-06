@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Error, Global, Output, err};
+use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
@@ -17,26 +17,27 @@ use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
-// lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
+// lives under crate::api::bun::process.
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
     event_loop_handle_to_ctx,
 };
-// TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
-// TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`
-// TODO(port): crate path for Output writer type
 type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
 /// `bun_resolver::package_json::ScriptsMap` (`StringArrayHashMap<&'static [u8]>`).
+/// Its `&'static [u8]` values borrow the owning `PackageJSON.source_contents`.
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
+
+/// Owned variant of `ScriptsMap`: both keys and values are owned `Box<[u8]>`, so
+/// it can outlive the `PackageJSON` the bytes were parsed from (see `MatchedPackage`).
+type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` — NUL-terminated, used directly as argv element
     command: Box<[u8]>,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
@@ -55,7 +56,7 @@ pub struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(is_stderr: bool) -> Self {
         Self {
-            // BufferedReader::init(This) — Zig passes the parent type for vtable.
+            // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
             is_stderr,
@@ -123,8 +124,7 @@ impl<'a> ProcessHandle<'a> {
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
-        // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
-        // spawnProcess. Using *const c_char placeholders.
+        // Null-terminated argv array, as required by spawnProcess.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
             if cfg!(unix) {
@@ -137,9 +137,6 @@ impl<'a> ProcessHandle<'a> {
         ];
 
         self.start_time = Instant::now().into();
-        // TODO(port): narrow error set
-        // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
-        // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
         let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
@@ -180,7 +177,7 @@ impl<'a> ProcessHandle<'a> {
 
         self.stdout_reader.handle = std::ptr::from_ref(self);
         self.stderr_reader.handle = std::ptr::from_ref(self);
-        // PORT NOTE: compute parent ptrs before calling `set_parent` to avoid
+        // Compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
         let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
         self.stdout_reader.reader.set_parent(stdout_parent);
@@ -189,8 +186,7 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
-            // In the Rust port `spawn_process_windows` has *already* reclaimed
+            // `spawn_process_windows` has *already* reclaimed
             // sole ownership of that heap pipe into
             // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
             // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
@@ -309,7 +305,6 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    // TODO(port): narrow error set — was `(std.Io.Writer.Error || bun.OOM)!void`
     fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
         pipe.line_buffer.extend_from_slice(chunk);
 
@@ -332,7 +327,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn write_line_with_prefix(
         &self,
         handle: &ProcessHandle,
@@ -344,7 +338,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
         if self.use_colors {
             writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
@@ -364,7 +357,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn flush_pipe_buffer(
         &self,
         handle: &ProcessHandle<'a>,
@@ -387,12 +379,11 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // PORT NOTE: reshaped for borrowck — `flush_pipe_buffer` would need both
+        // Reshaped for borrowck — `flush_pipe_buffer` would need both
         // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
         // through a raw ptr (the State/handle backref pattern is already
         // raw-ptr-based throughout this file).
@@ -449,7 +440,7 @@ impl<'a> State<'a> {
 
         if failed {
             // Pre->main->post chain is broken -- skip group dependents.
-            // PORT NOTE: reshaped for borrowck — clone the dependent ptr slices to avoid
+            // Reshaped for borrowck — clone the dependent ptr slices to avoid
             // borrowing `handle` while iterating self.handles via the raw ptrs.
             let group = handle.group_dependents.clone();
             let next = handle.next_dependents.clone();
@@ -478,7 +469,7 @@ impl<'a> State<'a> {
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 if dependent.start().is_err() {
-                    Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                    bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                     Global::exit(1);
                 }
             }
@@ -579,14 +570,13 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
-            // TODO(port): move to <area>_sys
             let res = bun_sys::windows::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
             );
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n");
+                    bun_core::warn!("Failed to set abort handler\n");
                 }
             }
         }
@@ -638,16 +628,20 @@ struct GroupInfo {
 
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
-fn add_script_configs(
+///
+/// Generic over the scripts map value type so both the single-package path
+/// (values borrow the process-lifetime DirInfo-cached package.json) and the
+/// workspace path (values are owned `Box<[u8]>` copies, see `MatchedPackage`)
+/// can share this code. The script bytes are only ever read here, never stored.
+fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     configs: &mut Vec<ScriptConfig>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
-    scripts_map: Option<&ScriptsMap>,
+    scripts_map: Option<&StringArrayHashMap<V>>,
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let group_start = configs.len();
 
     let label: Box<[u8]> = if let Some(prefix) = label_prefix {
@@ -757,20 +751,20 @@ fn add_script_configs(
     Ok(())
 }
 
-// TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
+// Returns either an error or diverges:
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
 pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel and --sequential cannot be used together",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel and --sequential cannot be used together"
         );
         Global::exit(1);
     }
 
     // Collect script names from positionals + passthrough
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
-    // PORT NOTE: cloned to owned so the &mut ctx borrow below doesn't conflict.
+    // Cloned to owned so the &mut ctx borrow below doesn't conflict.
     let mut script_names: Vec<Box<[u8]>> = Vec::new();
 
     let mut positionals: &[Box<[u8]>] = &ctx.positionals;
@@ -789,15 +783,15 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if script_names.is_empty() {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel/--sequential requires at least one script name",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel/--sequential requires at least one script name"
         );
         Global::exit(1);
     }
 
     // Set up the transpiler/environment
     let _ = bun_resolver::fs::FileSystem::init(None)?;
-    // Out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
+    // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
@@ -865,10 +859,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // Drop handles deinit
 
         // Phase 1: Collect matching packages (filesystem order is nondeterministic)
+        //
+        // `scripts` owns its bytes (`OwnedScriptsMap`): the `ScriptsMap` values
+        // parsed from each package.json borrow that package's `source_contents`,
+        // which is freed when the standalone `PackageJSON` drops at the end of
+        // each loop iteration below. Storing the borrowed map here would dangle
+        // (heap-use-after-free, #31636) — unlike the single-package path, whose
+        // package.json is kept alive by the process-lifetime DirInfo cache — so
+        // we deep-copy keys and values into owned storage before `pkgjson` drops.
         struct MatchedPackage {
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
-            scripts: Box<ScriptsMap>,
+            scripts: OwnedScriptsMap,
             path: Box<[u8]>,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
@@ -897,9 +899,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 continue;
             }
 
-            let Some(pkg_scripts) = pkgjson.scripts else {
+            let Some(pkg_scripts) = &pkgjson.scripts else {
                 continue;
             };
+            // Deep-copy the scripts map while `pkgjson` (and the `source_contents`
+            // the borrowed `&'static [u8]` values point into) is still alive.
+            let mut owned_scripts = OwnedScriptsMap::with_capacity(pkg_scripts.count());
+            for (key, value) in pkg_scripts.iter() {
+                owned_scripts
+                    .put(&key[..], Box::<[u8]>::from(&value[..]))
+                    .unwrap_or_oom();
+            }
+
             let run_in_bun = ctx.debug.run_in_bun;
             let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
                 ctx,
@@ -910,7 +921,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 run_in_bun,
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
-                pkgjson.name
+                Box::<[u8]>::from(&pkgjson.name[..])
             } else {
                 // Fallback: use relative path from workspace root
                 Box::from(bun_paths::resolve_path::relative_platform::<
@@ -922,7 +933,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
                 dirpath,
-                scripts: pkg_scripts,
+                scripts: owned_scripts,
                 path: pkg_path_env.into(),
             });
         }
@@ -971,11 +982,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             Some(&pkg.name),
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Missing \"{}\" script in package \"{}\"",
                             bstr::BStr::new(raw_name),
                             bstr::BStr::new(&pkg.name),
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -987,11 +998,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 Global::exit(0);
             }
             if ctx.workspaces {
-                Output::pretty_errorln(
-                    "<r><red>error<r>: No workspace packages have matching scripts",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: No workspace packages have matching scripts"
                 );
             } else {
-                Output::pretty_errorln("<r><red>error<r>: No packages matched the filter");
+                bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
             }
             Global::exit(1);
         }
@@ -1011,7 +1022,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
             Ok(Some(info)) => info,
             Ok(None) | Err(_) => {
-                Output::pretty_errorln("<r><red>error<r>: Failed to read directory");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to read directory");
                 Global::exit(1);
             }
         };
@@ -1035,10 +1046,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     matches.as_mut_slice().sort();
 
                     if matches.is_empty() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: No scripts match pattern \"{}\"",
                             bstr::BStr::new(raw_name),
-                        ));
+                        );
                         Global::exit(1);
                     }
 
@@ -1054,10 +1065,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                         )?;
                     }
                 } else {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Cannot use glob pattern \"{}\" without package.json scripts",
                         bstr::BStr::new(raw_name),
-                    ));
+                    );
                     Global::exit(1);
                 }
             } else {
@@ -1075,7 +1086,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if configs.is_empty() {
-        Output::pretty_errorln("<r><red>error<r>: No scripts to run");
+        bun_core::pretty_errorln!("<r><red>error<r>: No scripts to run");
         Global::exit(1);
     }
 
@@ -1090,8 +1101,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let use_colors = Output::enable_ansi_colors_stderr();
 
     let mut state = State {
-        // TODO(port): allocate handles slice; Zig used uninitialized alloc + per-index assign.
-        // Using Vec then into_boxed_slice after init loop below to avoid MaybeUninit gymnastics.
         handles: Box::default(),
         event_loop,
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
@@ -1154,7 +1163,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         });
     }
     state.handles = handles.into_boxed_slice();
-    // PORT NOTE: `state` field of each handle was set above as a raw ptr before `state.handles`
+    // The `state` field of each handle was set above as a raw ptr before `state.handles`
     // was assigned — the address of `state` does not change, so the backref remains valid.
 
     // Set up pre->main->post chaining within each group
@@ -1192,7 +1201,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     for handle in state.handles.iter_mut() {
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }
@@ -1220,5 +1229,3 @@ fn has_runnable_extension(name: &[u8]) -> bool {
     };
     loader.can_be_run_by_bun()
 }
-
-// ported from: src/cli/multi_run.zig

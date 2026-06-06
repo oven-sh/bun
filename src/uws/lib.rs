@@ -16,9 +16,6 @@ use bun_core::ZStr;
 // `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
-//
-// `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
-// upward refs into a higher tier and intentionally remain local stub modules.
 
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
@@ -34,12 +31,6 @@ pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
-
-// Upward refs into `bun_runtime` (higher tier) — kept as empty namespace stubs.
-// TODO(port): bun_runtime::socket::{uws_dispatch, windows_named_pipe, upgraded_duplex}
-pub mod dispatch {}
-pub mod WindowsNamedPipe {}
-pub mod UpgradedDuplex {}
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
 /// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
@@ -65,7 +56,6 @@ pub enum ResponseKind {
 }
 
 impl ResponseKind {
-    // PERF(port): was comptime monomorphization — profile if hot.
     pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
         if http3 {
             ResponseKind::H3
@@ -99,29 +89,20 @@ pub use bun_uws_sys::{
 };
 
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
-// (Zig: `@import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS` and
-// `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
+// (`createBunSocketErrorToJS` / `verifyErrorToJS`) live as extension traits
+// in the *_jsc crate.
 pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
 
-/// Owned socket-address shape (boxed IP) used where the borrowed
-/// `bun_uws_sys::SocketAddress<'a>` would tie a lifetime to a transient
-/// `uws_res` buffer. Distinct from the sys type by design — that one is the
-/// zero-copy borrow returned from `Response::get_remote_socket_info`.
+/// Owned socket-address shape (boxed IP). Distinct from the sys type by
+/// design — that one stores the IP text inline as returned from
+/// `Response::get_remote_socket_info`.
 pub struct SocketAddress {
     pub ip: Box<[u8]>,
     pub port: i32,
     pub is_ipv6: bool,
 }
 
-// TODO(port): move to uws_sys
-unsafe extern "C" {
-    // safe: no args; clears thread-local loop pointer — no preconditions.
-    safe fn bun_clear_loop_at_thread_exit();
-}
-
-pub fn on_thread_exit() {
-    bun_clear_loop_at_thread_exit()
-}
+pub use bun_uws_sys::loop_::on_thread_exit;
 
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
@@ -134,17 +115,16 @@ pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     let filename = unsafe { bun_core::ffi::cstr(filename) };
     // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
-    bun_core::Output::warn(format_args!(
+    bun_core::warn!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
         bstr::BStr::new(error_msg.to_bytes()),
-    ));
+    );
 }
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
 mod c {
-    // TODO(port): move to uws_sys
     unsafe extern "C" {
         // safe: no args; returns a process-static NUL-terminated cipher list.
         pub(crate) safe fn us_get_default_ciphers() -> *const core::ffi::c_char;
@@ -164,7 +144,6 @@ pub fn get_default_ciphers() -> &'static ZStr {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
-// Ground truth: src/runtime/socket/ssl_wrapper.zig
 // Requested by: http_jsc
 // ═══════════════════════════════════════════════════════════════════════════
 // `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
@@ -243,8 +222,8 @@ pub mod ssl_wrapper {
         pub renegotiation_window_start: Option<std::time::Instant>,
     }
 
-    /// CamelCase alias for callers that imported the Zig name through the
-    /// snake_case→CamelCase rewriter (e.g. `http_jsc`).
+    /// CamelCase alias for callers that use the alternate spelling
+    /// (e.g. `http_jsc`).
     pub type SslWrapper<T> = SSLWrapper<T>;
 
     /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
@@ -258,7 +237,7 @@ pub mod ssl_wrapper {
     #[derive(Default)]
     pub struct Flags(core::cell::Cell<u8>);
 
-    // packed struct(u8) layout (Zig packs LSB-first):
+    // Bit layout (LSB-first):
     //   bits 0-1: handshake_state (u2)
     //   bit  2:   received_ssl_shutdown
     //   bit  3:   sent_ssl_shutdown
@@ -288,9 +267,8 @@ pub mod ssl_wrapper {
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
             // bits 0-1 are always written via set_handshake_state with a valid
-            // discriminant in range 0..=2; the 4th bit-state traps (matches
-            // Zig's safety-checked `@enumFromInt`) rather than silently
-            // folding bitfield corruption to a valid variant.
+            // discriminant in range 0..=2; the 4th bit-state traps rather than
+            // silently folding bitfield corruption to a valid variant.
             match self.bits() & Self::HANDSHAKE_MASK {
                 0 => HandshakeState::HandshakePending,
                 1 => HandshakeState::HandshakeCompleted,
@@ -513,7 +491,7 @@ pub mod ssl_wrapper {
             })
         }
 
-        /// Tier-neutral form of Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
+        /// Tier-neutral constructor.
         /// Higher-tier callers convert their `SSLConfig` via `.as_usockets()` and pass the
         /// resulting `BunSocketContextOptions` here, so this crate stays free of the
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
@@ -952,12 +930,15 @@ pub mod ssl_wrapper {
 
         /// Handle reading data. Returns true if we can call handle_writing.
         fn handle_reading(&mut self, buffer: &mut [u8; BUFFER_SIZE]) -> bool {
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             let mut read: usize = 0;
 
             // read data from the input BIO
             loop {
                 log!("handleReading");
-                let Some(ssl) = self.ssl else { return false };
+                let Some(ssl) = Self::r(this).ssl else {
+                    return false;
+                };
 
                 let available = &mut buffer[read..];
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
@@ -978,34 +959,37 @@ pub mod ssl_wrapper {
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
-                            self.flags
+                            Self::r(this)
+                                .flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
                             // An over-limit renegotiation request is treated
                             // like a failed SSL_renegotiate(). The count
                             // resets each MAX_RENEGOTIATION_WINDOW, matching
                             // the C path's `us_reneg_policy`.
                             let now = std::time::Instant::now();
-                            match self.renegotiation_window_start {
+                            match Self::r(this).renegotiation_window_start {
                                 Some(start)
                                     if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
                                 _ => {
-                                    self.renegotiation_window_start = Some(now);
-                                    self.renegotiation_count = 0;
+                                    Self::r(this).renegotiation_window_start = Some(now);
+                                    Self::r(this).renegotiation_count = 0;
                                 }
                             }
                             let renegotiation_allowed =
-                                self.renegotiation_count < MAX_RENEGOTIATIONS;
-                            self.renegotiation_count = self.renegotiation_count.saturating_add(1);
+                                Self::r(this).renegotiation_count < MAX_RENEGOTIATIONS;
+                            Self::r(this).renegotiation_count =
+                                Self::r(this).renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
                             let renegotiated = renegotiation_allowed
                                 && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
                             if !renegotiated {
-                                self.flags
+                                Self::r(this)
+                                    .flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate
-                                let verify = self.get_verify_error();
-                                self.trigger_handshake_callback(false, verify);
-                                self.trigger_close_callback();
+                                let verify = Self::r(this).get_verify_error();
+                                Self::r(this).trigger_handshake_callback(false, verify);
+                                Self::r(this).trigger_close_callback();
                                 return false;
                             }
                             // ok, we are done here, we need to call SSL_read again
@@ -1015,12 +999,12 @@ pub mod ssl_wrapper {
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            self.flags.set_received_ssl_shutdown(true);
+                            Self::r(this).flags.set_received_ssl_shutdown(true);
                             // 2-step shutdown
-                            let _ = self.shutdown(false);
-                            self.handle_end_of_renegotiation();
+                            let _ = Self::r(this).shutdown(false);
+                            Self::r(this).handle_end_of_renegotiation();
                         }
-                        self.flags.set_fatal_error(
+                        Self::r(this).flags.set_fatal_error(
                             err == boring_sys::SSL_ERROR_SSL
                                 || err == boring_sys::SSL_ERROR_SYSCALL,
                         );
@@ -1028,13 +1012,14 @@ pub mod ssl_wrapper {
                         // flush the reading
                         if read > 0 {
                             log!("triggering data callback (read {})", read);
-                            self.trigger_data_callback(&buffer[0..read]);
+                            Self::r(this).trigger_data_callback(&buffer[0..read]);
                             // The data callback may have closed the connection
-                            if self.ssl.is_none() || self.flags.closed_notified() {
+                            if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified()
+                            {
                                 return false;
                             }
                         }
-                        self.trigger_close_callback();
+                        Self::r(this).trigger_close_callback();
                         return false;
                     } else {
                         log!("wanna read/write just break");
@@ -1043,7 +1028,7 @@ pub mod ssl_wrapper {
                     }
                 }
 
-                self.handle_end_of_renegotiation();
+                Self::r(this).handle_end_of_renegotiation();
 
                 read += usize::try_from(just_read).expect("int cast");
                 if read == buffer.len() {
@@ -1052,10 +1037,10 @@ pub mod ssl_wrapper {
                         read
                     );
                     // we filled the buffer
-                    self.trigger_data_callback(&buffer[0..read]);
+                    Self::r(this).trigger_data_callback(&buffer[0..read]);
                     // The callback may have closed the connection - check before continuing
                     // Check ssl first as a proxy for whether we were deinited
-                    if self.ssl.is_none() || self.flags.closed_notified() {
+                    if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
                         return false;
                     }
                     read = 0;
@@ -1064,10 +1049,10 @@ pub mod ssl_wrapper {
             // we finished reading
             if read > 0 {
                 log!("triggering data callback (read {})", read);
-                self.trigger_data_callback(&buffer[0..read]);
+                Self::r(this).trigger_data_callback(&buffer[0..read]);
                 // The callback may have closed the connection
                 // Check ssl first as a proxy for whether we were deinited
-                if self.ssl.is_none() || self.flags.closed_notified() {
+                if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
                     return false;
                 }
             }
@@ -1121,18 +1106,20 @@ pub mod ssl_wrapper {
         }
 
         fn handle_traffic(&mut self) {
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             // always handle the handshake first
-            if self.update_handshake_state() {
+            if Self::r(this).update_handshake_state() {
                 // shared stack buffer for reading and writing
-                // PERF(port): 64KiB on-stack array — was Zig stack array; verify Rust stack-size headroom.
+                // PERF: 64KiB on-stack array — verify stack-size headroom.
                 let mut buffer = [0u8; BUFFER_SIZE];
                 // drain the input BIO first
-                self.handle_writing(&mut buffer);
+                Self::r(this).handle_writing(&mut buffer);
 
                 // drain the output BIO in loop, because read can trigger writing and vice versa
-                while self.has_pending_read() && self.handle_reading(&mut buffer) {
+                while Self::r(this).has_pending_read() && Self::r(this).handle_reading(&mut buffer)
+                {
                     // read data can trigger writing so we need to handle it
-                    self.handle_writing(&mut buffer);
+                    Self::r(this).handle_writing(&mut buffer);
                 }
             }
         }
@@ -1161,12 +1148,10 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
-        /// Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
+        /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
     }
-
-    // ported from: src/runtime/socket/ssl_wrapper.zig
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1201,7 +1186,7 @@ pub trait InternalLoopDataExt {
 }
 
 impl InternalLoopDataExt for InternalLoopData {
-    /// Zig: `setParentEventLoop(this, parent: jsc.EventLoopHandle)`. Tag 1 = JS
+    /// Tag 1 = JS
     /// event loop, tag 2 = mini event loop. Generic over the handle so this
     /// crate stays free of the `jsc` dependency.
     #[inline]
@@ -1210,7 +1195,7 @@ impl InternalLoopDataExt for InternalLoopData {
         self.set_parent_raw(tag, ptr);
     }
 
-    /// Zig: `getParent() jsc.EventLoopHandle`. Low tier returns the (tag, ptr)
+    /// Low tier returns the (tag, ptr)
     /// pair; the typed enum wrapper lives in the higher-tier crate that can
     /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
     #[inline]
@@ -1242,7 +1227,7 @@ pub mod SocketContext {
     /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;
 }
-/// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
+/// Snake-case module alias.
 pub use SocketContext as socket_context;
 
 /// C-name alias for `SocketContext::BunSocketContextOptions` — what
@@ -1255,7 +1240,7 @@ pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOption
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Re-exported from `bun_uws_sys` so dispatch tables in both crates agree on
-/// one `#[repr(u8)]` enum. Source of truth: `src/uws_sys/SocketKind.zig`.
+/// one `#[repr(u8)]` enum.
 pub use bun_uws_sys::SocketKind;
 
 /// Alias used by some callers (`websocket_client`, `sql_jsc`) that named
@@ -1271,8 +1256,8 @@ pub type CloseKind = CloseCode;
 // ═══════════════════════════════════════════════════════════════════════════
 // Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
 // ═══════════════════════════════════════════════════════════════════════════
-// Re-exported from `bun_uws_sys::socket` — that is the ONE canonical port of
-// `socket.zig`. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
+// Re-exported from `bun_uws_sys::socket` — that is the ONE canonical
+// definition. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
 // here again; an earlier "thin placeholder" that grew full bodies has been
 // deleted.
 pub use bun_uws_sys::socket::{
@@ -1352,5 +1337,3 @@ pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 pub use bun_uws_sys::AnyResponse;
 
 pub use bun_uws_sys::response::WriteResult;
-
-// ported from: src/uws/uws.zig

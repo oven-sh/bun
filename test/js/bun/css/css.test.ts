@@ -7168,6 +7168,15 @@ describe("css tests", () => {
     minify_test(".foo { scale: 1 0 1 }", ".foo{scale:1 0}");
     minify_test(".foo { scale: 1 0 0 }", ".foo{scale:1 0 0}");
 
+    // calc() payloads must survive the transform property handler's deep clone.
+    minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
+    minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
+    // A later `transform` declaration resets buffered individual properties.
+    minify_test(
+      ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
+      ".foo{transform:translate(2px,3px)}",
+    );
+
     // TODO: Re-enable with a better solution
     //       See: https://github.com/parcel-bundler/buncss/issues/288
     // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
@@ -7466,6 +7475,74 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
+  describe("container", () => {
+    minify_test("@container (width > 100px) { a { color: red } }", "@container (width>100px){a{color:red}}");
+    minify_test("@container not (width > 100px) { a { color: red } }", "@container not (width>100px){a{color:red}}");
+
+    // `not` takes a single parenthesized query, so the grouping parens around
+    // a nested and/or group must survive minification for the output to parse.
+    minify_test(
+      "@container not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container not ((width > 100px) or (height > 100px)) { a { color: red } }",
+      "@container not ((width>100px) or (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container my-layout not ((width > 100px) and (height > 100px)) { a { color: red } }",
+      "@container my-layout not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+
+    // A nested group keeps its parens when its operator differs from the
+    // parent's; a nested group with the same operator is flattened.
+    minify_test(
+      "@container ((width > 100px) or (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width > 100px) and (height > 100px)) and (orientation: landscape) { a { color: red } }",
+      "@container (width>100px) and (height>100px) and (orientation:landscape){a{color:red}}",
+    );
+
+    // The same grammar applies inside style() queries.
+    minify_test("@container style(not (--a: 1)) { a { color: red } }", "@container style(not (--a:1)){a{color:red}}");
+    minify_test(
+      "@container style(not ((--a: 1) and (--b: 2))) { a { color: red } }",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((width: 1px) and (height: 2px))) { a { color: red } }",
+      "@container style(not ((width:1px) and (height:2px))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a: 1) or (--b: 2)) and (--c: 3)) { a { color: red } }",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+    minify_test(
+      "@container style((--a: 1) or (--b: 2)) and style(--c: 3) { a { color: red } }",
+      "@container style((--a:1) or (--b:2)) and style(--c:3){a{color:red}}",
+    );
+
+    // The minified forms parse back to themselves.
+    minify_test(
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+      "@container not ((width>100px) and (height>100px)){a{color:red}}",
+    );
+    minify_test(
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+      "@container ((width>100px) or (height>100px)) and (orientation:landscape){a{color:red}}",
+    );
+    minify_test(
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+      "@container style(not ((--a:1) and (--b:2))){a{color:red}}",
+    );
+    minify_test(
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+      "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
+    );
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",
@@ -7489,6 +7566,14 @@ describe("css tests", () => {
     minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
+  describe("grid-template-areas", () => {
+    // Not in the typed property table yet; `.` null-cell tokens (including
+    // multi-dot runs) must survive the unparsed-token round-trip unchanged.
+    minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
+    minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
+    minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
   describe("edge cases", () => {

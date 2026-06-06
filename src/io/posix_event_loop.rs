@@ -11,8 +11,7 @@ use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
 
-// PORT NOTE: `addActive`/`subActive` live on `PosixLoop` in Zig (uws_sys/Loop.zig)
-// but the Rust `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
+// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
 // `active` counter is a public field, so inline the saturating math here until
 // `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
 // such counter (libuv tracks active handles itself); `posix_event_loop` is only
@@ -30,18 +29,17 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
 
 bun_core::declare_scope!(KeepAlive, visible);
 
-// TODO(port): bun_sys::syslog — macro not exported from bun_sys yet.
-// Local no-op shim so debug log call sites compile. All call sites live in
-// `#[cfg(not(windows))] impl FilePoll`, so gate the definition to match.
 #[cfg(not(windows))]
-macro_rules! syslog {
-    ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
-}
+use bun_sys::syslog;
 
-/// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
+/// Local `errno_sys` helper. `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
-#[cfg(not(windows))]
+///
+/// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
+/// only read when `rc` is the all-ones failure value). Do NOT feed it a value
+/// that already is an errno — use [`kevent_change_error`] for those.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -51,6 +49,39 @@ where
         sys::E::SUCCESS => None,
         e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
     }
+}
+
+/// Error for a kevent changelist entry that came back with `EV_ERROR` set:
+/// the kernel stores the errno *value* in `data`. That is not the -1-sentinel
+/// return-code convention `errno_sys` decodes — feeding `data` through it
+/// yields `None` for every real errno.
+#[cfg(any(target_os = "macos", all(test, not(windows))))]
+#[inline]
+fn kevent_change_error(data: i64) -> sys::Result<()> {
+    sys::Result::Err(sys::Error::from_code(
+        sys::SystemErrno::init(data).unwrap_or(sys::E::EINVAL),
+        sys::Tag::kevent,
+    ))
+}
+
+/// Is this errno from a failed deregistration just "the registration is
+/// already gone"? Two routine producers:
+/// - the fd was closed while the poll was still registered (close() removes
+///   an fd's kevents; epoll drops closed fds automatically) → EBADF/ENOENT
+/// - on macOS, closing a pty master marks the slave's knotes
+///   `EV_EOF|EV_ONESHOT`, so the kernel deletes them when the hangup event is
+///   delivered; the reader's teardown `EV_DELETE` then finds nothing → ENOENT.
+///   This happens on every terminal window/tab close while a tty is polled.
+///
+/// Both mean the kernel-side state already matches what unregistration wants,
+/// so they count as success — in particular the registration flags must still
+/// be cleared, which an error return would skip, leaving the poll claiming to
+/// be registered and re-issuing doomed deletes on later teardown calls. libuv
+/// ignores the same errnos for its kqueue/epoll delete operations.
+#[cfg(not(windows))]
+#[inline]
+fn deregistration_already_gone(errno: sys::E) -> bool {
+    matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
 pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
@@ -66,7 +97,7 @@ unsafe extern "Rust" {
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
 /// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
 /// one definition; `bun_io::pipes` re-exports it for downstream callers.
-// PORT NOTE: Zig defines this in src/io/pipes.zig; sunk one tier to break the
+// Note: sunk one tier to break the
 // io↔aio cycle (FilePoll::file_type was the only aio→io edge).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FileType {
@@ -99,8 +130,7 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
 
 /// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
 ///
-/// Zig passed `*jsc.VirtualMachine` directly via `anytype` dispatch
-/// (`posix_event_loop.zig:45`); the Rust crate split routes through the
+/// The crate split routes through the
 /// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
 /// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
 /// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
@@ -121,10 +151,9 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
 #[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
-type KQueueGenerationNumber = u8; // PORT NOTE: Zig uses `u0`; smallest Rust int is u8. Gated by cfg below.
+type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
 
-// PORTING.md §Global mutable state: counter → Atomic. Debug-only diagnostic;
-// `Relaxed` matches Zig's `+%=` (no synchronization implied).
+// Debug-only diagnostic; `Relaxed` (no synchronization implied).
 #[cfg(all(target_os = "macos", debug_assertions))]
 static MAX_GENERATION_NUMBER: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
@@ -159,14 +188,10 @@ fn make_kevent(
     ev
 }
 
-/// Zig std's `.freebsd` `EV` struct omits EOF; the kernel value is the
+/// The kernel value is the
 /// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
-
-// PORT NOTE: Zig's `kqueue_or_epoll` comptime literal was only spliced into a
-// `panicLog` that the Rust port routes through `bun_output::panic!` (which
-// already names the syscall via `Tag`). No remaining call site → dropped.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
@@ -323,8 +348,7 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // PORT NOTE: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer
-    // semantics). The Rust signatures drop the loop parameter entirely: holding a
+    // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
     // that downstream `__bun_run_file_poll` handlers conjure via
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
@@ -374,7 +398,7 @@ impl FilePoll {
         readable
     }
 
-    // PORT NOTE: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
+    // Note: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
     // put back via `Store::put`; Drop would be wrong here.
     pub fn deinit(&mut self) {
         let ctx = get_vm_ctx(self.allocator_type);
@@ -429,7 +453,7 @@ impl FilePoll {
 
         // Hot-path hoisted-match: the per-tag `switch` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
-        // this T3 crate names no variant types. // PERF(port): was inline switch.
+        // this T3 crate names no variant types.
         // SAFETY: `self` is a live FilePoll for the duration of the call
         // (guaranteed by the uws loop callback contract).
         unsafe { __bun_run_file_poll(self, size_or_offset) };
@@ -519,7 +543,7 @@ impl FilePoll {
 
     /// Build a fully-initialized `FilePoll` value for `Store::get_init`.
     ///
-    /// PORT NOTE: the previous `&mut *pool.get()` + field-assign pattern was
+    /// Note: the previous `&mut *pool.get()` + field-assign pattern was
     /// instant validity UB — `FilePoll.owner`/`allocator_type` are enums with
     /// niches, and `&mut FilePoll` over an uninitialized hive slot asserts a
     /// valid discriminant. It also left `generation_number` uninitialized on
@@ -534,8 +558,7 @@ impl FilePoll {
             next_to_free: ptr::null_mut(),
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
             #[cfg(all(target_os = "macos", debug_assertions))]
-            // Matches Zig `max_generation_number +%= 1`; single-threaded event
-            // loop so `Relaxed` ordering is sufficient.
+            // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
                 .wrapping_add(1),
@@ -544,8 +567,7 @@ impl FilePoll {
         }
     }
 
-    // PORT NOTE: Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
-    // Callers normalize to EventLoopCtx before calling.
+    // Note: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
@@ -561,8 +583,6 @@ impl FilePoll {
 
     #[inline]
     pub fn can_ref(&self) -> bool {
-        // TODO(port): Zig checks `.disable` flag, but no such variant exists in Flags enum —
-        // dead code in Zig? Preserving as no-op false check.
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
@@ -694,8 +714,7 @@ impl FilePoll {
                 flags |= EPOLL::IN;
             }
 
-            // PORT NOTE: Zig uses `linux.epoll_event{ .data = .{ .ptr = ... } }`;
-            // libc::epoll_event flattens the union to a single `u64` field.
+            // Note: libc::epoll_event flattens the data union to a single `u64` field.
             let mut event = linux::epoll_event {
                 events: flags,
                 u64: Pollable::init(self).ptr() as u64,
@@ -804,7 +823,7 @@ impl FilePoll {
             // with EV_ERROR set in flags and the system error in data. xnu ORs
             // EV_ERROR into the existing action bits, so test the bit.
             if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
+                return kevent_change_error(changelist[0].data);
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
@@ -912,9 +931,8 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
-        // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
-        // the literal translation would require.
+        // Note: compute the syscall result first, then unconditionally
+        // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
@@ -1011,8 +1029,10 @@ impl FilePoll {
                 linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
             };
 
-            if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
-                return errno;
+            match sys::get_errno(ctl) {
+                sys::E::SUCCESS => {}
+                e if deregistration_already_gone(e) => {}
+                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::epoll_ctl)),
             }
         }
         #[cfg(target_os = "macos")]
@@ -1111,11 +1131,16 @@ impl FilePoll {
             // such error events; they are packed from index 0 regardless of
             // which change failed. xnu ORs EV_ERROR into the existing action
             // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
-            if rc >= 1 && (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
-            }
-            if rc >= 2 && (changelist[1].flags & EV::ERROR) != 0 && changelist[1].data != 0 {
-                return errno_sys(changelist[1].data, sys::Tag::kevent).unwrap();
+            for i in 0..usize::try_from(rc.min(2)).expect("int cast") {
+                if (changelist[i].flags & EV::ERROR) == 0 || changelist[i].data == 0 {
+                    continue;
+                }
+                if sys::SystemErrno::init(changelist[i].data)
+                    .is_some_and(deregistration_already_gone)
+                {
+                    continue;
+                }
+                return kevent_change_error(changelist[i].data);
             }
         }
         #[cfg(target_os = "freebsd")]
@@ -1158,8 +1183,10 @@ impl FilePoll {
                     ptr::null(),
                 )
             };
-            if let Some(err) = errno_sys(rc, sys::Tag::kevent) {
-                return err;
+            match sys::get_errno(rc) {
+                sys::E::SUCCESS => {}
+                e if deregistration_already_gone(e) => {}
+                e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
             }
         }
 
@@ -1237,7 +1264,6 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-#[allow(dead_code)]
 pub type FlagsStruct = FlagsSet;
 
 impl Flags {
@@ -1320,7 +1346,9 @@ impl fmt::Display for FlagsFormatter {
 // Store
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig uses `if (bun.heap_breakdown.enabled) 0 else 128` for the hive size.
+// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
+// heap-breakdown builds, so the 128-slot hive is unconditional here (same
+// choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
 #[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]
@@ -1373,8 +1401,8 @@ impl Store {
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
     /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
     /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
-    /// storage under Stacked Borrows (UB). Mirror Zig's alias-tolerant
-    /// `poll: *FilePoll` and touch fields only through raw pointer ops — same
+    /// storage under Stacked Borrows (UB). Take it as a raw pointer and
+    /// touch fields only through raw pointer ops — same
     /// rationale as `process_deferred_frees` above.
     pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
@@ -1407,7 +1435,6 @@ impl Store {
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
-        // TODO(port): Zig asserts the callback slot is empty or already this fn.
         debug_assert!(
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
@@ -1432,9 +1459,9 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Pollable` mirrors Zig `bun.TaggedPointerUnion(.{FilePoll})`.
+// `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
 //
-// PORT NOTE: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
+// Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
 // instantiated here — `impl_tagged_ptr_union!` would generate
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
@@ -1446,7 +1473,7 @@ pub(crate) struct Pollable {
 }
 
 impl Pollable {
-    /// Tag value for `FilePoll` (index 0 in the Zig type tuple → `1024 - 0`).
+    /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
     #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
@@ -1561,4 +1588,28 @@ pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub use crate::waker::Waker;
 
-// ported from: src/aio/posix_event_loop.zig
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// kevent `EV_ERROR` entries carry the errno value itself in `data`.
+    /// These used to be round-tripped through `errno_sys`, which decodes the
+    /// -1-sentinel return-code convention and therefore returned `None` for
+    /// every real errno — panicking at the `.unwrap()` call sites whenever an
+    /// `EV_DELETE` failed (e.g. EBADF/ENOENT from a pipe fd closed while its
+    /// `FilePoll` was still registered).
+    #[cfg(not(windows))]
+    #[test]
+    fn kevent_change_error_decodes_errno_value_not_return_code() {
+        let err = kevent_change_error(sys::E::EBADF as i64).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::EBADF);
+        assert_eq!(err.syscall, sys::Tag::kevent);
+
+        let err = kevent_change_error(sys::E::ENOENT as i64).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::ENOENT);
+
+        // Out-of-range data must not panic either.
+        let err = kevent_change_error(i64::MAX).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::EINVAL);
+    }
+}

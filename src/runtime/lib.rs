@@ -26,7 +26,7 @@ pub mod webcore;
 pub mod bake;
 pub mod cli;
 pub mod shell;
-// Port of src/bun.js.zig — `Run::boot` / `Run::boot_standalone`. Mounted here
+// `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of
 // `bun_runtime`, and the CLI dispatch in `cli/` needs to call it directly. The
 // original "higher-tier crate" split was speculative; folding it in breaks the
@@ -37,11 +37,12 @@ pub mod dispatch;
 pub mod hw_exports;
 pub mod ipc_host;
 pub mod jsc_hooks;
+pub mod linear_fifo_testing;
 pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
 pub mod timer;
-// `generated_classes_list.zig` lives under `src/jsc/` but every type it
+// `generated_classes_list.rs` lives under `src/jsc/` but every type it
 // aliases is defined in this crate (api/webcore/test_runner/bake) or a
 // same-tier dep, so it is `#[path]`-mounted here to avoid a bun_jsc cycle.
 #[path = "../jsc/generated_classes_list.rs"]
@@ -59,9 +60,9 @@ pub mod test_runner;
 pub mod valkey_jsc;
 
 // ─── crate-root re-exports for `cli/` submodules ────────────────────────────
-// Modules under `src/runtime/cli/**` were ported with crate-root paths
-// (`crate::Command`, `crate::test_command`, `crate::run_command`, …) because
-// the Zig source treats `cli.zig` as the binary root. Surface those names here
+// Modules under `src/runtime/cli/**` use crate-root paths
+// (`crate::Command`, `crate::test_command`, `crate::run_command`, …).
+// Surface those names here
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub use cli::{

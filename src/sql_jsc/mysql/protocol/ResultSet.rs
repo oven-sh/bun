@@ -1,6 +1,7 @@
 use core::ptr;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue};
+use crate::mysql::my_sql_value::DateTime;
 use bun_core::String as BunString;
 use bun_core::parse_int;
 
@@ -40,7 +41,7 @@ impl<'a> Row<'a> {
         structure: JSValue,
         flags: SQLDataCellFlags,
         result_mode: SQLQueryResultMode,
-        // PORT NOTE: Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
+        // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
         let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
@@ -98,7 +99,9 @@ impl<'a> Row<'a> {
                     ..SQLDataCell::default()
                 };
             }
-            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT => {
+            // YEAR arrives as a bare ASCII integer in the text protocol; parse it
+            // like SHORT so `.simple()` returns the same JS number as the binary path.
+            MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_YEAR => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
                     let val: u16 = parse_int::<u16>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
@@ -134,7 +137,6 @@ impl<'a> Row<'a> {
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
                         tag: Tag::Uint4,
@@ -142,7 +144,7 @@ impl<'a> Row<'a> {
                         ..SQLDataCell::default()
                     };
                 } else {
-                    // std.math.minInt(i24) == -8_388_608
+                    // -8_388_608 is the minimum value of a signed 24-bit int
                     let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
                     *cell = SQLDataCell {
                         tag: Tag::Int4,
@@ -230,20 +232,34 @@ impl<'a> Row<'a> {
                 };
             }
             MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP => {
-                let mut str = BunString::init(value.slice());
-                // `str` derefs on Drop.
-                let date = 'brk: {
-                    match crate::jsc::bun_string_jsc::parse_date(&mut str, self.global_object) {
-                        Ok(d) => break 'brk d,
-                        Err(err) => {
-                            let _ = self.global_object.take_exception(err);
-                            break 'brk f64::NAN;
-                        }
-                    }
+                // MySQL's DATE/DATETIME/TIMESTAMP text has no timezone, so parse
+                // the components directly and convert them as UTC — matching the
+                // binary path. Routing through JS Date.parse here would instead
+                // read "2024-06-15 12:00:00" as local time and make the text and
+                // binary protocols disagree on non-UTC hosts. Zero/invalid dates
+                // fall through to NaN (Invalid Date).
+                let date = match DateTime::from_text(value.slice()) {
+                    Some(dt) => dt.to_js_timestamp(self.global_object).unwrap_or(f64::NAN),
+                    None => f64::NAN,
                 };
                 *cell = SQLDataCell {
                     tag: Tag::Date,
                     value: Value { date },
+                    ..SQLDataCell::default()
+                };
+            }
+            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
+            // heuristic would wrongly return them as a Buffer.
+            MYSQL_TYPE_NEWDECIMAL => {
+                let slice = value.slice();
+                *cell = SQLDataCell {
+                    tag: Tag::String,
+                    value: Value {
+                        string: clone_wtf_string_or_null(slice),
+                    },
+                    free_value: 1,
                     ..SQLDataCell::default()
                 };
             }
@@ -425,7 +441,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub(crate) fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -437,7 +453,9 @@ impl<'a> Row<'a> {
 impl<'a> Drop for Row<'a> {
     fn drop(&mut self) {
         for value in self.values.iter_mut() {
-            // TODO(port): if SQLDataCell gains `impl Drop`, delete this loop and the Drop impl entirely.
+            // SQLDataCell deliberately has no `impl Drop` — it is an FFI struct
+            // whose ownership is normally transferred to C++ — so the cells
+            // still owned by this row must be freed manually here.
             value.deinit();
         }
         // self.columns is intentionally left out.
@@ -448,8 +466,7 @@ impl<'a> Drop for Row<'a> {
 
 #[inline]
 fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
-    // Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
-    // WTFStringImpl* from a freshly-cloned bun.String (ownership transferred to the cell,
+    // Extracts the raw WTFStringImpl* from a freshly-cloned string (ownership transferred to the cell,
     // freed via `free_value = 1`).
     if !slice.is_empty() {
         BunString::clone_utf8(slice).leak_wtf_impl()
@@ -457,5 +474,3 @@ fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
         ptr::null_mut()
     }
 }
-
-// ported from: src/sql_jsc/mysql/protocol/ResultSet.zig

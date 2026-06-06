@@ -87,6 +87,33 @@ describe("fuzzer-like edge cases", () => {
     expect(typeof Markdown.html(input)).toBe("string");
   });
 
+  test("ansi: pathologically nested lists produce linear output", () => {
+    // Every rendered list-item line starts with its indentation, so if the
+    // per-line indent grows without bound the output becomes quadratic in
+    // the nesting depth (a ~240 KB fuzzer document of `- - - …` lines
+    // produced gigabytes of ANSI output). The renderer caps the emitted
+    // indent, keeping the output proportional to the number of items.
+    const depth = 2000;
+    const input = Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("•");
+    // ~8 MB without the indent cap, ~300 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
+  test("ansi: pathologically nested blockquotes + lists produce linear output", () => {
+    // Same idea as above, but the per-line prefix is dominated by the
+    // blockquote `│ ` bars instead of list indent spaces.
+    const depth = 1500;
+    const input = Buffer.alloc(depth * 2, "> ").toString() + Buffer.alloc(depth * 2, "- ").toString() + "hi";
+    const out = Markdown.ansi(input);
+    expect(out).toContain("hi");
+    expect(out).toContain("│");
+    // ~9 MB without the indent cap, ~450 KB with it.
+    expect(out.length).toBeLessThan(2_000_000);
+  });
+
   test("deeply nested emphasis", () => {
     const depth = 50;
     const open = Buffer.alloc(depth, "*").toString();
@@ -760,4 +787,338 @@ describe("pathological inline HTML inputs", () => {
       '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
   });
+});
+
+// ============================================================================
+// Pathological inputs: permissive-autolink trailing-paren trimming. The GFM
+// ")"-balancing pass used to recount every "(" and ")" in the URL for each
+// trailing ")" it removed, so a URL whose query string is N closing parens
+// cost O(N^2) (~4e12 byte compares for N = 2M, minutes of CPU). The child
+// process is killed after 30s so a regression fails fast instead of hanging
+// the runner.
+// ============================================================================
+
+describe("pathological autolink inputs", () => {
+  test("autolink with a long run of trailing close-parens renders in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const parens = Buffer.alloc(2000000, ")").toString();
+        const input = "http://a.bc/?x=" + parens + "\\n";
+        const html = Bun.markdown.html(input, { autolinks: true });
+        if (!html.includes('<a href="http://a.bc/?x=">')) {
+          throw new Error("unexpected link target: " + JSON.stringify(html.slice(0, 120)));
+        }
+        if (!html.includes(")))))))")) throw new Error("trimmed parens missing from output");
+        if (html.length <= parens.length) throw new Error("unexpected output length " + html.length);
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // The trimming semantics themselves are unchanged: balanced parens stay
+    // part of the URL, a trailing unbalanced ")" is trimmed off it.
+    expect(Markdown.html("http://a.bc/?x=(1)\n", { autolinks: true })).toContain('<a href="http://a.bc/?x=(1)">');
+    const trimmed = Markdown.html("http://a.bc/?x=(1))\n", { autolinks: true });
+    expect(trimmed).toContain('<a href="http://a.bc/?x=(1)">');
+    expect(trimmed).not.toContain('x=(1))"');
+  }, 90_000);
+});
+
+// ============================================================================
+// ANSI renderer: text taken from the markdown document must not be able to
+// smuggle its own terminal control sequences (OSC 52 clipboard writes, title
+// changes, CSI device queries, ...) into the output alongside the renderer's
+// styling escapes.
+// ============================================================================
+
+describe("ansi renderer source-text control bytes", () => {
+  test("escape sequences embedded in markdown source are stripped from terminal output", () => {
+    // OSC 52 clipboard-write sequence in a paragraph. With colors disabled
+    // the renderer emits no escapes of its own, so the output must contain
+    // no ESC or BEL byte at all.
+    const osc52 = "before \x1b]52;c;Y3VybCBldmlsLnNoIHwgc2g=\x07 after\n";
+    const plain = Markdown.ansi(osc52, { colors: false });
+    expect(plain).toContain("before");
+    expect(plain).toContain("after");
+    expect(plain).not.toContain("\x1b");
+    expect(plain).not.toContain("\x07");
+    // With colors enabled the renderer emits its own SGR escapes, but never
+    // an OSC sequence taken from the document (hyperlinks are off by default).
+    expect(Markdown.ansi(osc52)).not.toContain("\x1b]");
+
+    // CSI sequences, OSC title changes, and bare C0 controls are dropped too.
+    const csi = Markdown.ansi("x \x1b[31mred\x1b[0m \x1b]0;owned\x07 \x07\x08 y\n", { colors: false });
+    expect(csi).toContain("red");
+    expect(csi).toContain("y");
+    expect(csi).not.toContain("\x1b");
+    expect(csi).not.toContain("\x07");
+    expect(csi).not.toContain("\x08");
+
+    // A numeric character reference that decodes to a raw control byte is
+    // sanitized after decoding.
+    expect(Markdown.ansi("a &#27;[31m b\n", { colors: false })).not.toContain("\x1b");
+
+    // Ordinary text is unaffected.
+    expect(Markdown.ansi("hello world\n", { colors: false })).toContain("hello world");
+  });
+});
+
+// ============================================================================
+// ANSI renderer: link destinations, image src/title, and code-fence info
+// strings come straight from the markdown document. Like paragraph text, they
+// must not be able to carry their own terminal control bytes (OSC 52
+// clipboard writes, title changes, BEL terminators, ...) into the output.
+// ============================================================================
+
+describe("ansi renderer link and metadata control bytes", () => {
+  test("escape sequences in link destinations, image metadata, and fence info strings are stripped from terminal output", () => {
+    const osc52 = "\x1b]52;c;Y3VybCBldmlsLnNoIHwgc2g=\x07";
+
+    // Angle-bracket link destinations accept almost any byte, so the href can
+    // carry control sequences. With colors disabled the renderer emits no
+    // escapes of its own, so the rendered link (text plus the " (url)"
+    // fallback) must contain no ESC or BEL byte at all.
+    const linkMd = `[click](<x\x07${osc52}y>)\n`;
+    const plain = Markdown.ansi(linkMd, { colors: false });
+    expect(plain).toContain("click");
+    // Guard: the input really parsed as a link (otherwise it would echo "](<").
+    expect(plain).not.toContain("](<");
+    expect(plain).not.toContain("\x1b");
+    expect(plain).not.toContain("\x07");
+
+    // Default theme (colors on, hyperlinks off): the renderer only emits its
+    // own SGR escapes, never an OSC sequence taken from the document.
+    const colored = Markdown.ansi(linkMd);
+    expect(colored).toContain("click");
+    expect(colored).not.toContain("\x07");
+    expect(colored).not.toContain("\x1b]");
+
+    // With hyperlinks enabled the href is wrapped in the renderer's own OSC 8
+    // sequence; a BEL or nested OSC from the document must not be able to
+    // terminate it early.
+    const linked = Markdown.ansi(linkMd, { hyperlinks: true });
+    expect(linked).toContain("click");
+    expect(linked).not.toContain("\x07");
+    expect(linked).not.toContain("\x1b]52");
+
+    // Image src goes into the OSC 8 wrapper too, and the title is printed as
+    // the caption when there is no alt text.
+    const imgMd = `![](<img\x07${osc52}.png> "ti\x1b]0;owned\x07tle")\n`;
+    const imgLinked = Markdown.ansi(imgMd, { hyperlinks: true });
+    expect(imgLinked).not.toContain("\x07");
+    expect(imgLinked).not.toContain("\x1b]52");
+    expect(imgLinked).not.toContain("\x1b]0;");
+    const imgPlain = Markdown.ansi(imgMd, { colors: false });
+    expect(imgPlain).toContain("[img]");
+    expect(imgPlain).not.toContain("\x1b");
+    expect(imgPlain).not.toContain("\x07");
+
+    // Code-fence info strings are echoed as the language badge above the block.
+    const fenceMd = "```js\x1b]0;owned\x07\nconsole.log(1)\n```\n";
+    const fencePlain = Markdown.ansi(fenceMd, { colors: false });
+    expect(fencePlain).toContain("console.log(1)");
+    expect(fencePlain).not.toContain("\x1b");
+    expect(fencePlain).not.toContain("\x07");
+
+    // Ordinary links keep their destination in both modes.
+    const normal = Markdown.ansi("[site](https://example.com/a)\n", { colors: false });
+    expect(normal).toContain("site");
+    expect(normal).toContain("https://example.com/a");
+    expect(Markdown.ansi("[site](https://example.com/a)\n", { hyperlinks: true })).toContain(
+      "\x1b]8;;https://example.com/a",
+    );
+  });
+});
+
+// ============================================================================
+// Pathological inputs: emphasis delimiter floods. Each closer used to scan
+// backward over every already-consumed delimiter in the paragraph, so
+// ("*a " x N) + ("a* " x N) cost Theta(N^2) inner iterations — minutes of CPU
+// for a ~1 MB document. Resolution now skips dead delimiters in O(1); the
+// child process is killed after 30s so a regression fails fast instead of
+// hanging the test runner.
+// ============================================================================
+
+describe("pathological emphasis inputs", () => {
+  test("emphasis delimiter floods render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const n = 200000;
+        const input = fill(n, "*a ") + fill(n, "a* ");
+        const html = Bun.markdown.html(input);
+        if (!html.includes("<em>")) throw new Error("expected emphasis in output: " + JSON.stringify(html.slice(0, 120)));
+        if (html.length < input.length) throw new Error("unexpected output length " + html.length);
+        const ansi = Bun.markdown.ansi(fill(50000, "*a ") + fill(50000, "a* "), { colors: false });
+        if (typeof ansi !== "string" || ansi.length === 0) throw new Error("unexpected ansi output");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Ordinary emphasis still resolves the same way.
+    expect(Markdown.html("**bold** and *em*\n")).toBe("<p><strong>bold</strong> and <em>em</em></p>\n");
+    expect(Markdown.html("*a **b** c*\n")).toBe("<p><em>a <strong>b</strong> c</em></p>\n");
+  }, 90_000);
+});
+
+// ============================================================================
+// Pathological inputs: reference-definition floods. Every `[label]` reference
+// used to do a linear scan over the whole ref-definition list (one
+// normalized-label allocation plus a byte compare per stored definition), so a
+// document with ~100k definitions and ~120k references cost O(refs x defs) —
+// minutes of CPU for a ~3 MB document. Lookups now go through the label index;
+// the child process is killed after 30s so a regression fails fast instead of
+// hanging the test runner.
+// ============================================================================
+
+describe("pathological reference definition inputs", () => {
+  test("documents with many reference definitions and references render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const pad = n => String(n).padStart(6, "0");
+        const NDEFS = 100000;
+        const NREFS = 120000;
+        const lines = [];
+        for (let i = 0; i < NDEFS; i++) lines.push("[r" + pad(i) + "]: /x" + i);
+        lines.push("");
+        for (let i = 0; i < NREFS; i++) {
+          // 6-digit labels starting at 500000 are never defined, so every lookup misses.
+          lines.push("[r" + pad(500000 + i) + "]");
+          lines.push("");
+        }
+        lines.push("first [r" + pad(0) + "] last [r" + pad(NDEFS - 1) + "] missing [r-none]");
+        const html = Bun.markdown.html(lines.join("\\n"));
+        if (!html.includes('<a href="/x0">r000000</a>')) throw new Error("first definition did not resolve: " + JSON.stringify(html.slice(-300)));
+        if (!html.includes('<a href="/x99999">r099999</a>')) throw new Error("last definition did not resolve");
+        if (!html.includes("[r500000]")) throw new Error("undefined reference should stay literal text");
+        if (!html.includes("[r-none]")) throw new Error("undefined reference should stay literal text");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Reference resolution semantics are unchanged for ordinary documents.
+    const resolved = Markdown.html("[a]: /url\n\n[a] and [text][a] and [missing]\n");
+    expect(resolved).toContain('<a href="/url">a</a>');
+    expect(resolved).toContain('<a href="/url">text</a>');
+    expect(resolved).toContain("[missing]");
+  }, 90_000);
+});
+
+// ============================================================================
+// Pathological inputs: table delimiter rows declaring huge column counts. The
+// column count taken from the delimiter row used to be unbounded, and every
+// body row is padded to that count, so a delimiter row declaring N columns
+// followed by M bare `|` body rows emitted N*M empty cells — gigabytes of HTML
+// from a ~100 KB document. The count is now capped at 128 columns (md4c
+// parity); wider delimiter rows are not tables at all, keeping output linear
+// in input size.
+// ============================================================================
+
+describe("pathological table inputs", () => {
+  test("table delimiter rows declaring more than 128 columns are not parsed as tables", () => {
+    const cols = 1000;
+    const rows = 2000;
+    const input = "|" + "h|".repeat(cols) + "\n" + "|" + "-|".repeat(cols) + "\n" + "|\n".repeat(rows);
+    const out = Markdown.html(input);
+    expect(out).not.toContain("<table>");
+    expect(out).toContain("|h|h|");
+    // Without the cap this emitted ~cols*rows empty cells (tens of MB of HTML);
+    // the non-table rendering stays proportional to the ~26 KB input.
+    expect(out.length).toBeLessThan(1_000_000);
+
+    // The cap matches md4c: 128 columns still renders as a table...
+    const table = (n: number) =>
+      "|" + "h|".repeat(n) + "\n" + "|" + "-|".repeat(n) + "\n" + "|" + "d|".repeat(n) + "\n";
+    const ok = Markdown.html(table(128));
+    expect(ok).toContain("<table>");
+    expect(ok).toContain("<td>");
+    // ...and one more column does not.
+    expect(Markdown.html(table(129))).not.toContain("<table>");
+  }, 30_000);
+});
+
+// ============================================================================
+// Pathological inputs: unclosed scheme autolink openers. Every `<scheme:`
+// candidate used to scan forward looking for the closing `>` and only stopped
+// at `>`, whitespace, or end of content, so a paragraph of repeated `<ab:`
+// units cost O(n^2) — minutes of CPU for a ~1 MB document. The scan now also
+// stops at the next `<`, keeping inline parsing linear; the child process is
+// killed after 30s so a regression fails fast instead of hanging the test
+// runner.
+// ============================================================================
+
+describe("pathological autolink opener inputs", () => {
+  test("unclosed scheme autolink openers render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const flood = "x " + fill(300000, "<ab:");
+        const html = Bun.markdown.html(flood);
+        if (!html.includes("&lt;ab:&lt;ab:")) throw new Error("expected escaped autolink openers: " + JSON.stringify(html.slice(0, 120)));
+        if (html.length < flood.length) throw new Error("unexpected output length " + html.length);
+        // A real autolink in front of the flood is still recognized.
+        const mixed = Bun.markdown.html("see <https://example.com/x> then " + fill(50000, "<ab:"));
+        if (!mixed.includes('<a href="https://example.com/x">https://example.com/x</a>')) {
+          throw new Error("real autolink did not render: " + JSON.stringify(mixed.slice(0, 200)));
+        }
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Ordinary autolinks are unaffected.
+    expect(Markdown.html("<https://example.com/a>\n")).toContain(
+      '<a href="https://example.com/a">https://example.com/a</a>',
+    );
+  }, 90_000);
 });

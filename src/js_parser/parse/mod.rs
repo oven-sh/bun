@@ -33,12 +33,10 @@ use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
-// Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
+// File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
+// so this is a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_or_bindings(
         &mut self,
@@ -48,14 +46,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, errors, EFlags::None, expr)
     }
-    // Zig: `inline fn parseExpr(p, level) !Expr`
     #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
         let mut expr = Expr::EMPTY;
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
     }
-    // Zig: `inline fn parseExprWithFlags(p, level, flags, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_with_flags(
         &mut self,
@@ -79,8 +75,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let had_pure_comment_before =
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
-        // PORT NOTE: reshaped for borrowck — `errors` is reborrowed via as_deref_mut
-        // for each call site instead of Zig's single pointer pass-through.
+        // `errors` is reborrowed via as_deref_mut for each call site.
 
         // There is no formal spec for "__PURE__" comments but from reverse-
         // engineering, it looks like they apply to the next CallExpression or
@@ -199,7 +194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // PORT NOTE: Zig hoisted `opts` above the loop; it is fully
+            // `opts` is fully
             // reinitialized here every iteration before any read, so declare
             // per-iteration.
             let mut opts = PropertyOpts {
@@ -212,6 +207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
+            let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
@@ -222,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(property) =
                 p.parse_property(js_ast::g::PropertyKind::Normal, &mut opts, None)?
             {
-                // PORT NOTE: read fields before move (G::Property is not Copy).
+                // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
                 properties.push(property);
@@ -245,6 +241,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 has_decorators = has_decorators || opts.has_argument_decorators;
+            } else {
+                // The property was dropped (e.g. a TypeScript overload signature or
+                // abstract method), which drops its decorators and computed key too.
+                // Discard any scopes recorded while parsing them or the visit pass
+                // will hit a scope order mismatch.
+                p.discard_scopes_up_to(property_scope_index);
             }
         }
 
@@ -336,12 +338,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
-        let p = self;
-        // Allow "in" inside call arguments
-        let old_allow_in = p.allow_in;
-        p.allow_in = true;
-        // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path
+        // Allow "in" inside call arguments; restored on every exit path
+        let old_allow_in = self.allow_in;
+        self.allow_in = true;
+        let result = self.parse_call_args_inner();
+        self.allow_in = old_allow_in;
+        result
+    }
 
+    fn parse_call_args_inner(&mut self) -> Result<ExprListLoc, Error> {
+        let p = self;
         let mut args: smallvec::SmallVec<[Expr; 4]> = smallvec::SmallVec::new();
         p.lexer.expect(T::TOpenParen)?;
 
@@ -364,7 +370,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let close_paren_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseParen)?;
-        p.allow_in = old_allow_in;
         Ok(ExprListLoc {
             list: ExprNodeList::from_arena_slice(&args),
             loc: close_paren_loc,
@@ -428,7 +433,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
 
         // Forbid "await" and "yield", but only for arrow functions
-        // PORT NOTE: Zig saved/restored via toBytes/bytesToValue; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
@@ -485,7 +489,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
-        // PORT NOTE: Zig kept `items_list` alive and aliased `.items`; bump_slice is equivalent (arena-owned).
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -752,9 +755,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
             } else {
-                // PORT NOTE: Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
-                // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
-                // surrogate-error diagnostic path is dropped until the strict variant lands.
+                // Lone surrogates are replaced with U+FFFD; the surrogate-error
+                // diagnostic path is dropped until the strict variant lands.
                 let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
                 let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
                 return Ok(leaked);
@@ -919,7 +921,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             decls: decls_slice,
                         });
                     }
-                    let r = p.store_name_in_ref(raw)?;
+                    let r = p.store_name_in_ref(raw2)?;
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,
@@ -962,7 +964,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )),
             ..Default::default()
         };
-        // PORT NOTE: reshaped for borrowck — Zig mutated `result.stmt_or_expr.expr` in place.
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
             p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
         }
@@ -1362,7 +1363,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
-                        // PORT NOTE: Zig used `inline for` over enum values + @tagName.
                         if p.lexer.identifier == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
                         }
@@ -1400,7 +1400,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {
-                            // This logic is duplicated in js_ast.zig fn importRecordTag()
                             let type_attr = string_literal_text;
                             if type_attr == b"macro" {
                                 path.is_macro = true;
@@ -1608,14 +1607,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             js_ast::scope::Kind::FunctionArgs,
                             async_range.loc,
                         )?;
-                        // TODO(port): errdefer — `defer p.popScope()` (borrowck blocks scopeguard over &mut p)
 
                         let mut data = FnOrArrowDataParse {
                             allow_await: AwaitOrYield::AllowExpr,
                             needs_async_loc: args[0].binding.loc,
                             ..Default::default()
                         };
-                        let mut arrow_body = p.parse_arrow_body(args, &mut data)?;
+                        // Pop the scope on the error path too.
+                        let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                            Ok(body) => body,
+                            Err(e) => {
+                                p.pop_scope();
+                                return Err(e);
+                            }
+                        };
                         arrow_body.is_async = true;
                         p.pop_scope();
                         return Ok(p.new_expr(arrow_body, async_range.loc));
@@ -1681,5 +1686,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 }
-
-// ported from: src/js_parser/ast/parse.zig

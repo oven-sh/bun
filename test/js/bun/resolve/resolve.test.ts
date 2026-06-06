@@ -779,3 +779,47 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Stress the resolver's directory-info cache: resolve through hundreds of
+// distinct package directories (each `put` hands back a slot pointer into the
+// shared dir-cache that must stay valid while the cache keeps growing) plus a
+// deep directory chain (the cache-miss walk stashes a parent slot pointer
+// across subsequent cache insertions). A stale/corrupted slot pointer shows up
+// as wrong resolution results or a crash, not a clean error.
+it("resolves through many directories without corrupting the dir cache", async () => {
+  const files: Record<string, string> = {};
+  const N = 200;
+  let imports = "";
+  for (let i = 0; i < N; i++) {
+    files[`node_modules/pkg-${i}/package.json`] = JSON.stringify({
+      name: `pkg-${i}`,
+      main: "./lib/index.js",
+    });
+    files[`node_modules/pkg-${i}/lib/index.js`] = `module.exports = ${i};`;
+    imports += `total += require("pkg-${i}");\n`;
+  }
+
+  // Deep chain: resolving the leaf populates one cache entry per path
+  // component in a single cache-miss walk, and requiring packages *from* the
+  // leaf walks every parent directory back up through the now-cached entries.
+  // Depth 30 keeps the absolute path well under Windows' 260-char MAX_PATH
+  // even with a long CI temp-dir prefix; the cache-miss walk is exercised the
+  // same at this depth.
+  let deep = "deep";
+  for (let d = 0; d < 30; d++) deep += `/d${d}`;
+  files[`${deep}/leaf.js`] = `module.exports = require("pkg-3") + require("pkg-77");`;
+  files["index.js"] = `let total = 0;\n${imports}console.log(total);\nconsole.log(require("./${deep}/leaf.js"));`;
+
+  const dir = tempDirWithFiles("dir-cache-stress", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${(N * (N - 1)) / 2}\n${3 + 77}\n`);
+  expect(exitCode).toBe(0);
+});

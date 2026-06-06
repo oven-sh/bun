@@ -75,8 +75,7 @@ pub(crate) struct Stringifier {
 pub(crate) enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
-    /// `Space.deinit() → str.deref()`).
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
     Str(OwnedString),
 }
 
@@ -114,10 +113,9 @@ pub(crate) struct AnchorAlias {
 
 impl Default for AnchorAlias {
     fn default() -> Self {
-        // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
-        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
-        // left it `undefined`; this is the closest legal Rust equivalent and is
-        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        // Exists only because `HashMap::get_or_put` requires `V: Default` to
+        // fill the freshly-inserted slot; the value is immediately overwritten
+        // by the caller (see `find_anchors_and_aliases`).
         AnchorAlias {
             anchored: false,
             used: false,
@@ -240,7 +238,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -380,7 +377,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
@@ -424,7 +420,8 @@ impl Stringifier {
                 return Ok(());
             }
 
-            // PORT NOTE: reshaped for borrowck — set anchored before newline()
+            // `anchored` is set before `newline()` (the order is irrelevant to
+            // output; doing it here releases the `anchor` borrow first).
             anchor.anchored = true;
             match self.space {
                 Space::Minified => {
@@ -900,16 +897,14 @@ fn string_needs_quotes(str: &BunString) -> bool {
 
 /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
 ///
-/// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
-/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
-/// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
-///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
-///   seen, and at most one additional `-`).
-/// - `0x` / `0X` → hex digits; `0o` / `0O` → octal digits.
-/// - Additionally, `wtf.parseDouble` is a prefix parser, so a leading numeric prefix is
-///   enough for `YAML.parse` to resolve a number — e.g. `"1+5"` round-trips to `1`.
-///   We err on the side of quoting when the parser's scanner would accept the full token
-///   as `valid`.
+/// This mirrors the rules in `src/parsers/yaml.rs`'s `try_resolve_number` /
+/// `is_core_schema_number`:
+/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF`.
+/// - Otherwise either an integer (`[0-9]+` / `0x…` / `0o…`) or a float
+///   matching §10.2.1.4 `[-+]? ( . [0-9]+ | [0-9]+ ( . [0-9]* )? ) ([eE][-+]?[0-9]+)?`.
+///   The parser-side gate now rejects non-conforming float-like tokens
+///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
+///   *quoting* whenever a token *might* parse as a number.
 fn string_is_number(str: &BunString) -> bool {
     let len = str.length();
     if len == 0 {
@@ -1220,5 +1215,3 @@ impl<'a> ParserCtx<'a> {
         }
     }
 }
-
-// ported from: src/runtime/api/YAMLObject.zig

@@ -7,20 +7,15 @@ use crate::helpers;
 use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 
-// TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
-// source buffer for the renderer's lifetime (never freed in Zig `deinit`).
-// The porting guide discourages struct lifetimes, but raw `*const [u8]` is
-// worse here; revisit if `'src` causes friction.
 pub(crate) struct HtmlRenderer<'src> {
     pub out: OutputBuffer,
     // allocator dropped — non-AST crate uses global mimalloc
     pub src_text: &'src [u8],
     pub image_nesting_level: u32,
-    // PORT NOTE: was `&'src [u8]` borrowing parser content; owned now so the
+    // Owned (rather than `&'src [u8]` borrowing parser content) so the
     // RendererImpl trait does not entangle SpanDetail's lifetime with 'src.
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
-    pub tag_filter_raw_depth: u32,
     pub autolink_headings: bool,
     pub heading_buf: Vec<u8>,
     pub heading_tracker: helpers::HeadingIdTracker,
@@ -67,7 +62,6 @@ impl<'src> HtmlRenderer<'src> {
             image_nesting_level: 0,
             saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
-            tag_filter_raw_depth: 0,
             autolink_headings: render_opts.autolink_headings,
             heading_buf: Vec::new(),
             heading_tracker: helpers::HeadingIdTracker::init(render_opts.heading_ids),
@@ -165,7 +159,7 @@ impl<'src> HtmlRenderer<'src> {
                     }
                     if lang_end > info_beg {
                         self.write(b" class=\"language-");
-                        // PORT NOTE: reshaped for borrowck — capture slice before &mut self call.
+                        // Capture the slice before the &mut self call.
                         let src_text = self.src_text;
                         self.write_with_entity_decoding(&src_text[info_beg..lang_end]);
                         self.write(b"\"");
@@ -212,7 +206,6 @@ impl<'src> HtmlRenderer<'src> {
             BlockType::Li => self.write(b"</li>\n"),
             BlockType::Hr => {}
             BlockType::H => {
-                // TODO(port): leave_heading() drops allocator param; returns Option<&[u8]>.
                 if let Some(slug) = self.heading_tracker.leave_heading() {
                     // Write opening tag with id
                     self.out.write(match data {
@@ -347,7 +340,7 @@ impl<'src> HtmlRenderer<'src> {
                     self.write(b"\"");
                     if !self.saved_img_title.is_empty() {
                         self.write(b" title=\"");
-                        // PORT NOTE: reshaped for borrowck — take field before &mut self call.
+                        // Take the field before the &mut self call.
                         let title = core::mem::take(&mut self.saved_img_title);
                         self.write_title_with_escapes(&title);
                         self.write(b"\"");
@@ -401,8 +394,6 @@ impl<'src> HtmlRenderer<'src> {
             }
             TextType::Html => {
                 if self.tag_filter {
-                    // Track entry/exit of disallowed tag raw zones
-                    self.update_tag_filter_raw_depth(content);
                     self.write_html_with_tag_filter(content);
                 } else {
                     self.write(content);
@@ -425,14 +416,7 @@ impl<'src> HtmlRenderer<'src> {
                     self.write_html_escaped(&content[start..]);
                 }
             }
-            _ => {
-                // When inside a tag-filtered disallowed tag, emit text as raw
-                if self.tag_filter && self.tag_filter_raw_depth > 0 {
-                    self.write(content);
-                } else {
-                    self.write_html_escaped(content);
-                }
-            }
+            _ => self.write_html_escaped(content),
         }
     }
 
@@ -461,29 +445,6 @@ impl<'src> HtmlRenderer<'src> {
             self.heading_buf.push(b);
         } else {
             self.out.write_byte(b);
-        }
-    }
-
-    /// Track whether we're inside a disallowed tag's raw zone.
-    /// When an opening disallowed tag is seen, increment depth.
-    /// When a closing disallowed tag is seen, decrement depth.
-    fn update_tag_filter_raw_depth(&mut self, content: &[u8]) {
-        if content.len() < 2 || content[0] != b'<' {
-            return;
-        }
-        if content[1] == b'/' {
-            // Closing tag
-            if is_disallowed_tag(content) && self.tag_filter_raw_depth > 0 {
-                self.tag_filter_raw_depth -= 1;
-            }
-        } else {
-            // Opening tag (not self-closing)
-            if is_disallowed_tag(content) {
-                // Check if NOT self-closing (doesn't end with "/>")
-                if content[content.len() - 2] != b'/' || content[content.len() - 1] != b'>' {
-                    self.tag_filter_raw_depth += 1;
-                }
-            }
         }
     }
 
@@ -682,8 +643,6 @@ impl<'src> HtmlRenderer<'src> {
 // Static helpers
 // ========================================
 
-// PORT NOTE: Zig's manual `*anyopaque + VTable` is collapsed into the
-// `RendererImpl` trait (see types.rs); the static VTABLE is no longer needed.
 impl RendererImpl for HtmlRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         HtmlRenderer::enter_block(self, block_type, data, flags);
@@ -730,7 +689,6 @@ fn is_disallowed_tag(content: &[u8]) -> bool {
         b"script",
         b"plaintext",
     ];
-    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for tag in DISALLOWED.iter() {
         if match_tag_name_ci(content, after_lt, tag) {
             return true;
@@ -753,12 +711,10 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
     if end >= content.len() {
         return true;
     }
-    matches!(content[end], b'>' | b' ' | b'\t' | b'\n' | b'/')
+    matches!(content[end], b'>' | b'/') || helpers::is_whitespace(content[end])
 }
 
 /// Find an entity in text starting at `start`. Delegates to helpers.findEntity.
 fn find_entity_in_text(content: &[u8], start: usize) -> Option<usize> {
     helpers::find_entity(content, start)
 }
-
-// ported from: src/md/html_renderer.zig

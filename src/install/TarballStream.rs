@@ -46,7 +46,6 @@ type Task = crate::package_manager_task::Task<'static>;
 
 bun_output::declare_scope!(TarballStream, hidden);
 
-// Zig: `[:0]const bun.OSPathChar` / `[:0]bun.OSPathChar` / `bun.OSPathSliceZ`.
 type OSPathZ<'a> = &'a OSPathSliceZ;
 type OSPathZMut<'a> = &'a mut OSPathSliceZ;
 
@@ -61,13 +60,12 @@ enum Phase {
     Done,
 }
 
-// PORT NOTE: `extract_task` / `package_manager` are raw pointers, not
-// `&'a mut` / `&'a`. The Zig original stores `*Task` / `*PackageManager`
-// (freely-aliasing). This struct is heap-allocated (`heap::alloc`),
+// `extract_task` / `package_manager` are raw pointers, not
+// `&'a mut` / `&'a`. This struct is heap-allocated (`heap::alloc`),
 // crosses threads via `drain_task`, and self-destroys in `finish()`, so a
 // borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
 // `populate_result` materialises another `&mut Task` from a raw copy of it
-// would be aliased UB; raw pointers match the Zig aliasing contract.
+// would be aliased UB; raw pointers avoid forming aliased references.
 pub struct TarballStream {
     // ---------------------------------------------------------------------
     // Cross-thread producer state (HTTP → worker)
@@ -130,8 +128,7 @@ pub struct TarballStream {
     /// touches the filesystem.
     dest: Option<Fd>,
     /// Owned copy of the temp-directory name.
-    // Zig `[:0]const u8` field freed via `allocator.free`. `ZBox` is the
-    // owned NUL-terminated counterpart of `&ZStr` (port of `dupeZ`).
+    // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
     tmpname: ZBox,
 
     /// Incremental SHA over the *compressed* bytes, matching
@@ -154,6 +151,7 @@ pub struct TarballStream {
     bytes_received: usize,
     entry_count: u32,
     fail: Option<bun_core::Error>,
+    invalid_name: bool,
 
     /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
     /// arrives and no drain is currently in flight.
@@ -175,8 +173,8 @@ impl TarballStream {
     /// state machine is only worth its per-chunk overhead for tarballs that
     /// would otherwise consume a noticeable amount of memory.
     pub(crate) fn min_size() -> usize {
-        // env_var.get() returns Option<u64> in the Rust port even when a default
-        // is configured (Zig collapses it at comptime); the var has a 2 MiB
+        // env_var.get() returns Option<u64> even when a default
+        // is configured; the var has a 2 MiB
         // default so unwrap is infallible here.
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
@@ -187,13 +185,13 @@ impl TarballStream {
         manager: *mut PackageManager,
     ) -> *mut TarballStream {
         // Caller guarantees `extract_task` is live for the lifetime of this
-        // stream (it is published back to the main thread only in `finish()`);
-        // see Zig `init` which takes `*Task`. Wrapped once as `ParentRef` so
+        // stream (it is published back to the main thread only in `finish()`).
+        // Wrapped once as `ParentRef` so
         // the union read goes through the centralised tag-checked
         // `request_extract()` accessor; `extract` is the active `Request`
         // variant for streaming tarballs (set by `enqueueExtractNPMPackage`,
         // `tag == Tag::Extract`). Safe `From<NonNull>` construction — caller
-        // passes a non-null `*mut Task` (Zig `*Task`).
+        // passes a non-null `*mut Task`.
         let extract_task = bun_ptr::ParentRef::<Task>::from(
             core::ptr::NonNull::new(extract_task).expect("extract_task non-null (Zig *Task)"),
         );
@@ -249,6 +247,7 @@ impl TarballStream {
             bytes_received: 0,
             entry_count: 0,
             fail: None,
+            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
@@ -268,7 +267,7 @@ impl TarballStream {
     /// `this` must be the live pointer returned by `init()`. Runs on the
     /// HTTP thread concurrently with `drain()` on a worker, so this never
     /// materialises `&mut TarballStream` — all access is via raw-ptr field
-    /// projection (Zig spec: freely-aliasing `*TarballStream`).
+    /// projection.
     pub(crate) unsafe fn on_chunk(
         this: *mut Self,
         chunk: &[u8],
@@ -438,8 +437,7 @@ impl TarballStream {
     /// `this` must be live. Called both from `drain()` and re-entrantly
     /// from inside libarchive's read callback (while `step()` is on the
     /// stack), so this must NOT materialise `&mut TarballStream` — all
-    /// access is via raw-ptr field projection (matches Zig's freely-
-    /// aliasing `*TarballStream`). Producer fields (`pending`/`closed`)
+    /// access is via raw-ptr field projection. Producer fields (`pending`/`closed`)
     /// are synchronised by `mutex`; drain-side fields (`reading`/
     /// `read_pos`/`hasher`) are owned by the single active drain task.
     unsafe fn take_pending(this: *mut Self) -> bool {
@@ -663,12 +661,20 @@ impl TarballStream {
         // Tag::Extract` for streaming tarballs).
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if crate::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if tarball.resolution.tag.is_git()
+                || tarball.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                self.invalid_name = true;
+                return Err(bun_core::err!("InstallFailed"));
+            };
         let mut buf = PathBuffer::uninit();
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut buf[..],
-            bun_core::fast_random(),
-        )?;
+        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
@@ -945,8 +951,7 @@ impl TarballStream {
     /// `this` must be the live pointer returned by `init()`. Frees `*this`
     /// — caller must not touch it after return. Takes a raw pointer (not
     /// `&mut self`) so no Rust reference dangles across the
-    /// `heap::take` self-destruction (Zig spec: `this.deinit()` with a
-    /// freely-aliasing `*TarballStream`).
+    /// `heap::take` self-destruction.
     // The `&(&(*task).request.extract)` wrappers below are deliberate — they
     // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
     // the union deref. `needless_borrow` flags them as redundant but they are not.
@@ -956,7 +961,7 @@ impl TarballStream {
         // are live raw pointers; this fn is the sole owner. After
         // `heap::take(this)` nothing touches `this`.
         unsafe {
-            // Fields are already raw pointers (see struct PORT NOTE), so copying
+            // Fields are already raw pointers (see the struct-level note), so copying
             // them out before `heap::take(this)` is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
             let task: *mut Task = (*this).extract_task.as_mut_ptr();
@@ -1024,7 +1029,7 @@ impl TarballStream {
             // thread may immediately recycle it *and* the NetworkTask it
             // references, so nothing below this line may touch either.
             // SAFETY: manager/task outlive this stream by construction; manager
-            // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
+            // is `*mut` and shared across
             // threads, so we mutate via raw-ptr deref without forming a
             // long-lived `&mut PackageManager`.
             (*manager)
@@ -1036,7 +1041,7 @@ impl TarballStream {
 
     /// # Safety
     /// `task` must be live and exclusively owned by this drain. Takes a raw
-    /// pointer (Zig: freely-aliasing `*Task`) so `tarball` (a borrow into
+    /// pointer so `tarball` (a borrow into
     /// `task.request`) can coexist with writes to `task.log`/`task.data`.
     // The `&(&(*task).request.extract)` wrapper below sidesteps
     // `dangerous_implicit_autorefs`; `needless_borrow` is wrong here.
@@ -1052,15 +1057,26 @@ impl TarballStream {
             };
 
             if let Some(err) = self.fail {
-                (*task).log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{} extracting tarball for \"{}\"",
-                        err.name(),
-                        bstr::BStr::new(tarball.name.slice()),
-                    ),
-                );
+                if self.invalid_name {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to install package with invalid name \"{}\"",
+                            bun_fmt::s(tarball.name_and_basename().0),
+                        ),
+                    );
+                } else {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} extracting tarball for \"{}\"",
+                            err.name(),
+                            bstr::BStr::new(tarball.name.slice()),
+                        ),
+                    );
+                }
                 (*task).err = Some(err);
                 (*task).status = TaskStatus::Fail;
                 return;
@@ -1087,11 +1103,16 @@ impl TarballStream {
                     if self.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
-                    if bun_sys::File::write_file(
+                    if bun_sys::File::openat(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
-                        self.resolved_github_dirname,
+                        O::WRONLY
+                            | O::CREAT
+                            | O::TRUNC
+                            | if cfg!(windows) { 0 } else { O::NOFOLLOW },
+                        0o664,
                     )
+                    .and_then(|f| f.write_all(self.resolved_github_dirname))
                     .is_err()
                     {
                         let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
@@ -1135,12 +1156,12 @@ impl TarballStream {
             }
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Streamed {} tarball → {} entries<r>",
                     bstr::BStr::new(name),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
-                ));
+                );
                 Output::flush();
             }
 
@@ -1219,8 +1240,7 @@ extern "C" fn archive_read_callback(
     // unchanged. `step()`/`open_archive()` take `*mut Self` (not
     // `&mut self`) precisely so this pointer's provenance survives every
     // re-entry — see `step()` # Safety. We keep `this` as a raw pointer and
-    // access fields through it directly (Zig: freely-aliasing
-    // `*TarballStream`); no `&mut TarballStream` is live anywhere on the
+    // access fields through it directly; no `&mut TarballStream` is live anywhere on the
     // call stack while libarchive runs. All fields touched here (`reading`,
     // `read_pos`, `mutex`, `pending`, `closed`, `hasher`) are drain-side /
     // mutex-guarded and are not accessed by `step()` across the FFI call
@@ -1404,6 +1424,18 @@ fn make_symlink(
         // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
+        let mut seen_named_component = false;
+        for component in target_bytes.split(|c| *c == b'/') {
+            match component {
+                b"" | b"." => {}
+                b".." => {
+                    if seen_named_component {
+                        return false;
+                    }
+                }
+                _ => seen_named_component = true,
+            }
+        }
         let mut join_buf = PathBuffer::uninit();
         if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
             return false;
@@ -1468,12 +1500,9 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
     }
 }
 
-// `std.mem.tokenizeScalar(OSPathChar, s, '/')` followed by one `next()` then
-// `.rest()`: Zig's `TokenIterator.rest()` first SKIPS any delimiters at the
-// current index (vendor/zig/lib/std/mem.zig) before returning
-// `buffer[index..]`, so for `"package/index.js"` the result is `"index.js"`
+// Skips any leading `/` delimiters, then returns everything after the first
+// path component, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// TODO(port): Phase B — hoist into bun_str or bun_paths if reused elsewhere.
 fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {
@@ -1492,5 +1521,3 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
 // discriminant; Data/Status live on PackageManagerTask.
 use crate::package_manager_task::{Data as TaskData, Status as TaskStatus};
 use crate::resolution::Tag as ResolutionTag;
-
-// ported from: src/install/TarballStream.zig

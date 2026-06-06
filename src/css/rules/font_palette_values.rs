@@ -53,7 +53,6 @@ impl FontPaletteValuesRule {
         while let Some(result) = parser.next() {
             if let Ok(decl) = result {
                 properties.push(decl);
-                // PERF(port): was `append(input.arena(), decl) catch unreachable`
             }
         }
 
@@ -81,9 +80,9 @@ pub enum FontPaletteValuesProperty {
 
 impl FontPaletteValuesRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `FontPaletteValuesProperty`'s
-        // variant-walk lands when its enum body un-gates (properties::{font,
-        // custom}); the gated stub above panics with the blocker named.
+        // `FontPaletteValuesProperty`'s variant-walk lands when its enum body
+        // un-gates (properties::{font, custom}); the gated stub above panics
+        // with the blocker named.
         Self {
             name: self.name.deep_clone(bump),
             properties: self.properties.iter().map(|p| p.deep_clone(bump)).collect(),
@@ -119,7 +118,6 @@ impl FontPaletteValuesProperty {
     }
 
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk.
         match self {
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
             Self::BasePalette(b) => Self::BasePalette(b.deep_clone(bump)),
@@ -222,7 +220,6 @@ impl BasePalette {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` — `Copy` payload (u16).
         match self {
             Self::Light => Self::Light,
             Self::Dark => Self::Dark,
@@ -233,9 +230,6 @@ impl BasePalette {
 
 pub(crate) struct FontPaletteValuesDeclarationParser {}
 
-// PORT NOTE: Zig models these as nested namespace structs (`DeclarationParser`,
-// `RuleBodyItemParser`, `AtRuleParser`, `QualifiedRuleParser`) duck-typed by
-// `RuleBodyParser`. In Rust these are trait impls.
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::FontFamily;
@@ -281,7 +275,6 @@ const _: () = {
             }}
 
             input.reset(&state);
-            // PERF(port): Zig passed `input.arena()` + `null` here.
             let opts = ParserOptions::default(None);
             let custom = CustomProperty::parse(CustomPropertyName::from_str(name), input, &opts)?;
             Ok(FontPaletteValuesProperty::Custom(custom))
@@ -350,5 +343,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/font_palette_values.zig

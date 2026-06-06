@@ -1,6 +1,6 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Split from
-//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
-//! `CharacterSet`/`FieldType` enums without `JSValue` references.
+//! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
+//! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
+//! `JSValue` references.
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
@@ -181,8 +181,7 @@ impl Drop for Bytes {
     }
 }
 
-// Value's Zig `deinit` only forwarded to payload deinit; Rust auto-drops enum
-// payloads (ZigStringSlice, Bytes, Data all impl Drop), so no explicit Drop.
+// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
@@ -234,10 +233,10 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union);
-                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
-                // return a `Temporary` aliasing the same bytes. `to_data` callers
-                // must keep `self` alive until the returned `Data` is consumed.
+                // `bun_sql::shared::Data` is not
+                // `Clone`, so return a `Temporary` aliasing the
+                // same bytes. INVARIANT: `to_data` callers must keep `self`
+                // alive until the returned `Data` is consumed.
                 let s = data.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
@@ -495,7 +494,6 @@ pub struct DateTime {
 
 impl DateTime {
     pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -559,8 +557,37 @@ impl DateTime {
                 }
             }
             _ => panic!("Invalid datetime length: {}", val.len()),
-            // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
         }
+    }
+
+    /// Parse a MySQL text-protocol DATE/DATETIME/TIMESTAMP string
+    /// (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or with `.ffffff` fractional
+    /// seconds) into components so the text path can treat them as UTC, the
+    /// same way the binary path does. Returns `None` for MySQL zero-date
+    /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
+    /// malformed input, so the caller surfaces `Invalid Date` — matching what
+    /// the previous `Date.parse` path produced for those.
+    pub fn from_text(text: &[u8]) -> Option<DateTime> {
+        let parsed = crate::shared::datetime_text::parse_mysql(text)?;
+        if parsed.month < 1
+            || parsed.month > 12
+            || parsed.day < 1
+            || parsed.day > days_in_month(parsed.year, parsed.month)
+            || parsed.hour > 23
+            || parsed.minute > 59
+            || parsed.second > 59
+        {
+            return None;
+        }
+        Some(DateTime {
+            year: parsed.year,
+            month: parsed.month,
+            day: parsed.day,
+            hour: parsed.hour,
+            minute: parsed.minute,
+            second: parsed.second,
+            microsecond: parsed.microsecond,
+        })
     }
 
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
@@ -597,7 +624,25 @@ impl DateTime {
     }
 
     pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
-        global_object.gregorian_date_time_to_ms(
+        // MySQL in permissive sql_mode can store zero / partial-zero dates like
+        // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
+        // WTF::GregorianDateTime would silently wrap month=0 to December of the
+        // prior year, so validate here and surface NaN instead — matching the
+        // Invalid Date the text path produces via from_text().
+        if self.month < 1
+            || self.month > 12
+            || self.day < 1
+            || self.day > days_in_month(self.year, self.month)
+            || self.hour > 23
+            || self.minute > 59
+            || self.second > 59
+        {
+            return Ok(f64::NAN);
+        }
+        // from_unix_timestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with
+        // pure-UTC arithmetic, so decode must also treat the stored wall-clock
+        // as UTC — otherwise a Date round-trips shifted by the local UTC offset.
+        global_object.gregorian_date_time_to_ms_utc(
             i32::from(self.year),
             i32::from(self.month),
             i32::from(self.day),
@@ -636,7 +681,6 @@ impl DateTime {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // TODO(port): Zig calls toJSTimestamp() with no args here but the fn takes globalObject and is fallible; preserved bug
         JSValue::from_date_number(
             global_object,
             self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
@@ -663,7 +707,6 @@ impl DateTime {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
@@ -715,7 +758,6 @@ impl Time {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
@@ -760,7 +802,6 @@ impl Time {
     }
 
     pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -836,7 +877,6 @@ pub struct Decimal {
 
 impl Decimal {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile if it shows up on a hot path.
         let mut str: Vec<u8> = Vec::new();
 
         if self.negative {
@@ -855,10 +895,8 @@ impl Decimal {
     }
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — not a
-        // porting placeholder. The `Decimal` arm of `Value` is commented out,
-        // so this is unreachable today.
+        // Intentional runtime "feature not yet implemented". The `Decimal` arm
+        // of `Value` is commented out, so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
 
@@ -913,7 +951,6 @@ fn gregorian_date(days: i32) -> Date {
     }
 }
 
-// TODO(port): move to sql_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
@@ -928,5 +965,3 @@ unsafe extern "C" {
         out_len: &mut usize,
     ) -> i32;
 }
-
-// ported from: src/sql_jsc/mysql/MySQLValue.zig

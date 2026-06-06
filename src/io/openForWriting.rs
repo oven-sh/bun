@@ -3,11 +3,8 @@ use bun_core::ZStr;
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
-// PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
-// `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
-// so this is expressed as a sealed trait whose impls encode each `switch (PathT)` arm.
-// TODO(port): verify callers — if only one input type is ever used per call site, consider
-// monomorphizing into two free fns instead of the trait.
+// A sealed trait whose impls cover each accepted input type
+// (`PathOrFileDescriptor` and zero-terminated path slices).
 pub trait OpenForWritingInput {
     fn open_for_writing_result(
         &self,
@@ -19,7 +16,7 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
-impl OpenForWritingInput for crate::PathOrFileDescriptor {
+impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -32,7 +29,7 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor {
         match self {
             Path(path) => {
                 *is_nonblocking = true;
-                bun_sys::openat_a(dir, path.slice(), input_flags, mode)
+                bun_sys::openat_a(dir, path, input_flags, mode)
             }
             Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
         }
@@ -189,12 +186,9 @@ where
 
     #[cfg(windows)]
     {
-        // TODO(port): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
         return Ok(fd);
     }
 }
-
-// ported from: src/io/openForWriting.zig

@@ -944,7 +944,13 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         text = text[1..];
                     }
 
-                    if (text.len > 0 and (text[0] == '=' or text[0] == ':')) {
+                    // A redacted keyword followed by nothing but whitespace:
+                    // the loop above consumed the rest of the input, so there
+                    // is no value left to redact (`text[0]` below would be out
+                    // of bounds).
+                    if (text.len == 0) return;
+
+                    if (text[0] == '=' or text[0] == ':') {
                         try writer.writeByte(text[0]);
                         text = text[1..];
                         while (text.len > 0 and std.ascii.isWhitespace(text[0])) {
@@ -1008,7 +1014,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     i += 2;
 
                                     while (i < text.len and text[i] != '}') {
-                                        if (text[i] == '\\') {
+                                        if (i + 1 < text.len and text[i] == '\\') {
                                             i += 1;
                                         }
                                         i += 1;
@@ -1066,6 +1072,12 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             continue;
                         } else if (this.opts.redact_sensitive_information) {
                             try_redact: {
+                                // `i == 0` happens when a `${...}` interpolation ended
+                                // exactly at the end of the input: the scan loop above
+                                // resets `i` to 0 and exits with `text` empty, so there
+                                // is no quoted content to inspect (`text[1..0]` would
+                                // be out of range).
+                                if (i == 0) break :try_redact;
                                 var inner = text[1..i];
                                 if (inner.len > 0 and inner[inner.len - 1] == char) {
                                     inner = inner[0 .. inner.len - 1];

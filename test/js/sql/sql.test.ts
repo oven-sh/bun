@@ -706,6 +706,33 @@ if (isDockerEnabled()) {
       const sql = postgres(options);
       afterAll(() => sql.close());
 
+      // Mixed named + integer-aliased columns past JSFinalObject's inline capacity
+      // take the un-cached structure path where property names come from a raw
+      // column-identifier array; the names cursor must skip integer-aliased entries
+      // so every named column keeps a real column name.
+      test("keeps property names aligned for mixed named and integer-aliased columns past the inline capacity", async () => {
+        const namedCount = 65;
+        const columns = [`1000 as "2"`, ...Array.from({ length: namedCount }, (_, i) => `${i + 1} as a${i + 1}`)];
+        const result = await sql.unsafe(`select ${columns.join(", ")}`);
+        expect(result).toHaveLength(1);
+        const row = result[0];
+
+        // Sanity check: ensure iterating through the properties doesn't crash.
+        Bun.inspect(result);
+
+        // Exactly the selected column names appear as keys: the numeric alias plus
+        // a1..a65 — no missing trailing column and no extra/empty property names.
+        const expectedKeys = ["2", ...Array.from({ length: namedCount }, (_, i) => `a${i + 1}`)].sort();
+        expect(Object.keys(row).sort()).toEqual(expectedKeys);
+
+        // The integer-aliased column keeps its value under its numeric key.
+        expect(row["2"]).toBe(1000);
+
+        // Every selected value shows up exactly once across the row's properties.
+        const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
+        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+      });
+
       for (let size of [50, 60, 62, 64, 70, 100]) {
         for (let duplicated of [true, false]) {
           test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
@@ -1430,7 +1457,9 @@ if (isDockerEnabled()) {
             login_md5.username +
             ":" +
             (login_md5.password || "") +
-            "@localhost:" +
+            "@" +
+            container.host +
+            ":" +
             container.port.toString() +
             "/" +
             options.db,
@@ -12572,6 +12601,280 @@ console.log("FIXTURE_DONE");
   expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("ROWS {false,true} => [false,true]");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// A simple-query response can contain several result sets. The first one here
+// has zero columns, which caches a zero-property row Structure when its
+// DataRow is materialized. The next RowDescription widens the field list to
+// three named columns; the cached structure must be invalidated so the second
+// result set's rows are built with the new column layout instead of writing
+// the new cells past the inline capacity of an empty object. Runs in a
+// subprocess because a regression corrupts the JS heap of the process that
+// parses the response.
+test("result set following a zero-column result set uses its own column layout", async () => {
+  const fixtureDir = tempDirWithFiles("pg-zero-column-then-wide", {
+    "fixture.ts": `
+import { SQL } from "bun";
+import net from "node:net";
+
+function pkt(type, body) {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+}
+const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
+const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+function rowDescription(names) {
+  const fields = Buffer.concat(
+    names.map(name =>
+      Buffer.concat([cstr(name), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
+    ),
+  );
+  return pkt("T", Buffer.concat([int16(names.length), fields]));
+}
+function dataRow(values) {
+  const cols = Buffer.concat(
+    values.map(v => {
+      const bytes = Buffer.from(v);
+      return Buffer.concat([int32(bytes.length), bytes]);
+    }),
+  );
+  return pkt("D", Buffer.concat([int16(values.length), cols]));
+}
+const authenticationOk = pkt("R", int32(0));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = tag => pkt("C", cstr(tag));
+
+const server = net.createServer(socket => {
+  let startup = true;
+  socket.on("data", data => {
+    if (startup) {
+      startup = false;
+      socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+      return;
+    }
+    if (data[0] !== 0x51 /* 'Q' */) return;
+    // First result set: zero columns, one row. Second result set: three named
+    // columns, one row.
+    socket.write(
+      Buffer.concat([
+        rowDescription([]),
+        dataRow([]),
+        commandComplete("SELECT 1"),
+        rowDescription(["a", "b", "c"]),
+        dataRow(["1", "2", "3"]),
+        commandComplete("SELECT 1"),
+        readyForQuery,
+      ]),
+    );
+  });
+  socket.on("error", () => {});
+});
+await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
+const port = server.address().port;
+
+const sql = new SQL({
+  url: "postgres://u@127.0.0.1:" + port + "/db",
+  max: 1,
+  idleTimeout: 5,
+  connectionTimeout: 5,
+});
+try {
+  const result = await sql\`select; select 1 as a, 2 as b, 3 as c\`.simple();
+  console.log("SECOND_RESULT_SET " + JSON.stringify(result[1]));
+  console.log("SECOND_RESULT_SET_KEYS " + Object.keys(result[1][0]).sort().join(","));
+} finally {
+  await sql.close().catch(() => {});
+  await new Promise(r => server.close(() => r()));
+}
+console.log("FIXTURE_DONE");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: fixtureDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The second result set must expose all three named columns with their
+  // values; reusing the zero-property structure from the first result set
+  // would yield a row object with no own properties.
+  expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
+  expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
+  expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+// Connection options are serialized into the NUL-delimited Postgres
+// StartupMessage as `key\0value\0`. A key or value containing a NUL byte
+// would be parsed by the server as additional startup parameters (an injected
+// `user`, `options`, etc.), so it must be refused before any connection is
+// attempted. The username/password/database fields already get this check
+// natively; the pre-encoded options blob must get it too.
+test("rejects Postgres connection options containing null bytes", async () => {
+  const url = "postgres://bun_sql_test@127.0.0.1:5432/bun_sql_test";
+
+  // NUL inside an option value splits it into extra key/value pairs.
+  expect(() => new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // NUL inside an option key does the same.
+  expect(() => new SQL(url, { max: 1, connection: { ["application_name\0user"]: "postgres" } })).toThrow(
+    "must not contain null bytes",
+  );
+  // The same options arriving through the connection URL's query string.
+  expect(() => new SQL(url + "?application_name=x%00user%00postgres", { max: 1 })).toThrow(
+    "must not contain null bytes",
+  );
+
+  let err: any;
+  try {
+    new SQL(url, { max: 1, connection: { application_name: "x\0user\0postgres" } });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+
+  // A normal application_name is still accepted. Construction is lazy, so no
+  // server needs to be listening for this to succeed.
+  const ok = new SQL(url, { max: 1, connection: { application_name: "bun_sql_test_app" } });
+  expect(ok).toBeDefined();
+  await ok.close();
+});
+
+// A Postgres server controls two independent column counts: the
+// RowDescription's field list (which sizes the per-row cell buffer and the
+// cached row Structure) and each DataRow's own column count. When a DataRow
+// declares fewer columns than the RowDescription, the unfilled cells stay in
+// their default "named null" state; building the row object must only write
+// as many properties as the Structure actually has, leaving the missing
+// columns as null instead of writing past the row object's property storage.
+// The row description here uses 62 identically-named fields so the cached
+// Structure has a single property while the cell buffer has 62 entries.
+// Runs in a subprocess because a regression corrupts the JS heap of the
+// process that parses the response.
+test("data row that omits columns declared in the row description yields nulls for the missing columns", async () => {
+  const fixtureDir = tempDirWithFiles("pg-short-data-row", {
+    "fixture.ts": `
+import { SQL } from "bun";
+import net from "node:net";
+
+function pkt(type, body) {
+  const header = Buffer.alloc(5);
+  header.write(type, 0);
+  header.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([header, body]);
+}
+const int16 = n => { const b = Buffer.alloc(2); b.writeInt16BE(n, 0); return b; };
+const int32 = n => { const b = Buffer.alloc(4); b.writeInt32BE(n, 0); return b; };
+const cstr = s => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+// 62 text columns (oid 25, format 0) that all share the same name "c", so the
+// cached row Structure has a single property and the other 61 fields are
+// duplicates.
+const COLUMNS = 62;
+const rowDescription = pkt("T", Buffer.concat([
+  int16(COLUMNS),
+  ...Array.from({ length: COLUMNS }, () =>
+    Buffer.concat([cstr("c"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]),
+  ),
+]));
+function dataRow(values) {
+  const cols = Buffer.concat(
+    values.map(v => {
+      const bytes = Buffer.from(v);
+      return Buffer.concat([int32(bytes.length), bytes]);
+    }),
+  );
+  return pkt("D", Buffer.concat([int16(values.length), cols]));
+}
+const authenticationOk = pkt("R", int32(0));
+const readyForQuery = pkt("Z", Buffer.from("I"));
+const commandComplete = pkt("C", cstr("SELECT 1"));
+
+async function run(label, rowValues) {
+  const server = net.createServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([authenticationOk, readyForQuery]));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' */) return;
+      socket.write(Buffer.concat([rowDescription, dataRow(rowValues), commandComplete, readyForQuery]));
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise(r => server.listen(0, "127.0.0.1", () => r()));
+  const port = server.address().port;
+  const sql = new SQL({
+    url: "postgres://u@127.0.0.1:" + port + "/db",
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+  try {
+    const rows = await sql\`select c\`.simple();
+    console.log(label + " " + JSON.stringify(rows[0]));
+  } catch (e) {
+    console.log(label + "_ERROR " + (e.code || e.message));
+  } finally {
+    await sql.close().catch(() => {});
+    await new Promise(r => server.close(() => r()));
+  }
+}
+
+// The DataRow declares zero of the 62 described columns: the row's single
+// named property must come back as null and nothing else may be written.
+await run("EMPTY_ROW", []);
+// A DataRow that supplies all 62 declared columns still resolves the duplicate
+// column name following the established "last one wins" rule.
+await run("FULL_ROW", Array.from({ length: COLUMNS }, (_, i) => "v" + i));
+console.log("FIXTURE_DONE");
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: fixtureDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+
+  // The row built from the short DataRow has exactly the structure's one
+  // property, valued null; the fully-populated row still maps the duplicate
+  // column name to the last column's value (last one wins, matching the
+  // existing duplicate-column-name behavior).
+  expect(stdout).toContain('EMPTY_ROW {"c":null}');
+  expect(stdout).toContain('FULL_ROW {"c":"v61"}');
   expect(stdout).toContain("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);

@@ -32,6 +32,7 @@ pub enum RedisError {
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
+    LineTooLong,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -41,7 +42,7 @@ bun_core::named_error_set!(RedisError);
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
+    /// `bun_core::Error` without losing the variant.
     /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
     /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
     /// already covers.
@@ -218,6 +219,7 @@ pub struct ValkeyReader<'a> {
     /// Bytes of aggregate `Vec` preallocation still allowed for the current
     /// `read_value` call. See `take_prealloc_budget`.
     prealloc_budget: usize,
+    crlf_skip: usize,
 }
 
 impl<'a> ValkeyReader<'a> {
@@ -226,13 +228,13 @@ impl<'a> ValkeyReader<'a> {
             buffer,
             pos: 0,
             prealloc_budget: buffer.len(),
+            crlf_skip: 0,
         }
     }
 
     /// Current read offset into the underlying buffer.
     ///
-    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
-    /// use this to compute how many bytes a `read_value` call consumed.
+    /// Callers use this to compute how many bytes a `read_value` call consumed.
     #[inline]
     pub fn pos(&self) -> usize {
         self.pos
@@ -249,12 +251,18 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        for (i, &byte) in buffer.iter().enumerate() {
+        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
+        let start = self.crlf_skip.min(limit);
+        self.crlf_skip = 0;
+        for (i, &byte) in buffer.iter().enumerate().take(limit).skip(start) {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
+        }
+        if buffer.len() > Self::MAX_LINE_LEN + 1 {
+            return Err(RedisError::LineTooLong);
         }
 
         Err(RedisError::InvalidResponse)
@@ -337,6 +345,8 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
+    const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed
@@ -601,6 +611,7 @@ pub struct ReplyScanner {
     /// Remaining child-value count for each in-progress aggregate, outermost
     /// first.
     stack: Vec<u64>,
+    crlf_skip: usize,
 }
 
 impl ReplyScanner {
@@ -609,6 +620,7 @@ impl ReplyScanner {
     pub fn reset(&mut self) {
         self.pos = 0;
         self.stack.clear();
+        self.crlf_skip = 0;
     }
 
     /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
@@ -620,13 +632,22 @@ impl ReplyScanner {
                 buffer,
                 pos: self.pos,
                 prealloc_budget: 0,
+                crlf_skip: self.crlf_skip,
             };
             let children = match Self::scan_one(&mut reader, self.stack.len()) {
                 Ok(children) => children,
                 // `InvalidResponse` is the parser's "ran out of bytes" sentinel.
-                Err(RedisError::InvalidResponse) => return Ok(ScanResult::NeedMoreData),
+                Err(RedisError::InvalidResponse) => {
+                    self.crlf_skip = if reader.pos == self.pos + 1 {
+                        (buffer.len() - reader.pos).saturating_sub(1)
+                    } else {
+                        0
+                    };
+                    return Ok(ScanResult::NeedMoreData);
+                }
                 Err(err) => return Err(err),
             };
+            self.crlf_skip = 0;
             self.pos = reader.pos;
             if let Some(children) = children
                 && children > 0
@@ -780,22 +801,17 @@ pub enum SubscriptionPushMessage {
     Unsubscribe,
 }
 
-impl SubscriptionPushMessage {
-    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. An earlier port used
-    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
-    // for three keys whose lengths are all distinct (7/9/11). A length-gated
-    // match rejects the miss case on a single `usize` compare and confirms the
-    // hit with one fixed-size byte compare, matching the Zig codegen.
-    #[inline]
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        match bytes.len() {
-            7 if bytes == b"message" => Some(Self::Message),
-            9 if bytes == b"subscribe" => Some(Self::Subscribe),
-            11 if bytes == b"unsubscribe" => Some(Self::Unsubscribe),
-            _ => None,
-        }
-    }
+bun_core::comptime_string_map! {
+    static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
+        b"message" => SubscriptionPushMessage::Message,
+        b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+    };
 }
 
-// ported from: src/valkey/valkey_protocol.zig
+impl SubscriptionPushMessage {
+    #[inline]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
+    }
+}

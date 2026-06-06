@@ -17,7 +17,11 @@ channel = "nightly-2026-05-06"
 # comes with the toolchain install regardless; they're listed here so a dev
 # running `bun run rust:check-all` or `cargo check --target` from any host
 # still gets prebuilt std for every Tier 1/2 triple.
-components = ["rust-src", "rustfmt", "clippy", "miri"]
+# llvm-tools provides llvm-link/opt for the ELF cross-language LTO
+# regular-LTO-summary fix-up (scripts/build/rust-lto-fix-cli.ts). CI agents
+# that pin via RUSTUP_TOOLCHAIN bypass this list; that script self-heals by
+# running `rustup component add llvm-tools` when the tools are missing.
+components = ["rust-src", "rustfmt", "clippy", "miri", "llvm-tools"]
 targets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-gnu",

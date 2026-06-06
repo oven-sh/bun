@@ -1,13 +1,6 @@
 use core::ffi::c_ushort;
 
-// TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;
-
-// PORT NOTE: `dateForHeader` (Request.zig:62) is NOT ported here. Parsing an
-// HTTP date needs `bun_jsc::VirtualMachine` (T6); rather than hook upward, the
-// sole caller (`bun_runtime::server::FileRoute`) does
-// `req.header(name).and_then(parse_http_date)` itself — call site moved UP per
-// docs/PORTING.md §"Low crate needs to call high crate" option (a).
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
 /// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
@@ -137,5 +130,3 @@ mod c {
         ) -> usize;
     }
 }
-
-// ported from: src/uws_sys/Request.zig

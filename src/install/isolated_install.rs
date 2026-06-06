@@ -1,6 +1,6 @@
 // ───────────────────────────────────────────────────────────────────────────
-// Submodules — Zig basenames preserved per PORTING.md, hence #[path] attrs.
-// These are the install-to-disk primitives the Installer state machine drives.
+// Submodules — these are the install-to-disk primitives the Installer state
+// machine drives.
 // ───────────────────────────────────────────────────────────────────────────
 #[path = "isolated_install/FileCloner.rs"]
 pub mod file_cloner;
@@ -57,8 +57,7 @@ bun_output::define_scoped_log!(log, IsolatedInstall, visible);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Inner helper types (hoisted from fn body — Rust does not allow local
-// struct decls that borrow outer locals via closures the same way; field
-// order matches the Zig declarations).
+// struct decls that borrow outer locals via closures the same way).
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -123,11 +122,6 @@ struct WyhashWriter<'a> {
     hasher: &'a mut Wyhash,
 }
 
-impl<'a> WyhashWriter<'a> {
-    // TODO(port): Zig used std.io.GenericWriter; here we impl std::io::Write
-    // directly so `write!()` works and never errors.
-}
-
 impl<'a> std::io::Write for WyhashWriter<'a> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.hasher.update(bytes);
@@ -138,10 +132,8 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop. Mirrors the Zig
-/// anonymous-struct call shape `{ .onExtract = onPackageExtracted, .onResolve = {},
-/// .onPackageManifestError = {}, .onPackageDownloadError = onPackageDownloadError,
-/// .progress_bar = false, .manifests_only = false }` with `Ctx == *Store.Installer`.
+/// `RunTasksCallbacks` impl for the isolated-install loop, with
+/// `Ctx == store::Installer`.
 pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
 
 impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
@@ -231,9 +223,8 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
-    // passing `*PackageManager` (which owns it); take a raw pointer so column
-    // borrows below don't tie up `&mut manager`.
+    // Take a raw pointer so column borrows below don't tie up `&mut manager`
+    // (which owns the lockfile).
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
     // SAFETY: `lockfile` was just derived from `&raw mut *manager.lockfile`;
     // `manager` outlives this function and no other `&mut Lockfile` is formed
@@ -242,7 +233,6 @@ pub(crate) fn install_isolated_packages(
 
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
-        // TODO(port): std.time.Timer.start() catch unreachable → Instant::now()
         let pkgs = lockfile.packages.slice();
         let pkg_dependency_slices = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -424,8 +414,7 @@ pub(crate) fn install_isolated_packages(
             'check_cycle: {
                 // check for cycles
                 let mut nodes_slice = nodes.slice();
-                // PORT NOTE: Zig grabbed multiple mutable column views from one
-                // Slice; `split_mut()` yields disjoint `&mut [_]` per column.
+                // `split_mut()` yields disjoint `&mut [_]` per column.
                 let store::node::NodeColumnsMut {
                     pkg_id: node_pkg_ids,
                     dep_id: node_dep_ids,
@@ -444,7 +433,6 @@ pub(crate) fn install_isolated_packages(
                         if dep_id == invalid_dependency_id && entry.dep_id == invalid_dependency_id
                         {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                            // PERF(port): was appendAssumeCapacity — profile if hot.
                             continue 'next_node;
                         }
 
@@ -466,7 +454,6 @@ pub(crate) fn install_isolated_packages(
                             curr_dep.behavior.is_workspace() == entry_dep.behavior.is_workspace()
                         {
                             node_nodes[entry.parent_id.get() as usize].push(curr_id);
-                            // PERF(port): was appendAssumeCapacity — profile if hot.
                             continue 'next_node;
                         }
                     }
@@ -499,7 +486,7 @@ pub(crate) fn install_isolated_packages(
 
                 'dont_dedupe: {
                     let mut nodes_slice = nodes.slice();
-                    // PORT NOTE: disjoint-column views via `split_mut`.
+                    // disjoint-column views via `split_mut`.
                     let store::node::NodeColumnsMut {
                         nodes: node_nodes,
                         dep_id: node_dep_ids,
@@ -600,7 +587,7 @@ pub(crate) fn install_isolated_packages(
                             string_buf,
                             pkg_names,
                         };
-                        // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
+                        // Reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
                         let dedupe_peers: Vec<_> =
                             node_peers[dedupe_node_id.get() as usize].list.clone();
@@ -620,7 +607,6 @@ pub(crate) fn install_isolated_packages(
                         }
 
                         node_nodes[entry.parent_id.get() as usize].push(dedupe_node_id);
-                        // PERF(port): was appendAssumeCapacity — profile if hot.
                         continue 'next_node;
                     }
 
@@ -646,7 +632,7 @@ pub(crate) fn install_isolated_packages(
             })?;
 
             let mut nodes_slice = nodes.slice();
-            // PORT NOTE: disjoint-column views via `split_mut`.
+            // disjoint-column views via `split_mut`.
             let store::node::NodeColumnsMut {
                 parent_id: node_parent_ids,
                 dependencies: node_dependencies,
@@ -657,7 +643,6 @@ pub(crate) fn install_isolated_packages(
 
             if let Some(parent_id) = entry.parent_id.try_get() {
                 node_nodes[parent_id as usize].push(node_id);
-                // PERF(port): was appendAssumeCapacity — profile if hot.
             }
 
             if skip_dependencies {
@@ -671,12 +656,10 @@ pub(crate) fn install_isolated_packages(
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
                 let dep_id: DependencyID = _dep_id;
                 dep_ids_sort_buf.push(dep_id);
-                // PERF(port): was appendAssumeCapacity — profile if hot.
             }
 
             // TODO: make this sort in an order that allows peers to be resolved last
             // and devDependency handling to match `hoistDependency`
-            // TODO(port): std.sort.pdq → slice::sort_by with DepSorter
             {
                 let sorter = lockfile::DepSorter { lockfile };
                 dep_ids_sort_buf.sort_by(|a, b| {
@@ -706,7 +689,6 @@ pub(crate) fn install_isolated_packages(
                                 if package_to_install == pkg_id {
                                     node_dependencies[node_id.get() as usize]
                                         .push(store::node::DependencyIds { dep_id, pkg_id });
-                                    // PERF(port): was appendAssumeCapacity — profile if hot.
                                     node_queue.push(QueuedNode {
                                         parent_id: node_id,
                                         dep_id,
@@ -745,7 +727,6 @@ pub(crate) fn install_isolated_packages(
                         // - queue it
                         node_dependencies[node_id.get() as usize]
                             .push(store::node::DependencyIds { dep_id, pkg_id });
-                        // PERF(port): was appendAssumeCapacity — profile if hot.
                         node_queue.push(QueuedNode {
                             parent_id: node_id,
                             dep_id,
@@ -884,7 +865,6 @@ pub(crate) fn install_isolated_packages(
                         dep_id: peer_dep_id,
                         pkg_id: resolved_pkg_id,
                     });
-                    // PERF(port): was appendAssumeCapacity — profile if hot.
                     node_queue.push(QueuedNode {
                         parent_id: node_id,
                         dep_id: peer_dep_id,
@@ -901,10 +881,10 @@ pub(crate) fn install_isolated_packages(
         if manager.options.log_level.is_verbose() {
             let full_tree_end = timer.elapsed();
             timer = std::time::Instant::now();
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "Resolved peers [{}]",
                 bun_fmt::fmt_duration_one_decimal(full_tree_end.as_nanos() as u64)
-            ));
+            );
         }
 
         let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::default();
@@ -974,7 +954,7 @@ pub(crate) fn install_isolated_packages(
                         // dedupe! depend on the already created entry
 
                         let mut entries = store_entries.slice();
-                        // PORT NOTE: disjoint-column views via `split_mut`.
+                        // disjoint-column views via `split_mut`.
                         let store::entry::EntryColumnsMut {
                             dependencies: entry_dependencies,
                             parents: entry_parents,
@@ -1158,10 +1138,10 @@ pub(crate) fn install_isolated_packages(
 
         if manager.options.log_level.is_verbose() {
             let dedupe_end = timer.elapsed();
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "Created store [{}]",
                 bun_fmt::fmt_duration_one_decimal(dedupe_end.as_nanos() as u64)
-            ));
+            );
         }
 
         break 'store Store {
@@ -1173,7 +1153,7 @@ pub(crate) fn install_isolated_packages(
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
             let mut entries = store.entries.slice();
-            // PORT NOTE: disjoint-column views via `split_mut`.
+            // disjoint-column views via `split_mut`.
             let store::entry::EntryColumnsMut {
                 entry_hash: entry_hashes,
                 node_id: entry_node_ids,
@@ -1221,7 +1201,7 @@ pub(crate) fn install_isolated_packages(
 
                 while !stack.is_empty() {
                     let top_idx = stack.len() - 1;
-                    // PORT NOTE: reshaped for borrowck — re-borrow `top` after each
+                    // Reshaped for borrowck — re-borrow `top` after each
                     // potential `stack.push()` realloc.
                     let id = stack[top_idx].id;
                     let idx = id.get() as usize;
@@ -1246,8 +1226,6 @@ pub(crate) fn install_isolated_packages(
                                 // patch or be mutated underneath other projects.
                                 if lockfile.patched_dependencies.count() > 0 {
                                     let mut name_version_buf = PathBuffer::uninit();
-                                    // TODO(port): std.fmt.bufPrint returned the written
-                                    // slice; emulate via cursor write into the PathBuffer.
                                     let mut cursor =
                                         std::io::Cursor::new(&mut name_version_buf.0[..]);
                                     let name_version: &[u8] = match write!(
@@ -1275,13 +1253,6 @@ pub(crate) fn install_isolated_packages(
                                         break 'eligible false;
                                     }
                                 }
-                                // `run_preinstall()` authorizes scripts by the
-                                // dependency *alias* name, so an aliased install
-                                // like `foo: npm:bar@1` is trusted if `foo` is in
-                                // trustedDependencies even though the package name
-                                // is `bar`. Mirror that here so the alias case
-                                // can't slip past the eligibility check.
-                                //
                                 // Intentionally *not* gated on `do.run_scripts`
                                 // (a later install without `--ignore-scripts`
                                 // would run the postinstall through the project
@@ -1503,7 +1474,7 @@ pub(crate) fn install_isolated_packages(
                                 }
                                 unreachable!();
                             };
-                            // PORT NOTE: reshaped for borrowck — copy members to
+                            // Reshaped for borrowck — copy members to
                             // avoid holding a borrow into scc_stack while mutating.
                             let members: Vec<u32> = scc_stack[start..].to_vec();
                             for &m in &members {
@@ -1679,8 +1650,7 @@ pub(crate) fn install_isolated_packages(
             if cache_dir_path.is_empty() {
                 break 'global_store_path None;
             }
-            // PORT NOTE: Zig allocated a `[:0]u8` via `joinAbsStringBufZ`; here
-            // we own a Vec<u8> with a trailing NUL so it can be re-borrowed as
+            // Own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
                 cache_dir_path,
@@ -1697,12 +1667,11 @@ pub(crate) fn install_isolated_packages(
 
     // setup node_modules/.bun
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
-        // Zig: `bun.OSPathLiteral(...)` — but `sys::mkdirat` is `&ZStr`-only
-        // (it widens to NT path internally on Windows), so use `path_literal!`
-        // here to keep the call-site cross-platform without a `&WStr` overload.
+        // `sys::mkdirat` is `&ZStr`-only (it widens to NT path internally on
+        // Windows), so use `path_literal!` here to keep the call-site
+        // cross-platform without a `&WStr` overload.
         let node_modules_path = paths::path_literal!("node_modules");
-        // Zig: `bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name)`.
-        // Rust `concat!` can't take a `&[u8]` const, so spell the literal —
+        // `concat!` can't take a `&[u8]` const, so spell the literal —
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
@@ -1725,11 +1694,9 @@ pub(crate) fn install_isolated_packages(
                     // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
                     // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
 
-                    // PORT NOTE: Zig builds a separate `RelPath(.{.unit=.u16})`
-                    // for `mkdirat` because Zig's `sys.mkdirat` on Windows takes
-                    // `[:0]const u16`. The Rust `sys::mkdirat`/`renameat` take
-                    // `&ZStr` (u8) and widen internally, so a single u8
-                    // `AutoRelPath` covers both the mkdir and rename targets.
+                    // `sys::mkdirat`/`renameat` take `&ZStr` (u8) and widen
+                    // internally, so a single u8 `AutoRelPath` covers both the
+                    // mkdir and rename targets.
                     let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
                     let rand = fast_random();
                     rename_path
@@ -1749,10 +1716,8 @@ pub(crate) fn install_isolated_packages(
                         break 'is_new_bun_modules true;
                     };
                     // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
-                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it.
-                    // The Zig spec (isolated_install.zig:1299) likewise lacks a
-                    // `defer node_modules.close()`, so this leak is pre-existing in
-                    // the spec — fixed in both per the audit. The guard fires on
+                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it,
+                    // so close explicitly. The guard fires on
                     // normal fall-through to step 3 and on every
                     // `break 'is_new_bun_modules true` early exit.
                     let _close_node_modules = scopeguard::guard(node_modules, |fd| {
@@ -1775,8 +1740,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
-                        // holds `*Path`; capture lengths and truncate manually so
+                        // Capture lengths and truncate manually so
                         // the paths stay unborrowed across the loop body.
                         let entry_path_save = entry_path.len();
                         entry_path.append(entry.name.slice()).assume_ok();
@@ -1801,14 +1765,13 @@ pub(crate) fn install_isolated_packages(
                             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
                                 .assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — clone basename before
-                        // mutating `workspace_node_modules` (Zig held a slice into
-                        // the buffer across an append-with-separator).
+                        // Clone basename before mutating
+                        // `workspace_node_modules`.
                         let basename = workspace_node_modules.basename().to_vec();
 
                         workspace_node_modules.append(b"node_modules").assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — capture length instead
+                        // Reshaped for borrowck — capture length instead
                         // of `save()` so `rename_path` stays unborrowed.
                         let rename_path_save = rename_path.len();
                         rename_path
@@ -1912,15 +1875,13 @@ pub(crate) fn install_isolated_packages(
                             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
                                 .assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — clone basename before
-                        // mutating `workspace_node_modules` (Zig held a slice into
-                        // the buffer across an append-with-separator).
+                        // Clone basename before mutating
+                        // `workspace_node_modules`.
                         let basename = workspace_node_modules.basename().to_vec();
 
                         workspace_node_modules.append(b"node_modules").assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
-                        // holds a `*Path`; capture the length and truncate manually
+                        // Capture the length and truncate manually
                         // so `rename_path` stays unborrowed between save/restore.
                         let rename_path_save = rename_path.len();
 
@@ -1956,15 +1917,14 @@ pub(crate) fn install_isolated_packages(
     };
 
     {
-        // TODO(port): Progress.Node locals are conditionally initialized in Zig;
-        // model with Option.
+        // Conditionally initialized (only when progress is shown); definite-
+        // initialization analysis guarantees no use before assignment.
         let mut download_node: ProgressNode;
         let mut install_node: ProgressNode = ProgressNode::default();
         let mut scripts_node: ProgressNode;
         let progress: *mut Progress = &raw mut manager.progress;
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
-        // disjoint from the other `manager.*` field accesses (Zig holds the
-        // same two pointers freely).
+        // disjoint from the other `manager.*` field accesses.
         let progress = unsafe { &mut *progress };
 
         if manager.options.log_level.show_progress() {
@@ -1993,8 +1953,7 @@ pub(crate) fn install_isolated_packages(
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
 
-        // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
-        // also keeping immutable column slices into it. Reborrow through a
+        // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
         // the `Installer { lockfile, .. }` move below. `BackRef` is the
         // canonical non-owning back-pointer wrapper; the lockfile lives for
@@ -2018,9 +1977,6 @@ pub(crate) fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        // PORT NOTE: reshaped — Zig does `allocator.alloc(Task, n)` then
-        // `task.* = .{..}` in-place, which is safe because Zig has no drop
-        // glue and no validity invariants on uninit memory. In Rust,
         // `installer::Task` carries `result: Result` (Drop via `TaskError`
         // payloads) and a non-nullable fn-ptr in `thread_pool::Task`, so
         // `assume_init()` on uninit memory is instant UB and a subsequent
@@ -2102,8 +2058,7 @@ pub(crate) fn install_isolated_packages(
         // per-statement instead.
         // (Drop handles installer.deinit())
 
-        // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
-        // into `installer.tasks[i]`; in Rust the back-pointer is taken before
+        // The back-pointer is taken before
         // the `tasks` borrow. `Task.installer` is typed
         // `BackRef<Installer<'static>>` (raw back-ref, no real `'static` data),
         // so erase the lifetime via a void-pointer cast — `*mut T` is invariant
@@ -2116,12 +2071,11 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside
-        // `appendStorePath` (worker threads, via `*const Installer`). Rust
-        // can't take `&mut PackageManager` from `&self` there, so ensure the
+        // `append_store_path` runs on worker threads via `&Installer` and
+        // can't take `&mut PackageManager` there, so ensure the
         // global link dir once on the main thread before any `.symlink`
         // resolution can be reached by a task. Guarded so installs without
-        // `link:` deps don't touch the global dir (matches Zig laziness).
+        // `link:` deps don't touch the global dir.
         if pkg_resolutions
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
@@ -2228,10 +2182,9 @@ pub(crate) fn install_isolated_packages(
                 | ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => {
-                    // PORT NOTE: Zig used `inline ... => |pkg_res_tag|` to monomorphize the
-                    // body per-tag. Rust collapses to a single arm with a runtime
-                    // `pkg_res.tag` re-match where the body branches. // PERF(port): was
-                    // comptime monomorphization — profile if hot.
+                    // A single arm with a runtime `pkg_res.tag` re-match where
+                    // the body branches. // PERF: could monomorphize per-tag —
+                    // profile if hot.
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =
@@ -2298,8 +2251,7 @@ pub(crate) fn install_isolated_packages(
                                     .unwrap_or(false);
                             }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // PORT NOTE: reshaped for borrowck — Zig `save()` returns a
-                            // `ResetScope` holding `*Path`; capture the length instead so
+                            // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.
                             let scope_for_patch_tag_path = store_path.len();
                             if pkg_res_tag == ResolutionTag::Npm {
@@ -2391,7 +2343,7 @@ pub(crate) fn install_isolated_packages(
 
                     let (cache_dir, cache_dir_path) =
                         installer.manager_mut().get_cache_directory_and_abs_path();
-                    let _ = &cache_dir_path; // dropped at scope exit (Zig: defer cache_dir_path.deinit())
+                    let _ = &cache_dir_path; // dropped at scope exit
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
@@ -2400,7 +2352,7 @@ pub(crate) fn install_isolated_packages(
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
                                     ResolutionTag::Npm => {
-                                        // PORT NOTE: reshaped for borrowck — capture length
+                                        // Reshaped for borrowck — capture length
                                         // instead of `save()` so the path stays unborrowed.
                                         let cache_dir_path_save = pkg_cache_dir_subpath.len();
                                         pkg_cache_dir_subpath.append(b"package.json").assume_ok();
@@ -2504,10 +2456,9 @@ pub(crate) fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::Github => {
-                            // Zig (isolated_install.zig:1759) reads `pkg_res.value.git` here as
-                            // a raw union pun (`git`/`github` arms share `Repository` layout);
-                            // Rust's `.git()` accessor adds a `debug_assert_eq!(tag, Git)` that
-                            // fires under `Github`, so use the tag-correct `.github()` instead.
+                            // The `.git()` accessor has a `debug_assert_eq!(tag, Git)` that
+                            // fires under `Github`, so use the tag-correct `.github()`
+                            // (the two arms share `Repository` layout).
                             let url = installer.manager().alloc_github_url(pkg_res.github());
                             // (Drop frees url)
                             match installer.manager_mut().enqueue_tarball_for_download(
@@ -2693,5 +2644,3 @@ pub(crate) fn install_isolated_packages(
 
 use crate::dependency::VersionTag;
 use crate::resolution::Tag as ResolutionTag;
-
-// ported from: src/install/isolated_install.zig

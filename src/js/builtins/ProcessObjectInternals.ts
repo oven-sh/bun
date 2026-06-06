@@ -478,7 +478,12 @@ export function windowsEnv(
       }
       // Node also requires a [[Value]]: a value-less data descriptor is
       // rejected rather than defining the property as undefined.
-      if (!("value" in attributes) || attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
+      if (
+        !("value" in attributes) ||
+        attributes.configurable !== true ||
+        attributes.writable !== true ||
+        attributes.enumerable !== true
+      ) {
         throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
           "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
         );

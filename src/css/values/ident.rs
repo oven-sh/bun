@@ -439,6 +439,22 @@ impl IdentOrRef {
         }
     }
 
+    /// Test-only: wyhash of `IdentOrRef::from_ref(r, debug_ident)` where the
+    /// debug-ident slice is arena-allocated from `debug_slice`. Lives here
+    /// (not in the `bun_css_jsc` binding) because `DebugIdent`/`debug_ident`
+    /// are `pub(crate)`. Used by `cssInternals.identOrRefHashRefs`.
+    pub fn hash_from_ref_for_testing(
+        arena: &bun_alloc::Arena,
+        r: Ref,
+        debug_slice: &[u8],
+    ) -> u64 {
+        let slice: &[u8] = arena.alloc_slice_copy(debug_slice);
+        let ior = Self::from_ref(r, debug_ident(slice, arena));
+        let mut h = Wyhash::init(0);
+        ior.hash(&mut h);
+        h.final_()
+    }
+
     pub fn eql(&self, other: &Self) -> bool {
         if let (Some(a), Some(b)) = (self.as_ident(), other.as_ident()) {
             return a.v() == b.v();

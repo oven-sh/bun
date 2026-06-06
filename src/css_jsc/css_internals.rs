@@ -405,8 +405,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 /// with overwhelming probability for wyhash over distinct 8-byte inputs).
 pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Ref;
-    use bun_css::css_values::ident::{IdentOrRef, debug_ident};
-    use bun_wyhash::Wyhash;
+    use bun_css::css_values::ident::IdentOrRef;
 
     let arena = Arena::new();
     let arguments_ = frame.arguments_old::<4>();
@@ -442,34 +441,24 @@ pub fn ident_or_ref_hash_refs(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let ref_a = Ref::init(a_inner, a_source, false);
     let ref_b = Ref::init(b_inner, b_source, false);
 
-    // Allocate four distinct debug slices so each `from_ref` packs a different
-    // `ptrbits` lane in debug builds. The four resulting `IdentOrRef` values
-    // pair off into logically-equal refs — `eql` ignores `ptrbits`, so a
-    // correct `hash` must too.
-    let slice_a = arena.alloc_slice_copy(b"a");
-    let slice_a2 = arena.alloc_slice_copy(b"a2");
-    let slice_b = arena.alloc_slice_copy(b"b");
-    let slice_b2 = arena.alloc_slice_copy(b"b2");
-
-    let ior_a = IdentOrRef::from_ref(ref_a, debug_ident(slice_a, &arena));
-    let ior_a2 = IdentOrRef::from_ref(ref_a, debug_ident(slice_a2, &arena));
-    let ior_b = IdentOrRef::from_ref(ref_b, debug_ident(slice_b, &arena));
-    let ior_b2 = IdentOrRef::from_ref(ref_b, debug_ident(slice_b2, &arena));
-
-    let hash_one = |ior: &IdentOrRef| -> u64 {
-        let mut h = Wyhash::init(0);
-        ior.hash(&mut h);
-        h.final_()
-    };
+    // Hash each ref twice with distinct debug-ident slices so each `from_ref`
+    // packs a different `ptrbits` lane in debug builds. The four resulting
+    // `IdentOrRef` values pair off into logically-equal refs — `eql` ignores
+    // `ptrbits`, so a correct `hash` must too.
+    let hashes: [u64; 4] = [
+        IdentOrRef::hash_from_ref_for_testing(&arena, ref_a, b"a"),
+        IdentOrRef::hash_from_ref_for_testing(&arena, ref_a, b"a2"),
+        IdentOrRef::hash_from_ref_for_testing(&arena, ref_b, b"b"),
+        IdentOrRef::hash_from_ref_for_testing(&arena, ref_b, b"b2"),
+    ];
 
     let arr = JSValue::create_empty_array(global, 4)?;
-    for (idx, ior) in [&ior_a, &ior_a2, &ior_b, &ior_b2].iter().enumerate() {
+    for (idx, full) in hashes.iter().enumerate() {
         // Fold the u64 wyhash output into the low 30 bits so the JS Number
         // return value stays in int32 range (no f64 precision loss above
         // 2^53). XOR of high and low halves preserves distinctness for any
         // distinct wyhash outputs whose two halves don't happen to agree —
         // astronomically unlikely for wyhash over distinct 8-byte keys.
-        let full = hash_one(ior);
         let folded: i32 = (((full ^ (full >> 32)) as u32) & 0x3fff_ffff) as i32;
         arr.put_index(global, idx as u32, JSValue::js_number_from_int32(folded))?;
     }

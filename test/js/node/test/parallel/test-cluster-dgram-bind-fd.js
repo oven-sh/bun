@@ -3,6 +3,11 @@
 const common = require('../common');
 if (common.isWindows)
   common.skip('dgram clustering is currently not supported on Windows.');
+// Same shared-fd packet distribution assertion as test-cluster-dgram-1, so
+// the same macOS >= 15.7 kernel behavior makes it stall forever.
+// https://github.com/nodejs/node/issues/60050
+if (common.isMacOS)
+  common.skip('dgram packet distribution is uneven on macOS >= 15.7');
 
 const NUM_WORKERS = 4;
 const PACKETS_PER_WORKER = 10;

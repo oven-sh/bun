@@ -830,16 +830,21 @@ describe.concurrent(() => {
   });
 
   it("--abort-on-uncaught-exception aborts an unhandled rejection with no listeners", async () => {
-    const proc = Bun.spawn(
-      [
-        bunExe(),
-        "--abort-on-uncaught-exception",
-        "--unhandled-rejections=strict",
-        "-e",
-        `Promise.reject(new Error("x"));`,
-      ],
-      { env: bunEnv, stdout: "ignore", stderr: "ignore" },
-    );
+    const cmd = [
+      bunExe(),
+      "--abort-on-uncaught-exception",
+      "--unhandled-rejections=strict",
+      "-e",
+      `Promise.reject(new Error("x"));`,
+    ];
+    // The abort is intentional: disable core dumps like the upstream node
+    // abort tests do, so CI lanes that collect core files at teardown don't
+    // flag this child's core as a crash.
+    const proc = Bun.spawn(isWindows ? cmd : ["sh", "-c", 'ulimit -c 0 && exec "$@"', "sh", ...cmd], {
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
     const exitCode = await proc.exited;
     // SIGABRT on POSIX; _exit(134) on Windows.
     expect(proc.signalCode === "SIGABRT" || exitCode === 134).toBe(true);

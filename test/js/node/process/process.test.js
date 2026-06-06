@@ -106,6 +106,36 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
+it("process.loadEnvFile can set accessor-backed keys and respects empty values", async () => {
+  using dir = tempDir("load-env-accessors", {
+    ".env": "HTTP_PROXY=http://from-dotenv:8080\nEMPTY_WINS=from-dotenv\nFRESH_KEY=fresh\n",
+    "index.js": `
+      process.loadEnvFile();
+      // HTTP_PROXY always exists on process.env as a custom accessor even
+      // when the variable is unset; loadEnvFile must still apply it.
+      console.log(process.env.HTTP_PROXY);
+      // An existing empty-string value takes precedence over the file.
+      console.log(JSON.stringify(process.env.EMPTY_WINS));
+      console.log(process.env.FRESH_KEY);
+    `,
+  });
+
+  const env = { ...bunEnv, EMPTY_WINS: "" };
+  delete env.HTTP_PROXY;
+  delete env.http_proxy;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('http://from-dotenv:8080\n""\nfresh\n');
+  expect(exitCode).toBe(0);
+});
+
 it("process.env defineProperty matches assignment semantics", () => {
   // Node's EnvDefiner delegates to the env setter after validating the
   // descriptor: symbol keys throw a TypeError...

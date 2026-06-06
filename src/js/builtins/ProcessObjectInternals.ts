@@ -567,8 +567,13 @@ export function loadEnvFile(path) {
   for (const key of Object.keys(parsed)) {
     // Node's Dotenv::SetEnvironment: variables already present in the
     // environment (including ones from --env-file) take precedence; the
-    // file only fills in missing keys.
-    if (!(key in process.env)) {
+    // file only fills in missing keys. Compare the read value with
+    // undefined instead of using \`in\`: keys like TZ and HTTP_PROXY always
+    // exist as custom accessors on process.env even when the variable is
+    // unset (and \`in\` would also see Object.prototype members), while an
+    // unset accessor reads back as undefined and an existing empty-string
+    // value reads as "" and correctly takes precedence.
+    if (process.env[key] === undefined) {
       process.env[key] = parsed[key];
     }
   }

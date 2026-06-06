@@ -72,12 +72,20 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
+    if (message.act === "newconn" && handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
+      handle = makeConnectionHandle(message["$fd"]);
+    }
+    // node's child_process emits cluster-internal messages on the process
+    // object before the cluster machinery consumes them (node's own cluster
+    // child is wired through this event); tests and tooling tap it - e.g.
+    // test-cluster-worker-handle-close closes its server from a prepended
+    // listener so the connection below is dropped.
+    process.emit("internalMessage", message, handle);
     if (message.act === "newconn") {
-      if (handle == null && typeof message["$fd"] === "number" && message["$fd"] >= 0) {
-        handle = makeConnectionHandle(message["$fd"]);
-      }
       onconnection(message, handle);
-    } else if (message.act === "disconnect") worker._disconnect(true);
+    } else if (message.act === "disconnect") {
+      worker._disconnect(true);
+    }
   }
 };
 

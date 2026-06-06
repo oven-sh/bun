@@ -249,43 +249,43 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
 /// selectors multiplied through compiled nesting can reach hundreds of
 /// megabytes while staying under the count cap. This estimate only needs to
 /// be proportional to the serialized size, not exact.
-pub(crate) fn selector_list_weight(selectors: &[Selector]) -> u32 {
-    let mut weight: u32 = 0;
+pub(crate) fn selector_list_weight(selectors: &[Selector]) -> u64 {
+    let mut weight: u64 = 0;
     for selector in selectors {
         weight = weight.saturating_add(selector_weight(selector));
     }
     weight
 }
 
-pub(crate) fn selector_weight(selector: &Selector) -> u32 {
-    let mut weight: u32 = 0;
+pub(crate) fn selector_weight(selector: &Selector) -> u64 {
+    let mut weight: u64 = 0;
     for component in selector.components.iter() {
         weight = weight.saturating_add(component_weight(component));
     }
     weight
 }
 
-fn component_weight(component: &Component) -> u32 {
-    const BASE: u32 = 4;
-    let payload: u32 = match component {
-        Component::DefaultNamespace(url) => url.len() as u32,
+fn component_weight(component: &Component) -> u64 {
+    const BASE: u64 = 4;
+    let payload: u64 = match component {
+        Component::DefaultNamespace(url) => url.len() as u64,
         Component::Namespace { prefix, url } => {
-            (prefix.v.len() as u32).saturating_add(url.len() as u32)
+            (prefix.v.len() as u64).saturating_add(url.len() as u64)
         }
-        Component::LocalName(name) => name.name.v.len() as u32,
+        Component::LocalName(name) => name.name.v.len() as u64,
         Component::Id(ident) | Component::Class(ident) => ident_or_ref_weight(*ident),
-        Component::AttributeInNoNamespaceExists { local_name, .. } => local_name.v.len() as u32,
+        Component::AttributeInNoNamespaceExists { local_name, .. } => local_name.v.len() as u64,
         Component::AttributeInNoNamespace {
             local_name, value, ..
-        } => (local_name.v.len() as u32).saturating_add(value.len() as u32),
+        } => (local_name.v.len() as u64).saturating_add(value.len() as u64),
         Component::AttributeOther(attr) => {
             let op_len = match &attr.operation {
                 parser::attrs::ParsedAttrSelectorOperation::Exists => 0,
                 parser::attrs::ParsedAttrSelectorOperation::WithValue {
                     expected_value, ..
-                } => expected_value.len() as u32,
+                } => expected_value.len() as u64,
             };
-            (attr.local_name.v.len() as u32).saturating_add(op_len)
+            (attr.local_name.v.len() as u64).saturating_add(op_len)
         }
         Component::Negation(list)
         | Component::Where(list)
@@ -298,9 +298,9 @@ fn component_weight(component: &Component) -> u32 {
         Component::Slotted(selector) => selector_weight(selector),
         Component::Host(selector) => selector.as_ref().map_or(0, selector_weight),
         Component::Part(names) => {
-            let mut w: u32 = 0;
+            let mut w: u64 = 0;
             for name in names.iter() {
-                w = w.saturating_add(name.v.len() as u32);
+                w = w.saturating_add(name.v.len() as u64);
             }
             w
         }
@@ -311,56 +311,56 @@ fn component_weight(component: &Component) -> u32 {
     BASE.saturating_add(payload)
 }
 
-fn ident_or_ref_weight(ident: css::css_values::ident::IdentOrRef) -> u32 {
+fn ident_or_ref_weight(ident: css::css_values::ident::IdentOrRef) -> u64 {
     // CSS-modules refs resolve through the symbol table; use a flat estimate.
     match ident.as_ident() {
-        Some(ident) => ident.v.len() as u32,
+        Some(ident) => ident.v.len() as u64,
         None => 16,
     }
 }
 
-fn pseudo_class_weight(pseudo: &PseudoClass) -> u32 {
+fn pseudo_class_weight(pseudo: &PseudoClass) -> u64 {
     // Longest built-in pseudo-class names are ~24 bytes (vendor prefixes
     // included); variants carrying input-controlled payloads are measured.
-    const NAME: u32 = 24;
+    const NAME: u64 = 24;
     match pseudo {
         PseudoClass::Lang { languages } => {
             // Downleveling multiplies each language into its own `:lang()`
             // inside `:is()`, so charge per-language overhead too.
-            let mut w: u32 = 0;
+            let mut w: u64 = 0;
             for lang in languages {
-                w = w.saturating_add(lang.len() as u32).saturating_add(8);
+                w = w.saturating_add(lang.len() as u64).saturating_add(8);
             }
             w
         }
         PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
             selector_weight(selector)
         }
-        PseudoClass::Custom { name } => NAME.saturating_add(name.len() as u32),
+        PseudoClass::Custom { name } => NAME.saturating_add(name.len() as u64),
         PseudoClass::CustomFunction { name, arguments } => NAME
-            .saturating_add(name.len() as u32)
+            .saturating_add(name.len() as u64)
             .saturating_add(token_list_weight(arguments)),
         _ => NAME,
     }
 }
 
-fn pseudo_element_weight(pseudo: &PseudoElement) -> u32 {
-    const NAME: u32 = 24;
+fn pseudo_element_weight(pseudo: &PseudoElement) -> u64 {
+    const NAME: u64 = 24;
     match pseudo {
         PseudoElement::CueFunction { selector } | PseudoElement::CueRegionFunction { selector } => {
             NAME.saturating_add(selector_weight(selector))
         }
-        PseudoElement::Custom { name } => NAME.saturating_add(name.len() as u32),
+        PseudoElement::Custom { name } => NAME.saturating_add(name.len() as u64),
         PseudoElement::CustomFunction { name, arguments } => NAME
-            .saturating_add(name.len() as u32)
+            .saturating_add(name.len() as u64)
             .saturating_add(token_list_weight(arguments)),
         _ => NAME,
     }
 }
 
-fn token_list_weight(list: &crate::properties::custom::TokenList) -> u32 {
+fn token_list_weight(list: &crate::properties::custom::TokenList) -> u64 {
     use crate::properties::custom::TokenOrValue;
-    let mut weight: u32 = 0;
+    let mut weight: u64 = 0;
     for token_or_value in &list.v {
         let w = match token_or_value {
             TokenOrValue::Token(token) => token_weight(token),
@@ -375,7 +375,7 @@ fn token_list_weight(list: &crate::properties::custom::TokenList) -> u32 {
                 .map_or(0, token_list_weight)
                 .saturating_add(16),
             TokenOrValue::Function(func) => {
-                (func.name.v.len() as u32).saturating_add(token_list_weight(&func.arguments))
+                (func.name.v.len() as u64).saturating_add(token_list_weight(&func.arguments))
             }
             _ => 16,
         };
@@ -384,8 +384,9 @@ fn token_list_weight(list: &crate::properties::custom::TokenList) -> u32 {
     weight
 }
 
-fn token_weight(token: &css::Token) -> u32 {
+fn token_weight(token: &css::Token) -> u64 {
     use css::Token;
+    const NUMERIC: u64 = 17;
     match token {
         Token::Ident(v)
         | Token::Function(v)
@@ -397,8 +398,12 @@ fn token_weight(token: &css::Token) -> u32 {
         | Token::UnquotedUrl(v)
         | Token::BadUrl(v)
         | Token::Whitespace(v)
-        | Token::Comment(v) => v.len() as u32,
-        Token::Dimension(dim) => dim.unit.len() as u32,
+        | Token::Comment(v) => v.len() as u64,
+        // Numeric tokens serialize through dtoa's shortest round-trip
+        // form, which is bounded (<= ~17 bytes), so a constant covers them.
+        Token::Number(_) => NUMERIC,
+        Token::Percentage { .. } => NUMERIC.saturating_add(1),
+        Token::Dimension(dim) => (dim.unit.len() as u64).saturating_add(NUMERIC),
         _ => 8,
     }
 }

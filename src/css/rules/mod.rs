@@ -1125,7 +1125,7 @@ pub struct MinifyContext<'a, 'bump> {
     /// average selector weight of their lists. `0` at the top level;
     /// maintained alongside `selector_expansion_multiplier` in
     /// `StyleRule::minify_nested_rules`.
-    pub selector_expansion_chain_bytes: u32,
+    pub selector_expansion_chain_bytes: u64,
     /// Running estimate of the serialized bytes the expansion will produce,
     /// checked against [`MAX_SELECTOR_EXPANSION_BYTES`].
     pub selector_expansion_bytes_total: u64,

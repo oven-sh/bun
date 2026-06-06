@@ -206,6 +206,51 @@ describe("webContents module", () => {
     });
   });
 
+  describe("webContents.sendInputEvent", () => {
+    test("mouse click reaches the page", async () => {
+      const w = createWindow({ show: true, width: 300, height: 200 });
+      await w.loadURL(
+        dataURL(
+          `<body style="margin:0"><button id="b" style="position:absolute;left:0;top:0;width:300px;height:200px">x</button>` +
+            `<script>window.__clicks=0;document.getElementById("b").addEventListener("click",()=>{window.__clicks++});</script></body>`,
+        ),
+      );
+      await new Promise((r) => setTimeout(r, 200));
+      w.webContents.sendInputEvent({ type: "mouseDown", x: 150, y: 100, button: "left", clickCount: 1 });
+      w.webContents.sendInputEvent({ type: "mouseUp", x: 150, y: 100, button: "left", clickCount: 1 });
+      await waitForTrue(async () => {
+        try {
+          return ((await w.webContents.executeJavaScript("window.__clicks")) as number) >= 1;
+        } catch {
+          return false;
+        }
+      });
+      expect((await w.webContents.executeJavaScript("window.__clicks")) as number).toBeGreaterThanOrEqual(1);
+    });
+
+    test("char key reaches a focused input", async () => {
+      const w = createWindow({ show: true, width: 300, height: 200 });
+      await w.loadURL(dataURL(`<body><input id="i" autofocus></body>`));
+      await new Promise((r) => setTimeout(r, 200));
+      await w.webContents.executeJavaScript(`document.getElementById("i").focus()`);
+      w.webContents.sendInputEvent({ type: "char", keyCode: "h" });
+      w.webContents.sendInputEvent({ type: "char", keyCode: "i" });
+      await waitForTrue(async () => {
+        try {
+          return (await w.webContents.executeJavaScript(`document.getElementById("i").value`)) === "hi";
+        } catch {
+          return false;
+        }
+      });
+      expect(await w.webContents.executeJavaScript(`document.getElementById("i").value`)).toBe("hi");
+    });
+
+    test("validates the event argument", () => {
+      const w = createWindow();
+      expect(() => w.webContents.sendInputEvent({} as never)).toThrow(TypeError);
+    });
+  });
+
   describe("console-message event", () => {
     test("is emitted for console.log in the page", async () => {
       const w = createWindow();

@@ -255,6 +255,43 @@ export class WebContents extends EventEmitter {
     this.win._command("stop_find");
   }
 
+  /** Injects a synthetic input event (keyboard or mouse). */
+  sendInputEvent(event: {
+    type: string;
+    keyCode?: string | number;
+    x?: number;
+    y?: number;
+    button?: "left" | "middle" | "right";
+    clickCount?: number;
+    modifiers?: string[];
+  }): void {
+    if (!event || typeof event.type !== "string") {
+      throw new TypeError("event.type is required");
+    }
+    // Electron passes keyCode as a character or named key; for char/keypress
+    // we forward the first character and its char code.
+    let keyCode: number | undefined;
+    let character: string | undefined;
+    if (typeof event.keyCode === "number") keyCode = event.keyCode;
+    else if (typeof event.keyCode === "string" && event.keyCode.length > 0) {
+      character = event.keyCode;
+      keyCode = event.keyCode.toUpperCase().charCodeAt(0);
+    }
+    if (this.win.isDestroyed()) return;
+    this.win._whenBrowserReady(() => {
+      native.sendInputEvent(this.win.id, {
+        type: event.type,
+        keyCode,
+        character,
+        x: event.x,
+        y: event.y,
+        button: event.button,
+        clickCount: event.clickCount,
+        modifiers: event.modifiers ? event.modifiers.length : 0,
+      });
+    });
+  }
+
   canGoBack(): boolean {
     return this.win._canGoBack;
   }
@@ -510,6 +547,20 @@ export class BrowserWindow extends EventEmitter {
 
   capturePage(): Promise<NativeImage> {
     return this.webContents.capturePage();
+  }
+
+  /** Returns the platform window handle (X11 Window id on Linux) as a Buffer,
+   * matching Electron's getNativeWindowHandle() shape. */
+  getNativeWindowHandle(): Buffer {
+    const handle = native.windowGetHandle(this.id);
+    const buf = Buffer.alloc(8);
+    buf.writeBigUInt64LE(handle);
+    return buf;
+  }
+
+  /** The raw native handle as a number (not in Electron; convenient for X11). */
+  getNativeWindowId(): number {
+    return Number(native.windowGetHandle(this.id));
   }
 
   /** Sets the window (and taskbar/dock) icon from a NativeImage or PNG path. */

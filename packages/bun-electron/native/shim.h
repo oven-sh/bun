@@ -77,6 +77,14 @@ BE_EXPORT char *be_window_get_state(int32_t id);
 // event where result.data is base64 PNG on success.
 BE_EXPORT void be_capture_page(int32_t id, int32_t capture_id);
 
+// Inject a synthetic input event. kv keys: type (char/keyDown/keyUp/
+// rawKeyDown/mouseDown/mouseUp/mouseMove), x, y, button, keyCode, character,
+// modifiers, clickCount.
+BE_EXPORT void be_send_input_event(int32_t id, const char *kv);
+
+// Native window handle (X11 Window on Linux), or 0 if not yet created.
+BE_EXPORT uint64_t be_window_get_handle(int32_t id);
+
 // Execute JavaScript in the window's main frame. If eval_id > 0 the result
 // round-trips through the renderer and an {"type":"eval-result","evalId":N,
 // "result":...,"isError":bool} event fires; with eval_id == 0 it's

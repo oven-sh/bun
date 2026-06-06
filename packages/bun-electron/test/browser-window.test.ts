@@ -237,6 +237,25 @@ describe("BrowserWindow module", () => {
     });
   });
 
+  describe("BrowserWindow.getNativeWindowHandle()", () => {
+    test("returns the real X11 window handle", async () => {
+      const { desktopCapturer } = await import("../src/index.ts");
+      const w = createWindow({ show: true, width: 280, height: 200, title: "handle-test" });
+      await w.loadURL(dataURL("<body></body>"));
+      await waitFor(() => w.getNativeWindowId() !== 0);
+      const handle = w.getNativeWindowId();
+      expect(handle).toBeGreaterThan(0);
+      // The handle must match one of the enumerated native windows.
+      const sources = await desktopCapturer.getSources({ types: ["window"] });
+      const xids = sources.map((s) => Number(s.id.split(":")[1]));
+      expect(xids).toContain(handle);
+      // Buffer form is 8 bytes encoding the same value.
+      const buf = w.getNativeWindowHandle();
+      expect(buf.length).toBe(8);
+      expect(Number(buf.readBigUInt64LE(0))).toBe(handle);
+    });
+  });
+
   describe("BrowserWindow events", () => {
     test("emits resize when the window is resized", async () => {
       const w = createWindow({ show: true, width: 300, height: 200 });

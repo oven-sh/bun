@@ -18,7 +18,7 @@ await win.loadURL("https://bun.com");
 
 | Platform        | Build         | Runtime            | Tests                               |
 | --------------- | ------------- | ------------------ | ----------------------------------- |
-| Linux x64/arm64 | ✅            | ✅                 | ✅ 235 ported Electron tests passing |
+| Linux x64/arm64 | ✅            | ✅                 | ✅ 243 ported Electron tests passing |
 | macOS x64/arm64 | ✅ (untested) | needs verification | —                                   |
 | Windows x64     | ✅ (untested) | needs verification | —                                   |
 
@@ -237,7 +237,7 @@ carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `tray-notification`, `net`, `message-channel`, `power-monitor`,
 `context-isolation`, `web-request`, `desktop-capturer`, `png-decode`, and
 `jpeg-decode`, `native-theme`, `app-extras`, `power-save-blocker`, and
-`system-preferences`, `power-save-blocker`, and `desktop-capturer` test files (235 tests total). App-lifecycle scenarios spawn fresh
+`system-preferences`, `power-save-blocker`, `desktop-capturer`, and `utility-process` test files (243 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

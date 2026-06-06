@@ -33,6 +33,7 @@ export { Session } from "./session";
 export { nativeTheme } from "./native-theme";
 export { powerSaveBlocker } from "./power-save-blocker";
 export { systemPreferences } from "./system-preferences";
+export { utilityProcess } from "./utility-process";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -56,6 +57,7 @@ import { desktopCapturer } from "./desktop-capturer";
 import { nativeTheme } from "./native-theme";
 import { powerSaveBlocker } from "./power-save-blocker";
 import { systemPreferences } from "./system-preferences";
+import { utilityProcess } from "./utility-process";
 
 export default {
   app,
@@ -82,4 +84,5 @@ export default {
   shell,
   systemPreferences,
   Tray,
+  utilityProcess,
 };

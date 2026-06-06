@@ -244,6 +244,7 @@ struct WindowEntry {
   std::map<int, int32_t> pending_captures;  // devtools message id -> capture id
   std::map<int, int32_t> pending_devtools;  // devtools message id -> call id
   WindowState state;
+  uint64_t native_handle = 0;  // X11 Window / HWND / NSView, cached on create
   bool destroyed = false;
 };
 
@@ -672,6 +673,10 @@ class WindowDelegate : public CefWindowDelegate {
 
     if (KVGetBool(options_, "fullscreen", false)) window->SetFullscreen(true);
 
+    if (auto entry = FindWindow(window_id_)) {
+      entry->native_handle =
+          static_cast<uint64_t>(window->GetWindowHandle());
+    }
     UpdateCachedBounds(window_id_, window->GetBoundsInScreen());
     EmitWindowEvent("window-created", window_id_);
   }
@@ -1693,6 +1698,51 @@ void EvalJsOnUI(int32_t window_id, std::string code, int32_t eval_id) {
   }
 }
 
+void SendInputEventOnUI(int32_t window_id, std::string kv_str) {
+  CEF_REQUIRE_UI_THREAD();
+  auto entry = FindWindow(window_id);
+  if (!entry || !entry->browser) return;
+  CefRefPtr<CefBrowserHost> host = entry->browser->GetHost();
+  KVList kv = ParseKV(kv_str.c_str());
+  std::string type = KVGet(kv, "type");
+
+  if (type == "char" || type == "keyDown" || type == "keyUp" || type == "rawKeyDown") {
+    CefKeyEvent ev;
+    ev.modifiers = static_cast<uint32_t>(KVGetInt(kv, "modifiers", 0));
+    ev.windows_key_code = KVGetInt(kv, "keyCode", 0);
+    ev.native_key_code = 0;
+    std::string ch = KVGet(kv, "character");
+    char16_t c = ch.empty() ? static_cast<char16_t>(ev.windows_key_code)
+                            : static_cast<char16_t>(ch[0]);
+    ev.character = c;
+    ev.unmodified_character = c;
+    if (type == "char") ev.type = KEYEVENT_CHAR;
+    else if (type == "keyUp") ev.type = KEYEVENT_KEYUP;
+    else if (type == "rawKeyDown") ev.type = KEYEVENT_RAWKEYDOWN;
+    else ev.type = KEYEVENT_KEYDOWN;
+    host->SendKeyEvent(ev);
+    return;
+  }
+
+  if (type == "mouseDown" || type == "mouseUp" || type == "mouseMove") {
+    CefMouseEvent ev;
+    ev.x = KVGetInt(kv, "x", 0);
+    ev.y = KVGetInt(kv, "y", 0);
+    ev.modifiers = static_cast<uint32_t>(KVGetInt(kv, "modifiers", 0));
+    if (type == "mouseMove") {
+      host->SendMouseMoveEvent(ev, false);
+      return;
+    }
+    std::string button = KVGet(kv, "button", "left");
+    cef_mouse_button_type_t bt = MBT_LEFT;
+    if (button == "right") bt = MBT_RIGHT;
+    else if (button == "middle") bt = MBT_MIDDLE;
+    host->SendMouseClickEvent(ev, bt, type == "mouseUp",
+                              KVGetInt(kv, "clickCount", 1));
+    return;
+  }
+}
+
 void IpcSendOnUI(int32_t window_id, std::string channel, std::string args_json) {
   CEF_REQUIRE_UI_THREAD();
   auto entry = FindWindow(window_id);
@@ -1935,6 +1985,15 @@ BE_EXPORT void be_window_eval_js(int32_t id, const char* code, int32_t eval_id) 
 
 BE_EXPORT void be_capture_page(int32_t id, int32_t capture_id) {
   PostToUI(base::BindOnce(&CapturePageOnUI, id, capture_id));
+}
+
+BE_EXPORT void be_send_input_event(int32_t id, const char* kv) {
+  PostToUI(base::BindOnce(&SendInputEventOnUI, id, std::string(kv ? kv : "")));
+}
+
+BE_EXPORT uint64_t be_window_get_handle(int32_t id) {
+  auto entry = FindWindow(id);
+  return entry ? entry->native_handle : 0;
 }
 
 BE_EXPORT void be_devtools_method(int32_t id,

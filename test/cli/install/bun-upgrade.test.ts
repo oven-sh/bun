@@ -559,13 +559,31 @@ it("delta upgrade falls back to the full download when the patch fails verificat
   expect(exitCode).toBe(1);
 });
 
-it.skipIf(isWindows)("delta upgrade chains through intermediate releases", async () => {
-  // Two releases behind: current -> middle -> target. No direct
-  // target.from-current patch exists, so the chain is used, verifying the
-  // intermediate binary's checksum along the way.
-  const { current, target: middle } = releaseVersions();
-  const [major, minor, patch] = middle.split(".").map(Number);
-  const target = `${major}.${minor}.${patch + 1}`;
+// Two releases behind: current -> middle -> target. No direct
+// target.from-current patch exists, so the chain is used, verifying the
+// intermediate binary's checksum along the way.
+const chainLayouts = [
+  {
+    label: "consecutive patch releases",
+    versions() {
+      const { current, target: middle } = releaseVersions();
+      const [major, minor, patch] = middle.split(".").map(Number);
+      return { current, middle, target: `${major}.${minor}.${patch + 1}` };
+    },
+  },
+  {
+    label: "a minor version bump",
+    versions() {
+      // The chain crosses the minor boundary via the new minor's .0 release.
+      const { current } = releaseVersions();
+      const [major, minor] = current.split(".").map(Number);
+      return { current, middle: `${major}.${minor + 1}.0`, target: `${major}.${minor + 1}.1` };
+    },
+  },
+];
+
+it.skipIf(isWindows).each(chainLayouts)("delta upgrade chains through $label", async ({ versions }) => {
+  const { current, middle, target } = versions();
   const tagName = `bun-v${target}`;
 
   using cwdDir = tempDir("bun-upgrade-cwd", {});
@@ -786,118 +804,142 @@ function storeZip(entries: Record<string, { data: Uint8Array; mode?: number }>):
   return Buffer.concat([...chunks, ...centrals, eocd]);
 }
 
-it.skipIf(isWindows)("bun upgrade pr <number> installs the pull request's build", async () => {
-  const prNumber = 12345;
-  const prTitle = "fix: make something faster";
-  const headSha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
-  const script = `#!/bin/sh\necho 1.2.3-pr+${headSha.slice(0, 9)}\n`;
+const prInstallVariants = [
+  { label: "", flags: [] as string[], exeName: "bun" },
+  { label: " with --profile", flags: ["--profile"], exeName: "bun-profile" },
+];
 
-  // One artifact zip per platform so the test passes on any target.
-  const zips = new Map<string, Uint8Array>();
-  for (const name of allPlatformAssetNames()) {
-    zips.set(
-      `${name}.zip`,
-      storeZip({
-        [`${name}/bun`]: { data: new TextEncoder().encode(script), mode: 0o755 },
-      }),
-    );
-  }
+it.skipIf(isWindows).each(prInstallVariants)(
+  "bun upgrade pr <number> installs the pull request's build$label",
+  async ({ flags, exeName }) => {
+    const prNumber = 12345;
+    const prTitle = "fix: make something faster";
+    const headSha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0";
+    const scriptFor = (exe: string) => `#!/bin/sh\necho ${exe} 1.2.3-pr+${headSha.slice(0, 9)}\n`;
 
-  using cwdDir = tempDir("bun-upgrade-cwd", {});
-  const cwd = String(cwdDir);
-  const execPath = join(cwd, basename(bunExe()));
-  await copyFile(bunExe(), execPath);
-
-  const artifactDownloads: string[] = [];
-  using server = Bun.serve({
-    tls,
-    port: 0,
-    async fetch(req) {
-      const { pathname } = new URL(req.url);
-
-      if (pathname === `/repos/oven-sh/bun/pulls/${prNumber}`) {
-        return Response.json({
-          title: prTitle,
-          state: "open",
-          head: { sha: headSha },
-        });
-      }
-      if (pathname === `/repos/oven-sh/bun/commits/${headSha}/statuses`) {
-        return Response.json([
-          { context: "some-other-ci", state: "success", target_url: "https://example.com/nope" },
-          {
-            context: "buildkite/bun",
-            state: "success",
-            target_url: `https://${server.hostname}:${server.port}/bun/bun/builds/4242#annotation`,
-          },
-        ]);
-      }
-      if (pathname === "/bun/bun/builds/4242.json") {
-        return Response.json({
-          state: "passed",
-          jobs: [
-            { step_key: "linux-x64-test-bun", base_path: "/bun/bun/builds/4242/jobs/test" },
-            { step_key: "build-bun", base_path: "/bun/bun/builds/4242/jobs/build" },
-          ],
-        });
-      }
-      if (pathname === "/bun/bun/builds/4242/jobs/build/artifacts") {
-        // Real Buildkite responses carry both checksums.
-        return Response.json(
-          [...zips.entries()].map(([name, data]) => ({
-            file_name: name,
-            url: `/artifacts/${name}`,
-            sha256sum: sha256Hex(data),
-            sha1sum: sha1Hex(data),
-          })),
+    // Standard and -profile artifact zips for every platform, so the test
+    // passes on any target and proves the requested flavor gets picked.
+    const zips = new Map<string, Uint8Array>();
+    for (const name of allPlatformAssetNames()) {
+      for (const [folder, exe] of [
+        [name, "bun"],
+        [`${name}-profile`, "bun-profile"],
+      ] as const) {
+        zips.set(
+          `${folder}.zip`,
+          storeZip({
+            [`${folder}/${exe}`]: { data: new TextEncoder().encode(scriptFor(exe)), mode: 0o755 },
+          }),
         );
       }
-      if (pathname.startsWith("/artifacts/")) {
-        artifactDownloads.push(pathname);
-        const zip = zips.get(pathname.slice("/artifacts/".length));
-        if (zip) return new Response(zip);
-      }
-      return new Response("not found", { status: 404 });
-    },
-  });
+    }
 
-  using staging = tempDir("bun-upgrade-pr", {});
-  await using proc = Bun.spawn({
-    cmd: [execPath, "upgrade", "pr", String(prNumber)],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      NODE_TLS_REJECT_UNAUTHORIZED: "0",
-      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
-      // Build links are pinned to Bun's Buildkite pipeline; point the pin at
-      // the mock server.
-      BUN_UPGRADE_TESTING_BUILDKITE_URL: `https://${server.hostname}:${server.port}/bun/bun/builds/`,
-      BUN_TMPDIR: String(staging),
-      ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-    },
-  });
+    using cwdDir = tempDir("bun-upgrade-cwd", {});
+    const cwd = String(cwdDir);
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const artifactDownloads: string[] = [];
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
 
-  expect(stderr).toContain(`PR #${prNumber}`);
-  expect(stderr).toContain(prTitle);
-  expect(stderr).toContain(`Installed a build of Bun from pull request #${prNumber}`);
-  expect(stderr).not.toContain("error:");
+        if (pathname === `/repos/oven-sh/bun/pulls/${prNumber}`) {
+          return Response.json({
+            title: prTitle,
+            state: "open",
+            head: { sha: headSha },
+          });
+        }
+        if (pathname === `/repos/oven-sh/bun/commits/${headSha}/statuses`) {
+          return Response.json([
+            { context: "some-other-ci", state: "success", target_url: "https://example.com/nope" },
+            {
+              context: "buildkite/bun",
+              state: "success",
+              target_url: `https://${server.hostname}:${server.port}/bun/bun/builds/4242#annotation`,
+            },
+          ]);
+        }
+        if (pathname === "/bun/bun/builds/4242.json") {
+          return Response.json({
+            state: "passed",
+            jobs: [
+              { step_key: "linux-x64-test-bun", base_path: "/bun/bun/builds/4242/jobs/test" },
+              { step_key: "build-bun", base_path: "/bun/bun/builds/4242/jobs/build" },
+            ],
+          });
+        }
+        if (pathname === "/bun/bun/builds/4242/jobs/build/artifacts") {
+          // Real Buildkite responses carry both checksums. Each artifact is
+          // listed twice: first a decoy on a lookalike origin (must be
+          // skipped: the build's origin is a prefix of it, but not equal),
+          // then the real entry. The profile variant uses absolute
+          // same-origin URLs and the standard variant relative ones, so both
+          // accepted URL forms stay covered.
+          const origin = `https://${server.hostname}:${server.port}`;
+          return Response.json(
+            [...zips.entries()].flatMap(([name, data]) => {
+              const entry = { file_name: name, sha256sum: sha256Hex(data), sha1sum: sha1Hex(data) };
+              return [
+                { ...entry, url: `${origin}.attacker.example/artifacts/${name}` },
+                { ...entry, url: exeName === "bun-profile" ? `${origin}/artifacts/${name}` : `/artifacts/${name}` },
+              ];
+            }),
+          );
+        }
+        if (pathname.startsWith("/artifacts/")) {
+          artifactDownloads.push(pathname);
+          const zip = zips.get(pathname.slice("/artifacts/".length));
+          if (zip) return new Response(zip);
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
 
-  // Exactly one artifact was downloaded, and it was this platform's.
-  const os = process.platform === "darwin" ? "darwin" : "linux";
-  const arch = process.arch === "arm64" ? "aarch64" : "x64";
-  expect(artifactDownloads).toHaveLength(1);
-  expect(artifactDownloads[0]).toStartWith(`/artifacts/bun-${os}-${arch}`);
+    using staging = tempDir("bun-upgrade-pr", {});
+    await using proc = Bun.spawn({
+      cmd: [execPath, "upgrade", "pr", String(prNumber), ...flags],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        // Build links are pinned to Bun's Buildkite pipeline; point the pin at
+        // the mock server.
+        BUN_UPGRADE_TESTING_BUILDKITE_URL: `https://${server.hostname}:${server.port}/bun/bun/builds/`,
+        BUN_TMPDIR: String(staging),
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
+    });
 
-  // The pull request's build was installed over the executable.
-  expect(await Bun.file(execPath).text()).toBe(script);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toContain(`PR #${prNumber}`);
+    expect(stderr).toContain(prTitle);
+    expect(stderr).toContain(`Installed a build of Bun from pull request #${prNumber}`);
+    expect(stderr).not.toContain("error:");
+
+    // Exactly one artifact was downloaded: this platform's, in the requested
+    // flavor.
+    const os = process.platform === "darwin" ? "darwin" : "linux";
+    const arch = process.arch === "arm64" ? "aarch64" : "x64";
+    expect(artifactDownloads).toHaveLength(1);
+    expect(artifactDownloads[0]).toStartWith(`/artifacts/bun-${os}-${arch}`);
+    expect(artifactDownloads[0].endsWith("-profile.zip")).toBe(exeName === "bun-profile");
+
+    // The pull request's build (of the requested flavor) was installed over
+    // the executable.
+    expect(await Bun.file(execPath).text()).toBe(scriptFor(exeName));
+
+    expect(exitCode).toBe(0);
+  },
+);
 
 // `#1234` and pull request URLs are accepted too; a 404 from the mocked
 // GitHub API proves the number was parsed out of each spelling (the error
@@ -947,10 +989,13 @@ describe.concurrent("bun upgrade pr argument validation", () => {
     expect(exitCode).toBe(1);
   });
 
-  it("rejects a non-numeric pull request number", async () => {
+  // Wrong-repo URLs are rejected: the number is looked up in oven-sh/bun,
+  // so reinterpreting another repository's PR URL would install a build the
+  // user never named.
+  it.each(["not-a-number", "https://github.com/acme/widget/pull/123"])("rejects %s", async arg => {
     using cwd = tempDir("bun-upgrade-pr-args", {});
     await using proc = spawn({
-      cmd: [bunExe(), "upgrade", "pr", "not-a-number"],
+      cmd: [bunExe(), "upgrade", "pr", arg],
       cwd: String(cwd),
       stdout: null,
       stdin: "pipe",

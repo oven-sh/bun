@@ -511,8 +511,11 @@ impl UpgradeCommand {
         if strings::has_prefix_comptime(digits, b"https://")
             || strings::has_prefix_comptime(digits, b"http://")
         {
-            let i = strings::index_of(digits, b"/pull/")?;
-            digits = &digits[i as usize + b"/pull/".len()..];
+            // The number is looked up in oven-sh/bun, so a URL naming any
+            // other repository must be rejected, not reinterpreted.
+            const PULL_PATH: &[u8] = b"github.com/oven-sh/bun/pull/";
+            let i = strings::index_of(digits, PULL_PATH)?;
+            digits = &digits[i as usize + PULL_PATH.len()..];
             if let Some(end) = digits.iter().position(|c| !c.is_ascii_digit()) {
                 digits = &digits[..end];
             }
@@ -2279,7 +2282,9 @@ impl UpgradeCommand {
                 let zip_url: Vec<u8> = if strings::has_prefix_comptime(&artifact_url, b"http") {
                     // An absolute artifact URL must stay on the build's own
                     // origin; anything else doesn't belong to this CI build.
-                    if !strings::starts_with(&artifact_url, &origin) {
+                    // Compare origins exactly (a prefix check would accept
+                    // lookalike hosts such as `https://example.com.evil`).
+                    if Self::url_origin(&artifact_url) != origin.as_slice() {
                         continue;
                     }
                     artifact_url

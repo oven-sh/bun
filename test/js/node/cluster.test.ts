@@ -202,16 +202,18 @@ const cluster = require("node:cluster");
 const net = require("node:net");
 const path = require("node:path");
 
-const PIPE =
-  process.platform === "win32"
-    ? String.raw\`\\\\.\\pipe\\bun-cluster-pipe-err-\${process.pid}\`
-    : path.join(__dirname, "test.sock");
-
 if (cluster.isPrimary) {
+  // The name must be computed once and shared via the fork env: a
+  // pid-derived name re-evaluated in the worker would point at a
+  // different (free) pipe and the listen below would succeed.
+  const PIPE =
+    process.platform === "win32"
+      ? String.raw\`\\\\.\\pipe\\bun-cluster-pipe-err-\${process.pid}\`
+      : path.join(__dirname, "test.sock");
   // Hold the pipe in the primary so the worker's listen fails EADDRINUSE.
   const blocker = net.createServer(() => {});
   blocker.listen(PIPE, () => {
-    const worker = cluster.fork();
+    const worker = cluster.fork({ BUN_CLUSTER_PIPE: PIPE });
     worker.on("message", msg => {
       console.log("code:", msg.code);
       console.log("message:", msg.message);
@@ -224,7 +226,7 @@ if (cluster.isPrimary) {
 } else {
   const server = net.createServer(() => {});
   server.on("error", err => process.send({ code: err.code, message: err.message, port: err.port }));
-  server.listen(PIPE);
+  server.listen(process.env.BUN_CLUSTER_PIPE);
 }
 `,
   });

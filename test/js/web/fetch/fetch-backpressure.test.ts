@@ -119,8 +119,12 @@ function spawnFetch(script: string, extraEnv: Record<string, string> = {}) {
   });
 }
 
-function lineReader(stream: ReadableStream<Uint8Array>) {
-  const reader = stream.getReader();
+// Reads the child's stdout line-by-line. Drains stderr eagerly so that when
+// the child dies before printing the awaited line, the error carries the
+// actual crash output instead of just "closed stdout".
+function lineReader(proc: { stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array> }) {
+  const stderrP = proc.stderr.text();
+  const reader = proc.stdout.getReader();
   let acc = "";
   return async function waitFor(prefix: string) {
     while (true) {
@@ -132,7 +136,11 @@ function lineReader(stream: ReadableStream<Uint8Array>) {
         continue;
       }
       const { value, done } = await reader.read();
-      if (done) throw new Error(`subprocess closed stdout without ${JSON.stringify(prefix)}; buffered: ${acc}`);
+      if (done) {
+        throw new Error(
+          `subprocess closed stdout without ${JSON.stringify(prefix)}; buffered: ${acc}\nstderr: ${await stderrP}`,
+        );
+      }
       acc += Buffer.from(value).toString();
     }
   };
@@ -180,7 +188,7 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
           process.stdout.write("reader\\n");
           await new Promise(() => {}); // hold the reader; test kills us
         `);
-        const waitFor = lineReader(proc.stdout);
+        const waitFor = lineReader(proc);
         await waitFor("reader");
         await opened;
         // 12 MiB crosses the 8 MiB replenish threshold under receipt-based
@@ -226,7 +234,7 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
           process.stdout.write("read:" + total + "\\n");
           await new Promise(() => {});
         `);
-        const waitFor = lineReader(proc.stdout);
+        const waitFor = lineReader(proc);
         await waitFor("reader");
         await opened;
         // 12 MiB, no END_STREAM: the h2 Stream must stay in the session
@@ -278,7 +286,7 @@ describe("fetch() over HTTP/2 — per-stream receive-window backpressure", () =>
           process.stdout.write("cancelled\\n");
           await new Promise(() => {});
         `);
-        const waitFor = lineReader(proc.stdout);
+        const waitFor = lineReader(proc);
         await waitFor("cancelled");
         await opened;
         await floodData(conn, 1);
@@ -379,7 +387,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         process.stdout.write("paused:" + sawPause + ":" + c.pauses + ":" + c.resumes + "\\n");
         await new Promise(() => {});
       `);
-      const waitFor = lineReader(proc.stdout);
+      const waitFor = lineReader(proc);
       await waitFor("reader");
       const socket = await gotSocket;
       // Only need to push past receive_body_high_water (4 MiB) for the
@@ -421,7 +429,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         const c = counts();
         process.stdout.write("read:" + total + ":" + c.pauses + ":" + c.resumes + "\\n");
       `);
-      const waitFor = lineReader(proc.stdout);
+      const waitFor = lineReader(proc);
       await waitFor("reader");
       const socket = await gotSocket;
       // 16 MiB gives the HTTP thread room to pull ahead of the
@@ -468,7 +476,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         process.stdout.write("done:" + sawPause + ":" + sawResume + ":" + c.pauses + ":" + c.resumes + "\\n");
         await new Promise(() => {});
       `);
-      const waitFor = lineReader(proc.stdout);
+      const waitFor = lineReader(proc);
       await waitFor("reader");
       const socket = await gotSocket;
       void pump(socket, 8 * 1024 * 1024);
@@ -522,7 +530,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         const c2 = counts();
         process.stdout.write("read:" + total + ":" + c2.pauses + ":" + c2.resumes + "\\n");
       `);
-      const waitFor = lineReader(proc.stdout);
+      const waitFor = lineReader(proc);
       await waitFor("reader");
       const socket = await gotSocket;
       // Push past receive_body_high_water (4 MiB) while the piped
@@ -575,7 +583,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
         process.stdout.write("cancelled:" + sawResume + "\\n");
         await new Promise(() => {});
       `);
-      const waitFor = lineReader(proc.stdout);
+      const waitFor = lineReader(proc);
       await waitFor("reader");
       const socket = await gotSocket;
       void pump(socket, 8 * 1024 * 1024);
@@ -720,11 +728,8 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
         ),
         { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
       );
-      const stderrP = proc.stderr.text();
-      const waitFor = lineReader(proc.stdout);
-      await waitFor("reader").catch(async e => {
-        throw new Error(`${e.message}\nstderr: ${await stderrP}`);
-      });
+      const waitFor = lineReader(proc);
+      await waitFor("reader");
       const settled = Number((await waitFor("settled:")).slice(8));
       // ~4 MiB high-water plus whatever lsquic's on_read loop
       // delivered in the batch that crossed it (≤ one
@@ -754,11 +759,8 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
         ),
         { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
       );
-      const stderrP = proc.stderr.text();
-      const waitFor = lineReader(proc.stdout);
-      await waitFor("reader").catch(async e => {
-        throw new Error(`${e.message}\nstderr: ${await stderrP}`);
-      });
+      const waitFor = lineReader(proc);
+      await waitFor("reader");
       const [, read, recv] = (await waitFor("read:")).split(":").map(Number);
       // Actively draining: the pause/resume cycle must let the full
       // body through, and every byte delivered by onStreamData is
@@ -792,11 +794,8 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
         ),
         { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
       );
-      const stderrP = proc.stderr.text();
-      const waitFor = lineReader(proc.stdout);
-      await waitFor("reader").catch(async e => {
-        throw new Error(`${e.message}\nstderr: ${await stderrP}`);
-      });
+      const waitFor = lineReader(proc);
+      await waitFor("reader");
       const [, stalledAt, moved] = (await waitFor("resumed:")).split(":").map(Number);
       expect(stalledAt).toBeGreaterThan(0);
       expect(stalledAt).toBeLessThan(10 * 1024 * 1024);

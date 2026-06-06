@@ -1845,7 +1845,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.cast::<c_void>()
     }
 
-    pub extern "C" fn init(
+    /// # Safety
+    /// `input_socket` must be a live `us_socket_t`; `buffered_data` must be
+    /// null or point to `buffered_data_len` bytes whose ownership transfers
+    /// to the client; `secure_ptr` must be null or a live TLS context.
+    pub unsafe extern "C" fn init(
         outgoing: *mut CppWebSocket,
         input_socket: *mut c_void,
         global_this: &JSGlobalObject,
@@ -1908,7 +1912,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
     /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
     /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
-    pub extern "C" fn init_with_tunnel(
+    ///
+    /// # Safety
+    /// `tunnel_ptr` must be a live `WebSocketProxyTunnel`; `buffered_data`
+    /// must be null or point to `buffered_data_len` bytes whose ownership
+    /// transfers to the client.
+    pub unsafe extern "C" fn init_with_tunnel(
         outgoing: *mut CppWebSocket,
         tunnel_ptr: *mut c_void,
         global_this: &JSGlobalObject,
@@ -2088,8 +2097,10 @@ macro_rules! export_websocket_client {
         pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::finalize(this)
         }
+        /// # Safety
+        /// See [`WebSocket::init`].
         #[unsafe(no_mangle)]
-        pub extern "C" fn $init(
+        pub unsafe extern "C" fn $init(
             outgoing: *mut CppWebSocket,
             input_socket: *mut c_void,
             global_this: &JSGlobalObject,
@@ -2098,18 +2109,23 @@ macro_rules! export_websocket_client {
             deflate_params: Option<&websocket_deflate::Params>,
             secure_ptr: *mut c_void,
         ) -> *mut c_void {
-            WebSocket::<$ssl>::init(
-                outgoing,
-                input_socket,
-                global_this,
-                buffered_data,
-                buffered_data_len,
-                deflate_params,
-                secure_ptr,
-            )
+            // SAFETY: the C++ caller upholds `WebSocket::init`'s contract.
+            unsafe {
+                WebSocket::<$ssl>::init(
+                    outgoing,
+                    input_socket,
+                    global_this,
+                    buffered_data,
+                    buffered_data_len,
+                    deflate_params,
+                    secure_ptr,
+                )
+            }
         }
+        /// # Safety
+        /// See [`WebSocket::init_with_tunnel`].
         #[unsafe(no_mangle)]
-        pub extern "C" fn $init_with_tunnel(
+        pub unsafe extern "C" fn $init_with_tunnel(
             outgoing: *mut CppWebSocket,
             tunnel_ptr: *mut c_void,
             global_this: &JSGlobalObject,
@@ -2117,14 +2133,17 @@ macro_rules! export_websocket_client {
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,
         ) -> *mut c_void {
-            WebSocket::<$ssl>::init_with_tunnel(
-                outgoing,
-                tunnel_ptr,
-                global_this,
-                buffered_data,
-                buffered_data_len,
-                deflate_params,
-            )
+            // SAFETY: the C++ caller upholds `WebSocket::init_with_tunnel`'s contract.
+            unsafe {
+                WebSocket::<$ssl>::init_with_tunnel(
+                    outgoing,
+                    tunnel_ptr,
+                    global_this,
+                    buffered_data,
+                    buffered_data_len,
+                    deflate_params,
+                )
+            }
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $memory_cost(this: *const WebSocket<$ssl>) -> usize {

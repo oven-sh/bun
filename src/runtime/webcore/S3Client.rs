@@ -85,6 +85,7 @@ impl S3CredentialsExt for S3Credentials {
 /// path argument. Mirrors the per-method divergence in the Zig reference:
 /// presign/exists/size/stat throw "invalid arguments" when an argument was
 /// present but is not a path, while unlink always throws `MISSING_ARGS`.
+#[derive(Clone, Copy)]
 enum MissingPathError {
     MissingOrInvalid,
     AlwaysMissingArgs,

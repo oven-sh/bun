@@ -343,3 +343,18 @@ it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async 
   await fsPromises.rm(target, { recursive: true });
   expect(fs.existsSync(target)).toBe(false);
 });
+
+it("close() while an operation is in flight actually closes the fd", async () => {
+  const dir = tempDirWithFiles("deferred-close", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+  const fd = fh.fd;
+  // take an extra ref so close() defers, then release it
+  const read = fh.read(Buffer.alloc(5), 0, 5, 0);
+  const closed = fh.close();
+  await read;
+  await closed;
+  expect(fh.fd).toBe(-1);
+  // the deferred path must have issued the real close; nothing else runs in
+  // this process between the close and this check, so EBADF is deterministic
+  expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+});

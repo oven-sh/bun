@@ -566,15 +566,23 @@ test("a FileHandle in transferList but not in workerData is detached without lea
   fs.writeFileSync(script, `import { parentPort } from "worker_threads"; parentPort.postMessage("ok");`);
   const fh = await fs.promises.open(file, "r");
   const fd = fh.fd;
+  const ino = fs.fstatSync(fd).ino;
   const worker = new Worker(script, { workerData: {}, transferList: [fh as any] } as any);
   const [message] = await once(worker, "message");
   expect(message).toBe("ok");
   await worker.terminate();
   // the parent handle is neutered like node...
   expect(fh.fd).toBe(-1);
-  // ...and the orphaned fd was closed (not leaked): re-opening reuses low fds,
-  // and closing the old number must not hit a still-open descriptor we own.
-  expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+  // ...and the orphaned fd was closed (not leaked). The number may have been
+  // recycled by the worker machinery in the meantime, so accept either EBADF
+  // or a descriptor that no longer refers to our file.
+  let closedOrRecycled = false;
+  try {
+    closedOrRecycled = fs.fstatSync(fd).ino !== ino;
+  } catch (e: any) {
+    closedOrRecycled = e.code === "EBADF";
+  }
+  expect(closedOrRecycled).toBe(true);
 });
 
 test("failed construction restores an unreferenced transferred FileHandle intact", async () => {

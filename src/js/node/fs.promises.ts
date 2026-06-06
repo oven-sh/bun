@@ -1342,8 +1342,13 @@ function asyncWrap(fn: any, name: string) {
 
     [kUnref]() {
       if (--this[kRefs] === 0) {
+        // Close the captured fd directly: this.close() would see kFd === -1
+        // and short-circuit without ever closing the descriptor, leaking it
+        // on the deferred-close path (close() called while an op was still
+        // in flight).
+        const fd = this[kFd];
         this[kFd] = -1;
-        this.close().$then(this[kCloseResolve], this[kCloseReject]);
+        (fd !== -1 ? close(fd) : Promise.$resolve()).$then(this[kCloseResolve], this[kCloseReject]);
       }
     }
   }

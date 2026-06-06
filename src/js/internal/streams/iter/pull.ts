@@ -697,10 +697,10 @@ function pipeToSync(source, ...args) {
         for (let i = 0; i < batch.length; i++) {
           const chunk = batch[i];
           if (writer.writeSync(chunk) === false) {
-            throw $ERR_OPERATION_FAILED(
-              "Operation failed: the writer did not accept the chunk synchronously; " +
-                "increase the writer's chunkSize or use pipeTo()",
-            );
+            // The refusal may be due to chunk size, an exhausted limit, or a
+            // failed first write - the writer doesn't say which, so keep the
+            // message generic.
+            throw $ERR_OPERATION_FAILED("Operation failed: the writer did not accept the chunk synchronously");
           }
           totalBytes += chunk.byteLength;
         }

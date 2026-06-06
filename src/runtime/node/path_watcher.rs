@@ -2,7 +2,7 @@
 //!
 //! This is deliberately independent of `bun.Watcher` (the bundler/--watch/--hot
 //! watcher). `bun.Watcher` is shaped around a module graph — its WatchItem carries
-//! `options.Loader`, `*PackageJSON`, a `*bun.fs.FileSystem`, and on Windows is pinned
+//! `options.Loader`, `*PackageJSON`, a filesystem handle, and on Windows is pinned
 //! to `top_level_dir`. None of that applies to `fs.watch()`, and routing `fs.watch()`
 //! through it required a 1k-line shim (the old version of this file) full of
 //! lock-ordering workarounds, a WorkPool directory crawler, and a bolted-on FSEvents
@@ -283,13 +283,13 @@ pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
-    /// `bun.TrivialNew(PathWatcher)` — heap-allocate and return raw pointer.
+    /// Heap-allocate and return a raw pointer.
     pub(crate) fn new(init: PathWatcher) -> *mut PathWatcher {
         bun_core::heap::into_raw(Box::new(init))
     }
 
     /// Called from the platform reader thread with `manager.mutex` held.
-    /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
+    /// `rel_path` is borrowed — `on_path_update_posix` dupes it before enqueuing.
     #[cfg(not(windows))]
     fn emit(&mut self, event_type: EventType, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
@@ -329,11 +329,11 @@ impl PathWatcher {
     /// Worker cannot observe a zero-handler PathWatcher still present in the dedup map.
     ///
     /// On macOS the FSEvents unregister happens *after* releasing `manager.mutex`:
-    /// `FSEventsWatcher.deinit()` takes the FSEvents loop mutex, and the CF thread's
-    /// `_events_cb` holds that mutex while calling into `onFSEvent` (which takes
-    /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
-    /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
-    /// slot, so no further callbacks will fire and `destroy()` is safe.
+    /// dropping the `FSEventsWatcher` takes the FSEvents loop mutex, and the CF
+    /// thread's `_events_cb` holds that mutex while calling into `on_fs_event` (which
+    /// takes `manager.mutex`). Holding both here would be AB/BA with the CF thread.
+    /// Once `remove_watch()` returns, `_events_cb` has released the loop mutex and
+    /// nulled our slot, so no further callbacks will fire and `destroy()` is safe.
     ///
     /// # Safety
     /// `this` must be a live `PathWatcher` produced by [`PathWatcher::new`] whose
@@ -368,7 +368,7 @@ impl PathWatcher {
             // SAFETY: holding manager.mutex; the reader/CF threads only form their own
             // `&mut PathWatcher` while holding this lock, so ours is exclusive. Scope
             // `w` so its last use is before `unlock()` (NLL ends the borrow there) —
-            // on macOS the tail below must not hold a `&mut` across `fse.deinit()`.
+            // on macOS the tail below must not hold a `&mut` across `remove_watch()`.
             let w = unsafe { &mut *this };
             w.handlers.swap_remove(&ctx);
             if w.handlers.len() > 0 {
@@ -390,7 +390,7 @@ impl PathWatcher {
         {
             // Takes fsevents_loop.mutex; must not hold manager.mutex (see doc comment).
             // Pass the raw pointer: the CF thread (holding the FSEvents loop mutex
-            // that `deinit` is about to block on) may concurrently take
+            // that `remove_watch` is about to block on) may concurrently take
             // `manager.mutex`, raw-read `(*this).manager`, observe `None`, and bail
             // — so no `&mut PathWatcher` may be live across that call.
             Platform::remove_watch(manager, this);
@@ -436,8 +436,8 @@ pub fn watch(
     //
     // Open with O_PATH|O_DIRECTORY first and retry without O_DIRECTORY on ENOTDIR —
     // that tells us file-vs-dir without a separate stat, follows symlinks, and the
-    // resulting fd feeds `getFdPath` for the realpath. One or two syscalls instead
-    // of lstat + open + (stat) in the old code. `O.PATH` is 0 on macOS (degrades to
+    // resulting fd feeds `get_fd_path` for the realpath. One or two syscalls instead
+    // of lstat + open + (stat) in the old code. `O::PATH` is 0 on macOS (degrades to
     // O_RDONLY, which is what F_GETPATH needs anyway).
     let mut resolve_buf = path::path_buffer_pool::get();
     let mut is_file = false;
@@ -500,11 +500,11 @@ pub fn watch(
     unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
     handle_oom(watchers.put(key, watcher));
 
-    // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
+    // Linux/FreeBSD: `add_watch` mutates the platform dispatch maps (wd_map/entries)
     // which live under `manager.mutex`, so call it while still locked.
     //
-    // macOS: `addWatch` calls `FSEvents.watch()` which takes the FSEvents loop mutex.
-    // The CF thread holds that mutex while calling `onFSEvent`, which in turn takes
+    // macOS: `add_watch` calls `FSEvents::watch()` which takes the FSEvents loop mutex.
+    // The CF thread holds that mutex while calling `on_fs_event`, which in turn takes
     // `manager.mutex`. To keep lock order one-way (fsevents → manager), release ours
     // first. Another Worker's `watch()` finding this PathWatcher in the interim is
     // fine — it just appends a handler; events won't deliver until the FSEventStream
@@ -522,7 +522,7 @@ pub fn watch(
                 (*watcher).manager = None;
                 PathWatcher::destroy(watcher);
             }
-            // `Linux.addOne` builds the error with `.path = watcher.path`, which we
+            // `Linux::add_one` builds the error with `.path = watcher.path`, which we
             // just freed; strip it like every other return in this function.
             return Err(err.without_path());
         }
@@ -542,7 +542,7 @@ pub fn watch(
             // handler and already returned `watcher` to its caller. Only destroy if
             // ours was the last handler; otherwise surface the error to the survivors
             // and leave `watcher.manager` set so their `detach()` takes the locked path
-            // (→ `unlinkWatcherLocked` no-ops, `removeWatch` no-ops on null `fsevents`,
+            // (→ `unlink_watcher_locked` no-ops, `remove_watch` no-ops on `None` `fsevents`,
             // then frees). Never free memory another thread holds.
             manager.mutex.lock();
             manager.unlink_watcher_locked(watcher);
@@ -788,8 +788,8 @@ impl Linux {
         //   - a subdirectory was *renamed* within the tree: IN_MOVED_TO re-adds it,
         //     inotify returns the same wd (it watches by inode), and the cached subpath
         //     is now stale. Overwrite so later events under the moved dir report the
-        //     new name. `walkAndAdd` never follows symlinks (`entry.kind == .directory`,
-        //     not `.sym_link`), so this can't pick a longer alias via a cycle.
+        //     new name. `walk_and_add` never follows symlinks (`EntryKind::Directory`,
+        //     not `EntryKind::SymLink`), so this can't pick a longer alias via a cycle.
         for o in owners.iter_mut() {
             if core::ptr::eq(o.watcher, watcher) {
                 if !strings::eql(o.subpath.as_bytes(), subpath) {
@@ -972,7 +972,7 @@ impl Linux {
                 };
 
                 // Dispatch to every owner of this wd. The recursive branch below calls
-                // `addOne`/`walkAndAdd`, which insert into `wd_map` via `getOrPut` and
+                // `add_one`/`walk_and_add`, which insert into `wd_map` via `entry()` and
                 // may rehash — that would invalidate any pointer into the map's value
                 // storage. Re-fetch the owners list by key each iteration rather than
                 // caching `getPtr(wd)` across the loop.
@@ -1089,7 +1089,7 @@ use bun_watcher::inotify_watcher::Event as InotifyEvent;
 
 /// macOS: delegate to `fs_events.rs`, which already runs one CFRunLoop thread with
 /// one FSEventStream covering every watched path. The PathWatcher itself is the
-/// FSEventsWatcher's opaque ctx — `fs_events.rs` calls back via `onFSEvent` below,
+/// FSEventsWatcher's opaque ctx — `fs_events.rs` calls back via `on_fs_event` below,
 /// and we fan out to the JS handlers.
 ///
 /// Unlike the old design, FSEvents is used for both files and directories (same as
@@ -1126,7 +1126,7 @@ impl Darwin {
     }
 
     /// Caller does NOT hold `manager.mutex` — `FSEvents.watch()` takes the FSEvents
-    /// loop mutex, and the CF thread holds that while calling `onFSEvent` (which
+    /// loop mutex, and the CF thread holds that while calling `on_fs_event` (which
     /// takes `manager.mutex`). Keeping this call outside `manager.mutex` makes the
     /// lock order one-way: fsevents_loop.mutex → manager.mutex.
     fn add_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
@@ -1157,13 +1157,13 @@ impl Darwin {
         }
     }
 
-    /// Caller does NOT hold `manager.mutex` (same lock-order reasoning as `addWatch`).
-    /// `FSEventsWatcher.deinit()` → `unregisterWatcher()` blocks on the FSEvents loop
+    /// Caller does NOT hold `manager.mutex` (same lock-order reasoning as `add_watch`).
+    /// `FSEventsWatcher::drop` → `unregister_watcher()` blocks on the FSEvents loop
     /// mutex, which `_events_cb` holds for the whole dispatch; once this returns no
-    /// further `onFSEvent` calls will arrive for `watcher`.
+    /// further `on_fs_event` calls will arrive for `watcher`.
     ///
     /// Takes a raw `*mut PathWatcher`: while we block on the FSEvents loop mutex
-    /// inside `deinit`, the CF thread may concurrently take `manager.mutex` and
+    /// inside the drop, the CF thread may concurrently take `manager.mutex` and
     /// raw-read `(*watcher).manager` (to bail on `None`). Holding a `&mut PathWatcher`
     /// across that would be aliased-`&mut` UB under Stacked Borrows.
     fn remove_watch(_: &'static PathWatcherManager, watcher: *mut PathWatcher) {
@@ -1184,10 +1184,10 @@ impl Darwin {
     /// `manager.mutex` across a call into FSEvents, so this is deadlock-free.
     ///
     /// `watcher` itself is kept alive by the FSEvents loop mutex: `detach()` →
-    /// `removeWatch()` → `fse.deinit()` → `unregisterWatcher()` blocks until
-    /// `_events_cb` releases it, so `destroy()` cannot run under us. The
-    /// `watcher.manager == null` check catches the window where detach has already
-    /// unlinked us but hasn't yet called `fse.deinit()`.
+    /// `remove_watch()` → `FSEventsWatcher::drop` → `unregister_watcher()` blocks
+    /// until `_events_cb` releases it, so `destroy()` cannot run under us. The
+    /// `watcher.manager.is_none()` check catches the window where detach has already
+    /// unlinked us but hasn't yet run `remove_watch()`.
     fn on_fs_event(ctx: *mut c_void, event: Event, is_file: bool) {
         // SAFETY: ctx is the *mut PathWatcher passed in add_watch above. Keep it raw
         // until `manager.mutex` is held and the `manager.is_none()` bail-out has run:
@@ -1457,7 +1457,7 @@ impl Kqueue {
 
             for kev in &events[..count as usize] {
                 // Validate via the map — the entry may have been freed by a racing
-                // removeWatch between kevent() returning and us taking the lock. POSIX
+                // remove_watch between kevent() returning and us taking the lock. POSIX
                 // recycles the lowest fd on open(), so the ident could also now belong
                 // to an *unrelated* watch registered in that same window; `udata` was
                 // set to a monotonic generation at registration and survives in the

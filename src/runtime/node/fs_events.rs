@@ -451,7 +451,7 @@ impl FSEventsLoop {
         // (JS thread could load null between signal and wake).
     }
 
-    // Runs in CF thread, executed after `enqueueTaskConcurrent()`. Body
+    // Runs in CF thread, executed after `enqueue_task_concurrent()`. Body
     // discharges its own preconditions; safe `extern "C" fn` coerces to the
     // `CFRunLoopSourceContext.perform` fn-pointer slot.
     extern "C" fn cf_loop_callback(arg: *mut c_void) {
@@ -618,11 +618,11 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
-        // Hold the mutex for the whole iteration. `unregisterWatcher` on the
+        // Hold the mutex for the whole iteration. `unregister_watcher` on the
         // main thread nulls the entry under this same mutex and then the
         // caller immediately frees the FSEventsWatcher (and its path buffer),
         // so without this lock we can read `handle.path` / call `handle.emit`
-        // on freed memory. Holding the lock also prevents `registerWatcher`
+        // on freed memory. Holding the lock also prevents `register_watcher`
         // from reallocating the `watchers` buffer mid-iteration.
         let _guard = loop_.mutex.lock_guard();
         // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
@@ -1055,7 +1055,7 @@ pub fn watch(
             // returned `None` above, so this is the first publish.
             let _ = FSEVENTS_DEFAULT_LOOP.set(l);
             // First loop ever created → arrange `close_and_wait` to run from
-            // `Bun__onExit`, which runs it BEFORE `runExitCallbacks()`, so
+            // `Bun__onExit`, which runs it BEFORE `run_exit_callbacks()`, so
             // push to the pre-exit list rather than the generic atexit list
             // (storage lives in bun_core; forward dep).
             bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);

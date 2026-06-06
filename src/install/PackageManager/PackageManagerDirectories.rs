@@ -1205,11 +1205,11 @@ pub fn linked_package_path_mut<'a>(
 
     // POSIX fast path: the readdir in populate already UTF-8-keyed the
     // registered names into linked_names, so after populate has run we
-    // can answer without touching the filesystem. Per-entry
-    // `has_active_link` calls in isolated_install.rs go through this
-    // function; without this check every npm/git/tarball entry would
-    // pay a per-call lstat even on machines with zero active links (the
-    // CI / most-dev-machines case).
+    // can answer without touching the filesystem. The linked_pkg_ids
+    // bitset build in isolated_install.rs calls this once per
+    // root/workspace direct dependency; this check skips the lstat
+    // below for every direct dep whose name is not link-registered
+    // (the vast majority).
     #[cfg(not(windows))]
     {
         if this.linked_names_populated && !this.linked_names.contains_key(pkg_name) {

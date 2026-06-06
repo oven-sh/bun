@@ -297,7 +297,7 @@ devTest("connected client reloads when a broken route is re-bundled", {
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
-    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await using c = await dev.client("/");
     await c.expectMessage("v1");
     await dev.write(
       "script.ts",
@@ -310,20 +310,27 @@ devTest("connected client reloads when a broken route is re-bundled", {
       },
     );
     // Requesting the broken route re-bundles its HTML module; the hot update
-    // carrying that module must tell viewers to reload.
+    // carrying that module must tell viewers to perform a route reload
+    // instead of delivering "index.html" through `replaceModules`.
     await c.expectReload(async () => {
       expect((await dev.fetch("/")).status).toBe(500);
     });
-    await dev.write(
-      "script.ts",
-      `
-        console.log("v2");
-      `,
-    );
-    // The client converges on the healthy page. Depending on when its reload
-    // request lands, it may pass through the bundling error page first and
-    // reload once more when the errors clear.
-    await c.output.waitForLine(/\[Bun\] (Live|Hot-module)-reloading socket connected/);
+    await c.output.waitForLine(/\[Bun\] Server-side code changed, reloading!/);
+    // The reload lands on the bundling error page (the route is still
+    // broken). Wait for the client to settle there so the recovery below
+    // deterministically reloads it through the error page.
+    while (!(await c.js<boolean>`document.querySelector("bun-hmr")?.style.display === "block"`.catch(() => false))) {
+      await Bun.sleep(50);
+    }
+    await c.expectErrorOverlay(['script.ts:1:8: error: Could not resolve: "./missing.ts"']);
+    await c.expectReload(async () => {
+      await dev.write(
+        "script.ts",
+        `
+          console.log("v2");
+        `,
+      );
+    });
     await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
     await c.expectMessage("v2");
   },

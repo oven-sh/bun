@@ -518,7 +518,8 @@ _bun_run_completion() {
 
 _bun_upgrade_completion() {
     _arguments -s -C \
-        '1: :->cmd' \
+        '1::subcommand:(pr)' \
+        '2::pull request number:' \
         '--canary[Upgrade to canary build]' \
         '--stable[Switch back to the latest stable release]' \
         '--profile[Install a build with debug symbols]' \

@@ -394,7 +394,8 @@ it.skipIf(isWindows)("delta upgrade applies binary patches instead of downloadin
   const { current, target } = releaseVersions();
   const tagName = `bun-v${target}`;
 
-  const cwd = tmpdirSync();
+  using cwdDir = tempDir("bun-upgrade-cwd", {});
+  const cwd = String(cwdDir);
   const execPath = join(cwd, basename(bunExe()));
   await copyFile(bunExe(), execPath);
 
@@ -480,7 +481,8 @@ it("delta upgrade falls back to the full download when the patch fails verificat
   const { current, target } = releaseVersions();
   const tagName = `bun-v${target}`;
 
-  const cwd = tmpdirSync();
+  using cwdDir = tempDir("bun-upgrade-cwd", {});
+  const cwd = String(cwdDir);
   const execPath = join(cwd, basename(bunExe()));
   await copyFile(bunExe(), execPath);
 
@@ -557,11 +559,124 @@ it("delta upgrade falls back to the full download when the patch fails verificat
   expect(exitCode).toBe(1);
 });
 
+it.skipIf(isWindows)("delta upgrade chains through intermediate releases", async () => {
+  // Two releases behind: current -> middle -> target. No direct
+  // target.from-current patch exists, so the chain is used, verifying the
+  // intermediate binary's checksum along the way.
+  const { current, target: middle } = releaseVersions();
+  const [major, minor, patch] = middle.split(".").map(Number);
+  const target = `${major}.${minor}.${patch + 1}`;
+  const tagName = `bun-v${target}`;
+
+  using cwdDir = tempDir("bun-upgrade-cwd", {});
+  const cwd = String(cwdDir);
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  const middleBinary = new TextEncoder().encode(`#!/bin/sh\necho ${middle}\n`);
+  const targetBinary = new TextEncoder().encode(`#!/bin/sh\necho ${target}\n`);
+  const middlePatch = craftReplacementPatch(middleBinary);
+  const targetPatch = craftReplacementPatch(targetBinary);
+  const currentExeSha = await sha256HexOfFile(execPath);
+
+  const requests: string[] = [];
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      requests.push(pathname);
+      if (pathname.startsWith("/releases/")) {
+        return new Response("this is not a real zip archive");
+      }
+      if (pathname.includes(`/bun-v${target}/`) && pathname.includes(`.from-${current}.bsdiff`)) {
+        // The direct patch doesn't exist; only per-release patches do.
+        return new Response("not found", { status: 404 });
+      }
+      if (pathname.includes(`/bun-v${middle}/`)) {
+        if (pathname.endsWith(".bsdiff.sha256sum")) {
+          return new Response(`${sha256Hex(middlePatch)}  patch.bsdiff\n`);
+        }
+        if (pathname.endsWith(`.from-${current}.bsdiff`)) {
+          return new Response(middlePatch);
+        }
+        if (pathname.endsWith(".sha256sum")) {
+          return new Response(`${sha256Hex(middleBinary)}  bun\n`);
+        }
+      }
+      if (pathname.includes(`/bun-v${target}/`)) {
+        if (pathname.endsWith(".bsdiff.sha256sum")) {
+          return new Response(`${sha256Hex(targetPatch)}  patch.bsdiff\n`);
+        }
+        if (pathname.endsWith(`.from-${middle}.bsdiff`)) {
+          return new Response(targetPatch);
+        }
+        if (pathname.endsWith(".sha256sum")) {
+          return new Response(`${sha256Hex(targetBinary)}  bun\n`);
+        }
+      }
+      if (pathname.includes(`/bun-v${current}/`) && pathname.endsWith(".sha256sum")) {
+        return new Response(`${currentExeSha}  bun\n`);
+      }
+      return new Response(
+        JSON.stringify({
+          tag_name: tagName,
+          assets: allPlatformAssetNames().map(name => ({
+            url: "foo",
+            content_type: "application/zip",
+            name: `${name}.zip`,
+            browser_download_url: `https://${server.hostname}:${server.port}/releases/${tagName}/${name}.zip`,
+          })),
+        }),
+      );
+    },
+  });
+
+  using staging = tempDir("bun-upgrade-delta-chain", {});
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", "--stable"],
+    cwd,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      BUN_UPGRADE_TESTING_RELEASE_URL: `https://${server.hostname}:${server.port}`,
+      BUN_TMPDIR: String(staging),
+      ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // The direct patch 404s, then the two-step chain applies.
+  expect(stderr).toContain("Attempting delta upgrade");
+  expect(stderr).toContain("Downloading patch 1/2");
+  expect(stderr).toContain("Downloading patch 2/2");
+  expect(stderr).toContain("Delta upgrade verified");
+  expect(stderr).not.toContain("error:");
+
+  // The direct patch was tried first, then both chain patches; the archive
+  // was never downloaded.
+  expect(requests.some(p => p.includes(`/bun-v${target}/`) && p.includes(`.from-${current}.bsdiff`))).toBe(true);
+  expect(requests.some(p => p.includes(`/bun-v${middle}/`) && p.endsWith(`.from-${current}.bsdiff`))).toBe(true);
+  expect(requests.some(p => p.includes(`/bun-v${target}/`) && p.endsWith(`.from-${middle}.bsdiff`))).toBe(true);
+  expect(requests.some(p => p.startsWith("/releases/"))).toBe(false);
+
+  // The final chained binary was installed.
+  expect(await Bun.file(execPath).text()).toBe(`#!/bin/sh\necho ${target}\n`);
+
+  expect(exitCode).toBe(0);
+});
+
 it("delta upgrade is skipped with --no-delta", async () => {
   const { target } = releaseVersions();
   const tagName = `bun-v${target}`;
 
-  const cwd = tmpdirSync();
+  using cwdDir = tempDir("bun-upgrade-cwd", {});
+  const cwd = String(cwdDir);
   const execPath = join(cwd, basename(bunExe()));
   await copyFile(bunExe(), execPath);
 
@@ -688,10 +803,12 @@ it.skipIf(isWindows)("bun upgrade pr <number> installs the pull request's build"
     );
   }
 
-  const cwd = tmpdirSync();
+  using cwdDir = tempDir("bun-upgrade-cwd", {});
+  const cwd = String(cwdDir);
   const execPath = join(cwd, basename(bunExe()));
   await copyFile(bunExe(), execPath);
 
+  const artifactDownloads: string[] = [];
   using server = Bun.serve({
     tls,
     port: 0,
@@ -725,15 +842,18 @@ it.skipIf(isWindows)("bun upgrade pr <number> installs the pull request's build"
         });
       }
       if (pathname === "/bun/bun/builds/4242/jobs/build/artifacts") {
+        // Real Buildkite responses carry both checksums.
         return Response.json(
           [...zips.entries()].map(([name, data]) => ({
             file_name: name,
             url: `/artifacts/${name}`,
+            sha256sum: sha256Hex(data),
             sha1sum: sha1Hex(data),
           })),
         );
       }
       if (pathname.startsWith("/artifacts/")) {
+        artifactDownloads.push(pathname);
         const zip = zips.get(pathname.slice("/artifacts/".length));
         if (zip) return new Response(zip);
       }
@@ -764,17 +884,55 @@ it.skipIf(isWindows)("bun upgrade pr <number> installs the pull request's build"
   expect(stderr).toContain(`Installed a build of Bun from pull request #${prNumber}`);
   expect(stderr).not.toContain("error:");
 
+  // Exactly one artifact was downloaded, and it was this platform's.
+  const os = process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "aarch64" : "x64";
+  expect(artifactDownloads).toHaveLength(1);
+  expect(artifactDownloads[0]).toStartWith(`/artifacts/bun-${os}-${arch}`);
+
   // The pull request's build was installed over the executable.
   expect(await Bun.file(execPath).text()).toBe(script);
 
   expect(exitCode).toBe(0);
 });
 
+// `#1234` and pull request URLs are accepted too; a 404 from the mocked
+// GitHub API proves the number was parsed out of each spelling (the error
+// echoes it back) without running a full install.
+describe.concurrent("bun upgrade pr argument spellings", () => {
+  it.each(["#4321", "https://github.com/oven-sh/bun/pull/4321"])("accepts %s", async spelling => {
+    using cwd = tempDir("bun-upgrade-pr-spelling", {});
+    using server = Bun.serve({
+      tls,
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "upgrade", "pr", spelling],
+      cwd: String(cwd),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+      },
+    });
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Pull request #4321 was not found");
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe.concurrent("bun upgrade pr argument validation", () => {
   it("requires a pull request number", async () => {
+    using cwd = tempDir("bun-upgrade-pr-args", {});
     await using proc = spawn({
       cmd: [bunExe(), "upgrade", "pr"],
-      cwd: tmpdirSync(),
+      cwd: String(cwd),
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",
@@ -787,9 +945,10 @@ describe.concurrent("bun upgrade pr argument validation", () => {
   });
 
   it("rejects a non-numeric pull request number", async () => {
+    using cwd = tempDir("bun-upgrade-pr-args", {});
     await using proc = spawn({
       cmd: [bunExe(), "upgrade", "pr", "not-a-number"],
-      cwd: tmpdirSync(),
+      cwd: String(cwd),
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",
@@ -802,9 +961,10 @@ describe.concurrent("bun upgrade pr argument validation", () => {
   });
 
   it("rejects extra arguments after the pull request number", async () => {
+    using cwd = tempDir("bun-upgrade-pr-args", {});
     await using proc = spawn({
       cmd: [bunExe(), "upgrade", "pr", "123", "456"],
-      cwd: tmpdirSync(),
+      cwd: String(cwd),
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",

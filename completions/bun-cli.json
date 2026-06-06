@@ -3597,7 +3597,7 @@
         }
       ],
       "examples": ["bun upgrade", "bun upgrade --stable", "bun upgrade pr 12345"],
-      "usage": "Usage: bun upgrade [flags]",
+      "usage": "Usage: bun upgrade [flags] [pr <number>]",
       "documentationUrl": "https://bun.com/docs/installation#upgrading",
       "dynamicCompletions": {}
     }

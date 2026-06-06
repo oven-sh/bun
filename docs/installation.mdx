@@ -186,10 +186,12 @@ To avoid conflicts with Scoop, use `scoop update bun` instead.
 
 ## Installing a Build from a Pull Request
 
-To try out a change before it's merged and released, install the CI build of any pull request in [oven-sh/bun](https://github.com/oven-sh/bun/pulls) by its number:
+To try out a change before it's merged and released, install the CI build of any pull request in [oven-sh/bun](https://github.com/oven-sh/bun/pulls). The pull request can be given as a plain number, a `#`-prefixed number, or the pull request's URL:
 
 ```bash terminal icon="terminal"
 bun upgrade pr 12345
+bun upgrade pr "#12345"
+bun upgrade pr https://github.com/oven-sh/bun/pull/12345
 ```
 
 This replaces your current `bun` binary with the pull request's build for your platform. To switch back, run `bun upgrade` (or `bun upgrade --canary`).

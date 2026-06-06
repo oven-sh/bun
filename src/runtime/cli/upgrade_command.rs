@@ -538,7 +538,7 @@ impl UpgradeCommand {
             let mut positionals = args
                 .iter()
                 .skip(2)
-                .filter(|arg| !strings::contains(arg, b"--"));
+                .filter(|arg| !strings::has_prefix_comptime(arg, b"--"));
             if let Some(first) = positionals.next() {
                 if first == b"pr".as_slice() {
                     let Some(arg) = positionals.next() else {
@@ -614,12 +614,12 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut pr_build_title: Option<Box<[u8]>> = None;
-        let mut pr_zip_sha1: Option<Box<[u8]>> = None;
+        let mut pr_checksum: Option<PrArtifactChecksum> = None;
 
         let mut version: Version = if let Some(number) = pr_number {
             let pr_build = Self::fetch_pr_build(&mut env_loader, number, use_profile)?;
             pr_build_title = Some(pr_build.title);
-            pr_zip_sha1 = pr_build.zip_sha1;
+            pr_checksum = Some(pr_build.zip_checksum);
             pr_build.version
         } else if !use_canary {
             // `Progress::start` returns `&mut Node` borrowing `refresher`;
@@ -788,12 +788,17 @@ impl UpgradeCommand {
                     Global::exit(1);
                 }
 
-                if let Some(expected_sha1) = pr_zip_sha1.as_deref() {
-                    let actual = Self::sha1_hex(bytes);
-                    if actual.as_bytes() != expected_sha1 {
+                if let Some(checksum) = &pr_checksum {
+                    let (expected, actual) = match checksum {
+                        PrArtifactChecksum::Sha256(expected) => {
+                            (&**expected, Self::sha256_hex(bytes))
+                        }
+                        PrArtifactChecksum::Sha1(expected) => (&**expected, Self::sha1_hex(bytes)),
+                    };
+                    if actual.as_bytes() != expected {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> The downloaded artifact failed checksum verification.\n  Expected: <b>{}<r>\n    Actual: <b>{}<r>",
-                            bstr::BStr::new(expected_sha1),
+                            bstr::BStr::new(expected),
                             actual
                         );
                         Global::exit(1);
@@ -2268,9 +2273,26 @@ impl UpgradeCommand {
                     absolute
                 };
 
-                let zip_sha1: Option<Box<[u8]>> = Self::json_string_property(artifact, b"sha1sum")
-                    .filter(|hash| hash.len() == 40 && hash.iter().all(u8::is_ascii_hexdigit))
-                    .map(|hash| hash.to_ascii_lowercase().into());
+                // Buildkite records checksums for every artifact; refuse to
+                // install one that can't be verified after download.
+                let zip_checksum = Self::json_string_property(artifact, b"sha256sum")
+                    .filter(|hash| hash.len() == 64 && hash.iter().all(u8::is_ascii_hexdigit))
+                    .map(|hash| PrArtifactChecksum::Sha256(hash.to_ascii_lowercase().into()))
+                    .or_else(|| {
+                        Self::json_string_property(artifact, b"sha1sum")
+                            .filter(|hash| {
+                                hash.len() == 40 && hash.iter().all(u8::is_ascii_hexdigit)
+                            })
+                            .map(|hash| PrArtifactChecksum::Sha1(hash.to_ascii_lowercase().into()))
+                    });
+                let Some(zip_checksum) = zip_checksum else {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> The <b>{}<r> artifact for PR <b>#{}<r> has no usable checksum; refusing to install it.",
+                        bstr::BStr::new(&file_name),
+                        pr_number,
+                    );
+                    Global::exit(1);
+                };
 
                 let mut tag = Vec::new();
                 write!(&mut tag, "pr-{}", pr_number).expect("oom");
@@ -2283,7 +2305,7 @@ impl UpgradeCommand {
                         buf: MutableString::init_empty(),
                     },
                     title,
-                    zip_sha1,
+                    zip_checksum,
                 });
             }
         }
@@ -2302,8 +2324,15 @@ impl UpgradeCommand {
 struct PrBuild {
     version: Version,
     title: Box<[u8]>,
-    /// Buildkite's recorded checksum of the artifact, when present.
-    zip_sha1: Option<Box<[u8]>>,
+    /// Buildkite's recorded checksum of the artifact.
+    zip_checksum: PrArtifactChecksum,
+}
+
+/// Buildkite's recorded checksum of a build artifact, as a lowercase hex
+/// string. Newer responses carry sha256; older ones only sha1.
+enum PrArtifactChecksum {
+    Sha256(Box<[u8]>),
+    Sha1(Box<[u8]>),
 }
 
 // ──────────────────────────────────────────────────────────────────────────

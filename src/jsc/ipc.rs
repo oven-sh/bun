@@ -1882,7 +1882,7 @@ fn handle_ipc_message(
 /// Handles every decode failure other than `NotEnoughBytes` (which each call
 /// site recovers from differently): report OOM, then close the socket.
 #[inline]
-fn close_socket_on_decode_failure(send_queue: &mut SendQueue, err: IPCDecodeError) {
+fn close_socket_on_decode_failure(send_queue: &mut SendQueue, err: &IPCDecodeError) {
     debug_assert!(!matches!(err, IPCDecodeError::NotEnoughBytes));
     if matches!(err, IPCDecodeError::OutOfMemory) {
         Output::print_errorln("IPC message is too long.");
@@ -1907,7 +1907,7 @@ fn drain_json_messages(send_queue: &mut SendQueue, global_this: &JSGlobalObject)
                     return;
                 }
                 Err(err) => {
-                    close_socket_on_decode_failure(send_queue, err);
+                    close_socket_on_decode_failure(send_queue, &err);
                     return;
                 }
             };
@@ -1942,7 +1942,7 @@ fn drain_advanced_messages(send_queue: &mut SendQueue, global_this: &JSGlobalObj
                 return;
             }
             Err(err) => {
-                close_socket_on_decode_failure(send_queue, err);
+                close_socket_on_decode_failure(send_queue, &err);
                 return;
             }
         };
@@ -2003,7 +2003,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
                             return;
                         }
                         Err(err) => {
-                            close_socket_on_decode_failure(send_queue, err);
+                            close_socket_on_decode_failure(send_queue, &err);
                             return;
                         }
                     };

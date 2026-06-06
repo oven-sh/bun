@@ -186,6 +186,14 @@ str2 = '''no leading newline'''
   expect(result.str2).toBe("no leading newline");
 });
 
+it("TOML multi-line strings handle CRLF line endings", () => {
+  // Template literals normalize to LF, so build CRLF inputs explicitly.
+  expect(Bun.TOML.parse('str = """\r\nhello"""').str).toBe("hello");
+  expect(Bun.TOML.parse("str = '''\r\nhello'''").str).toBe("hello");
+  // Line-ending backslash followed by CRLF consumes the pair plus indentation.
+  expect(Bun.TOML.parse('str = """a\\\r\n  b"""').str).toBe("ab");
+});
+
 it("TOML escape sequences produce correct character codes", () => {
   const toml = `
 tab = "hello\\tworld"

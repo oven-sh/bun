@@ -1,6 +1,7 @@
 // session — cookie access backed by CEF's global CefCookieManager.
 
 import * as native from "./native";
+import { defaultSessionWebRequest, type WebRequest } from "./web-request";
 
 export interface Cookie {
   name: string;
@@ -35,17 +36,23 @@ export function routeCookiesEvent(ev: { opId?: unknown; success?: unknown; cooki
   pending.resolve(Array.isArray(ev.cookies) ? (ev.cookies as Cookie[]) : []);
 }
 
-function runOp(op: string, kv: Record<string, string | number | boolean | undefined>): Promise<Cookie[]> {
+function runOp(
+  partition: string,
+  op: string,
+  kv: Record<string, string | number | boolean | undefined>,
+): Promise<Cookie[]> {
   const opId = nextOpId++;
   return new Promise((resolve, reject) => {
     pendingOps.set(opId, { resolve, reject });
-    native.cookiesOp(opId, op, kv);
+    native.cookiesOp(opId, op, { ...kv, partition });
   });
 }
 
 class Cookies {
+  constructor(private readonly partition: string) {}
+
   async get(filter: CookiesGetFilter = {}): Promise<Cookie[]> {
-    let cookies = await runOp("get", { url: filter.url });
+    let cookies = await runOp(this.partition, "get", { url: filter.url });
     if (filter.name !== undefined) cookies = cookies.filter((c) => c.name === filter.name);
     if (filter.domain !== undefined) cookies = cookies.filter((c) => c.domain?.endsWith(filter.domain!));
     return cookies;
@@ -55,7 +62,7 @@ class Cookies {
     if (!details || typeof details.url !== "string") {
       throw new TypeError("url must be specified");
     }
-    await runOp("set", {
+    await runOp(this.partition, "set", {
       url: details.url,
       name: details.name,
       value: details.value,
@@ -67,23 +74,38 @@ class Cookies {
   }
 
   async remove(url: string, name: string): Promise<void> {
-    await runOp("remove", { url, name });
+    await runOp(this.partition, "remove", { url, name });
   }
 }
 
 class Session {
-  readonly cookies = new Cookies();
+  readonly cookies: Cookies;
+  readonly webRequest: WebRequest;
+
+  constructor(readonly partition: string) {
+    this.cookies = new Cookies(partition);
+    // webRequest interception is wired at the browser level (one native
+    // hook), so all sessions share the default webRequest instance.
+    this.webRequest = defaultSessionWebRequest();
+  }
 }
 
-const defaultSession = new Session();
+const defaultSession = new Session("");
+const partitioned = new Map<string, Session>();
 
 export const session = {
   get defaultSession(): Session {
     return defaultSession;
   },
-  fromPartition(_partition: string): Session {
-    // Partitioned sessions are not implemented; everything shares the
-    // global CEF request context.
-    return defaultSession;
+  fromPartition(partition: string): Session {
+    if (!partition) return defaultSession;
+    let s = partitioned.get(partition);
+    if (!s) {
+      s = new Session(partition);
+      partitioned.set(partition, s);
+    }
+    return s;
   },
 };
+
+export { Session };

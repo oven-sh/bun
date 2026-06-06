@@ -45,7 +45,31 @@ describe("session module", () => {
     });
   });
 
-  test("fromPartition returns a session", () => {
-    expect(session.fromPartition("persist:test")).toBeDefined();
+  describe("partitioned sessions", () => {
+    test("fromPartition returns a stable, distinct session", () => {
+      const a = session.fromPartition("persist:a");
+      const b = session.fromPartition("persist:b");
+      expect(a).toBe(session.fromPartition("persist:a"));
+      expect(a).not.toBe(b);
+      expect(a).not.toBe(session.defaultSession);
+    });
+
+    test("cookies are isolated between partitions", async () => {
+      const purl = "https://partition-tests.bun-electron.test";
+      const a = session.fromPartition("persist:cookies-a");
+      const b = session.fromPartition("persist:cookies-b");
+      await a.cookies.set({ url: purl, name: "k", value: "in-a" });
+      const fromA = await a.cookies.get({ url: purl, name: "k" });
+      const fromB = await b.cookies.get({ url: purl, name: "k" });
+      expect(fromA.map((c) => c.value)).toEqual(["in-a"]);
+      expect(fromB.length).toBe(0);
+      await a.cookies.remove(purl, "k");
+    });
+
+    test("each session exposes cookies and webRequest", () => {
+      const s = session.fromPartition("persist:shape");
+      expect(s.cookies).toBeDefined();
+      expect(s.webRequest).toBeDefined();
+    });
   });
 });

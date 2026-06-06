@@ -205,6 +205,16 @@ class HelperApp : public CefApp, public CefRenderProcessHandler {
         }
       }
     }
+
+    // The bootstrap stashed ipcRenderer/contextBridge on a non-enumerable
+    // globalThis.__beInternals so the preload wrapper could reach them. Remove
+    // it (and __beIsolate) now — before any page script runs — so an isolated
+    // page cannot recover ipcRenderer via globalThis.__beInternals.
+    CefRefPtr<CefV8Value> cleanup_ret;
+    CefRefPtr<CefV8Exception> cleanup_exc;
+    context->Eval(
+        "try { delete globalThis.__beInternals; delete globalThis.__beIsolate; } catch (e) {}",
+        frame->GetURL(), 0, cleanup_ret, cleanup_exc);
   }
 
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,

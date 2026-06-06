@@ -24,7 +24,10 @@
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_image.h"
 #include "include/cef_request.h"
+#include "include/cef_request_context.h"
+#include "include/cef_request_handler.h"
 #include "include/cef_resource_handler.h"
+#include "include/cef_resource_request_handler.h"
 #include "include/cef_response.h"
 #include "include/cef_scheme.h"
 #include "include/views/cef_display.h"
@@ -246,6 +249,14 @@ struct WindowEntry {
 std::mutex g_windows_mutex;
 std::map<int32_t, std::shared_ptr<WindowEntry>> g_windows;
 std::map<int, int32_t> g_browser_to_window;  // browser id -> window id
+
+// webRequest.onBeforeRequest interception. Active only while a JS listener is
+// registered, so the resource path stays zero-overhead otherwise. Declared
+// here (before Client) because Client's resource methods reference it.
+std::atomic<bool> g_web_request_active{false};
+std::mutex g_web_request_mutex;
+std::atomic<int32_t> g_next_web_request_id{1};
+std::map<int32_t, CefRefPtr<CefCallback>> g_web_request_callbacks;
 std::atomic<int32_t> g_next_window_id{1};
 std::atomic<bool> g_external_pump{false};
 std::atomic<bool> g_initialized{false};
@@ -291,13 +302,33 @@ void SetWindowOpt(int32_t id, const std::string& key, const std::string& value) 
 class Client : public CefClient,
                public CefLifeSpanHandler,
                public CefLoadHandler,
-               public CefDisplayHandler {
+               public CefDisplayHandler,
+               public CefRequestHandler,
+               public CefResourceRequestHandler {
  public:
   explicit Client(int32_t window_id) : window_id_(window_id) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+
+  // CefRequestHandler -> resource request handler (only when a webRequest
+  // listener is active, to avoid per-request overhead otherwise).
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override;
+
+  // CefResourceRequestHandler
+  cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                          CefRefPtr<CefFrame> frame,
+                                          CefRefPtr<CefRequest> request,
+                                          CefRefPtr<CefCallback> callback) override;
 
   // Popups created by window.open() share the opener's CefClient, so the
   // owning window is resolved through the browser view's ID (assigned at
@@ -319,7 +350,7 @@ class Client : public CefClient,
                      int popup_id,
                      const CefString& target_url,
                      const CefString& target_frame_name,
-                     WindowOpenDisposition target_disposition,
+                     cef_window_open_disposition_t target_disposition,
                      bool user_gesture,
                      const CefPopupFeatures& popupFeatures,
                      CefWindowInfo& windowInfo,
@@ -739,6 +770,51 @@ class WindowDelegate : public CefWindowDelegate {
   IMPLEMENT_REFCOUNTING(WindowDelegate);
 };
 
+// webRequest interception: when a listener is active, every resource load is
+// announced to JS, which decides allow/cancel and calls be_web_request_continue.
+CefRefPtr<CefResourceRequestHandler> Client::GetResourceRequestHandler(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    bool is_navigation,
+    bool is_download,
+    const CefString& request_initiator,
+    bool& disable_default_handling) {
+  return g_web_request_active.load() ? this : nullptr;
+}
+
+cef_return_value_t Client::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                                CefRefPtr<CefFrame> frame,
+                                                CefRefPtr<CefRequest> request,
+                                                CefRefPtr<CefCallback> callback) {
+  if (!g_web_request_active.load()) return RV_CONTINUE;
+  int32_t req_id = g_next_web_request_id.fetch_add(1);
+  {
+    std::lock_guard<std::mutex> lock(g_web_request_mutex);
+    g_web_request_callbacks[req_id] = callback;
+  }
+  const char* rt = "other";
+  switch (request->GetResourceType()) {
+    case RT_MAIN_FRAME: rt = "mainFrame"; break;
+    case RT_SUB_FRAME: rt = "subFrame"; break;
+    case RT_STYLESHEET: rt = "stylesheet"; break;
+    case RT_SCRIPT: rt = "script"; break;
+    case RT_IMAGE: rt = "image"; break;
+    case RT_FONT_RESOURCE: rt = "font"; break;
+    case RT_XHR: rt = "xhr"; break;
+    default: rt = "other";
+  }
+  EmitEvent(JsonObj()
+                .AddString("type", "web-request-before")
+                .AddInt("requestId", req_id)
+                .AddInt("windowId", WindowId(browser))
+                .AddString("url", request->GetURL().ToString())
+                .AddString("method", request->GetMethod().ToString())
+                .AddString("resourceType", rt)
+                .Build());
+  return RV_CONTINUE_ASYNC;
+}
+
 // window.open() popups: allocate the window entry and give the popup its own
 // Client so events are attributed correctly from the first callback.
 bool Client::OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -746,7 +822,7 @@ bool Client::OnBeforePopup(CefRefPtr<CefBrowser> browser,
                            int popup_id,
                            const CefString& target_url,
                            const CefString& target_frame_name,
-                           WindowOpenDisposition target_disposition,
+                           cef_window_open_disposition_t target_disposition,
                            bool user_gesture,
                            const CefPopupFeatures& popupFeatures,
                            CefWindowInfo& windowInfo,
@@ -1206,10 +1282,28 @@ class CookieDone : public CefSetCookieCallback, public CefDeleteCookiesCallback 
   IMPLEMENT_REFCOUNTING(CookieDone);
 };
 
+// Per-partition request contexts (UI-thread only). "" => global context.
+std::map<std::string, CefRefPtr<CefRequestContext>> g_partition_contexts;
+
+CefRefPtr<CefRequestContext> PartitionContext(const std::string& partition) {
+  CEF_REQUIRE_UI_THREAD();
+  if (partition.empty()) return CefRequestContext::GetGlobalContext();
+  auto it = g_partition_contexts.find(partition);
+  if (it != g_partition_contexts.end()) return it->second;
+  CefRequestContextSettings settings;
+  // "persist:" partitions get on-disk storage; others are in-memory.
+  CefRefPtr<CefRequestContext> ctx =
+      CefRequestContext::CreateContext(settings, nullptr);
+  g_partition_contexts[partition] = ctx;
+  return ctx;
+}
+
 void CookiesOpOnUI(int32_t op_id, std::string op, std::string kv_str) {
   CEF_REQUIRE_UI_THREAD();
   KVList kv = ParseKV(kv_str.c_str());
-  CefRefPtr<CefCookieManager> manager = CefCookieManager::GetGlobalManager(nullptr);
+  CefRefPtr<CefRequestContext> ctx = PartitionContext(KVGet(kv, "partition"));
+  CefRefPtr<CefCookieManager> manager =
+      ctx ? ctx->GetCookieManager(nullptr) : CefCookieManager::GetGlobalManager(nullptr);
   if (!manager) {
     EmitEvent(JsonObj()
                   .AddString("type", "cookies-result")
@@ -1771,6 +1865,26 @@ BE_EXPORT void be_allow_ipc_origin(const char* origin) {
   if (!origin || !*origin) return;
   std::lock_guard<std::mutex> lock(g_ipc_origins_mutex);
   g_ipc_allowed_origins.insert(origin);
+}
+
+// Enable/disable webRequest interception (set when JS registers/clears an
+// onBeforeRequest listener).
+BE_EXPORT void be_web_request_set_active(int32_t active) {
+  g_web_request_active.store(active != 0);
+}
+
+// Resolve a pending onBeforeRequest: cancel != 0 blocks the load.
+BE_EXPORT void be_web_request_continue(int32_t request_id, int32_t cancel) {
+  CefRefPtr<CefCallback> callback;
+  {
+    std::lock_guard<std::mutex> lock(g_web_request_mutex);
+    auto it = g_web_request_callbacks.find(request_id);
+    if (it == g_web_request_callbacks.end()) return;
+    callback = it->second;
+    g_web_request_callbacks.erase(it);
+  }
+  if (cancel) callback->Cancel();
+  else callback->Continue();
 }
 
 BE_EXPORT void be_ipc_send(int32_t id, const char* channel, const char* args_json) {

@@ -65,6 +65,8 @@ interface Shim {
     be_capture_page: (id: number, captureId: number) => void;
     be_devtools_method: (id: number, callId: number, method: Buffer, params: Buffer) => void;
     be_allow_ipc_origin: (origin: Buffer) => void;
+    be_web_request_set_active: (active: number) => void;
+    be_web_request_continue: (requestId: number, cancel: number) => void;
     be_resource_reply: (id: number, status: number, mime: Buffer, body: Buffer) => void;
     be_run_file_dialog: (id: number, dialogId: number, kv: Buffer) => void;
     be_cookies_op: (opId: number, op: Buffer, kv: Buffer) => void;
@@ -111,6 +113,8 @@ function loadShim(): Shim {
     be_capture_page: { args: [FFIType.i32, FFIType.i32], returns: FFIType.void },
     be_devtools_method: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_allow_ipc_origin: { args: [FFIType.ptr], returns: FFIType.void },
+    be_web_request_set_active: { args: [FFIType.i32], returns: FFIType.void },
+    be_web_request_continue: { args: [FFIType.i32, FFIType.i32], returns: FFIType.void },
     be_resource_reply: { args: [FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
     be_run_file_dialog: { args: [FFIType.i32, FFIType.i32, FFIType.ptr], returns: FFIType.void },
     be_cookies_op: { args: [FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
@@ -262,6 +266,14 @@ export function devtoolsMethod(id: number, callId: number, method: string, param
 
 export function allowIpcOrigin(origin: string): void {
   loadShim().symbols.be_allow_ipc_origin(cstr(origin));
+}
+
+export function webRequestSetActive(active: boolean): void {
+  loadShim().symbols.be_web_request_set_active(active ? 1 : 0);
+}
+
+export function webRequestContinue(requestId: number, cancel: boolean): void {
+  loadShim().symbols.be_web_request_continue(requestId, cancel ? 1 : 0);
 }
 
 export function resourceReply(id: number, status: number, mime: string, bodyBase64: string): void {

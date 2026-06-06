@@ -6,6 +6,7 @@ import { routeIpcEvent } from "./ipc-main";
 import * as native from "./native";
 import { customSchemes, routeProtocolEvent } from "./protocol";
 import { routeCookiesEvent } from "./session";
+import { routeWebRequestEvent } from "./web-request";
 
 class CommandLine {
   readonly switches: string[] = [];
@@ -177,6 +178,9 @@ class App extends EventEmitter {
         return;
       case "cookies-result":
         routeCookiesEvent(ev);
+        return;
+      case "web-request-before":
+        routeWebRequestEvent(ev);
         return;
       default:
         if (typeof ev.windowId === "number") {

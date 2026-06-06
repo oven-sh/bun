@@ -212,9 +212,10 @@ Implemented as data models / process-local (no OS surface wired up): `Menu`
 rendering, `Tray` icon, `Notification` display, `clipboard` (no system
 clipboard), `globalShortcut` key capture.
 
-Not implemented: partitioned sessions, `webRequest` interception, image
-resize/crop in `nativeImage`, `desktopCapturer`, real OS power-event
-delivery, and OS-native rendering of menus/tray/notifications.
+Not implemented: image resize/crop in `nativeImage`, real OS power-event
+delivery, OS-native rendering of menus/tray/notifications, window-source
+capture in `desktopCapturer`, and `webRequest` stages beyond
+`onBeforeRequest` (headers/completed/error).
 
 Context isolation is implemented at the JS-scope level (observable Electron
 semantics), not via a separate Chromium V8 world — sufficient for the API
@@ -232,8 +233,9 @@ Tests are ported from Electron's spec suite (names preserved where behavior
 carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `menu`, `native-image`, `dialog`, `screen`, `session`, `protocol`,
 `window-icon`, `safe-storage`, `clipboard`, `global-shortcut`,
-`tray-notification`, `net`, `message-channel`, `power-monitor`, and
-`context-isolation` test files (170 tests total). App-lifecycle scenarios spawn fresh
+`tray-notification`, `net`, `message-channel`, `power-monitor`,
+`context-isolation`, `web-request`, and `desktop-capturer` test files (179
+tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

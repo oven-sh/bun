@@ -28,6 +28,8 @@ export type { NotificationConstructorOptions } from "./notification";
 export { net, ClientRequest } from "./net";
 export { MessageChannelMain, MessagePortMain } from "./message-channel";
 export { powerMonitor } from "./power-monitor";
+export { desktopCapturer } from "./desktop-capturer";
+export { Session } from "./session";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -47,6 +49,7 @@ import { Notification } from "./notification";
 import { net } from "./net";
 import { MessageChannelMain, MessagePortMain } from "./message-channel";
 import { powerMonitor } from "./power-monitor";
+import { desktopCapturer } from "./desktop-capturer";
 
 export default {
   app,
@@ -60,6 +63,7 @@ export default {
   nativeImage,
   MessageChannelMain,
   MessagePortMain,
+  desktopCapturer,
   net,
   Notification,
   powerMonitor,

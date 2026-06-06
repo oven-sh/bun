@@ -123,12 +123,12 @@ pub mod mysql {
         pub use crate::mysql::mysql_types::FieldType;
     }
 
+    pub use crate::shared::query_status;
+    pub use crate::shared::query_status::Status as QueryStatus;
     pub use auth_method::AuthMethod;
     pub use capabilities::Capabilities;
     pub use connection_state::ConnectionState;
     pub use mysql_query_result::MySQLQueryResult;
-    pub use crate::shared::query_status;
-    pub use crate::shared::query_status::Status as QueryStatus;
     pub use ssl_mode::SSLMode;
     pub use status_flags::{StatusFlag, StatusFlags};
     pub use tls_status::TLSStatus;

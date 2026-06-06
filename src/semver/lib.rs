@@ -343,9 +343,9 @@ pub mod semver_string {
                 5 => [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
                 6 => [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
                 7 => [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
-                Self::MAX_INLINE_LEN => {
-                    [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7]]
-                }
+                Self::MAX_INLINE_LEN => [
+                    in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+                ],
                 _ => unreachable!(),
             }
         }

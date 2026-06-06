@@ -25,8 +25,8 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 // `Resolver`, and `dispatch.rs`'s `from_field_ptr!`/`owner_as!` casts now resolve
 // to the same allocation `dns_body::Resolver::init` produces.
 
+pub use dns_body::get_addr_info_request;
 pub use dns_body::{
     CacheConfig, CacheHit, GetAddrInfoAsyncCallback, GetAddrInfoRequest, GlobalData,
     InternalDNSRequest, Order, PendingCache, PendingCacheField, RecordType, Resolver, internal,
 };
-pub use dns_body::get_addr_info_request;

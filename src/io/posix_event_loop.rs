@@ -376,7 +376,10 @@ macro_rules! impl_poll_slot {
             #[inline]
             unsafe fn ignore_updates(p: *mut Self) {
                 // SAFETY: caller upholds the trait-level contract.
-                unsafe { (*p).flags.insert($crate::posix_event_loop::Flags::IgnoreUpdates) };
+                unsafe {
+                    (*p).flags
+                        .insert($crate::posix_event_loop::Flags::IgnoreUpdates)
+                };
             }
         }
     };

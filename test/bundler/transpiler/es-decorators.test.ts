@@ -1080,5 +1080,56 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("true 42\n");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/29837
+    test("auto-accessor in subclass does not collide with base class storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A"
+        }
+        class B extends A {
+          accessor name = "B"
+          logName() {
+            console.log(this.name)
+            console.log(super.name)
+          }
+        }
+        new B().logName()
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/28010
+    test("field decorators in a subclass do not remap base class initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function decorate(name) {
+          return function (_value, context) {
+            return function (initialValue) {
+              console.log(name, String(context.name), initialValue);
+              return initialValue;
+            }
+          }
+        }
+        class Parent {
+          @decorate('Parent.foo') foo = 'parent_foo';
+          @decorate('Parent.shared') shared = 'parent_shared';
+        }
+        class Child extends Parent {
+          @decorate('Child.foo') foo = 'child_foo';
+          @decorate('Child.childOnly') childOnly = 'child_childOnly';
+        }
+        new Child();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "Parent.foo foo parent_foo\n" +
+          "Parent.shared shared parent_shared\n" +
+          "Child.foo foo child_foo\n" +
+          "Child.childOnly childOnly child_childOnly\n",
+      );
+      expect(exitCode).toBe(0);
+    });
   });
 });

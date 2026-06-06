@@ -4,7 +4,7 @@
 use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{HashMap, VecExt};
-use bun_core::MutableString;
+use bun_core::{MutableString, UnwrapOrOom as _};
 
 use crate::lexer as js_lexer;
 use crate::p::P;
@@ -186,14 +186,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn temp_name(&mut self, base: &'a [u8]) -> &'a [u8] {
         // Key-derived bases (`_` + private name or string key) can contain
         // arbitrary bytes; sanitize them like the renamer does.
-        let valid = MutableString::ensure_valid_identifier(base).expect("unreachable");
+        let valid = MutableString::ensure_valid_identifier(base).unwrap_or_oom();
         let base: &'a [u8] = if *valid == *base {
             base
         } else {
             self.arena.alloc_slice_copy(&valid)
         };
         let Some(&prev) = self.decorator_temp_names.get(base) else {
-            self.decorator_temp_names.put(base, 1).expect("oom");
+            self.decorator_temp_names.put(base, 1).unwrap_or_oom();
             return base;
         };
         let mut tries = prev + 1;
@@ -202,8 +202,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             tries += 1;
             name = self.bump_name(base, Some(tries as usize));
         }
-        self.decorator_temp_names.put(base, tries).expect("oom");
-        self.decorator_temp_names.put(name, 1).expect("oom");
+        self.decorator_temp_names.put(base, tries).unwrap_or_oom();
+        self.decorator_temp_names.put(name, 1).unwrap_or_oom();
         name
     }
 
@@ -220,7 +220,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ref_,
                 is_top_level: true,
             })
-            .expect("oom");
+            .unwrap_or_oom();
         ref_
     }
 

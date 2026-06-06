@@ -2562,6 +2562,41 @@ describe("bundler", () => {
       stdout: "2 3",
     },
   });
+  // https://github.com/oven-sh/bun/issues/30568
+  itBundled("edgecase/AccessorStorageTempsAcrossModules", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ComponentA } from './a.js';
+        import { ComponentB } from './b.js';
+        console.log(new ComponentA().myData, new ComponentB().myData);
+      `,
+      "/a.js": /* js */ `
+        import { state } from './decorator.js';
+        export class ComponentA {
+          @state() accessor myData = 'A';
+        }
+      `,
+      "/b.js": /* js */ `
+        import { state } from './decorator.js';
+        export class ComponentB {
+          @state() accessor myData = 'B';
+        }
+      `,
+      "/decorator.js": /* js */ `
+        export function state() {
+          return function (target, context) {
+            return {
+              get() { return target.get.call(this); },
+              set(newValue) { target.set.call(this, newValue); },
+            };
+          };
+        }
+      `,
+    },
+    run: {
+      stdout: "A B",
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

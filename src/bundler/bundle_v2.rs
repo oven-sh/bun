@@ -6363,9 +6363,20 @@ pub mod bv2_impl {
                     && self.dev_server.is_none();
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
-                    if self.dev_server.is_some() && loader != Loader::Html {
+                    if self.dev_server.is_some() {
+                        // In dev, printed module specifiers come from
+                        // `path.pretty`, which must match the incremental
+                        // graph's project-relative key. The record may still
+                        // hold the raw specifier (HTMLScanner rewrites bare
+                        // specifiers to absolute paths with `pretty == text`),
+                        // so take the graph input file's prettified path.
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
+                        if loader == Loader::Html {
+                            // HTML chunk printing reads the loader and unique
+                            // key through `source_index`.
+                            import_record.source_index = Index::init(id);
+                        }
                     } else {
                         import_record.source_index = Index::init(id);
                     }

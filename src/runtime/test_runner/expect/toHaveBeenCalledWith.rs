@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
@@ -32,20 +31,7 @@ pub(crate) fn to_have_been_called_with(
                 )));
             }
 
-            if call_item.get_length(global)? != arguments.len() as u64 {
-                continue;
-            }
-
-            let mut call_itr = call_item.array_iterator(global)?;
-            let mut matched = true;
-            while let Some(call_arg) = call_itr.next()? {
-                if !call_arg.jest_deep_equals(arguments[call_itr.i as usize - 1], global)? {
-                    matched = false;
-                    break;
-                }
-            }
-
-            if matched {
+            if mock::call_args_equal(global, call_item, arguments)? {
                 pass = true;
                 break;
             }
@@ -57,52 +43,31 @@ pub(crate) fn to_have_been_called_with(
     }
 
     // handle failure
-    let mut formatter = super::make_formatter(global);
-
     let expected_args_js_array = JSValue::create_array_from_slice(global, arguments)?;
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nExpected mock function not to have been called with: <green>{}<r>\nBut it was.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+        return mock::throw_not_failure(
+            &this, global, "toHaveBeenCalledWith", "<green>...expected<r>",
+            format_args!("Expected mock function not to have been called with"), expected_args_js_array, "\nBut it was.",
         );
     }
     let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false);
 
     if calls_count == 0 {
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nBut it was not called.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
-        );
+        return mock::throw_not_called(&this, global, signature, expected_args_js_array);
     }
 
     // If there's only one call, provide a nice diff.
     if calls_count == 1 {
         let received_call_args = calls.get_index(global, 0)?;
-        let diff_format = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            expected: Some(expected_args_js_array),
-            received: Some(received_call_args),
-            global_this: Some(global),
-            not: false,
-        };
-        return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
+        return mock::throw_diff(&this, global, signature, format_args!(""), expected_args_js_array, received_call_args);
     }
 
     // If there are multiple calls, list them all to help debugging.
     // The AllCallsWithArgsFormatter holds an exclusive borrow of the formatter, so
     // we allocate a second ConsoleObject formatter for the list.
+    let mut formatter = super::make_formatter(global);
     let mut list_fmt = super::make_formatter(global);
     let list_formatter = mock::AllCallsWithArgsFormatter {
         global_this: global,

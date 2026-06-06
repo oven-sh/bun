@@ -39,29 +39,11 @@ pub struct FilePoll {
 }
 
 impl FilePoll {
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn is_watching(&self) -> bool {
-        !self.flags.contains(Flags::NeedsRearm)
-            && (self.flags.contains(Flags::PollReadable)
-                || self.flags.contains(Flags::PollWritable)
-                || self.flags.contains(Flags::PollProcess))
-    }
+    posix::impl_file_poll_flag_methods!();
 
     #[inline]
     pub fn is_keeping_process_alive(&self) -> bool {
         !self.flags.contains(Flags::Closed) && self.is_active()
-    }
-
-    pub fn is_registered(&self) -> bool {
-        self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
     }
 
     /// Make calling ref() on this poll into a no-op.
@@ -99,11 +81,6 @@ impl FilePoll {
     // teardown returns the slot to the pool via `Store::put`.
     pub fn deinit(&mut self) {
         self.deinit_with_vm(js_vm_ctx());
-    }
-
-    #[inline]
-    pub fn file_descriptor(&self) -> Fd {
-        self.fd
     }
 
     pub fn deinit_force_unregister(&mut self) {
@@ -147,34 +124,6 @@ impl FilePoll {
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
         vm.file_polls_mut().put(this, vm, was_ever_registered);
-    }
-
-    pub fn is_readable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Readable);
-        self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_hup(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Hup);
-        self.flags.remove(Flags::Hup);
-        readable
-    }
-
-    pub fn is_eof(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Eof);
-        self.flags.remove(Flags::Eof);
-        readable
-    }
-
-    pub fn clear_event(&mut self, flag: Flags) {
-        self.flags.remove(flag);
-    }
-
-    pub fn is_writable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Writable);
-        self.flags.remove(Flags::Writable);
-        readable
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -232,11 +181,6 @@ impl FilePoll {
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
@@ -268,24 +212,7 @@ impl FilePoll {
 
 pub type Store = posix::PollStore<FilePoll>;
 
-impl posix::PollSlot for FilePoll {
-    #[inline]
-    unsafe fn next_to_free(p: *mut Self) -> *mut Self {
-        // SAFETY: caller upholds the trait-level contract (`p` is a live hive
-        // slot; raw-pointer field op only).
-        unsafe { (*p).next_to_free }
-    }
-    #[inline]
-    unsafe fn set_next_to_free(p: *mut Self, next: *mut Self) {
-        // SAFETY: caller upholds the trait-level contract.
-        unsafe { (*p).next_to_free = next }
-    }
-    #[inline]
-    unsafe fn ignore_updates(p: *mut Self) {
-        // SAFETY: caller upholds the trait-level contract.
-        unsafe { (*p).flags.insert(Flags::IgnoreUpdates) };
-    }
-}
+posix::impl_poll_slot!(FilePoll);
 
 pub struct Waker {
     // `BackRef<WindowsLoop>`: `WindowsLoop::get()` hands out the shared

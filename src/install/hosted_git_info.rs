@@ -1421,30 +1421,51 @@ pub mod formatters {
             Ok(Some(build_result(Some(user_part), project, committish)?))
         }
 
-        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        /// Shared tail for hosts whose URL shape is `/user/project[.git][/aux]`
+        /// with the committish in the fragment: reject `aux == reject_aux`,
+        /// trim `.git`, require a non-empty project (and user, unless
+        /// `user_optional`, in which case a lone segment is the project), then
+        /// build the result. With `error_as_none`, allocation or decode
+        /// failure maps to "not a hosted git URL" rather than an error.
+        fn user_project_committish(
+            url: &JscUrl,
+            reject_aux: &[u8],
+            user_optional: bool,
+            error_as_none: bool,
+        ) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
+            let Some(mut user_part) = iter.next() else {
                 return Ok(None);
             };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
+            let mut project_part = iter.next();
 
-            if let Some(a) = aux {
-                if a == b"get" {
-                    return Ok(None);
-                }
+            if iter.next() == Some(reject_aux) {
+                return Ok(None);
             }
+
+            if user_optional && project_part.is_none_or(<[u8]>::is_empty) {
+                project_part = Some(user_part);
+                user_part = b"";
+            }
+            let Some(project_part) = project_part else {
+                return Ok(None);
+            };
 
             let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
+            if project.is_empty() {
                 return Ok(None);
             }
+            let user: Option<&[u8]> = if user_part.is_empty() {
+                if !user_optional {
+                    return Ok(None);
+                }
+                None
+            } else {
+                Some(user_part)
+            };
 
             let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
@@ -1455,7 +1476,17 @@ pub mod formatters {
                 None
             };
 
-            Ok(Some(build_result(Some(user_part), project, committish)?))
+            match build_result(user, project, committish) {
+                Ok(result) => Ok(Some(result)),
+                Err(_) if error_as_none => Ok(None),
+                Err(err) => Err(err),
+            }
+        }
+
+        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            user_project_committish(
+                url, b"get", /* user_optional */ false, /* error_as_none */ false,
+            )
         }
 
         pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
@@ -1513,89 +1544,15 @@ pub mod formatters {
         }
 
         pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(mut user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let mut project_part = iter.next();
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"raw" {
-                    return Ok(None);
-                }
-            }
-
-            if project_part.is_none() || project_part.unwrap().is_empty() {
-                project_part = Some(user_part);
-                user_part = b"";
-            }
-
-            let project = strings::trim_suffix(project_part.unwrap(), b".git");
-            let user: Option<&[u8]> = if !user_part.is_empty() {
-                Some(user_part)
-            } else {
-                None
-            };
-
-            if project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            // Unlike github/bitbucket, allocation or decode failure here maps
-            // to "not a hosted git URL" rather than an error.
-            Ok(build_result(user, project, committish).ok())
+            user_project_committish(
+                url, b"raw", /* user_optional */ true, /* error_as_none */ true,
+            )
         }
 
         pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"archive" {
-                    return Ok(None);
-                }
-            }
-
-            let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            // Unlike github/bitbucket, allocation or decode failure here maps
-            // to "not a hosted git URL" rather than an error.
-            Ok(build_result(Some(user_part), project, committish).ok())
+            user_project_committish(
+                url, b"archive", /* user_optional */ false, /* error_as_none */ true,
+            )
         }
     }
 

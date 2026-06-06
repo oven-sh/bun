@@ -33,9 +33,7 @@ use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
-use bun_sys::{
-    self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
-};
+use bun_sys::{self, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator};
 
 // ───────────────────────────────────────────────────────────────────────────
 // local shims for upstream-stub gaps
@@ -1856,7 +1854,7 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// would create.
 ///
 /// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
-/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
+/// a `File` whose Drop fires after the read loop). The
 /// previous fd may already be closed; disarm its `File::Drop` before
 /// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
@@ -1910,32 +1908,20 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// Const generics cannot vary the
-// return type directly, so both instantiations return an Option that is
-// `Some` only when FOR_PUBLISH == true.
-pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
-
-pub(crate) fn pack<const FOR_PUBLISH: bool>(
-    ctx: &mut Context<'_>,
+/// Reads `abs_package_json_path` through the workspace package.json cache;
+/// read/parse failures are fatal. Unlike
+/// `WorkspacePackageJSONCache::get_with_path_or_exit`, this keeps pack's
+/// error wording and ordering (`Output::err` first, then the log printed
+/// unconditionally on parse errors), matching the `pack_command.zig`
+/// reference.
+fn load_package_json_or_exit<'a>(
+    manager_ptr: *mut PackageManager,
     abs_package_json_path: &ZStr,
-) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
-    // Note: reshaped for borrowck —
-    // `ctx`-whole calls (`run_lifecycle_script(ctx, …)`,
-    // `iterate_bundled_deps(ctx, …)`) overlap the manager borrow.
-    // Round-trip the field through a raw
-    // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
-    // every interleaved `ctx` access touches disjoint fields (`command_ctx`,
-    // `bundled_deps`, `stats`) or only reads `manager` via `pm_*` helpers.
-    let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
-    // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
-    // single-threaded and no callee retains a conflicting borrow.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
-    let log_level = manager.options.log_level;
-    let bump = pack_bump();
+) -> &'a mut WorkspacePackageJSONCache::MapEntry {
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the
     // two `&mut` borrows don't conflict.
-    let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
+    match pm_workspace_cache(manager_ptr).get_with_path(
         pm_log(manager_ptr),
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions {
@@ -1961,7 +1947,32 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-    };
+    }
+}
+
+// Const generics cannot vary the
+// return type directly, so both instantiations return an Option that is
+// `Some` only when FOR_PUBLISH == true.
+pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
+
+pub(crate) fn pack<const FOR_PUBLISH: bool>(
+    ctx: &mut Context<'_>,
+    abs_package_json_path: &ZStr,
+) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
+    // Note: reshaped for borrowck —
+    // `ctx`-whole calls (`run_lifecycle_script(ctx, …)`,
+    // `iterate_bundled_deps(ctx, …)`) overlap the manager borrow.
+    // Round-trip the field through a raw
+    // pointer so the long-lived `manager` reborrow is decoupled from `ctx`;
+    // every interleaved `ctx` access touches disjoint fields (`command_ctx`,
+    // `bundled_deps`, `stats`) or only reads `manager` via `pm_*` helpers.
+    let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
+    // SAFETY: `ctx.manager` is the sole `&mut PackageManager`; CLI is
+    // single-threaded and no callee retains a conflicting borrow.
+    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let log_level = manager.options.log_level;
+    let bump = pack_bump();
+    let mut json = load_package_json_or_exit(manager_ptr, abs_package_json_path);
 
     if FOR_PUBLISH {
         if let Some(config) = json.root.get(b"publishConfig") {
@@ -2191,33 +2202,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
 
         // Re-read package.json from disk
-        json = match pm_workspace_cache(manager_ptr).get_with_path(
-            pm_log(manager_ptr),
-            abs_package_json_path.as_bytes(),
-            WorkspacePackageJSONCache::GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-                Output::err(
-                    err,
-                    "failed to read package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-                Output::err(
-                    err,
-                    "failed to parse package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-        };
+        json = load_package_json_or_exit(manager_ptr, abs_package_json_path);
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {
@@ -2611,11 +2596,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
             node.as_mut().expect("infallible: progress active").unit = Progress::Unit::Files;
         }
-        // Note: the loop bodies' only early exits are `continue`
-        // and `Global::crash()` (never returns, no
-        // unwinding). `scopeguard` captures of `&mut node` overlap the inline
-        // uses below, so call `complete_one()` explicitly at every loop-body
-        // exit and `end()` once after the loops.
+        // Note: `scopeguard` captures of `&mut node` would overlap the inline
+        // uses below, so call `complete_one()` explicitly after each archived
+        // entry and `end()` once after the queues drain.
 
         entry = archive_package_json(
             ctx,
@@ -2632,142 +2615,41 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 .complete_one();
         }
 
-        while let Some(item) = pack_queue.remove_or_null() {
-            let file = match bun_sys::openat(
-                Fd::from_std_dir(&root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
-                Ok(f) => f,
-                Err(err) => {
-                    if item.optional {
-                        ctx.stats.total_files -= 1;
-                        if log_level.show_progress() {
-                            node.as_mut()
-                                .expect("infallible: progress active")
-                                .complete_one();
-                        }
-                        continue;
-                    }
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
+        entry = archive_pack_queue(
+            ctx,
+            &mut pack_queue,
+            PackQueueOpenMode::UvOwnedFd,
+            &root_dir,
+            Some(&mut pack_list),
+            &mut read_buf,
+            &mut file_reader,
+            // SAFETY: `archive` is the non-null `*mut Archive` returned by
+            // `Archive::write_new()` above; only this thread accesses it.
+            unsafe { &mut *archive },
+            entry,
+            &mut print_buf,
+            &bins,
+            log_level,
+            &mut node,
+        )?;
 
-            let fd: Fd = match file
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            {
-                Ok(fd) => fd,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            let _close_fd = CloseOnDrop::new(fd);
-
-            let stat = match bun_sys::sys_uv::fstat(fd) {
-                Ok(s) => s,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to stat file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            pack_list.push(PackListEntry {
-                subpath: ZBox::from_bytes(item.path.as_bytes()),
-                size: usize::try_from(stat.st_size).expect("int cast"),
-            });
-
-            entry = add_archive_entry(
-                ctx,
-                fd,
-                &stat,
-                &item.path,
-                &mut read_buf,
-                &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
-                entry,
-                &mut print_buf,
-                &bins,
-            )?;
-
-            if log_level.show_progress() {
-                node.as_mut()
-                    .expect("infallible: progress active")
-                    .complete_one();
-            }
-        }
-
-        while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let file = match root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0) {
-                Ok(f) => f,
-                Err(err) => {
-                    if item.optional {
-                        ctx.stats.total_files -= 1;
-                        if log_level.show_progress() {
-                            node.as_mut()
-                                .expect("infallible: progress active")
-                                .complete_one();
-                        }
-                        continue;
-                    }
-                    Output::err(
-                        err,
-                        "failed to open file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-            let stat = match file.stat() {
-                Ok(s) => s,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to stat file: \"{}\"",
-                        format_args!("{}", file.handle),
-                    );
-                    Global::crash();
-                }
-            };
-
-            entry = add_archive_entry(
-                ctx,
-                file.handle,
-                &stat,
-                &item.path,
-                &mut read_buf,
-                &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
-                entry,
-                &mut print_buf,
-                &bins,
-            )?;
-
-            if log_level.show_progress() {
-                node.as_mut()
-                    .expect("infallible: progress active")
-                    .complete_one();
-            }
-        }
+        entry = archive_pack_queue(
+            ctx,
+            &mut bundled_pack_queue,
+            PackQueueOpenMode::PlainFile,
+            &root_dir,
+            None,
+            &mut read_buf,
+            &mut file_reader,
+            // SAFETY: `archive` is the non-null `*mut Archive` returned by
+            // `Archive::write_new()` above; only this thread accesses it.
+            unsafe { &mut *archive },
+            entry,
+            &mut print_buf,
+            &bins,
+            log_level,
+            &mut node,
+        )?;
 
         if log_level.show_progress() {
             if let Some(n) = node.as_mut() {
@@ -3219,6 +3101,144 @@ fn archive_package_json(
         usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
 
     Ok(entry.clear())
+}
+
+/// How [`archive_pack_queue`] opens each queued file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackQueueOpenMode {
+    /// Open with `bun_sys::openat` and convert to a libuv-owned descriptor
+    /// stat'd through `sys_uv`.
+    UvOwnedFd,
+    /// Open relative to `root_dir` as a plain `File`.
+    PlainFile,
+}
+
+/// Drains `queue`, archiving each file via [`add_archive_entry`]; see
+/// [`PackQueueOpenMode`] for how each file is opened. Each entry is also
+/// appended to `pack_list` when provided.
+///
+/// The loop body's only early exits are `continue` and `Global::crash()`
+/// (never returns, no unwinding), so `node.complete_one()` is called
+/// explicitly at every loop-body exit instead of via a scope guard.
+fn archive_pack_queue(
+    ctx: &mut Context<'_>,
+    queue: &mut PackQueue,
+    open_mode: PackQueueOpenMode,
+    root_dir: &Dir,
+    mut pack_list: Option<&mut PackList>,
+    read_buf: &mut [u8],
+    file_reader: &mut BufferedFileReader,
+    archive: &mut Archive,
+    mut entry: *mut ArchiveEntry,
+    print_buf: &mut Vec<u8>,
+    bins: &[BinInfo],
+    log_level: LogLevel,
+    node: &mut Option<&mut Progress::Node>,
+) -> Result<*mut ArchiveEntry, AllocError> {
+    let uv_owned_fd = open_mode == PackQueueOpenMode::UvOwnedFd;
+    while let Some(item) = queue.remove_or_null() {
+        let opened = if uv_owned_fd {
+            bun_sys::openat(
+                Fd::from_std_dir(root_dir),
+                &item.path,
+                bun_sys::O::RDONLY,
+                0,
+            )
+            .map(File::from_fd)
+        } else {
+            root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0)
+        };
+        let file = match opened {
+            Ok(f) => f,
+            Err(err) => {
+                if item.optional {
+                    ctx.stats.total_files -= 1;
+                    if log_level.show_progress() {
+                        node.as_mut()
+                            .expect("infallible: progress active")
+                            .complete_one();
+                    }
+                    continue;
+                }
+                Output::err(
+                    err,
+                    "failed to open file: \"{}\"",
+                    format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
+                );
+                Global::crash();
+            }
+        };
+
+        let file = if uv_owned_fd {
+            match file
+                .into_raw()
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
+            {
+                Ok(fd) => File::from_fd(fd),
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "failed to open file: \"{}\"",
+                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
+                    );
+                    Global::crash();
+                }
+            }
+        } else {
+            file
+        };
+
+        let stat = match if uv_owned_fd {
+            bun_sys::sys_uv::fstat(file.handle)
+        } else {
+            file.stat()
+        } {
+            Ok(s) => s,
+            Err(err) => {
+                if uv_owned_fd {
+                    Output::err(
+                        err,
+                        "failed to stat file: \"{}\"",
+                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
+                    );
+                } else {
+                    Output::err(
+                        err,
+                        "failed to stat file: \"{}\"",
+                        format_args!("{}", file.handle),
+                    );
+                }
+                Global::crash();
+            }
+        };
+
+        if let Some(pack_list) = pack_list.as_deref_mut() {
+            pack_list.push(PackListEntry {
+                subpath: ZBox::from_bytes(item.path.as_bytes()),
+                size: usize::try_from(stat.st_size).expect("int cast"),
+            });
+        }
+
+        entry = add_archive_entry(
+            ctx,
+            file.handle,
+            &stat,
+            &item.path,
+            read_buf,
+            file_reader,
+            archive,
+            entry,
+            print_buf,
+            bins,
+        )?;
+
+        if log_level.show_progress() {
+            node.as_mut()
+                .expect("infallible: progress active")
+                .complete_one();
+        }
+    }
+    Ok(entry)
 }
 
 fn add_archive_entry(

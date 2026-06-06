@@ -2968,6 +2968,34 @@ pub mod args {
 
     pub type LChown = Chown;
 
+    fn time_arg_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+        name: &str,
+    ) -> JsResult<TimeLike> {
+        let time = node::time_like_from_js(
+            ctx,
+            arguments
+                .next()
+                .ok_or_else(|| ctx.throw_invalid_arguments(format_args!("{name} is required")))?,
+        )?
+        .ok_or_else(|| {
+            ctx.throw_invalid_arguments(format_args!("{name} must be a number or a Date"))
+        })?;
+        arguments.eat();
+        Ok(time)
+    }
+
+    /// Parse the `atime, mtime` argument pair shared by `utimes`/`lutimes`/`futimes`.
+    fn times_from_js(
+        ctx: &JSGlobalObject,
+        arguments: &mut ArgumentsSlice,
+    ) -> JsResult<(TimeLike, TimeLike)> {
+        let atime = time_arg_from_js(ctx, arguments, "atime")?;
+        let mtime = time_arg_from_js(ctx, arguments, "mtime")?;
+        Ok((atime, mtime))
+    }
+
     pub struct Lutimes {
         pub path: PathLike,
         pub atime: TimeLike,
@@ -2977,28 +3005,9 @@ pub mod args {
     impl Lutimes {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Lutimes> {
             // `Drop for PathLike` covers the
-            // `time_like_from_js` throws below.
+            // `times_from_js` throws below.
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            let (atime, mtime) = times_from_js(ctx, arguments)?;
             Ok(Lutimes { path, atime, mtime })
         }
     }
@@ -3640,26 +3649,7 @@ pub mod args {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Futimes> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let atime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("atime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
-            })?;
-            arguments.eat();
-            let mtime = node::time_like_from_js(
-                ctx,
-                arguments.next().ok_or_else(|| {
-                    ctx.throw_invalid_arguments(format_args!("mtime is required"))
-                })?,
-            )?
-            .ok_or_else(|| {
-                ctx.throw_invalid_arguments(format_args!("mtime must be a number or a Date"))
-            })?;
-            arguments.eat();
+            let (atime, mtime) = times_from_js(ctx, arguments)?;
             Ok(Futimes { fd, atime, mtime })
         }
     }
@@ -8088,12 +8078,26 @@ impl NodeFS {
         Maybe::<ret::UnwatchFile>::todo()
     }
 
-    pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+    /// Shared body of [`Self::utimes`] / [`Self::lutimes`]; they differ only
+    /// in which syscall applies the timestamps.
+    fn utimes_with(
+        &mut self,
+        args: &args::Utimes,
+        #[cfg(windows)] uv_utime: unsafe extern "C" fn(
+            *mut uv::Loop,
+            *mut uv::fs_t,
+            *const core::ffi::c_char,
+            f64,
+            f64,
+            uv::uv_fs_cb,
+        ) -> uv::ReturnCode,
+        #[cfg(not(windows))] utimens: fn(&ZStr, sys::TimeLike, sys::TimeLike) -> Maybe<()>,
+    ) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
             let rc = unsafe {
-                uv::uv_fs_utime(
+                uv_utime(
                     bun_io::Loop::get(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
@@ -8114,7 +8118,7 @@ impl NodeFS {
             };
         }
         #[cfg(not(windows))]
-        match Syscall::utimens(
+        match utimens(
             args.path.slice_z(&mut self.sync_error_buf),
             to_sys_time_like(args.atime),
             to_sys_time_like(args.mtime),
@@ -8124,40 +8128,18 @@ impl NodeFS {
         }
     }
 
+    pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+        #[cfg(windows)]
+        return self.utimes_with(args, uv::uv_fs_utime);
+        #[cfg(not(windows))]
+        self.utimes_with(args, Syscall::utimens)
+    }
+
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
         #[cfg(windows)]
-        {
-            let mut req = UvFsReq::new();
-            let rc = unsafe {
-                uv::uv_fs_lutime(
-                    bun_io::Loop::get(),
-                    &mut *req,
-                    args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
-                    args.atime,
-                    args.mtime,
-                    None,
-                )
-            };
-            return if let Some(errno) = rc.errno() {
-                Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::utime,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                })
-            } else {
-                Ok(())
-            };
-        }
+        return self.utimes_with(args, uv::uv_fs_lutime);
         #[cfg(not(windows))]
-        match Syscall::lutimens(
-            args.path.slice_z(&mut self.sync_error_buf),
-            to_sys_time_like(args.atime),
-            to_sys_time_like(args.mtime),
-        ) {
-            Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(()),
-        }
+        self.utimes_with(args, Syscall::lutimens)
     }
 
     pub fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {

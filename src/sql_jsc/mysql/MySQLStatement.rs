@@ -86,13 +86,7 @@ impl Default for ExecutionFlags {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Pending,
-    Parsing,
-    Prepared,
-    Failed,
-}
+pub use bun_sql::shared::statement_status::Status;
 
 impl MySQLStatement {
     /// Set the initial intrusive

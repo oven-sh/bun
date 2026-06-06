@@ -582,6 +582,32 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// Shared tail of the simple uws event callbacks (`on_writable`,
+    /// `on_timeout`, `on_end`, `on_data`): keeps `handlers` alive across the
+    /// user callback so the error handler can still be reached, routes a
+    /// thrown exception there, and nulls `self.handlers` when the scope's
+    /// exit frees the client `Handlers`. `extra_args` (at most one) follow
+    /// the implicit `this` argument.
+    #[inline]
+    fn call_socket_handler(
+        &self,
+        handlers: bun_ptr::BackRef<Handlers>,
+        callback: JSValue,
+        extra_args: &[JSValue],
+    ) {
+        let scope = Handlers::enter_ref(handlers);
+        let global = handlers.global_object;
+        let this_value = self.get_this_value(&global);
+        let mut args = [this_value; 2];
+        args[1..1 + extra_args.len()].copy_from_slice(extra_args);
+        if let Err(err) = callback.call(&global, this_value, &args[..1 + extra_args.len()]) {
+            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
+        }
+        if scope.exit() {
+            self.handlers.set(None);
+        }
+    }
+
     /// Noalias re-entrancy: takes `this: *mut Self`, NOT
     /// `&mut self`. `callback.call(...)` re-enters JS which can call
     /// `socket.write()`/`socket.end()`/`socket.reload()` on this same wrapper
@@ -630,18 +656,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        // the handlers must be kept alive for the duration of the function call
-        // that way if we need to call the error handler, we can
-        let scope = Handlers::enter_ref(handlers);
-
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
-        }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.call_socket_handler(handlers, callback, &[]);
         this.deref();
     }
 
@@ -673,18 +688,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        // the handlers must be kept alive for the duration of the function call
-        // that way if we need to call the error handler, we can
-        let scope = Handlers::enter_ref(handlers);
-
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
-        }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.call_socket_handler(handlers, callback, &[]);
     }
 
     /// Returns the raw, freely-aliased
@@ -1245,18 +1249,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        // the handlers must be kept alive for the duration of the function call
-        // that way if we need to call the error handler, we can
-        let scope = Handlers::enter_ref(handlers);
-
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
-        }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.call_socket_handler(handlers, callback, &[]);
         this.deref();
     }
 
@@ -1572,7 +1565,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
         let output_value = match handlers.binary_type.to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
@@ -1581,17 +1573,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         };
 
-        // the handlers must be kept alive for the duration of the function call
-        // that way if we need to call the error handler, we can
-        let scope = Handlers::enter_ref(handlers);
-
-        // const encoding = handlers.encoding;
-        if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
-            let _ = handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
-        }
-        if scope.exit() {
-            this.handlers.set(None);
-        }
+        this.call_socket_handler(handlers, callback, &[output_value]);
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -7,10 +7,14 @@ pub mod shared {
     pub mod connection_flags;
     #[path = "Data.rs"]
     pub mod data;
+    #[path = "QueryStatus.rs"]
+    pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
     #[path = "StackReader.rs"]
     pub mod stack_reader;
+    #[path = "StatementStatus.rs"]
+    pub mod statement_status;
 
     pub use column_identifier::ColumnIdentifier;
     pub use connection_flags::ConnectionFlags;
@@ -34,8 +38,6 @@ pub mod mysql {
     pub mod mysql_request;
     #[path = "MySQLTypes.rs"]
     pub mod mysql_types;
-    #[path = "QueryStatus.rs"]
-    pub mod query_status;
     #[path = "SSLMode.rs"]
     pub mod ssl_mode;
     #[path = "StatusFlags.rs"]
@@ -125,7 +127,8 @@ pub mod mysql {
     pub use capabilities::Capabilities;
     pub use connection_state::ConnectionState;
     pub use mysql_query_result::MySQLQueryResult;
-    pub use query_status::Status as QueryStatus;
+    pub use crate::shared::query_status;
+    pub use crate::shared::query_status::Status as QueryStatus;
     pub use ssl_mode::SSLMode;
     pub use status_flags::{StatusFlag, StatusFlags};
     pub use tls_status::TLSStatus;

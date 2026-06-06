@@ -3322,20 +3322,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                jsc::JSType::ArrayBuffer
-                | jsc::JSType::Int8Array
-                | jsc::JSType::Uint8Array
-                | jsc::JSType::Uint8ClampedArray
-                | jsc::JSType::Int16Array
-                | jsc::JSType::Uint16Array
-                | jsc::JSType::Int32Array
-                | jsc::JSType::Uint32Array
-                | jsc::JSType::Float16Array
-                | jsc::JSType::Float32Array
-                | jsc::JSType::Float64Array
-                | jsc::JSType::BigInt64Array
-                | jsc::JSType::BigUint64Array
-                | jsc::JSType::DataView => {
+                t if t.is_array_buffer_like() => {
                     return Blob::try_create(
                         top_value.as_array_buffer(global).unwrap().byte_slice(),
                         global,
@@ -3470,21 +3457,8 @@ impl BlobExt for Blob {
                                 continue;
                             }
                             match item.js_type_loose() {
-                                jsc::JSType::String
-                                | jsc::JSType::ArrayBuffer
-                                | jsc::JSType::Int8Array
-                                | jsc::JSType::Uint8Array
-                                | jsc::JSType::Uint8ClampedArray
-                                | jsc::JSType::Int16Array
-                                | jsc::JSType::Uint16Array
-                                | jsc::JSType::Int32Array
-                                | jsc::JSType::Uint32Array
-                                | jsc::JSType::Float16Array
-                                | jsc::JSType::Float32Array
-                                | jsc::JSType::Float64Array
-                                | jsc::JSType::BigInt64Array
-                                | jsc::JSType::BigUint64Array
-                                | jsc::JSType::DataView => {}
+                                jsc::JSType::String => {}
+                                t if t.is_array_buffer_like() => {}
                                 jsc::JSType::DOMWrapper
                                     if item.as_class_ref::<Blob>().is_some() => {}
                                 _ => {
@@ -3513,20 +3487,7 @@ impl BlobExt for Blob {
                                     joiner.push_cloned(sliced.slice());
                                     continue;
                                 }
-                                jsc::JSType::ArrayBuffer
-                                | jsc::JSType::Int8Array
-                                | jsc::JSType::Uint8Array
-                                | jsc::JSType::Uint8ClampedArray
-                                | jsc::JSType::Int16Array
-                                | jsc::JSType::Uint16Array
-                                | jsc::JSType::Int32Array
-                                | jsc::JSType::Uint32Array
-                                | jsc::JSType::Float16Array
-                                | jsc::JSType::Float32Array
-                                | jsc::JSType::Float64Array
-                                | jsc::JSType::BigInt64Array
-                                | jsc::JSType::BigUint64Array
-                                | jsc::JSType::DataView => {
+                                t if t.is_array_buffer_like() => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
@@ -3603,20 +3564,7 @@ impl BlobExt for Blob {
                     }
                 }
 
-                jsc::JSType::ArrayBuffer
-                | jsc::JSType::Int8Array
-                | jsc::JSType::Uint8Array
-                | jsc::JSType::Uint8ClampedArray
-                | jsc::JSType::Int16Array
-                | jsc::JSType::Uint16Array
-                | jsc::JSType::Int32Array
-                | jsc::JSType::Uint32Array
-                | jsc::JSType::Float16Array
-                | jsc::JSType::Float32Array
-                | jsc::JSType::Float64Array
-                | jsc::JSType::BigInt64Array
-                | jsc::JSType::BigUint64Array
-                | jsc::JSType::DataView => {
+                t if t.is_array_buffer_like() => {
                     let buf = current.as_array_buffer(global).unwrap();
                     // SAFETY: this arm is only reached when the typed array is the
                     // top-level value (the walk stack is empty), so no user JS runs

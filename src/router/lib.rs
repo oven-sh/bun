@@ -1944,6 +1944,9 @@ pub use pattern::Pattern;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+// Fixture scaffolding ported from `router.zig` (`Test.make*`, the mock
+// request/server types) has no enabled `#[test]` callers yet.
+#[allow(dead_code, unreachable_pub)]
 mod tests {
     use super::*;
 
@@ -2020,7 +2023,7 @@ mod tests {
     }
 
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
-        Output::init_test();
+        bun_core::output::init_test();
         debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
         let bun_tests_dir = bun_sys::Dir::cwd()
             .make_open_path(b"bun-test-scratch", bun_sys::OpenDirOptions::default())?;
@@ -2064,18 +2067,39 @@ mod tests {
         }
     }
 
-    pub struct Test;
+    fn dump_log(log: *mut bun_ast::Log) {
+        // SAFETY: points at the live boxed `Log` in `Fixture` (or the helper's
+        // local); every holder defuses or drops before the box is freed.
+        let _ = unsafe { &*log }.print(core::ptr::from_mut(bun_core::output::error_writer()));
+    }
 
-    impl Test {
-        pub fn make_routes(
+    /// Shared fixture state for [`Test::make_routes`] / [`Test::make`].
+    ///
+    /// Field order is load-bearing: `err_dump` and `resolver` hold raw
+    /// pointers into `log`, so `log` is declared (and thus dropped) last.
+    struct Fixture {
+        /// `errdefer logger.print(Output.errorWriter())` parity — flushes
+        /// diagnostics on early-return; defused via `ScopeGuard::into_inner`
+        /// on success.
+        err_dump: scopeguard::ScopeGuard<*mut bun_ast::Log, fn(*mut bun_ast::Log)>,
+        router: Router<'static>,
+        resolver: TestResolver<'static>,
+        root_dir: DirInfoRef,
+        top_level_dir: &'static [u8],
+        /// Boxed so the address `err_dump`/`resolver` point at stays stable
+        /// across the move out of [`Fixture::init`].
+        log: Box<bun_ast::Log>,
+    }
+
+    impl Fixture {
+        fn init<const FORCE: bool>(
             test_name: &'static str,
             data: &[(&str, &str)],
-        ) -> Result<Routes, bun_core::Error> {
-            Output::init_test();
+        ) -> Result<Fixture, bun_core::Error> {
             make_test(test_name.as_bytes(), data)?;
             bun_ast::initialize_store();
-            // const fs = try FileSystem.init(null);
-            let _ = bun_resolver::fs::FileSystem::init(None)?;
+            // const fs = try FileSystem.initWithForce(null, force);
+            let fs = bun_resolver::fs::FileSystem::init_with_force::<FORCE>(None)?;
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 
             // var pages_parts = [_]string{ top_level_dir, "pages" };
@@ -2098,14 +2122,9 @@ mod tests {
                 },
             )?;
 
-            let mut log = bun_ast::Log::init();
-            // NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
-            // no errdefer; the test harness panics on error anyway, but the guard
-            // still flushes diagnostics on early-return for parity.
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
+            let mut log = Box::new(bun_ast::Log::init());
+            let err_dump: scopeguard::ScopeGuard<*mut bun_ast::Log, fn(*mut bun_ast::Log)> =
+                scopeguard::guard(core::ptr::from_mut(&mut *log), dump_log);
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
             // NOTE: the resolver-side `BundleOptions` subset omits
@@ -2120,7 +2139,7 @@ mod tests {
 
             // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
             let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
+                core::ptr::NonNull::from(&mut *log),
                 fs,
                 opts,
             ));
@@ -2131,16 +2150,36 @@ mod tests {
                 .read_dir_info(pages_dir)?
                 .ok_or_else(|| bun_core::err!("FileNotFound"))?;
 
-            // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            let routes = RouteLoader::load_all(
-                router.config.clone(),
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &mut resolver,
-                &root_dir,
+            Ok(Fixture {
+                err_dump,
+                router,
+                resolver,
+                root_dir,
                 top_level_dir,
+                log,
+            })
+        }
+    }
+
+    pub struct Test;
+
+    impl Test {
+        pub fn make_routes(
+            test_name: &'static str,
+            data: &[(&str, &str)],
+        ) -> Result<Routes, bun_core::Error> {
+            let mut f = Fixture::init::<false>(test_name, data)?;
+
+            // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
+            // SAFETY: `err_dump` only re-derives `&*log` on drop (after this borrow ends).
+            let routes = RouteLoader::load_all(
+                f.router.config.clone(),
+                &mut f.log,
+                &mut f.resolver,
+                &f.root_dir,
+                f.top_level_dir,
             );
-            scopeguard::ScopeGuard::into_inner(_err_dump);
+            scopeguard::ScopeGuard::into_inner(f.err_dump);
             Ok(routes)
         }
 
@@ -2148,67 +2187,17 @@ mod tests {
             test_name: &'static str,
             data: &[(&str, &str)],
         ) -> Result<Router<'static>, bun_core::Error> {
-            make_test(test_name.as_bytes(), data)?;
-            bun_ast::initialize_store();
-            // const fs = try FileSystem.initWithForce(null, true);
-            let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
-            let pages_dir = bun_resolver::fs::FileSystem::instance()
-                .abs_alloc(&pages_parts)
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
-
-            // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
-            let mut router = Router::init(
-                fs_opaque,
-                RouteConfig {
-                    dir: pages_dir.to_vec().into_boxed_slice(),
-                    routes_enabled: true,
-                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
-                    ..RouteConfig::default()
-                },
-            )?;
-
-            let mut log = bun_ast::Log::init();
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
-
-            let opts = bun_resolver::options::BundleOptions {
-                target: bun_ast::Target::Browser,
-                external: bun_resolver::options::ExternalModules::default(),
-                ..Default::default()
-            };
-
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
-
-            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
-            let root_dir = resolver
-                .0
-                .read_dir_info(pages_dir)?
-                .ok_or_else(|| bun_core::err!("FileNotFound"))?;
+            let mut f = Fixture::init::<true>(test_name, data)?;
 
             // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            router.load_routes(
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &root_dir,
-                &mut resolver,
-                top_level_dir,
-            )?;
-            let entry_points = router.get_entry_points();
+            // SAFETY: `err_dump` only re-derives `&*log` on drop (after this borrow ends).
+            f.router
+                .load_routes(&mut f.log, &f.root_dir, &mut f.resolver, f.top_level_dir)?;
+            let entry_points = f.router.get_entry_points();
 
             assert_eq!(data.len(), entry_points.len());
-            scopeguard::ScopeGuard::into_inner(_err_dump);
-            Ok(router)
+            scopeguard::ScopeGuard::into_inner(f.err_dump);
+            Ok(f.router)
         }
     }
 

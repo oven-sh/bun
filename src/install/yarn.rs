@@ -1808,7 +1808,18 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
         let resolutions_off = u32::try_from(this.buffers.resolutions.len()).expect("int cast");
 
-        if let Some(deps) = &entry.dependencies {
+        let dep_groups = [
+            (entry.dependencies.as_ref(), dependency::Behavior::PROD),
+            (
+                entry.optional_dependencies.as_ref(),
+                dependency::Behavior::OPTIONAL,
+            ),
+            (entry.peer_dependencies.as_ref(), dependency::Behavior::PEER),
+            (entry.dev_dependencies.as_ref(), dependency::Behavior::DEV),
+        ];
+
+        for (deps, behavior) in dep_groups {
+            let Some(deps) = deps else { continue };
             for (dep_name_key, dep_version_ref) in deps.iter() {
                 let dep_name: &[u8] = dep_name_key.as_ref();
                 let dep_version_literal: &[u8] = *dep_version_ref;
@@ -1837,163 +1848,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior::PROD,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
-
-        if let Some(optional_deps) = &entry.optional_dependencies {
-            for (dep_name_key, dep_version_ref) in optional_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::OPTIONAL,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
-
-        if let Some(peer_deps) = &entry.peer_dependencies {
-            for (dep_name_key, dep_version_ref) in peer_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::PEER,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
-
-        if let Some(dev_deps) = &entry.dev_dependencies {
-            for (dep_name_key, dep_version_ref) in dev_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::DEV,
+                    behavior,
                 });
 
                 let mut dep_spec = Vec::new();

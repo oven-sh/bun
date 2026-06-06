@@ -286,6 +286,104 @@ pub enum AllocatorType {
     Mini,
 }
 
+/// Pure flag-accessor methods whose bodies are identical for the POSIX and
+/// Windows `FilePoll` types (distinct structs — see `windows_event_loop`).
+/// Expanded inside each platform's `impl FilePoll`; `Flags` and `Fd` resolve
+/// at the expansion site. Platform-divergent methods (the keep-alive /
+/// activate family) stay in their own modules — their flag semantics differ.
+macro_rules! impl_file_poll_flag_methods {
+    () => {
+        #[inline]
+        pub fn is_active(&self) -> bool {
+            self.flags.contains(Flags::HasIncrementedPollCount)
+        }
+
+        #[inline]
+        pub fn is_watching(&self) -> bool {
+            !self.flags.contains(Flags::NeedsRearm)
+                && (self.flags.contains(Flags::PollReadable)
+                    || self.flags.contains(Flags::PollWritable)
+                    || self.flags.contains(Flags::PollProcess))
+        }
+
+        pub fn is_registered(&self) -> bool {
+            self.flags.contains(Flags::PollWritable)
+                || self.flags.contains(Flags::PollReadable)
+                || self.flags.contains(Flags::PollProcess)
+                || self.flags.contains(Flags::PollMachport)
+        }
+
+        pub fn clear_event(&mut self, flag: Flags) {
+            self.flags.remove(flag);
+        }
+
+        pub fn is_readable(&mut self) -> bool {
+            let readable = self.flags.contains(Flags::Readable);
+            self.flags.remove(Flags::Readable);
+            readable
+        }
+
+        pub fn is_hup(&mut self) -> bool {
+            let readable = self.flags.contains(Flags::Hup);
+            self.flags.remove(Flags::Hup);
+            readable
+        }
+
+        pub fn is_eof(&mut self) -> bool {
+            let readable = self.flags.contains(Flags::Eof);
+            self.flags.remove(Flags::Eof);
+            readable
+        }
+
+        pub fn is_writable(&mut self) -> bool {
+            let readable = self.flags.contains(Flags::Writable);
+            self.flags.remove(Flags::Writable);
+            readable
+        }
+
+        #[inline]
+        pub fn can_unref(&self) -> bool {
+            self.flags.contains(Flags::HasIncrementedPollCount)
+        }
+
+        #[inline]
+        pub fn file_descriptor(&self) -> Fd {
+            self.fd
+        }
+    };
+}
+// Only `windows_event_loop` needs the path-based re-export; this module
+// invokes the macros textually.
+#[cfg(windows)]
+pub(crate) use impl_file_poll_flag_methods;
+
+/// `PollSlot` impl shared verbatim by both platform `FilePoll` types; both
+/// have the `next_to_free` / `flags` fields the trait contract requires.
+macro_rules! impl_poll_slot {
+    ($t:ty) => {
+        impl $crate::posix_event_loop::PollSlot for $t {
+            #[inline]
+            unsafe fn next_to_free(p: *mut Self) -> *mut Self {
+                // SAFETY: caller upholds the trait-level contract (`p` is a live hive
+                // slot; raw-pointer field op only).
+                unsafe { (*p).next_to_free }
+            }
+            #[inline]
+            unsafe fn set_next_to_free(p: *mut Self, next: *mut Self) {
+                // SAFETY: caller upholds the trait-level contract.
+                unsafe { (*p).next_to_free = next }
+            }
+            #[inline]
+            unsafe fn ignore_updates(p: *mut Self) {
+                // SAFETY: caller upholds the trait-level contract.
+                unsafe { (*p).flags.insert($crate::posix_event_loop::Flags::IgnoreUpdates) };
+            }
+        }
+    };
+}
+#[cfg(windows)]
+pub(crate) use impl_poll_slot;
+
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
 // generation_number, allocator_type). On Windows the variants live in
 // `windows_event_loop`; the shared `EventLoopCtxVTable` above names
@@ -369,33 +467,7 @@ impl FilePoll {
         self.on_update(0);
     }
 
-    pub fn clear_event(&mut self, flag: Flags) {
-        self.flags.remove(flag);
-    }
-
-    pub fn is_readable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Readable);
-        self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_hup(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Hup);
-        self.flags.remove(Flags::Hup);
-        readable
-    }
-
-    pub fn is_eof(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Eof);
-        self.flags.remove(Flags::Eof);
-        readable
-    }
-
-    pub fn is_writable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Writable);
-        self.flags.remove(Flags::Writable);
-        readable
-    }
+    impl_file_poll_flag_methods!();
 
     // Note: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
     // put back via `Store::put`; Drop would be wrong here.
@@ -436,13 +508,6 @@ impl FilePoll {
         self.deinit_possibly_defer(vm, false);
     }
 
-    pub fn is_registered(&self) -> bool {
-        self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
-    }
-
     pub fn on_update(&mut self, size_or_offset: i64) {
         if self.flags.contains(Flags::OneShot) && !self.flags.contains(Flags::NeedsRearm) {
             self.flags.insert(Flags::NeedsRearm);
@@ -456,19 +521,6 @@ impl FilePoll {
         // SAFETY: `self` is a live FilePoll for the duration of the call
         // (guaranteed by the uws loop callback contract).
         unsafe { __bun_run_file_poll(self, size_or_offset) };
-    }
-
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn is_watching(&self) -> bool {
-        !self.flags.contains(Flags::NeedsRearm)
-            && (self.flags.contains(Flags::PollReadable)
-                || self.flags.contains(Flags::PollWritable)
-                || self.flags.contains(Flags::PollProcess))
     }
 
     /// This decrements the active counter if it was previously incremented
@@ -585,11 +637,6 @@ impl FilePoll {
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
     /// Prevent a poll from keeping the process alive.
     pub fn unref(&mut self, event_loop_ctx: EventLoopCtx) {
         syslog!("unref");
@@ -611,11 +658,6 @@ impl FilePoll {
         // `loop_mut()` — crate-private nonnull-asref accessor; `deactivate` is
         // a leaf counter op so the `&mut Loop` borrow does not escape.
         self.deactivate(event_loop_ctx.loop_mut());
-    }
-
-    #[inline]
-    pub fn file_descriptor(&self) -> Fd {
-        self.fd
     }
 
     pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
@@ -1374,24 +1416,7 @@ pub trait PollSlot: Sized {
 pub type Store = PollStore<FilePoll>;
 
 #[cfg(not(windows))]
-impl PollSlot for FilePoll {
-    #[inline]
-    unsafe fn next_to_free(p: *mut Self) -> *mut Self {
-        // SAFETY: caller upholds the trait-level contract (`p` is a live hive
-        // slot; raw-pointer field op only).
-        unsafe { (*p).next_to_free }
-    }
-    #[inline]
-    unsafe fn set_next_to_free(p: *mut Self, next: *mut Self) {
-        // SAFETY: caller upholds the trait-level contract.
-        unsafe { (*p).next_to_free = next }
-    }
-    #[inline]
-    unsafe fn ignore_updates(p: *mut Self) {
-        // SAFETY: caller upholds the trait-level contract.
-        unsafe { (*p).flags.insert(Flags::IgnoreUpdates) };
-    }
-}
+impl_poll_slot!(FilePoll);
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called

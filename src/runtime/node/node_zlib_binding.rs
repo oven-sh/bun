@@ -363,6 +363,120 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
+/// Validated `write`/`writeSync` arguments:
+/// `(flush, in, in_off, in_len, out, out_off, out_len)`.
+/// `in_buf` is `None` when the `in` argument is null (flush-only write). The
+/// buffers are non-owning views kept alive by the argument `JSValue`s on the
+/// caller's frame.
+struct WriteArgs {
+    flush: u32,
+    in_buf: Option<jsc::ArrayBuffer>,
+    in_off: u32,
+    in_len: u32,
+    out_buf: jsc::ArrayBuffer,
+    out_off: u32,
+    out_len: u32,
+}
+
+/// Shared 7-argument validation for `write` and `writeSync`; `sig` is the
+/// function signature echoed in the missing-args error.
+fn parse_write_args(
+    global_this: &JSGlobalObject,
+    arguments: &[JSValue],
+    sig: &str,
+) -> JsResult<WriteArgs> {
+    if arguments.len() != 7 {
+        return Err(global_this
+            .err(ErrorCode::MISSING_ARGS, format_args!("{sig}"))
+            .throw());
+    }
+
+    if arguments[0].is_undefined() {
+        return Err(global_this
+            .err(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!("flush value is required"),
+            )
+            .throw());
+    }
+    let flush: u32 = jsv_to_u32(arguments[0]);
+    if !flush_value_is_valid(flush) {
+        return Err(global_this
+            .err(
+                ErrorCode::INVALID_ARG_VALUE,
+                format_args!("Invalid flush value"),
+            )
+            .throw());
+    }
+
+    let in_buf: Option<jsc::ArrayBuffer>;
+    let in_off: u32;
+    let in_len: u32;
+    if arguments[1].is_null() {
+        // just a flush
+        in_buf = None;
+        in_off = 0;
+        in_len = 0;
+    } else {
+        let Some(buf) = arguments[1].as_array_buffer(global_this) else {
+            return Err(global_this
+                .err(
+                    ErrorCode::INVALID_ARG_TYPE,
+                    format_args!("The \"in\" argument must be a TypedArray or DataView"),
+                )
+                .throw());
+        };
+        in_off = jsv_to_u32(arguments[2]);
+        in_len = jsv_to_u32(arguments[3]);
+        if buf.byte_len < in_off as usize + in_len as usize {
+            return Err(global_this
+                .err(
+                    ErrorCode::OUT_OF_RANGE,
+                    format_args!(
+                        "in_off + in_len ({}) exceeds input buffer length ({})",
+                        in_off as usize + in_len as usize,
+                        buf.byte_len,
+                    ),
+                )
+                .throw());
+        }
+        in_buf = Some(buf);
+    }
+
+    let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
+        return Err(global_this
+            .err(
+                ErrorCode::INVALID_ARG_TYPE,
+                format_args!("The \"out\" argument must be a TypedArray or DataView"),
+            )
+            .throw());
+    };
+    let out_off: u32 = jsv_to_u32(arguments[5]);
+    let out_len: u32 = jsv_to_u32(arguments[6]);
+    if out_buf.byte_len < out_off as usize + out_len as usize {
+        return Err(global_this
+            .err(
+                ErrorCode::OUT_OF_RANGE,
+                format_args!(
+                    "out_off + out_len ({}) exceeds output buffer length ({})",
+                    out_off as usize + out_len as usize,
+                    out_buf.byte_len,
+                ),
+            )
+            .throw());
+    }
+
+    Ok(WriteArgs {
+        flush,
+        in_buf,
+        in_off,
+        in_len,
+        out_buf,
+        out_off,
+        out_len,
+    })
+}
+
 impl<T: CompressionStreamImpl> CompressionStream<T> {
     pub(crate) fn write(
         this: &T,
@@ -371,94 +485,21 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
     ) -> JsResult<JSValue> {
         let args = callframe.arguments_undef::<7>();
         let arguments = args.slice();
-
-        if arguments.len() != 7 {
-            return Err(global_this
-                .err(
-                    ErrorCode::MISSING_ARGS,
-                    format_args!("write(flush, in, in_off, in_len, out, out_off, out_len)"),
-                )
-                .throw());
-        }
-
-        let in_off: u32;
-        let in_len: u32;
-
         let this_value = callframe.this();
 
-        if arguments[0].is_undefined() {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("flush value is required"),
-                )
-                .throw());
-        }
-        let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("Invalid flush value"),
-                )
-                .throw());
-        }
-
-        if arguments[1].is_null() {
-            // just a flush
-            in_len = 0;
-            in_off = 0;
-        } else {
-            let in_buf = match arguments[1].as_array_buffer(global_this) {
-                Some(b) => b,
-                None => {
-                    return Err(global_this
-                        .err(
-                            ErrorCode::INVALID_ARG_TYPE,
-                            format_args!("The \"in\" argument must be a TypedArray or DataView"),
-                        )
-                        .throw());
-                }
-            };
-            in_off = jsv_to_u32(arguments[2]);
-            in_len = jsv_to_u32(arguments[3]);
-            if in_buf.byte_len < in_off as usize + in_len as usize {
-                return Err(global_this
-                    .err(
-                        ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
-                            in_buf.byte_len,
-                        ),
-                    )
-                    .throw());
-            }
-        }
-
-        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("The \"out\" argument must be a TypedArray or DataView"),
-                )
-                .throw());
-        };
-        let out_off: u32 = jsv_to_u32(arguments[5]);
-        let out_len: u32 = jsv_to_u32(arguments[6]);
-        if out_buf.byte_len < out_off as usize + out_len as usize {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
-                        out_buf.byte_len,
-                    ),
-                )
-                .throw());
-        }
-        let _ = (in_off, in_len, out_off, out_len);
+        let WriteArgs {
+            flush,
+            in_buf: in_validated,
+            in_off,
+            in_len,
+            out_off,
+            out_len,
+            ..
+        } = parse_write_args(
+            global_this,
+            arguments,
+            "write(flush, in, in_off, in_len, out, out_off, out_len)",
+        )?;
 
         if this.write_in_progress().get() {
             return Err(global_this
@@ -477,7 +518,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
         let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
+        let in_: Option<&[u8]> = if in_validated.is_none() {
             None
         } else {
             let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
@@ -487,7 +528,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
         };
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
-            if !arguments[1].is_null() {
+            if in_validated.is_some() {
                 arguments[1].unpin_array_buffer();
             }
             return Err(global_this.throw_out_of_memory());
@@ -651,103 +692,29 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let args = callframe.arguments_undef::<7>();
         let arguments = args.slice();
 
-        if arguments.len() != 7 {
-            return Err(global_this
-                .err(
-                    ErrorCode::MISSING_ARGS,
-                    format_args!("writeSync(flush, in, in_off, in_len, out, out_off, out_len)"),
-                )
-                .throw());
-        }
+        let WriteArgs {
+            flush,
+            in_buf,
+            in_off,
+            in_len,
+            mut out_buf,
+            out_off,
+            out_len,
+        } = parse_write_args(
+            global_this,
+            arguments,
+            "writeSync(flush, in, in_off, in_len, out, out_off, out_len)",
+        )?;
 
-        let in_off: u32;
-        let in_len: u32;
-        let in_: Option<&[u8]>;
-
-        if arguments[0].is_undefined() {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("flush value is required"),
-                )
-                .throw());
-        }
-        let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_VALUE,
-                    format_args!("Invalid flush value"),
-                )
-                .throw());
-        }
-
-        // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
-        let in_buf: jsc::ArrayBuffer;
-        if arguments[1].is_null() {
-            // just a flush
-            in_ = None;
-            in_len = 0;
-            in_off = 0;
-        } else {
-            in_buf = match arguments[1].as_array_buffer(global_this) {
-                Some(b) => b,
-                None => {
-                    return Err(global_this
-                        .err(
-                            ErrorCode::INVALID_ARG_TYPE,
-                            format_args!("The \"in\" argument must be a TypedArray or DataView"),
-                        )
-                        .throw());
-                }
-            };
-            in_off = jsv_to_u32(arguments[2]);
-            in_len = jsv_to_u32(arguments[3]);
-            if in_buf.byte_len < in_off as usize + in_len as usize {
-                return Err(global_this
-                    .err(
-                        ErrorCode::OUT_OF_RANGE,
-                        format_args!(
-                            "in_off + in_len ({}) exceeds input buffer length ({})",
-                            in_off as usize + in_len as usize,
-                            in_buf.byte_len,
-                        ),
-                    )
-                    .throw());
-            }
-            // Bounds checked above; `byte_slice` is the safe accessor for the JS
-            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
-            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
-        }
-
-        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
-            return Err(global_this
-                .err(
-                    ErrorCode::INVALID_ARG_TYPE,
-                    format_args!("The \"out\" argument must be a TypedArray or DataView"),
-                )
-                .throw());
-        };
-        let out_off: u32 = jsv_to_u32(arguments[5]);
-        let out_len: u32 = jsv_to_u32(arguments[6]);
-        if out_buf.byte_len < out_off as usize + out_len as usize {
-            return Err(global_this
-                .err(
-                    ErrorCode::OUT_OF_RANGE,
-                    format_args!(
-                        "out_off + out_len ({}) exceeds output buffer length ({})",
-                        out_off as usize + out_len as usize,
-                        out_buf.byte_len,
-                    ),
-                )
-                .throw());
-        }
-        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
+        // Bounds checked in `parse_write_args`; `byte_slice`/`byte_slice_mut`
+        // are the safe accessors for the JS ArrayBuffers' backing stores
+        // (rooted via `arguments[1]`/`arguments[4]` on the call stack).
+        let in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
-        let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
             return Err(global_this

@@ -3089,6 +3089,175 @@ pub mod mock {
         }
     }
 
+    /// Compares one `mock.calls` entry (a JSArray of call arguments) against
+    /// the expected arguments: length pre-check, then per-argument
+    /// `jest_deep_equals` with early exit on the first mismatch.
+    pub(crate) fn call_args_equal(
+        global: &JSGlobalObject,
+        call_item: JSValue,
+        expected: &[JSValue],
+    ) -> JsResult<bool> {
+        if call_item.get_length(global)? != expected.len() as u64 {
+            return Ok(false);
+        }
+        let mut itr = call_item.array_iterator(global)?;
+        while let Some(call_arg) = itr.next()? {
+            if !call_arg.jest_deep_equals(expected[itr.i as usize - 1], global)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// A `mock.results` entry parsed into its `type` tag.
+    pub(crate) enum MockResult {
+        /// Carries the entry's `value`.
+        Return(JSValue),
+        /// Carries the result object itself; callers that need the thrown
+        /// `value` fetch it lazily (`toHaveReturnedWith` never reads it).
+        Throw(JSValue),
+        /// Not an object, no string `type`, or an unrecognized tag (e.g.
+        /// "incomplete") — the `*ReturnedWith` matchers skip these entries.
+        Other,
+    }
+
+    pub(crate) fn parse_mock_result(global: &JSGlobalObject, result: JSValue) -> JsResult<MockResult> {
+        if result.is_object() {
+            let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
+            if result_type.is_string() {
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
+                if type_str.eql_comptime("return") {
+                    return Ok(MockResult::Return(result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED)));
+                }
+                if type_str.eql_comptime("throw") {
+                    return Ok(MockResult::Throw(result));
+                }
+            }
+        }
+        Ok(MockResult::Other)
+    }
+
+    // ── shared failure epilogues for the `toHave*With` matcher family ──────
+    // Each matcher keeps only its index-selection logic and message verbs;
+    // the throw shapes below are byte-identical across the family.
+
+    /// `.not` failure: `"\n\n{lead}: <green>{expected}<r>{tail}"` under the
+    /// `not`-form signature.
+    pub(crate) fn throw_not_failure(
+        this: &Expect,
+        global: &JSGlobalObject,
+        matcher_name: &'static str,
+        matcher_params: &'static str,
+        lead: fmt::Arguments<'_>,
+        expected: JSValue,
+        tail: &'static str,
+    ) -> JsResult<JSValue> {
+        let mut formatter = make_formatter(global);
+        this.throw(
+            global,
+            Expect::get_signature(matcher_name, matcher_params, true),
+            format_args!("\n\n{}: <green>{}<r>{}", lead, expected.to_fmt(&mut formatter), tail),
+        )
+    }
+
+    /// `"Expected: {expected}\nBut it was not called."` failure.
+    pub(crate) fn throw_not_called(
+        this: &Expect,
+        global: &JSGlobalObject,
+        signature: &'static str,
+        expected: JSValue,
+    ) -> JsResult<JSValue> {
+        let mut formatter = make_formatter(global);
+        this.throw(
+            global,
+            signature,
+            format_args!("\n\nExpected: <green>{}<r>\nBut it was not called.", expected.to_fmt(&mut formatter)),
+        )
+    }
+
+    /// `"called N time(s), but call M was requested"` failure (`*Nth*` matchers).
+    pub(crate) fn throw_nth_call_missing(
+        this: &Expect,
+        global: &JSGlobalObject,
+        signature: &'static str,
+        total_calls: u32,
+        n: u32,
+        tail: &'static str,
+    ) -> JsResult<JSValue> {
+        this.throw(
+            global,
+            signature,
+            format_args!(
+                "\n\nThe mock function was called {} time{}, but call {} was requested.{}",
+                total_calls,
+                if total_calls == 1 { "" } else { "s" },
+                n,
+                tail,
+            ),
+        )
+    }
+
+    /// Diff failure: `"\n\n{prefix}{DiffFormatter}\n"`.
+    pub(crate) fn throw_diff(
+        this: &Expect,
+        global: &JSGlobalObject,
+        signature: &'static str,
+        prefix: fmt::Arguments<'_>,
+        expected: JSValue,
+        received: JSValue,
+    ) -> JsResult<JSValue> {
+        let diff_format = DiffFormatter {
+            expected: Some(expected),
+            received: Some(received),
+            expected_string: None,
+            received_string: None,
+            global_this: Some(global),
+            not: false,
+        };
+        this.throw(global, signature, format_args!("\n\n{}{}\n", prefix, diff_format))
+    }
+
+    /// `"{prefix}Expected: X\nReceived: Y"` failure. Two formatters because the
+    /// `ZigFormatter` adapter holds `&mut Formatter`, so two live adapters
+    /// cannot alias the same backing formatter.
+    pub(crate) fn throw_expected_received(
+        this: &Expect,
+        global: &JSGlobalObject,
+        signature: &'static str,
+        prefix: fmt::Arguments<'_>,
+        expected: JSValue,
+        received: JSValue,
+    ) -> JsResult<JSValue> {
+        let mut f1 = make_formatter(global);
+        let mut f2 = make_formatter(global);
+        this.throw(
+            global,
+            signature,
+            format_args!(
+                "\n\n{}Expected: <green>{}<r>\nReceived: <red>{}<r>",
+                prefix,
+                expected.to_fmt(&mut f1),
+                received.to_fmt(&mut f2),
+            ),
+        )
+    }
+
+    /// `"{which} threw an error: …"` failure (`toHave{Last,Nth}ReturnedWith`).
+    pub(crate) fn throw_call_threw(
+        this: &Expect,
+        global: &JSGlobalObject,
+        signature: &'static str,
+        which: fmt::Arguments<'_>,
+        error: JSValue,
+    ) -> JsResult<JSValue> {
+        let mut formatter = make_formatter(global);
+        this.throw(
+            global,
+            signature,
+            format_args!("\n\n{} threw an error: <red>{}<r>\n", which, error.to_fmt(&mut formatter)),
+        )
+    }
+
     pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
         if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
             if type_string.is_string() {

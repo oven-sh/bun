@@ -811,6 +811,39 @@ fn empty_array_data() -> js_ast::expr::Data {
     js_ast::expr::Data::EArray(js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()))
 }
 
+/// Shared fast-path prologue for every JSON entry point: empty input parses
+/// as an empty object (consistent with how disabled JS files are handled),
+/// and two-byte `""`/`''`/`{}`/`[]` inputs skip the lexer entirely.
+///
+/// Note: the two-byte arms compare a one-byte slice (`contents[0..1]`)
+/// against two-byte literals, so they never match. This mirrors the Zig
+/// reference (`json.zig` does the same with `eqlComptime`) — kept as-is to
+/// preserve behavior, since "fixing" it would accept `''` in strict JSON.
+#[inline]
+fn empty_source_fast_path(source: &bun_ast::Source) -> Option<Expr> {
+    let expr = |data| {
+        Some(Expr {
+            loc: bun_ast::Loc { start: 0 },
+            data,
+        })
+    };
+    match source.contents.len() {
+        0 => expr(empty_object_data()),
+        2 => {
+            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
+                expr(empty_string_data())
+            } else if &source.contents[0..1] == b"{}" {
+                expr(empty_object_data())
+            } else if &source.contents[0..1] == b"[]" {
+                expr(empty_array_data())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Parse JSON
@@ -827,36 +860,11 @@ pub fn parse<const FORCE_UTF8: bool>(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
-    match source.contents.len() {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
+
+    let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
 
     parser.parse_expr(false, FORCE_UTF8)
 }
@@ -871,36 +879,8 @@ pub fn parse_package_json_utf8(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    let len = source.contents.len();
-
-    match len {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
 
     let mut parser = JSONLikeParser::init(PACKAGE_JSON_OPTS, bump, source, log)?;
@@ -961,48 +941,11 @@ pub fn parse_package_json_utf8_with_opts_rt(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<JsonResult, bun_core::Error> {
-    let len = source.contents.len();
-
-    match len {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(JsonResult {
-                root: Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                },
-                indentation: Indentation::default(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(JsonResult {
-                    root: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_string_data(),
-                    },
-                    indentation: Indentation::default(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(JsonResult {
-                    root: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_object_data(),
-                    },
-                    indentation: Indentation::default(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(JsonResult {
-                    root: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_array_data(),
-                    },
-                    indentation: Indentation::default(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(root) = empty_source_fast_path(source) {
+        return Ok(JsonResult {
+            root,
+            indentation: Indentation::default(),
+        });
     }
 
     let mut parser = JSONLikeParser::init(opts, bump, source, log)?;
@@ -1039,36 +982,8 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    let len = source.contents.len();
-
-    match len {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
 
     let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
@@ -1090,34 +1005,8 @@ pub fn parse_for_macro(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    match source.contents.len() {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
 
     let mut parser = JSONLikeParser::init(MACRO_JSON_OPTS, bump, source, log)?;
@@ -1143,46 +1032,15 @@ pub fn parse_for_bundling(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<JSONParseResult, bun_core::Error> {
-    match source.contents.len() {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(JSONParseResult {
-                expr: Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                },
-                tag: JSONParseResultTag::Empty,
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(JSONParseResult {
-                    expr: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_string_data(),
-                    },
-                    tag: JSONParseResultTag::Expr,
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(JSONParseResult {
-                    expr: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_object_data(),
-                    },
-                    tag: JSONParseResultTag::Expr,
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(JSONParseResult {
-                    expr: Expr {
-                        loc: bun_ast::Loc { start: 0 },
-                        data: empty_array_data(),
-                    },
-                    tag: JSONParseResultTag::Expr,
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(JSONParseResult {
+            expr,
+            tag: if source.contents.is_empty() {
+                JSONParseResultTag::Empty
+            } else {
+                JSONParseResultTag::Expr
+            },
+        });
     }
 
     let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
@@ -1204,34 +1062,8 @@ pub fn parse_env_json(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    match source.contents.len() {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
 
     let mut parser = JSONLikeParser::init(DOTENV_JSON_OPTS, bump, source, log)?;
@@ -1272,34 +1104,8 @@ pub fn parse_ts_config<const FORCE_UTF8: bool>(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> Result<Expr, bun_core::Error> {
-    match source.contents.len() {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Ok(Expr {
-                loc: bun_ast::Loc { start: 0 },
-                data: empty_object_data(),
-            });
-        }
-        // This is a fast pass I guess
-        2 => {
-            if &source.contents[0..1] == b"\"\"" || &source.contents[0..1] == b"''" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_string_data(),
-                });
-            } else if &source.contents[0..1] == b"{}" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_object_data(),
-                });
-            } else if &source.contents[0..1] == b"[]" {
-                return Ok(Expr {
-                    loc: bun_ast::Loc { start: 0 },
-                    data: empty_array_data(),
-                });
-            }
-        }
-        _ => {}
+    if let Some(expr) = empty_source_fast_path(source) {
+        return Ok(expr);
     }
 
     let mut parser = JSONLikeParser::init(TSCONFIG_OPTS, bump, source, log)?;

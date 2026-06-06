@@ -21,6 +21,12 @@ for (const adapter of ["postgres", "mysql"] as const) {
       max: 1,
     });
 
-    await expect(sql`select 1`).rejects.toThrow("tls must be a boolean or an object");
+    // `sql\`...\`` is a lazy thenable that only dispatches once `.then` is
+    // invoked, so trigger it explicitly instead of handing it to `.rejects`.
+    const err = await sql`select 1`.then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.message).toBe("tls must be a boolean or an object");
   });
 }

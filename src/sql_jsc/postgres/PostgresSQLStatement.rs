@@ -69,19 +69,7 @@ impl Error {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Status {
-    Pending,
-    Parsing,
-    Prepared,
-    Failed,
-}
-
-impl Status {
-    pub fn is_running(self) -> bool {
-        self == Status::Parsing
-    }
-}
+pub use bun_sql::shared::statement_status::Status;
 
 impl PostgresSQLStatement {
     /// Set the initial intrusive

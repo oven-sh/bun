@@ -393,8 +393,9 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
         // the const-generic `print_as::<{ Tag::… }, …>` arms.
         let mut sink = bun_io::FmtAdapter::new(writer);
         let result = self::console_object::formatter::TagResult {
-            tag: tag.into(),
+            tag,
             cell,
+            custom: None,
         };
         let global = self.global_this;
         self.format::<ENABLE_ANSI_COLORS>(result, &mut sink, value, global)

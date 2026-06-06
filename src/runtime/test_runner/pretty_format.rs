@@ -546,20 +546,7 @@ impl Tag {
             | JSType::ModuleNamespaceObject
             | JSType::GlobalObject => Tag::Object,
 
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float16Array
-            | JSType::Float32Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => Tag::TypedArray,
+            t if t.is_array_buffer_like() => Tag::TypedArray,
 
             JSType::HeapBigInt => Tag::BigInt,
 
@@ -2792,7 +2779,7 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     ) -> JsResult<()> {
         let global = self.global_this;
         self.format::<C>(
-            bun_jsc::console_object::formatter::TagResult { tag: tag.into(), cell },
+            bun_jsc::console_object::formatter::TagResult { tag, cell, custom: None },
             w,
             v,
             global,

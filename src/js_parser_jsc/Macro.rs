@@ -596,9 +596,7 @@ impl<'a> Run<'a> {
 
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
-        // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
-        // collapse the payload to its discriminant via `.tag()`.
-        match T::get(value, self.global)?.tag.tag() {
+        match T::get(value, self.global)?.tag {
             T::Error => self.coerce(T::Error, value),
             T::Undefined => self.coerce(T::Undefined, value),
             T::Null => self.coerce(T::Null, value),

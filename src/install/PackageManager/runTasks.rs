@@ -446,16 +446,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        mark_update_request_failed(manager, name);
                     }
 
                     continue;
@@ -498,16 +489,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, name);
 
                     continue;
                 }
@@ -702,45 +684,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .fail
                         .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
 
-                    // The download will not be retried for this task_id, so
-                    // drop the dedupe state before dispatching the error.
-                    // Otherwise a later `enqueuePackageForDownload` for the
-                    // same package sees `found_existing`, never schedules a
-                    // network task, and waits forever for a callback that
-                    // will not arrive. `Store.Installer.onPackageDownloadError`
-                    // drains `task_queue` itself but does not touch
-                    // `network_dedupe_map`, so this must run on the callback
-                    // path too. Capture `is_required` first —
-                    // `isNetworkTaskRequired` reads the map and returns `true`
-                    // when the entry is gone, which would upgrade optional-dep
-                    // warnings to errors on the void-callback fallback below.
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
-
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                    let Some(is_required) =
+                        dispatch_tarball_error::<C>(manager, extract_ctx, task, extract, err)
+                    else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -767,16 +715,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -788,50 +727,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: drop dedupe state so a later
-                    // enqueue for this task_id schedules a fresh network task
-                    // instead of waiting on this failed one. Runs before the
-                    // callback branch so `Store.Installer` (which `continue`s
-                    // from the callback) is covered too. Capture
-                    // `is_required` first — `isNetworkTaskRequired` reads the
-                    // map and returns `true` when the entry is gone.
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
+                    let err = match response.status_code {
+                        400 => bun_core::err!("TarballHTTP400"),
+                        401 => bun_core::err!("TarballHTTP401"),
+                        402 => bun_core::err!("TarballHTTP402"),
+                        403 => bun_core::err!("TarballHTTP403"),
+                        404 => bun_core::err!("TarballHTTP404"),
+                        405..=499 => bun_core::err!("TarballHTTP4xx"),
+                        _ => bun_core::err!("TarballHTTP5xx"),
+                    };
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
-                        let err = match response.status_code {
-                            400 => bun_core::err!("TarballHTTP400"),
-                            401 => bun_core::err!("TarballHTTP401"),
-                            402 => bun_core::err!("TarballHTTP402"),
-                            403 => bun_core::err!("TarballHTTP403"),
-                            404 => bun_core::err!("TarballHTTP404"),
-                            405..=499 => bun_core::err!("TarballHTTP4xx"),
-                            _ => bun_core::err!("TarballHTTP5xx"),
-                        };
-
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                    let Some(is_required) =
+                        dispatch_tarball_error::<C>(manager, extract_ctx, task, extract, err)
+                    else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -852,16 +762,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1560,6 +1461,68 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     Ok(())
+}
+
+/// Non-retryable tarball download failure. Drops the dedupe state before
+/// dispatching the error — otherwise a later `enqueuePackageForDownload` for
+/// the same package sees `found_existing`, never schedules a network task,
+/// and waits forever for a callback that will not arrive.
+/// `Store.Installer.onPackageDownloadError` drains `task_queue` itself but
+/// does not touch `network_dedupe_map`, so this must run on the callback path
+/// too. Returns `None` when the `on_package_download_error_*` callback
+/// consumed the error, otherwise `Some(is_required)` for the caller's
+/// log-and-mark fallback. `is_required` is captured before the dedupe entry
+/// is removed — `isNetworkTaskRequired` reads the map and returns `true` when
+/// the entry is gone, which would upgrade optional-dep warnings to errors.
+fn dispatch_tarball_error<C: RunTasksCallbacks>(
+    manager: &mut PackageManager,
+    extract_ctx: &mut C::Ctx,
+    task: &NetworkTask,
+    extract: &ExtractTarball,
+    err: bun_core::Error,
+) -> Option<bool> {
+    let is_required = manager.is_network_task_required(task.task_id);
+    let _ = manager.network_dedupe_map.remove(&task.task_id);
+
+    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+        if C::IS_STORE_INSTALLER {
+            C::on_package_download_error_store(
+                extract_ctx,
+                task.task_id,
+                extract.name.slice(),
+                &extract.resolution,
+                err,
+                &task.url_buf,
+            );
+        } else {
+            let package_id = manager.lockfile.buffers.resolutions[extract.dependency_id as usize];
+            C::on_package_download_error_pkg(
+                extract_ctx,
+                package_id,
+                extract.name.slice(),
+                &extract.resolution,
+                err,
+                &task.url_buf,
+            );
+        }
+        return None;
+    }
+
+    Some(is_required)
+}
+
+fn mark_update_request_failed(manager: &mut PackageManager, name: &[u8]) {
+    if manager.subcommand == Subcommand::Remove {
+        return;
+    }
+    for request in manager.update_requests.iter_mut() {
+        if strings::eql(request.name, name) {
+            request.failed = true;
+            manager.options.do_.remove(Do::SAVE_LOCKFILE);
+            manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+            manager.options.do_.remove(Do::INSTALL_PACKAGES);
+        }
+    }
 }
 
 #[inline]

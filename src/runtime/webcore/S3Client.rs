@@ -81,6 +81,15 @@ impl S3CredentialsExt for S3Credentials {
     }
 }
 
+/// How [`S3Client::blob_and_options`] reports a missing/unparseable leading
+/// path argument. Mirrors the per-method divergence in the Zig reference:
+/// presign/exists/size/stat throw "invalid arguments" when an argument was
+/// present but is not a path, while unlink always throws `MISSING_ARGS`.
+enum MissingPathError {
+    MissingOrInvalid,
+    AlwaysMissingArgs,
+}
+
 #[inline]
 fn opt_js(v: JSValue) -> Option<JSValue> {
     if v.is_empty_or_undefined_or_null() {
@@ -338,6 +347,60 @@ impl S3Client {
         Ok(())
     }
 
+    /// Constructs the S3 blob for `path` using this client's credentials and
+    /// per-client defaults, merged with the per-call `options` object.
+    /// `defer blob.detach()` from the Zig reference is handled by Drop of the
+    /// returned blob's `Option<StoreRef>` field.
+    fn construct_blob(
+        &self,
+        global: &JSGlobalObject,
+        path: PathLike,
+        options: Option<JSValue>,
+    ) -> JsResult<crate::webcore::blob::Blob> {
+        S3File::construct_s3_file_with_s3_credentials_and_options(
+            global,
+            path,
+            options,
+            &self.credentials,
+            self.options,
+            self.acl,
+            self.storage_class,
+            self.request_payer,
+        )
+    }
+
+    /// Shared prologue for the path-taking instance methods: parses the
+    /// leading path argument, eats the trailing options argument, and
+    /// constructs the S3 blob via [`Self::construct_blob`]. `verb` completes
+    /// the "Expected a path to {verb}" error message.
+    fn blob_and_options(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        verb: &str,
+        missing_path: MissingPathError,
+    ) -> JsResult<(crate::webcore::blob::Blob, Option<JSValue>)> {
+        let arguments = callframe.arguments_old::<2>();
+        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
+        let vm = global.bun_vm();
+        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let Some(path) = PathLike::from_js(global, &mut args)? else {
+            return Err(match missing_path {
+                MissingPathError::MissingOrInvalid if args.len() != 0 => {
+                    global.throw_invalid_arguments(format_args!("Expected a path to {verb}"))
+                }
+                _ => global
+                    .err(
+                        ErrorCode::MISSING_ARGS,
+                        format_args!("Expected a path to {verb}"),
+                    )
+                    .throw(),
+            });
+        };
+        let options = args.next_eat();
+        Ok((self.construct_blob(global, path, options)?, options))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn file(
         ptr: &Self,
@@ -362,18 +425,7 @@ impl S3Client {
         let options = args.next_eat();
         // `Blob::new` heap-promotes and marks `ref_count = 1` so
         // the JSS3File wrapper's `finalize` knows to free the blob.
-        let blob = crate::webcore::blob::Blob::new(
-            S3File::construct_s3_file_with_s3_credentials_and_options(
-                global,
-                path,
-                options,
-                &ptr.credentials,
-                ptr.options,
-                ptr.acl,
-                ptr.storage_class,
-                ptr.request_payer,
-            )?,
-        );
+        let blob = crate::webcore::blob::Blob::new(ptr.construct_blob(global, path, options)?);
         // `to_js` runs `calculateEstimatedByteSize()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
         // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
@@ -389,39 +441,11 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
-            Some(p) => p,
-            None => {
-                if args.len() == 0 {
-                    return Err(global
-                        .err(
-                            ErrorCode::MISSING_ARGS,
-                            format_args!("Expected a path to presign"),
-                        )
-                        .throw());
-                }
-                return Err(
-                    global.throw_invalid_arguments(format_args!("Expected a path to presign"))
-                );
-            }
-        };
-
-        let options = args.next_eat();
-        // `defer blob.detach()` — `Blob`'s `store: Option<StoreRef>` field
-        // drops at scope exit, which calls `Store::deref()` (same as detach).
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let (mut blob, options) = ptr.blob_and_options(
             global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            callframe,
+            "presign",
+            MissingPathError::MissingOrInvalid,
         )?;
         S3File::get_presign_url_from(&mut blob, global, options)
     }
@@ -432,37 +456,11 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
-            Some(p) => p,
-            None => {
-                if args.len() == 0 {
-                    return Err(global
-                        .err(
-                            ErrorCode::MISSING_ARGS,
-                            format_args!("Expected a path to check if it exists"),
-                        )
-                        .throw());
-                }
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected a path to check if it exists"
-                )));
-            }
-        };
-        let options = args.next_eat();
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let (blob, _) = ptr.blob_and_options(
             global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            callframe,
+            "check if it exists",
+            MissingPathError::MissingOrInvalid,
         )?;
         S3File::S3BlobStatTask::exists(global, &blob)
     }
@@ -473,37 +471,11 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
-            Some(p) => p,
-            None => {
-                if args.len() == 0 {
-                    return Err(global
-                        .err(
-                            ErrorCode::MISSING_ARGS,
-                            format_args!("Expected a path to check the size of"),
-                        )
-                        .throw());
-                }
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected a path to check the size of"
-                )));
-            }
-        };
-        let options = args.next_eat();
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let (mut blob, _) = ptr.blob_and_options(
             global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            callframe,
+            "check the size of",
+            MissingPathError::MissingOrInvalid,
         )?;
         S3File::S3BlobStatTask::size(global, &mut blob)
     }
@@ -514,37 +486,11 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
-            Some(p) => p,
-            None => {
-                if args.len() == 0 {
-                    return Err(global
-                        .err(
-                            ErrorCode::MISSING_ARGS,
-                            format_args!("Expected a path to check the stat of"),
-                        )
-                        .throw());
-                }
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Expected a path to check the stat of"
-                )));
-            }
-        };
-        let options = args.next_eat();
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let (blob, _) = ptr.blob_and_options(
             global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            callframe,
+            "check the stat of",
+            MissingPathError::MissingOrInvalid,
         )?;
         S3File::S3BlobStatTask::stat(global, &blob)
     }
@@ -580,16 +526,7 @@ impl S3Client {
         };
 
         let options = args.next_eat();
-        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
-            global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
-        )?;
+        let blob = ptr.construct_blob(global, path, options)?;
         // Move into `PathOrBlob` directly; cleanup of the moved-out value is
         // handled by `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
@@ -641,32 +578,11 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
-        let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
-        let path: PathLike = match PathLike::from_js(global, &mut args)? {
-            Some(p) => p,
-            None => {
-                return Err(global
-                    .err(
-                        ErrorCode::MISSING_ARGS,
-                        format_args!("Expected a path to unlink"),
-                    )
-                    .throw());
-            }
-        };
-        let options = args.next_eat();
-        // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
-            path,
-            options,
-            &ptr.credentials,
-            ptr.options,
-            ptr.acl,
-            ptr.storage_class,
-            ptr.request_payer,
+            callframe,
+            "unlink",
+            MissingPathError::AlwaysMissingArgs,
         )?;
         let store = blob.store.get().as_ref().unwrap();
         store.data.as_s3().unlink(store, global, options)

@@ -276,7 +276,7 @@ function queryServer(worker, message) {
 
     if (errno) handles.delete(key); // Gives other workers a chance to retry.
 
-    send(
+    const sent = send(
       worker,
       {
         errno,
@@ -287,6 +287,14 @@ function queryServer(worker, message) {
       },
       handle,
     );
+    if (sent === null && handle !== null && handle !== undefined) {
+      // The shared handle could not be exported to this worker (Windows,
+      // e.g. WSAENOBUFS on a live peer) so the reply was never emitted.
+      // Deliver a bind error instead of leaving the worker's listen()
+      // hanging forever. The handle itself stays registered: other workers
+      // may be using it, and this worker's removal cleans up its slot.
+      send(worker, { errno: -1, errcode: "ENOBUFS", key, ack: message.seq, data }, null);
+    }
   });
 }
 

@@ -146,24 +146,32 @@ function deserializeJSTransferable(marker: Record<string, any>): unknown {
   }
 }
 
-function unpackJSTransferables(value: unknown, seen?: Set<object>): unknown {
+function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unknown {
   if (value === null || typeof value !== "object") return value;
+  memo ??= new Map();
+  // The memo both breaks cycles (containers map to themselves) and preserves
+  // reference identity for markers: structured clone keeps a marker shared
+  // between graph positions as one object, so the same marker must
+  // deserialize to the same instance (one FileHandle per transferred fd,
+  // like node's host-object back-references).
+  const cached = memo.get(value);
+  if (cached !== undefined) return cached;
   if (isJSTransferableMarker(value)) {
-    return deserializeJSTransferable(value as Record<string, any>);
+    const instance = deserializeJSTransferable(value as Record<string, any>);
+    memo.set(value, instance);
+    return instance;
   }
-  seen ??= new Set();
-  if (seen.has(value)) return value;
-  seen.add(value);
+  memo.set(value, value);
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      value[i] = unpackJSTransferables(value[i], seen);
+      value[i] = unpackJSTransferables(value[i], memo);
     }
     return value;
   }
   const proto = Object.getPrototypeOf(value);
   if (proto === Object.prototype || proto === null) {
     for (const key of Object.keys(value)) {
-      (value as Record<string, unknown>)[key] = unpackJSTransferables((value as Record<string, unknown>)[key], seen);
+      (value as Record<string, unknown>)[key] = unpackJSTransferables((value as Record<string, unknown>)[key], memo);
     }
   }
   return value;

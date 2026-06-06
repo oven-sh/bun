@@ -524,3 +524,26 @@ test("partially transferred FileHandles are restored when a later transfer throw
 function tmpdirSync2() {
   return fs.mkdtempSync(join(require("node:os").tmpdir(), "worker-fh-transfer-"));
 }
+
+test("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
+  const dir = tmpdirSync2();
+  const file = join(dir, "x.txt");
+  fs.writeFileSync(file, "hello");
+  const script = join(dir, "w.mjs");
+  fs.writeFileSync(
+    script,
+    `import { workerData, parentPort } from "worker_threads";
+     const { a, b } = workerData;
+     const same = a === b;
+     await a.close();
+     // b is the same handle, so it must be closed too (no stale second
+     // instance wrapping an already-closed fd)
+     const closed = b.fd === -1;
+     parentPort.postMessage({ same, closed });`,
+  );
+  const fh = await fs.promises.open(file, "r");
+  const worker = new Worker(script, { workerData: { a: fh, b: fh }, transferList: [fh as any] } as any);
+  const [message] = await once(worker, "message");
+  await worker.terminate();
+  expect(message).toEqual({ same: true, closed: true });
+});

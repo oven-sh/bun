@@ -1237,6 +1237,13 @@ impl SendQueue {
         }
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
+        // The retransmission budget is per handle message (node keeps it on
+        // the message object as `retransmissions`); handle messages are
+        // serialized through `waiting_for_ack`, so resetting on completion
+        // gives exactly per-message semantics. Without this, transient NACKs
+        // accumulate over the channel's lifetime and a later handle message
+        // would give up on its first NACK.
+        self.retry_count = 0;
         item.complete(global); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);

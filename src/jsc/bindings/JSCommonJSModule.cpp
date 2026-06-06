@@ -168,7 +168,17 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
+        // The two-argument JSC::evaluate overload catches the script's
+        // uncaught exception into an unused NakedPtr and drops it, which
+        // made a top-level throw from a CommonJS-sniffed --eval/--stdin
+        // entry exit 0 silently. Capture and rethrow it so the entry
+        // promise rejects and the error is reported with exit code 1.
+        NakedPtr<JSC::Exception> returnedException;
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (returnedException) [[unlikely]] {
+            scope.throwException(globalObject, returnedException.get());
+            return false;
+        }
         RETURN_IF_EXCEPTION(scope, false);
         ASSERT(result);
 

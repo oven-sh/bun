@@ -565,7 +565,12 @@ export function loadEnvFile(path) {
   const content = require("node:fs").readFileSync(path, "utf8");
   const parsed = require("node:util").parseEnv(content);
   for (const key of Object.keys(parsed)) {
-    process.env[key] = parsed[key];
+    // Node's Dotenv::SetEnvironment: variables already present in the
+    // environment (including ones from --env-file) take precedence; the
+    // file only fills in missing keys.
+    if (!(key in process.env)) {
+      process.env[key] = parsed[key];
+    }
   }
 }
 

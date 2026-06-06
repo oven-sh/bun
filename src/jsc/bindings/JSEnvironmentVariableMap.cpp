@@ -57,6 +57,33 @@ void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 
 const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
 
+// Node's EnvSetter value handling, shared by put / putByIndex /
+// defineOwnProperty: DEP0104 under --pending-deprecation for non-string,
+// non-number, non-boolean values (at most once per process, matching
+// EmitProcessEnvWarning's one-shot flag), then ToString coercion.
+static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    static std::once_flag processEnvWarningFlag;
+    bool shouldEmitDeprecationWarning = false;
+    if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
+        std::call_once(processEnvWarningFlag, [&] {
+            shouldEmitDeprecationWarning = true;
+        });
+    }
+    if (shouldEmitDeprecationWarning) [[unlikely]] {
+        Bun::Process::emitWarning(globalObject,
+            jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
+            jsString(vm, String("DeprecationWarning"_s)),
+            jsString(vm, String("DEP0104"_s)),
+            jsUndefined());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    JSC::JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return string;
+}
+
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -73,26 +100,7 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     if (propertyName.publicName() && propertyName.publicName()->isEmpty())
         return true;
 
-    // DEP0104: under --pending-deprecation, assigning a non-string,
-    // non-number, non-boolean value warns before being coerced. Node emits
-    // this at most once per process (EmitProcessEnvWarning's one-shot flag).
-    static std::once_flag processEnvWarningFlag;
-    bool shouldEmitDeprecationWarning = false;
-    if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
-        std::call_once(processEnvWarningFlag, [&] {
-            shouldEmitDeprecationWarning = true;
-        });
-    }
-    if (shouldEmitDeprecationWarning) [[unlikely]] {
-        Bun::Process::emitWarning(globalObject,
-            jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
-            jsString(vm, String("DeprecationWarning"_s)),
-            jsString(vm, String("DEP0104"_s)),
-            jsUndefined());
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-
-    JSString* string = value.toString(globalObject);
+    JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
 }
@@ -102,7 +110,9 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSString* string = value.toString(globalObject);
+    // Numeric keys route through EnvSetter in Node too, so the same DEP0104
+    // and coercion rules apply.
+    JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
     RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
 }
@@ -139,7 +149,7 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
         return true;
 
     PropertyDescriptor coerced = descriptor;
-    JSString* string = descriptor.value().toString(globalObject);
+    JSString* string = coerceEnvValue(globalObject, scope, descriptor.value());
     RETURN_IF_EXCEPTION(scope, false);
     coerced.setValue(string);
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));

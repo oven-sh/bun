@@ -763,6 +763,29 @@ describe.concurrent(() => {
     });
   }
 
+  it("process.getActiveResourcesInfo does not report unref'd timers", async () => {
+    // Node reports only ref'd handles: an unref'd timer is not keeping the
+    // event loop alive, so it must not be listed.
+    await runInlineFixture(
+      `const count = () => process.getActiveResourcesInfo().filter(x => x === "Timeout").length;
+       const base = count();
+       const t = setTimeout(() => {}, 100000);
+       t.unref();
+       const i = setInterval(() => {}, 100000);
+       i.unref();
+       console.log(count() - base);
+       const r = setTimeout(() => {}, 100000);
+       console.log(count() - base);
+       t.ref();
+       console.log(count() - base);
+       clearTimeout(t);
+       clearInterval(i);
+       clearTimeout(r);`,
+      "0\n1\n2\n",
+      0,
+    );
+  });
+
   const emptyObjectStubs = [];
   const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
 

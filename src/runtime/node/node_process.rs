@@ -95,6 +95,12 @@ pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
                 continue;
             }
             let flags = internals.flags.get();
+            // Node's getActiveResourcesInfo() reports only ref'd handles
+            // (timeoutInfo/immediateInfo refCount): an unref'd timer is not
+            // keeping the event loop alive, so it isn't listed.
+            if !flags.has_js_ref() {
+                continue;
+            }
             if flags.kind() == crate::timer::Kind::SetImmediate {
                 // Node counts an Immediate as already-gone while its own
                 // callback runs (unlike a Timeout, which stays visible until

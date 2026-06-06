@@ -693,8 +693,8 @@ public:
     // that references this global, so the global itself could never be
     // collected — `bun test --isolate` discards globals all the time.
     // Mutate only while holding gcLock(); the GC thread iterates it.
-    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>> m_nativeModuleDefaultObjects;
-    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>>& nativeModuleDefaultObjects() { return m_nativeModuleDefaultObjects; }
+    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>> m_nativeModuleDefaultObjects WTF_GUARDED_BY_LOCK(m_gcLock);
+    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>>& nativeModuleDefaultObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_nativeModuleDefaultObjects; }
 
     // This is the result of dlopen()ing a napi module.
     // We will add it to the resulting napi value.

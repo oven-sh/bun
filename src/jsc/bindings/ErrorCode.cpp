@@ -290,7 +290,9 @@ static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, cha
             builder.append(quote);
             return;
         }
-        if (c < 0x20 || c == 0x7f) {
+        // Node escapes C0 (0x00-0x1F), DEL, and the C1 range (0x80-0x9F);
+        // its meta table runs through index 0x9F.
+        if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
             static constexpr char hex[] = "0123456789abcdef";
             builder.append("\\x"_s);
             builder.append(hex[(c >> 4) & 0xf]);

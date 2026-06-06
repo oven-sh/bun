@@ -144,3 +144,15 @@ test("stale duplicate-rule entries do not erase a later rule", () => {
     cssInternals.minifyTest(".a,.b{color:red}.a{color:blue}.b{color:green}.b{color:blue}.a{color:purple}", ""),
   ).toBe(".a,.b{color:#00f}.a{color:purple}");
 });
+
+// When target-incompatible selectors are partitioned out of a rule whose
+// remaining selectors then declaration-merge into the previous rule, the
+// rules built for the incompatible selectors must clone the declarations
+// from before the merge drains them. Chrome 60 supports neither :is() nor
+// :focus-visible, so the selector list splits; this used to emit only
+// ".a { color: #00f }" and silently drop the .b:focus-visible styling.
+test("declaration merges do not drop partitioned incompatible selectors", () => {
+  expect(cssInternals._test(".a{color:red}.a,.b:focus-visible{color:blue}", "", { chrome: 60 << 16 })).toBe(
+    ".a {\n  color: #00f;\n}\n\n.b:focus-visible {\n  color: #00f;\n}\n",
+  );
+});

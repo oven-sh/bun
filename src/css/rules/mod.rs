@@ -772,6 +772,16 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     sty.update_prefix(context);
 
+    // The declaration merge below drains `sty.declarations`, but the rules
+    // built for the partitioned-out incompatible selectors clone it after the
+    // merge. Snapshot it first, or a merge would silently drop the
+    // incompatible selectors' styling.
+    let incompatible_decls: Option<css::DeclarationBlock> = if incompatible.len() > 0 {
+        Some(dc::decl_block_static(&sty.declarations, context.arena))
+    } else {
+        None
+    };
+
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
     let mut sty_compat: Option<bool> = None;
@@ -845,7 +855,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
-            declarations: dc::decl_block_static(&sty.declarations, context.arena),
+            declarations: dc::decl_block_static(
+                incompatible_decls.as_ref().unwrap_or(&sty.declarations),
+                context.arena,
+            ),
             rules: sty.rules.deep_clone(context.arena),
             loc: sty.loc,
         };

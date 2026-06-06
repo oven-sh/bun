@@ -547,6 +547,20 @@ impl TokenList {
         options: &ParserOptions,
         depth: usize,
     ) -> Result<()> {
+        let result = Self::parse_into_impl(input, tokens, options, depth);
+        if result.is_err() {
+            // See `ParserInput::token_list_parse_failures`.
+            input.note_token_list_parse_failure();
+        }
+        result
+    }
+
+    fn parse_into_impl(
+        input: &mut Parser,
+        tokens: &mut Vec<TokenOrValue>,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<()> {
         if depth > 500 {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
@@ -577,13 +591,30 @@ impl TokenList {
                         tokens.push(TokenOrValue::Color(color));
                         last_is_delim = false;
                         last_is_whitespace = false;
-                    } else if let Ok(color) =
-                        input.try_parse(|i| UnresolvedColor::parse(i, f, options, depth))
-                    {
-                        tokens.push(TokenOrValue::UnresolvedColor(color));
-                        last_is_delim = false;
-                        last_is_whitespace = false;
-                    } else if strings::eql(*f, b"url") {
+                        continue;
+                    }
+                    let failures_before = input.token_list_parse_failures();
+                    match input.try_parse(|i| UnresolvedColor::parse(i, f, options, depth)) {
+                        Ok(color) => {
+                            tokens.push(TokenOrValue::UnresolvedColor(color));
+                            last_is_delim = false;
+                            last_is_whitespace = false;
+                            continue;
+                        }
+                        Err(err) => {
+                            // The attempt failed inside one of its token-list
+                            // arguments (an rgb()/hsl() alpha or a light-dark()
+                            // half). Those tokens fail the same way under every
+                            // alternative below, so propagate instead of
+                            // falling through: re-parsing the arguments once
+                            // per alternative is exponential in the nesting
+                            // depth when such functions are nested.
+                            if input.token_list_parse_failures() != failures_before {
+                                return Err(err);
+                            }
+                        }
+                    }
+                    if strings::eql(*f, b"url") {
                         input.reset(&state);
                         tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                         last_is_delim = false;
@@ -975,6 +1006,23 @@ impl UnresolvedColor {
                 })
             }),
             b"light-dark" => return input.parse_nested_block(|input2| {
+                // light-dark() requires a top-level comma between its halves.
+                // Check with a raw scan before parsing: buffering the first
+                // half as a token list only to fail on the missing comma makes
+                // the caller re-parse the arguments as a plain function, which
+                // compounds exponentially when light-dark() calls are nested.
+                let scan_start = input2.state();
+                let mut found_comma = false;
+                while let Ok(tok) = input2.next() {
+                    if matches!(tok, Token::Comma) {
+                        found_comma = true;
+                        break;
+                    }
+                }
+                input2.reset(&scan_start);
+                if !found_comma {
+                    return Err(input2.new_error(BasicParseErrorKind::end_of_input));
+                }
                 // `?` drops `light` automatically on the error path.
                 let light = input2.parse_until_before(Delimiters::COMMA, |i| {
                     TokenListFns::parse(i, options, depth + 1)

@@ -3674,6 +3674,17 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
+    /// See `ParserInput::token_list_parse_failures`.
+    #[inline]
+    pub fn token_list_parse_failures(&self) -> u64 {
+        self.input.token_list_parse_failures
+    }
+
+    #[inline]
+    pub fn note_token_list_parse_failure(&mut self) {
+        self.input.token_list_parse_failures += 1;
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -4218,6 +4229,15 @@ pub struct ParserInput<'a> {
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
     math_fn_parse_failures: u64,
+    /// Monotonic count of raw token-list parse failures
+    /// (`TokenList::parse_into`). A token-list parse is context-free: it
+    /// fails or succeeds the same way every time it runs over the same
+    /// tokens at the same block-nesting depth. Backtracking callers sample
+    /// this before an alternative that buffers token lists internally; if it
+    /// grew, re-parsing the same range through another token-list-based
+    /// alternative is guaranteed to fail again, so they propagate the error
+    /// instead of retrying (which is exponential in the nesting depth).
+    token_list_parse_failures: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4245,6 +4265,7 @@ impl<'a> ParserInput<'a> {
             nesting_depth: 0,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
+            token_list_parse_failures: 0,
         }
     }
 }

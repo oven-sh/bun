@@ -68,6 +68,13 @@ pub struct File {
 
     /// When true, file will close itself when the current operation completes.
     pub close_after_operation: bool,
+
+    /// Read buffer parked here when the owning reader is torn down while a
+    /// `uv_fs_read` is still operating/canceling on the threadpool: the
+    /// worker keeps writing through `iov` into this allocation until the
+    /// completion callback runs, so it must outlive the operation. Dropped
+    /// with the Box in `on_close_complete`.
+    pub retained_read_buffer: Vec<u8>,
 }
 
 #[repr(u8)]
@@ -94,6 +101,7 @@ impl Default for File {
             file: 0,
             state: FileState::Deinitialized,
             close_after_operation: false,
+            retained_read_buffer: Vec::new(),
         }
     }
 }

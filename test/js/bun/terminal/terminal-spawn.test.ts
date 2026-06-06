@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
@@ -435,6 +435,76 @@ describe("Bun.Terminal subprocess integration", () => {
     const exitCode = await proc.exited;
     expect(terminal.localFlags & ICANON).not.toBe(0);
     expect(terminal.localFlags & ECHO).not.toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  // Regression test for a Windows-only use-after-free: cancelling a stdin
+  // stream while a cooked-mode console read is parked used to free the
+  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
+  // block a worker thread in ReadConsoleW and convert the result into the
+  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
+  // injecting a VK_RETURN, so the worker still writes "\r\n" through the
+  // stale pointer. The late write corrupted whatever mimalloc handed the
+  // freed 8 KiB block to next (seen in production as full-GC crashes in
+  // Heap::sweepArrayBuffers on clobbered ArrayBuffers). The child adopts the
+  // just-freed block with same-size ArrayBuffer probes and reports any
+  // mutation.
+  test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
+    using dir = tempDir("conpty-stdin-read-cancel", {
+      "child-fixture.ts": `
+        const reader = Bun.stdin.stream().getReader();
+        // Arms the native reader: libuv queues a cooked-mode console line
+        // read whose destination is the pipe reader's 8 KiB spare capacity.
+        reader.read().catch(() => {});
+        // Not waiting for time: waiting for the libuv worker to enter
+        // ReadConsoleW (unobservable from JS). If it has not started yet,
+        // cancellation traps the read before any write and the test is
+        // vacuous rather than wrong.
+        await Bun.sleep(200);
+        await reader.cancel();
+        // Immediately adopt the 8 KiB block the buggy teardown just freed;
+        // mimalloc serves freshly freed blocks of a size class first.
+        const probes: Uint8Array[] = [];
+        for (let i = 0; i < 32; i++) {
+          const probe = new Uint8Array(new ArrayBuffer(8192));
+          probe.fill(0xaa);
+          probes.push(probe);
+        }
+        // Bounded window for the cancelled console read's late write to land.
+        const deadline = Date.now() + 600;
+        let corrupted = false;
+        while (Date.now() < deadline && !corrupted) {
+          for (const probe of probes) {
+            for (let i = 0; i < 64; i++) {
+              if (probe[i] !== 0xaa) corrupted = true;
+            }
+          }
+          Bun.gc(true);
+          await Bun.sleep(20);
+        }
+        console.log(corrupted ? "PROBE-CORRUPTED" : "PROBE-CLEAN");
+        process.exit(corrupted ? 42 : 0);
+      `,
+    });
+
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "child-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+
+    const exitCode = await proc.exited;
+    expect(output).toContain("PROBE-CLEAN");
+    expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);
   });
 });

@@ -183,17 +183,17 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
     }
   }
 
-  #onConnected(err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) {
+  protected handleConnected(err: any, connection?: $ZigGeneratedClasses.MySQLConnection) {
     if (!err) {
-      this.connection = connection;
+      this.connection = connection!;
     }
-    this.handleConnected(err);
+    super.handleConnected(err);
   }
 
   protected startConnection() {
     PooledMySQLConnection.createConnection(
       this.connectionInfo,
-      this.#onConnected.bind(this),
+      this.handleConnected.bind(this),
       this.handleClose.bind(this),
     );
   }

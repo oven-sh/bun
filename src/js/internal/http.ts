@@ -482,7 +482,7 @@ function filterEnvForProxies(env) {
 // `NodeHTTPServerSocket` (node/_http_server.ts). They are copied onto each
 // class's prototype (instead of using a base class) so the prototype chain
 // stays `Socket.prototype -> Duplex.prototype`, matching `net.Socket`.
-const socketStubDescriptors = Object.getOwnPropertyDescriptors(
+const { constructor: _socketStubConstructor, ...socketStubDescriptors } = Object.getOwnPropertyDescriptors(
   class {
     declare connecting: boolean;
     declare readable: boolean;
@@ -555,7 +555,6 @@ const socketStubDescriptors = Object.getOwnPropertyDescriptors(
     }
   }.prototype,
 );
-delete (socketStubDescriptors as any).constructor;
 
 function installSocketStubs(SocketClass: { prototype: object }) {
   Object.defineProperties(SocketClass.prototype, socketStubDescriptors);

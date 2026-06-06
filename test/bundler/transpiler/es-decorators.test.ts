@@ -952,5 +952,90 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("1 1\n");
       expect(exitCode).toBe(0);
     });
+
+    test("references inside a nested class in the initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        function pick(x) { return x; }
+        const A = class Foo { @dec static s = (class { static x = Foo; }).x; };
+        console.log(A.s === A);
+        const B = class Foo {
+          static kname = "m";
+          @dec static s = new (class extends pick(this) { [pick(this).kname]() { return 7; } })();
+        };
+        console.log(B.s instanceof B, B.s.m());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\ntrue 7\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("references in parameter defaults in the initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const A = class Foo { @dec static s = (x = this) => x; };
+        console.log(A.s() === A);
+        const B = class Foo { @dec static s = (function (x = Foo) { return x; })(); };
+        console.log(B.s === B);
+        const C = class Foo { @dec static s = (({ v = Foo } = {}) => v)(); };
+        console.log(C.s === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\ntrue\ntrue\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("references in computed object keys in the initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const A = class Foo { static k = "a"; @dec static s = { [Foo.k]: 1 }; };
+        console.log(A.s.a);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("references under await, yield, and import() in the initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        const A = class Foo { @dec static s = (async () => await Foo)(); };
+        console.log((await A.s) === A);
+        const B = class Foo { @dec static s = [...(function* () { yield Foo; })()][0]; };
+        console.log(B.s === B);
+        const C = class Foo {
+          static tag = "marked";
+          @dec static s = import("data:text/javascript,export default " + JSON.stringify(Foo.tag));
+        };
+        console.log((await C.s).default);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\ntrue\nmarked\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("references in declarations and patterns inside a static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v, c) { return v; }
+        let fn, cls, def, caught, loop;
+        const C = class Foo {
+          @dec static x = 1;
+          static {
+            function bar() { return Foo; }
+            fn = bar();
+            class Helper { static z = Foo; }
+            cls = Helper.z;
+            const { v = Foo } = {};
+            def = v;
+            try { throw {}; } catch ({ w = Foo }) { caught = w; }
+            for (const { u = Foo } of [{}]) loop = u;
+          }
+        };
+        console.log(fn === C, cls === C, def === C, caught === C, loop === C);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true true true\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

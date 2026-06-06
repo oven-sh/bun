@@ -472,6 +472,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    // Computed keys; non-computed keys are literals (no-op).
+                    if let Some(k) = &mut prop.key {
+                        self.rewrite_expr(k, kind);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_expr(v, kind);
                     }
@@ -489,21 +493,95 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
+            js_ast::ExprData::EAwait(e) => self.rewrite_expr(&mut e.value, kind),
+            js_ast::ExprData::EYield(e) => {
+                if let Some(v) = &mut e.value {
+                    self.rewrite_expr(v, kind);
+                }
+            }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_expr(&mut e.expr, kind);
+                self.rewrite_expr(&mut e.options, kind);
+            }
             js_ast::ExprData::EArrow(e) => {
+                // Arrows inherit `this`: defaults and body get both kinds.
+                self.rewrite_args(e.args.slice_mut(), kind);
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
+                    self.rewrite_args(e.func.args.slice_mut(), kind);
                     let stmts = e.func.body.stmts.slice_mut();
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
                 }
             },
-            js_ast::ExprData::EClass(_) => {}
+            js_ast::ExprData::EClass(e) => self.rewrite_class(e, kind),
             _ => {}
+        }
+    }
+
+    /// Rewrite inside a nested class. The extends clause and computed keys
+    /// evaluate in the enclosing scope, so they get both kinds. Method
+    /// bodies, field initializers, and static blocks bind their own `this`,
+    /// so they are only walked for `ReplaceRef` (ref identity keeps
+    /// shadowing bindings intact).
+    fn rewrite_class(&mut self, class: &mut G::Class, kind: RewriteKind) {
+        if let Some(ext) = &mut class.extends {
+            self.rewrite_expr(ext, kind);
+        }
+        for prop in class.properties.slice_mut() {
+            if let Some(k) = &mut prop.key {
+                self.rewrite_expr(k, kind);
+            }
+            if matches!(kind, RewriteKind::ReplaceThis { .. }) {
+                continue;
+            }
+            if let Some(v) = &mut prop.value {
+                self.rewrite_expr(v, kind);
+            }
+            if let Some(ini) = &mut prop.initializer {
+                self.rewrite_expr(ini, kind);
+            }
+            if let Some(mut sb) = prop.class_static_block {
+                self.rewrite_stmts(sb.stmts.slice_mut(), kind);
+            }
+        }
+    }
+
+    fn rewrite_args(&mut self, args: &mut [G::Arg], kind: RewriteKind) {
+        for arg in args.iter_mut() {
+            self.rewrite_binding(&mut arg.binding, kind);
+            if let Some(d) = &mut arg.default {
+                self.rewrite_expr(d, kind);
+            }
+        }
+    }
+
+    /// Rewrite default values (and computed keys) in destructuring patterns.
+    fn rewrite_binding(&mut self, binding: &mut js_ast::Binding, kind: RewriteKind) {
+        match &mut binding.data {
+            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => {}
+            js_ast::b::B::BArray(arr) => {
+                for item in arr.items_mut() {
+                    self.rewrite_binding(&mut item.binding, kind);
+                    if let Some(d) = &mut item.default_value {
+                        self.rewrite_expr(d, kind);
+                    }
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties_mut() {
+                    self.rewrite_expr(&mut prop.key, kind);
+                    self.rewrite_binding(&mut prop.value, kind);
+                    if let Some(d) = &mut prop.default_value {
+                        self.rewrite_expr(d, kind);
+                    }
+                }
+            }
         }
     }
 
@@ -524,6 +602,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(local) => {
                     for decl in local.decls.slice_mut() {
+                        self.rewrite_binding(&mut decl.binding, kind);
                         if let Some(v) = &mut decl.value {
                             self.rewrite_expr(v, kind);
                         }
@@ -565,6 +644,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_stmts(core::slice::from_mut(&mut init), kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -573,6 +655,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_stmts(core::slice::from_mut(&mut init), kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -613,6 +698,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch_ {
+                        if let Some(b) = &mut c.binding {
+                            self.rewrite_binding(b, kind);
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_stmts(cb, kind);
                     }
@@ -634,6 +722,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_stmts(core::slice::from_mut(&mut body), kind);
                     data.body = body;
                 }
+                js_ast::StmtData::SFunction(data) => match kind {
+                    // Function declarations bind their own `this`.
+                    RewriteKind::ReplaceThis { .. } => {}
+                    RewriteKind::ReplaceRef { .. } => {
+                        self.rewrite_args(data.func.args.slice_mut(), kind);
+                        let stmts = data.func.body.stmts.slice_mut();
+                        self.rewrite_stmts(stmts, kind);
+                    }
+                },
+                js_ast::StmtData::SClass(data) => self.rewrite_class(&mut data.class, kind),
                 _ => {}
             }
         }

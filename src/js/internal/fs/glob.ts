@@ -485,7 +485,12 @@ class Glob {
 
     if (this.#exclude) {
       if (this.#withFileTypes) {
-        const stat = this.#cache.statSync(path);
+        // Key by absolute path: the stat cache is populated with entry
+        // fullpaths, and a relative lstat would resolve against
+        // process.cwd() instead of options.cwd (upstream passes `path`
+        // here, which silently skips the exclude callback when cwd
+        // differs).
+        const stat = this.#cache.statSync(fullpath);
         if (stat !== null) {
           if (this.#exclude(stat)) {
             return;

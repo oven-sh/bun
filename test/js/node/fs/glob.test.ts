@@ -233,3 +233,31 @@ describe("fs.promises.glob", () => {
     expect(Array.fromAsync(fs.promises.glob(["a/bar.txt", "a/baz.js"], { cwd: tmp }))).resolves.toStrictEqual(expected);
   });
 }); // </fs.promises.glob>
+
+describe("fs.globSync exclude with withFileTypes", () => {
+  it("invokes the exclude callback with Dirents when cwd differs from process.cwd()", () => {
+    const dir = tempDirWithFiles("glob-exclude-dirent", {
+      "skip/inner.txt": "x",
+      "keep/inner.txt": "y",
+    });
+    // The Dirents handed to exclude must be stat'ed relative to options.cwd,
+    // not process.cwd() (a relative lookup would silently skip the callback).
+    const seen: string[] = [];
+    const results = fs.globSync("**", {
+      cwd: dir,
+      withFileTypes: true,
+      exclude: (dirent: any) => {
+        seen.push(dirent.name);
+        return dirent.name === "skip";
+      },
+    }) as any[];
+    expect(seen).toContain("skip");
+    const names = results.map(d => d.name);
+    expect(names).toContain("keep");
+    expect(names).not.toContain("skip");
+    // skip/inner.txt pruned with its directory; keep/inner.txt survives
+    const inners = results.filter(d => d.name === "inner.txt");
+    expect(inners).toHaveLength(1);
+    expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});

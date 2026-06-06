@@ -315,10 +315,10 @@ async function onLink(destStat, src, dest, opts) {
   if (!isAbsolute(resolvedDest)) {
     resolvedDest = resolve(dirname(dest), resolvedDest);
   }
-  let srcIsDir = false;
-  try {
-    srcIsDir = (await stat(src)).isDirectory();
-  } catch {}
+  // stat(src) follows the link; a dangling src symlink throws ENOENT here,
+  // same as before (both gated checks below only apply to directories).
+  const srcStat = await stat(src);
+  const srcIsDir = srcStat.isDirectory();
   if (srcIsDir && isSrcSubdir(resolvedSrc, resolvedDest)) {
     throw fsCpEinvalError({
       message: `cannot copy ${resolvedSrc} to a subdirectory of self ${resolvedDest}`,
@@ -331,8 +331,7 @@ async function onLink(destStat, src, dest, opts) {
   // Do not copy if src is a subdir of dest since unlinking
   // dest in this case would result in removing src contents
   // and therefore a broken symlink would be created.
-  const srcStat = await stat(src);
-  if (srcStat.isDirectory() && isSrcSubdir(resolvedDest, resolvedSrc)) {
+  if (srcIsDir && isSrcSubdir(resolvedDest, resolvedSrc)) {
     throw fsCpSymlinkToSubdirectoryError({
       message: `cannot overwrite ${resolvedDest} with ${resolvedSrc}`,
       path: dest,

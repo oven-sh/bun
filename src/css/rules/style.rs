@@ -411,9 +411,10 @@ impl<R> StyleRule<R> {
 
             // Every expanded copy of one of this rule's selectors also repeats
             // its ancestor chain, so charge chain bytes once per copy.
-            let own_bytes = selector::selector_list_weight(self.selectors.v.slice()) as u64;
-            let chain_bytes =
-                (context.selector_expansion_chain_bytes as u64).saturating_mul(len as u64);
+            let own_bytes = selector::selector_list_weight(self.selectors.v.slice());
+            let chain_bytes = context
+                .selector_expansion_chain_bytes
+                .saturating_mul(len as u64);
             context.selector_expansion_bytes_total =
                 context.selector_expansion_bytes_total.saturating_add(
                     (context.selector_expansion_multiplier as u64)
@@ -472,7 +473,7 @@ impl<R> StyleRule<R> {
             // from this level; track the level's average selector weight as
             // the chain-bytes contribution.
             let avg_weight =
-                (selector::selector_list_weight(self.selectors.v.slice()) / len).max(1);
+                (selector::selector_list_weight(self.selectors.v.slice()) / len as u64).max(1);
             context.selector_expansion_chain_bytes = context
                 .selector_expansion_chain_bytes
                 .saturating_add(avg_weight);

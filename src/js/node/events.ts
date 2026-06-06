@@ -805,7 +805,6 @@ function lazyLoadAsyncResource() {
       }
 
       get eventEmitter() {
-        if (this.#eventEmitter === undefined) throw $ERR_INVALID_THIS("EventEmitterReferencingAsyncResource");
         return this.#eventEmitter;
       }
     };
@@ -831,18 +830,18 @@ class EventEmitterAsyncResource extends EventEmitter {
     this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
   }
 
+  // No explicit receiver guards: like node v26 (lib/events.js), the private
+  // field access itself brand-checks `this` and throws a TypeError on a wrong
+  // receiver, so an ERR_INVALID_THIS guard before it would be unreachable.
   get asyncId() {
-    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
     return this.#asyncResource.asyncId();
   }
 
   get triggerAsyncId() {
-    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
     return this.#asyncResource.triggerAsyncId();
   }
 
   get asyncResource() {
-    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
     return this.#asyncResource;
   }
 

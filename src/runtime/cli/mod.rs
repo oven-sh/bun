@@ -2123,6 +2123,12 @@ Learn more: <magenta>https://bun.com/docs/cli/bun-create<r>
   <d>{}<r>
   <b><green>bun upgrade<r> <cyan>--{}<r>
 
+  <d>Install the build from a GitHub pull request<r>
+  <b><green>bun upgrade<r> <cyan>pr 12345<r>
+
+<b>Flags:<r>
+  <cyan>--no-delta<r>  Always download the full release instead of delta patches
+
 Full documentation is available at <magenta>https://bun.com/docs/installation#upgrading<r>
 ",
                     latest,

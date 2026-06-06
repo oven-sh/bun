@@ -3596,7 +3596,7 @@
           "type": "string"
         }
       ],
-      "examples": ["bun upgrade", "bun upgrade --stable"],
+      "examples": ["bun upgrade", "bun upgrade --stable", "bun upgrade pr 12345"],
       "usage": "Usage: bun upgrade [flags]",
       "documentationUrl": "https://bun.com/docs/installation#upgrading",
       "dynamicCompletions": {}

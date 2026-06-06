@@ -17,6 +17,7 @@
     "get-version": "bun scripts/get-version.ts",
     "upload-npm": "bun scripts/upload-npm.ts",
     "upload-assets": "bun scripts/upload-assets.ts",
+    "upload-deltas": "bun scripts/upload-deltas.ts",
     "upload-s3": "bun scripts/upload-s3.ts"
   }
 }

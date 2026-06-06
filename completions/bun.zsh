@@ -519,7 +519,10 @@ _bun_run_completion() {
 _bun_upgrade_completion() {
     _arguments -s -C \
         '1: :->cmd' \
-        '--canary[Upgrade to canary build]' &&
+        '--canary[Upgrade to canary build]' \
+        '--stable[Switch back to the latest stable release]' \
+        '--profile[Install a build with debug symbols]' \
+        '--no-delta[Always download the full release instead of delta patches]' &&
         ret=0
 
 }

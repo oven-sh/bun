@@ -7,6 +7,11 @@ import * as native from "./native";
 import { customSchemes, routeProtocolEvent } from "./protocol";
 import { routeCookiesEvent } from "./session";
 import { routeWebRequestEvent } from "./web-request";
+import {
+  hasSingleInstanceLock,
+  releaseSingleInstanceLock,
+  requestSingleInstanceLock,
+} from "./single-instance";
 
 class CommandLine {
   readonly switches: string[] = [];
@@ -71,6 +76,51 @@ class App extends EventEmitter {
   getLocale(): string {
     const raw = process.env.LC_ALL || process.env.LC_MESSAGES || process.env.LANG || "en-US";
     return raw.split(".")[0].replace("_", "-") || "en-US";
+  }
+
+  getSystemLocale(): string {
+    return this.getLocale();
+  }
+
+  getPreferredSystemLanguages(): string[] {
+    const langs = process.env.LANGUAGE || process.env.LANG || "en-US";
+    return langs
+      .split(/[:.]/)[0]
+      .split(",")
+      .map((l) => l.replace("_", "-"))
+      .filter(Boolean);
+  }
+
+  requestSingleInstanceLock(): boolean {
+    return requestSingleInstanceLock(this._name);
+  }
+
+  hasSingleInstanceLock(): boolean {
+    return hasSingleInstanceLock();
+  }
+
+  releaseSingleInstanceLock(): void {
+    releaseSingleInstanceLock();
+  }
+
+  private _badgeCount = 0;
+
+  setBadgeCount(count = 0): boolean {
+    if (typeof count !== "number" || count < 0 || !Number.isInteger(count)) {
+      throw new TypeError("count must be a non-negative integer");
+    }
+    this._badgeCount = count;
+    return true;
+  }
+
+  getBadgeCount(): number {
+    return this._badgeCount;
+  }
+
+  private _appUserModelId = "";
+
+  setAppUserModelId(id: string): void {
+    this._appUserModelId = String(id);
   }
 
   /** CEF + shim version string. Not part of Electron's API. */

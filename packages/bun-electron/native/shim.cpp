@@ -1612,6 +1612,8 @@ void WindowCommandOnUI(int32_t window_id, std::string cmd, std::string arg) {
     browser->GoForward();
   } else if (cmd == "set_zoom" && browser) {
     browser->GetHost()->SetZoomLevel(atof(arg.c_str()));
+  } else if (cmd == "set_audio_muted" && browser) {
+    browser->GetHost()->SetAudioMuted(arg == "1");
   } else if (cmd == "set_resizable" || cmd == "set_minimizable" ||
              cmd == "set_maximizable") {
     SetWindowOpt(window_id, cmd.substr(4), arg == "1" ? "1" : "0");

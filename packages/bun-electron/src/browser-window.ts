@@ -208,12 +208,54 @@ export class WebContents extends EventEmitter {
   }
 
   setZoomLevel(level: number): void {
+    this._zoomLevel = level;
     this.win._command("set_zoom", String(level));
+  }
+
+  getZoomLevel(): number {
+    return this._zoomLevel;
+  }
+
+  setZoomFactor(factor: number): void {
+    if (typeof factor !== "number" || factor <= 0) {
+      throw new TypeError("zoomFactor must be a positive number");
+    }
+    // Electron: level = ln(factor) / ln(1.2).
+    this.setZoomLevel(Math.log(factor) / Math.log(1.2));
+  }
+
+  getZoomFactor(): number {
+    return Math.pow(1.2, this._zoomLevel);
+  }
+
+  setAudioMuted(muted: boolean): void {
+    this._audioMuted = Boolean(muted);
+    this.win._command("set_audio_muted", muted ? "1" : "0");
+  }
+
+  isAudioMuted(): boolean {
+    return this._audioMuted;
+  }
+
+  canGoBack(): boolean {
+    return this.win._canGoBack;
+  }
+
+  canGoForward(): boolean {
+    return this.win._canGoForward;
+  }
+
+  clearHistory(): void {
+    this.win._canGoBack = false;
+    this.win._canGoForward = false;
   }
 
   isDestroyed(): boolean {
     return this.win.isDestroyed();
   }
+
+  private _zoomLevel = 0;
+  private _audioMuted = false;
 }
 
 export class BrowserWindow extends EventEmitter {
@@ -231,6 +273,12 @@ export class BrowserWindow extends EventEmitter {
   private _maxSize: [number, number] = [0, 0];
   /** @internal */
   _isLoading = false;
+  /** @internal */
+  _canGoBack = false;
+  /** @internal */
+  _canGoForward = false;
+  private _documentEdited = false;
+  private _menuBarVisible = true;
 
   constructor(options: BrowserWindowOptions = {}) {
     super();
@@ -424,6 +472,22 @@ export class BrowserWindow extends EventEmitter {
     return [...this._maxSize];
   }
 
+  setDocumentEdited(edited: boolean): void {
+    this._documentEdited = Boolean(edited);
+  }
+
+  isDocumentEdited(): boolean {
+    return this._documentEdited;
+  }
+
+  setMenuBarVisibility(visible: boolean): void {
+    this._menuBarVisible = Boolean(visible);
+  }
+
+  isMenuBarVisible(): boolean {
+    return this._menuBarVisible;
+  }
+
   capturePage(): Promise<NativeImage> {
     return this.webContents.capturePage();
   }
@@ -571,6 +635,8 @@ export class BrowserWindow extends EventEmitter {
       }
       case "loading-state":
         this._isLoading = Boolean(ev.isLoading);
+        this._canGoBack = Boolean(ev.canGoBack);
+        this._canGoForward = Boolean(ev.canGoForward);
         if (ev.isLoading) this.webContents.emit("did-start-loading");
         else this.webContents.emit("did-stop-loading");
         break;

@@ -30,6 +30,7 @@ export { MessageChannelMain, MessagePortMain } from "./message-channel";
 export { powerMonitor } from "./power-monitor";
 export { desktopCapturer } from "./desktop-capturer";
 export { Session } from "./session";
+export { nativeTheme } from "./native-theme";
 
 import { app } from "./app";
 import { BrowserWindow } from "./browser-window";
@@ -50,6 +51,7 @@ import { net } from "./net";
 import { MessageChannelMain, MessagePortMain } from "./message-channel";
 import { powerMonitor } from "./power-monitor";
 import { desktopCapturer } from "./desktop-capturer";
+import { nativeTheme } from "./native-theme";
 
 export default {
   app,
@@ -61,6 +63,7 @@ export default {
   Menu,
   MenuItem,
   nativeImage,
+  nativeTheme,
   MessageChannelMain,
   MessagePortMain,
   desktopCapturer,

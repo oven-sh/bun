@@ -116,6 +116,68 @@ describe("webContents module", () => {
     });
   });
 
+  describe("webContents zoom", () => {
+    test("setZoomFactor / getZoomFactor round-trip", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body></body>"));
+      w.webContents.setZoomFactor(1.5);
+      expect(w.webContents.getZoomFactor()).toBeCloseTo(1.5, 5);
+    });
+
+    test("setZoomLevel / getZoomLevel round-trip", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body></body>"));
+      w.webContents.setZoomLevel(2);
+      expect(w.webContents.getZoomLevel()).toBe(2);
+    });
+
+    test("setZoomFactor rejects non-positive factors", () => {
+      const w = createWindow();
+      expect(() => w.webContents.setZoomFactor(0)).toThrow(TypeError);
+    });
+  });
+
+  describe("webContents audio", () => {
+    test("setAudioMuted / isAudioMuted round-trip", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body></body>"));
+      expect(w.webContents.isAudioMuted()).toBe(false);
+      w.webContents.setAudioMuted(true);
+      expect(w.webContents.isAudioMuted()).toBe(true);
+    });
+  });
+
+  describe("webContents navigation history", () => {
+    test("canGoBack becomes true after a second navigation and goBack returns", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<title>first</title><body>1</body>"));
+      expect(w.webContents.canGoBack()).toBe(false);
+      await w.loadURL(dataURL("<title>second</title><body>2</body>"));
+      // Wait for the loading-state event carrying canGoBack to arrive.
+      await waitForTrue(() => w.webContents.canGoBack());
+      expect(w.webContents.canGoBack()).toBe(true);
+      w.webContents.goBack();
+      await waitForTrue(async () => {
+        try {
+          return (await w.webContents.executeJavaScript("document.title")) === "first";
+        } catch {
+          return false; // transient error mid-navigation
+        }
+      });
+      expect(await w.webContents.executeJavaScript("document.title")).toBe("first");
+    });
+
+    test("clearHistory resets canGoBack/canGoForward", async () => {
+      const w = createWindow();
+      await w.loadURL(dataURL("<body>a</body>"));
+      await w.loadURL(dataURL("<body>b</body>"));
+      await waitForTrue(() => w.webContents.canGoBack());
+      w.webContents.clearHistory();
+      expect(w.webContents.canGoBack()).toBe(false);
+      expect(w.webContents.canGoForward()).toBe(false);
+    });
+  });
+
   describe("console-message event", () => {
     test("is emitted for console.log in the page", async () => {
       const w = createWindow();
@@ -126,3 +188,13 @@ describe("webContents module", () => {
     });
   });
 });
+
+
+async function waitForTrue(cond: () => boolean | Promise<boolean>, timeoutMs = 10_000): Promise<void> {
+  const start = Date.now();
+  for (;;) {
+    if (await cond()) return;
+    if (Date.now() - start > timeoutMs) throw new Error("waitForTrue timed out");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}

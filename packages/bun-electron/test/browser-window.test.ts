@@ -221,6 +221,22 @@ describe("BrowserWindow module", () => {
     });
   });
 
+  describe("BrowserWindow.setDocumentEdited / setMenuBarVisibility", () => {
+    test("document edited state round-trips", () => {
+      const w = createWindow();
+      expect(w.isDocumentEdited()).toBe(false);
+      w.setDocumentEdited(true);
+      expect(w.isDocumentEdited()).toBe(true);
+    });
+
+    test("menu bar visibility round-trips", () => {
+      const w = createWindow();
+      expect(w.isMenuBarVisible()).toBe(true);
+      w.setMenuBarVisibility(false);
+      expect(w.isMenuBarVisible()).toBe(false);
+    });
+  });
+
   describe("BrowserWindow events", () => {
     test("emits resize when the window is resized", async () => {
       const w = createWindow({ show: true, width: 300, height: 200 });

@@ -224,17 +224,29 @@ test("node:http2 session churn with GC shares one SSL_CTX and completes every re
 
   async function oneSession() {
     const session = http2.connect(`https://localhost:${port}`, clientOpts);
+    // Armed before anything can fail so the finally below never misses the event.
+    const closed = once(session, "close");
     const { promise, resolve, reject } = Promise.withResolvers<number>();
-    session.on("error", reject);
+    session.once("error", reject);
     const req = session.request({ ":path": "/" });
-    req.on("error", reject);
-    req.on("response", headers => resolve(headers[":status"] as number));
+    req.once("error", reject);
+    let statusCode: number | undefined;
+    req.once("response", headers => {
+      statusCode = headers[":status"] as unknown as number;
+    });
+    // Resolve on full request completion, not just headers.
+    req.once("end", () => {
+      if (statusCode == null) reject(new Error("request ended without a :status header"));
+      else resolve(statusCode);
+    });
     req.resume();
     req.end();
-    const status = await promise;
-    session.close();
-    await once(session, "close");
-    return status;
+    try {
+      return await promise;
+    } finally {
+      session.close();
+      await closed;
+    }
   }
 
   try {

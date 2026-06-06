@@ -2441,10 +2441,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Declare the receiver-capture temporaries that were created outside any
         // function body (field initializers, static blocks, pre-eval/decorate
         // expressions). Temps created inside method/function/arrow bodies were
-        // already declared there by `declare_capture_temps_in_fn_body`; these
-        // remaining sites run at most once per class evaluation, so a binding
-        // hoisted next to the other lowering variables is safe (and matches
-        // where esbuild hoists them).
+        // already declared there by `declare_capture_temps_in_fn_body`. Static
+        // blocks, static initializers, and decorate expressions run at most
+        // once per class evaluation; instance field initializers run once per
+        // construction and share the hoisted binding across constructions,
+        // matching where esbuild declares these temps.
         if let Some(decl_stmt) = p.drain_capture_temp_decls(temp_refs_before, loc) {
             prefix_stmts.push(decl_stmt);
         }

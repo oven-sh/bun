@@ -18,7 +18,7 @@ await win.loadURL("https://bun.com");
 
 | Platform        | Build         | Runtime            | Tests                               |
 | --------------- | ------------- | ------------------ | ----------------------------------- |
-| Linux x64/arm64 | ✅            | ✅                 | ✅ 252 ported Electron tests passing |
+| Linux x64/arm64 | ✅            | ✅                 | ✅ 256 ported Electron tests passing |
 | macOS x64/arm64 | ✅ (untested) | needs verification | —                                   |
 | Windows x64     | ✅ (untested) | needs verification | —                                   |
 
@@ -212,9 +212,12 @@ backgroundColor`), `loadURL`/`loadFile` (promise-returning, rejects on
 `ShowMenu`, verified under Xvfb by the native menu popup appearing as an X11
 window. Still data-model / process-local (no OS surface): `Notification.show()` emits a real freedesktop desktop notification over the
 D-Bus session bus (verified end-to-end with dbus-monitor); whether a daemon is
-running to draw it is the OS's concern, as in Electron. Still data-model /
-process-local: `Tray` icon (needs an X11 systray host, absent headless),
-`clipboard` (no system clipboard), and `globalShortcut` key capture.
+running to draw it is the OS's concern, as in Electron. `Tray` is a real `StatusNotifierItem` D-Bus service (it owns its bus name,
+serves the SNI properties, registers with the StatusNotifierWatcher, and
+handles Activate) — the same protocol libappindicator/Electron use; verified
+against a test watcher that reads the served properties back. Still
+data-model / process-local: `clipboard` (no system clipboard) and
+`globalShortcut` key capture.
 
 Not implemented (each blocked by a missing CEF API, no headless test surface,
 or hardware): real OS power-event delivery; OS-native rendering of
@@ -240,7 +243,7 @@ carries over): `browser-window`, `web-contents`, `ipc`, `app`, `preload`,
 `tray-notification`, `net`, `message-channel`, `power-monitor`,
 `context-isolation`, `web-request`, `desktop-capturer`, `png-decode`, and
 `jpeg-decode`, `native-theme`, `app-extras`, `power-save-blocker`, and
-`system-preferences`, `power-save-blocker`, `desktop-capturer`, `utility-process`, `menu-render`, `jpeg-progressive`, and `notification-dbus` test files (252 tests total). App-lifecycle scenarios spawn fresh
+`system-preferences`, `power-save-blocker`, `desktop-capturer`, `utility-process`, `menu-render`, `jpeg-progressive`, `notification-dbus`, and `tray-sni` test files (256 tests total). App-lifecycle scenarios spawn fresh
 bun processes per test (CEF initializes once per process); everything else
 shares one CEF instance across the suite.
 

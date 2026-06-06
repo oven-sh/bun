@@ -60,16 +60,24 @@ export class Notification extends EventEmitter {
     const summary = this.title || this.body || "Notification";
     const body = this.title ? this.body : "";
     const timeout = this.urgency === "critical" ? "0" : "5000";
+    // gdbus parses each positional as GVariant text, so string parameters are
+    // passed as explicitly-quoted/escaped GVariant strings. This both removes
+    // parsing ambiguity (a title like "42" or "[x]" would otherwise be read as
+    // a number/array) and makes argv flag-smuggling impossible — combined with
+    // the "--" option terminator below, no user value can become a gdbus flag.
+    const gvar = (s: string) => JSON.stringify(String(s));
+    // Only pass an icon that looks like an absolute path or a themed icon name.
+    const icon = this.icon && /^(\/|[a-zA-Z0-9][\w.-]*)$/.test(this.icon) ? this.icon : "";
     try {
-      // Args are passed as argv (no shell), so titles/bodies can't inject.
       Bun.spawn({
         cmd: [
           gdbus, "call", "--session",
           "--dest", "org.freedesktop.Notifications",
           "--object-path", "/org/freedesktop/Notifications",
           "--method", "org.freedesktop.Notifications.Notify",
-          "bun-electron", "0", this.icon || "",
-          summary, body, "[]", "{}", timeout,
+          "--",
+          gvar("bun-electron"), "0", gvar(icon),
+          gvar(summary), gvar(body), "[]", "{}", timeout,
         ],
         // Pass env explicitly so a session bus address set at runtime
         // propagates to the child.

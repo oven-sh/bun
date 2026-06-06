@@ -545,13 +545,11 @@ pub struct Resolver<'a> {
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. The runtime/bundler that enables
-    /// auto-install (`opts.global_cache != .disable`) is responsible for
-    /// constructing the `PackageManager`
-    /// and assigning it here BEFORE resolution; the resolver does not
-    /// construct it lazily — that would require depending on `bun_install`,
-    /// which depends on us. When `None`, [`get_package_manager`] panics if the
-    /// auto-install path is reached.
+    /// below `bun_install` in the dep graph. `None` until the auto-install
+    /// path is first reached: [`get_package_manager`] then initializes the
+    /// singleton through the link-time `__bun_resolver_init_package_manager`
+    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is

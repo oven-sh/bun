@@ -632,6 +632,74 @@ devTest("a module flipping between CommonJS and ESM across hot updates stays fre
     expect(await c.js<string>`readFlip()`).toBe("live:4");
   },
 });
+// Long enough that the module loader's old recursive dependency walk
+// (loadModuleSync/loadModuleAsync <-> parseEsmDependencies, ~2 fat native
+// frames per import edge) exceeds the V8 call-stack limit in the node-based
+// client fixture, both at initial page load and when the whole chain is
+// stale in one hot update. The loader must traverse the dependency closure
+// iteratively for this to pass. The chain uses side-effect imports plus a
+// globalThis side channel (not re-export live bindings) so that on the fixed
+// build no user-level getter chain scales with the constant: only the
+// loader's own traversal sees the depth, and DEEP_CHAIN_LENGTH can be raised
+// freely if engine stack limits grow. Bundle time inside the fixed
+// per-message wait window (2000 * WAIT_MULTIPLIER in bake-harness.ts; NOT
+// scaled by timeoutMultiplier) is the only upper bound on the constant.
+const DEEP_CHAIN_LENGTH = 2500;
+const deepChainFiles: Record<string, string> = {
+  "index.html": emptyHtmlFile({
+    scripts: ["index.ts"],
+  }),
+  "index.ts": `
+    import "./a0";
+    console.log("chain:" + globalThis.chainValue);
+    globalThis.readChain = () => "live:" + globalThis.chainValue;
+    import.meta.hot.accept();
+  `,
+  [`a${DEEP_CHAIN_LENGTH}.ts`]: `globalThis.chainValue = 1;`,
+};
+for (let i = 0; i < DEEP_CHAIN_LENGTH; i++) {
+  deepChainFiles[`a${i}.ts`] = `import "./a${i + 1}";`;
+}
+devTest("hot update applies across a deep import chain without a page reload", {
+  // Protects the outer test timeout for the two ~2500-file bundles; the
+  // per-message wait window is fixed and cannot be extended, so if this test
+  // times out waiting for a message, shrink DEEP_CHAIN_LENGTH (keeping the
+  // USE_SYSTEM_BUN=1 run failing) instead of touching timeouts.
+  timeoutMultiplier: 5,
+  files: deepChainFiles,
+  async test(dev) {
+    await using c = await dev.client("/");
+    // On the unfixed build the recursive initial-load walk of all
+    // DEEP_CHAIN_LENGTH+1 modules overflows the stack here.
+    await c.expectMessage("chain:1");
+
+    // Editing the leaf re-evaluates only the leaf and the self-accepting
+    // entry (replaceModules marks only payload modules and accepting
+    // boundaries stale); the leaf reloads first by Set insertion order. No
+    // full page reload may occur (the client fixture fails the test on an
+    // unexpected location.reload()).
+    await dev.patch(`a${DEEP_CHAIN_LENGTH}.ts`, { find: "= 1", replace: "= 2" });
+    await c.expectMessage("chain:2");
+    expect(await c.js<string>`readChain()`).toBe("live:2");
+
+    // Touch every module in the chain in a single batch so one hot update
+    // marks the entire chain stale: the first reloaded root's traversal then
+    // re-evaluates the whole cone through the loader in one synchronous
+    // pass, which is the depth that used to RangeError. Each rewrite is
+    // semantically distinct from the loaded version so no current or future
+    // content-dedup can drop it from the update payload. dev.write (not raw
+    // writeFileSync) re-arms the batch's SeenFiles synchronization per file.
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write(`a${DEEP_CHAIN_LENGTH}.ts`, `globalThis.chainValue = 3;`);
+      for (let i = 0; i < DEEP_CHAIN_LENGTH; i++) {
+        await dev.write(`a${i}.ts`, `import "./a${i + 1}"; globalThis.touched = ${i};`);
+      }
+    }
+    await c.expectMessage("chain:3");
+    expect(await c.js<string>`readChain()`).toBe("live:3");
+  },
+});
 devTest("require() of a hot-reloaded ESM module sees fresh exports", {
   files: {
     "index.html": emptyHtmlFile({

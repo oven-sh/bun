@@ -594,7 +594,9 @@ it.skipIf(isWindows).each(chainLayouts)("delta upgrade chains through $label", a
   const middleBinary = new TextEncoder().encode(`#!/bin/sh\necho ${middle}\n`);
   const targetBinary = new TextEncoder().encode(`#!/bin/sh\necho ${target}\n`);
   const middlePatch = craftReplacementPatch(middleBinary);
-  const targetPatch = craftReplacementPatch(targetBinary);
+  // A real diff against the intermediate binary: the second hop only
+  // produces the target if the first hop produced exactly `middleBinary`.
+  const targetPatch = createDeltaPatch(middleBinary, targetBinary);
   const currentExeSha = await sha256HexOfFile(execPath);
 
   const requests: string[] = [];
@@ -676,10 +678,14 @@ it.skipIf(isWindows).each(chainLayouts)("delta upgrade chains through $label", a
   expect(stderr).toContain("Delta upgrade verified");
   expect(stderr).not.toContain("error:");
 
-  // The direct patch was tried first, then both chain patches; the archive
-  // was never downloaded.
+  // The direct patch was tried first, then both chain patches; the
+  // intermediate binary's checksum was verified; the archive was never
+  // downloaded.
   expect(requests.some(p => p.includes(`/bun-v${target}/`) && p.includes(`.from-${current}.bsdiff`))).toBe(true);
   expect(requests.some(p => p.includes(`/bun-v${middle}/`) && p.endsWith(`.from-${current}.bsdiff`))).toBe(true);
+  expect(
+    requests.some(p => p.includes(`/bun-v${middle}/`) && p.endsWith(".sha256sum") && !p.endsWith(".bsdiff.sha256sum")),
+  ).toBe(true);
   expect(requests.some(p => p.includes(`/bun-v${target}/`) && p.endsWith(`.from-${middle}.bsdiff`))).toBe(true);
   expect(requests.some(p => p.startsWith("/releases/"))).toBe(false);
 
@@ -989,10 +995,15 @@ describe.concurrent("bun upgrade pr argument validation", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Wrong-repo URLs are rejected: the number is looked up in oven-sh/bun,
-  // so reinterpreting another repository's PR URL would install a build the
-  // user never named.
-  it.each(["not-a-number", "https://github.com/acme/widget/pull/123"])("rejects %s", async arg => {
+  // Non-canonical URLs are rejected: the number is looked up in oven-sh/bun,
+  // so reinterpreting another repository's PR URL (or a URL merely
+  // containing the oven-sh/bun pull path) would install a build the user
+  // never named.
+  it.each([
+    "not-a-number",
+    "https://github.com/acme/widget/pull/123",
+    "https://evil.example/github.com/oven-sh/bun/pull/123",
+  ])("rejects %s", async arg => {
     using cwd = tempDir("bun-upgrade-pr-args", {});
     await using proc = spawn({
       cmd: [bunExe(), "upgrade", "pr", arg],

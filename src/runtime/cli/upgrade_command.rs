@@ -511,11 +511,14 @@ impl UpgradeCommand {
         if strings::has_prefix_comptime(digits, b"https://")
             || strings::has_prefix_comptime(digits, b"http://")
         {
-            // The number is looked up in oven-sh/bun, so a URL naming any
-            // other repository must be rejected, not reinterpreted.
-            const PULL_PATH: &[u8] = b"github.com/oven-sh/bun/pull/";
-            let i = strings::index_of(digits, PULL_PATH)?;
-            digits = &digits[i as usize + PULL_PATH.len()..];
+            // The number is looked up in oven-sh/bun, so only the canonical
+            // oven-sh/bun pull request URL is accepted; a URL naming any
+            // other location must be rejected, not reinterpreted.
+            digits = digits
+                .strip_prefix(b"https://github.com/oven-sh/bun/pull/".as_slice())
+                .or_else(|| {
+                    digits.strip_prefix(b"http://github.com/oven-sh/bun/pull/".as_slice())
+                })?;
             if let Some(end) = digits.iter().position(|c| !c.is_ascii_digit()) {
                 digits = &digits[..end];
             }

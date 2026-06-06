@@ -666,7 +666,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
             .resolver
             .read_dir_info_ignore_error(b"/")
-            .unwrap_or_oom();
+            .expect("read_dir_info_ignore_error(\"/\") failed");
 
         this_transpiler.resolver.store_fd = false;
 

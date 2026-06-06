@@ -2930,7 +2930,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {

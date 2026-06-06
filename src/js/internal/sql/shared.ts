@@ -782,6 +782,9 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
+    // Deferred to the next tick: a synchronous `onClose` here re-enters the
+    // adapter while the connection slot is still being constructed, crashing
+    // the pool and hanging the pending query (see sql-invalid-tls-option test).
     process.nextTick(closeNT, onClose, e);
     return null;
   }

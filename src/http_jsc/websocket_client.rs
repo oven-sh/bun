@@ -1791,8 +1791,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     unsafe fn finish_init(
         ws: *mut Self,
         global_this: &JSGlobalObject,
-        buffered_data: *mut u8,
-        buffered_data_len: usize,
+        buffered: Option<Box<[u8]>>,
     ) -> *mut c_void {
         // SAFETY: caller contract — `ws` is live with no other borrows.
         let ws_ref = unsafe { &mut *ws };
@@ -1800,18 +1799,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         bun_core::handle_oom(ws_ref.receive_buffer.ensure_total_capacity(2048));
         ws_ref.poll_ref.r#ref(Self::vm_loop_ctx(global_this));
 
-        if buffered_data_len > 0 {
-            // SAFETY: buffered_data/len from C++; caller guarantees validity.
-            // The upgrade client allocated this buffer via mimalloc
-            // and transfers ownership to us.
-            // The global allocator is also mimalloc, so `heap::take`
-            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
-            let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
-                    buffered_data,
-                    buffered_data_len,
-                ))
-            };
+        if let Some(buffered_slice) = buffered {
             let initial_data = bun_core::heap::into_raw(Box::new(InitialDataHandler::<SSL> {
                 adopted: NonNull::new(ws),
                 slice: buffered_slice,
@@ -1845,11 +1833,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         ws.cast::<c_void>()
     }
 
-    /// # Safety
-    /// `input_socket` must be a live `us_socket_t`; `buffered_data` must be
-    /// null or point to `buffered_data_len` bytes whose ownership transfers
-    /// to the client; `secure_ptr` must be null or a live TLS context.
-    pub unsafe extern "C" fn init(
+    pub extern "C" fn init(
         outgoing: *mut CppWebSocket,
         input_socket: *mut c_void,
         global_this: &JSGlobalObject,
@@ -1903,21 +1887,30 @@ impl<const SSL: bool> WebSocket<SSL> {
             return core::ptr::null_mut();
         }
 
+        let buffered: Option<Box<[u8]>> = if buffered_data_len > 0 {
+            // SAFETY: buffered_data/len from C++; caller guarantees validity.
+            // The upgrade client allocated this buffer via mimalloc
+            // and transfers ownership to us.
+            // The global allocator is also mimalloc, so `heap::take`
+            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
+            Some(unsafe {
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
+                    buffered_data,
+                    buffered_data_len,
+                ))
+            })
+        } else {
+            None
+        };
         // SAFETY: `ws` is the live allocation created above with no other
-        // borrows; `buffered_data` ownership transfers per the extern-C
-        // contract.
-        unsafe { Self::finish_init(ws, global_this, buffered_data, buffered_data_len) }
+        // borrows.
+        unsafe { Self::finish_init(ws, global_this, buffered) }
     }
 
     /// Initialize a WebSocket client that uses a proxy tunnel for I/O.
     /// Used for wss:// through HTTP proxy where TLS is handled by the tunnel.
     /// The tunnel takes ownership of socket I/O, and this client reads/writes through it.
-    ///
-    /// # Safety
-    /// `tunnel_ptr` must be a live `WebSocketProxyTunnel`; `buffered_data`
-    /// must be null or point to `buffered_data_len` bytes whose ownership
-    /// transfers to the client.
-    pub unsafe extern "C" fn init_with_tunnel(
+    pub extern "C" fn init_with_tunnel(
         outgoing: *mut CppWebSocket,
         tunnel_ptr: *mut c_void,
         global_this: &JSGlobalObject,
@@ -1946,10 +1939,24 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate_params,
         );
 
+        let buffered: Option<Box<[u8]>> = if buffered_data_len > 0 {
+            // SAFETY: buffered_data/len from C++; caller guarantees validity.
+            // The upgrade client allocated this buffer via mimalloc
+            // and transfers ownership to us.
+            // The global allocator is also mimalloc, so `heap::take`
+            // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
+            Some(unsafe {
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
+                    buffered_data,
+                    buffered_data_len,
+                ))
+            })
+        } else {
+            None
+        };
         // SAFETY: `ws` is the live allocation created above with no other
-        // borrows; `buffered_data` ownership transfers per the extern-C
-        // contract.
-        unsafe { Self::finish_init(ws, global_this, buffered_data, buffered_data_len) }
+        // borrows.
+        unsafe { Self::finish_init(ws, global_this, buffered) }
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).
@@ -2097,10 +2104,8 @@ macro_rules! export_websocket_client {
         pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::finalize(this)
         }
-        /// # Safety
-        /// See [`WebSocket::init`].
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $init(
+        pub extern "C" fn $init(
             outgoing: *mut CppWebSocket,
             input_socket: *mut c_void,
             global_this: &JSGlobalObject,
@@ -2109,23 +2114,18 @@ macro_rules! export_websocket_client {
             deflate_params: Option<&websocket_deflate::Params>,
             secure_ptr: *mut c_void,
         ) -> *mut c_void {
-            // SAFETY: the C++ caller upholds `WebSocket::init`'s contract.
-            unsafe {
-                WebSocket::<$ssl>::init(
-                    outgoing,
-                    input_socket,
-                    global_this,
-                    buffered_data,
-                    buffered_data_len,
-                    deflate_params,
-                    secure_ptr,
-                )
-            }
+            WebSocket::<$ssl>::init(
+                outgoing,
+                input_socket,
+                global_this,
+                buffered_data,
+                buffered_data_len,
+                deflate_params,
+                secure_ptr,
+            )
         }
-        /// # Safety
-        /// See [`WebSocket::init_with_tunnel`].
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn $init_with_tunnel(
+        pub extern "C" fn $init_with_tunnel(
             outgoing: *mut CppWebSocket,
             tunnel_ptr: *mut c_void,
             global_this: &JSGlobalObject,
@@ -2133,17 +2133,14 @@ macro_rules! export_websocket_client {
             buffered_data_len: usize,
             deflate_params: Option<&websocket_deflate::Params>,
         ) -> *mut c_void {
-            // SAFETY: the C++ caller upholds `WebSocket::init_with_tunnel`'s contract.
-            unsafe {
-                WebSocket::<$ssl>::init_with_tunnel(
-                    outgoing,
-                    tunnel_ptr,
-                    global_this,
-                    buffered_data,
-                    buffered_data_len,
-                    deflate_params,
-                )
-            }
+            WebSocket::<$ssl>::init_with_tunnel(
+                outgoing,
+                tunnel_ptr,
+                global_this,
+                buffered_data,
+                buffered_data_len,
+                deflate_params,
+            )
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $memory_cost(this: *const WebSocket<$ssl>) -> usize {

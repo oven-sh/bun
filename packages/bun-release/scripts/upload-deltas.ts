@@ -165,7 +165,10 @@ for (const asset of targets) {
     const oldBinary = await extractBinary(previousAsset.browser_download_url, previousAsset.name);
     const newBinary = await extractBinary(asset.browser_download_url, asset.name);
     if (!oldBinary || !newBinary) {
-      warn("Skipping", base, "(no binary found in the archive)\n");
+      // Both archives exist, so a missing binary means the standard layout
+      // changed; that must fail the job, not silently skip the platform.
+      warn("No binary found in the", base, "archives\n");
+      failures++;
       continue;
     }
 

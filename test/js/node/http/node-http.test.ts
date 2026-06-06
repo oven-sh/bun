@@ -2265,7 +2265,7 @@ it("ClientRequest.destroy(err) emits 'error' before the terminal 'close'", async
   const { port } = server.address() as AddressInfo;
 
   try {
-    const events = await new Promise<string[]>((resolve, reject) => {
+    const events = await new Promise<string[]>(resolve => {
       const req = http.get({ host: "127.0.0.1", port }, () => {
         const seen: string[] = [];
         req.on("error", () => seen.push("error"));
@@ -2276,9 +2276,36 @@ it("ClientRequest.destroy(err) emits 'error' before the terminal 'close'", async
         req.destroy(new Error("boom"));
       });
       req.on("error", () => {}); // swallow pre-response errors
-      setTimeout(() => reject(new Error("timed out waiting for close")), 5000);
     });
     expect(events).toEqual(["error", "close"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("ClientRequest.destroy(err) with no error listener does not throw and still tears down", async () => {
+  // destroy() must never throw synchronously (node runs the teardown first
+  // and surfaces the error async). A listener attached after destroy()
+  // returns, same tick, still catches it - like node's async socket error.
+  const server = http.createServer((req, res) => {
+    res.write("x");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const { err, closed } = await new Promise<{ err: Error; closed: boolean }>(resolve => {
+      const req = http.get({ host: "127.0.0.1", port }, () => {
+        let sawClose = false;
+        req.on("close", () => (sawClose = true));
+        req.destroy(new Error("boom")); // must not throw
+        req.on("error", e => resolve({ err: e, closed: sawClose }));
+      });
+    });
+    expect(err.message).toBe("boom");
+    // The teardown chain ran (close emitted synchronously inside destroy).
+    expect(closed).toBe(true);
   } finally {
     server.close();
   }

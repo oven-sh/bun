@@ -230,9 +230,17 @@ function ClientRequest(input, options, cb) {
     // (socketCloseListener). Our teardown below emits 'close' synchronously
     // via the abort chain, so surface the error first to keep 'close' the
     // terminal event. Re-entry from an error handler is a no-op via the
-    // this.destroyed guard above.
+    // this.destroyed guard above. With no 'error' listener a synchronous
+    // emit would throw out of destroy() and skip the teardown entirely, so
+    // defer to a nextTick instead: cleanup always runs, a listener attached
+    // later this tick still catches, and an unhandled error crashes
+    // asynchronously - all matching node, where destroy() never throws.
     if (err) {
-      this.emit("error", err);
+      if (this.listenerCount("error") > 0) {
+        this.emit("error", err);
+      } else {
+        process.nextTick((self, e) => self.emit("error", e), this, err);
+      }
     }
 
     // Node tears the in-flight response down via the socket 'close' path

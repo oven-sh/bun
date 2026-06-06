@@ -622,7 +622,10 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
         // Build the wildcard sockaddr for `family`. The all-zero in6_addr is
         // in6addr_any by definition.
-        fn wildcard_sockaddr(family: c_int, port: i32) -> (libc::sockaddr_storage, libc::socklen_t) {
+        fn wildcard_sockaddr(
+            family: c_int,
+            port: i32,
+        ) -> (libc::sockaddr_storage, libc::socklen_t) {
             // SAFETY: sockaddr_storage is plain C data; all-zero is a valid
             // value, and the casted family views only write within bounds.
             unsafe {
@@ -676,12 +679,34 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     // UV_UDP_REUSEADDR: SO_REUSEPORT on BSD/macOS, SO_REUSEADDR on Linux.
                     #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
                     {
-                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, one_ptr, one_len);
-                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEPORT,
+                            one_ptr,
+                            one_len,
+                        );
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEADDR,
+                            one_ptr,
+                            one_len,
+                        );
                     }
-                    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "ios",
+                        target_os = "freebsd"
+                    )))]
                     {
-                        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                        libc::setsockopt(
+                            fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_REUSEADDR,
+                            one_ptr,
+                            one_len,
+                        );
                     }
                 }
                 if family == libc::AF_INET6 {

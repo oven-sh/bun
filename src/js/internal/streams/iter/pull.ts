@@ -677,15 +677,31 @@ function pipeToSync(source, ...args) {
 
   try {
     for (const batch of pipeline) {
+      // writeSync/writevSync return false when the writer refuses to write
+      // synchronously (chunk over options.chunkSize, limit exceeded, or a
+      // failed first write). The async pipeTo falls back to write() in that
+      // case; a sync pipe has no such fallback, so a refusal must not be
+      // silently counted as written.
+      let wrotev = false;
       if (hasWritevSync && batch.length > 1) {
-        writer.writevSync(batch);
-        for (let i = 0; i < batch.length; i++) {
-          totalBytes += batch[i].byteLength;
+        wrotev = writer.writevSync(batch) !== false;
+        if (wrotev) {
+          for (let i = 0; i < batch.length; i++) {
+            totalBytes += batch[i].byteLength;
+          }
         }
-      } else {
+        // else: the batch total may exceed the sync threshold even when each
+        // chunk fits - fall through to per-chunk writes.
+      }
+      if (!wrotev) {
         for (let i = 0; i < batch.length; i++) {
           const chunk = batch[i];
-          writer.writeSync(chunk);
+          if (writer.writeSync(chunk) === false) {
+            throw $ERR_OPERATION_FAILED(
+              "Operation failed: the writer did not accept the chunk synchronously; " +
+                "increase the writer's chunkSize or use pipeTo()",
+            );
+          }
           totalBytes += chunk.byteLength;
         }
       }

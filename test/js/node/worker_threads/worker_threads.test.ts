@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -489,7 +489,7 @@ describe("getHeapSnapshot", () => {
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const fh = await fs.promises.open(file, "r");
@@ -505,7 +505,7 @@ test("failed Worker construction restores transferred FileHandles", async () => 
 });
 
 test("partially transferred FileHandles are restored when a later transfer throws", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const fh1 = await fs.promises.open(file, "r");
@@ -521,12 +521,8 @@ test("partially transferred FileHandles are restored when a later transfer throw
   await fh2.close();
 });
 
-function tmpdirSync2() {
-  return fs.mkdtempSync(join(require("node:os").tmpdir(), "worker-fh-transfer-"));
-}
-
 test("a FileHandle referenced twice in workerData deserializes to one instance", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const script = join(dir, "w.mjs");
@@ -549,7 +545,7 @@ test("a FileHandle referenced twice in workerData deserializes to one instance",
 });
 
 test("duplicate FileHandle transferList entries throw DataCloneError and roll back", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const fh = await fs.promises.open(file, "r");
@@ -563,7 +559,7 @@ test("duplicate FileHandle transferList entries throw DataCloneError and roll ba
 });
 
 test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const script = join(dir, "noop.mjs");
@@ -582,7 +578,7 @@ test("a FileHandle in transferList but not in workerData is detached without lea
 });
 
 test("failed construction restores an unreferenced transferred FileHandle intact", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const fh = await fs.promises.open(file, "r");
@@ -598,7 +594,7 @@ test("failed construction restores an unreferenced transferred FileHandle intact
 });
 
 test("FileHandles nested in Map and Set workerData are transferred", async () => {
-  const dir = tmpdirSync2();
+  const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");
   fs.writeFileSync(file, "hello");
   const script = join(dir, "ms.mjs");

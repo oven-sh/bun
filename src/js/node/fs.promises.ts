@@ -753,6 +753,35 @@ function asyncWrap(fn: any, name: string) {
         validateAbortSignal(signal, "options.signal");
       }
 
+      if (signal?.aborted) {
+        // Don't lock the handle: with transforms, the pull pipeline's
+        // pre-abort branch returns a rejecting iterator without ever
+        // consuming the source, so the unlock in its finally would never
+        // run. Reject on first next() like the source itself would.
+        return {
+          __proto__: null,
+          [Symbol.asyncIterator]() {
+            let done = false;
+            return {
+              __proto__: null,
+              async next() {
+                if (done) return { value: undefined, done: true };
+                done = true;
+                if (autoClose) await handle.close();
+                throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+              },
+              async return() {
+                if (!done) {
+                  done = true;
+                  if (autoClose) await handle.close();
+                }
+                return { value: undefined, done: true };
+              },
+            };
+          },
+        };
+      }
+
       this[kLocked] = true;
 
       const source = {

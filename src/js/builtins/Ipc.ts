@@ -142,10 +142,10 @@
 /**
  * @param {unknown} message
  * @param {Handle} handle
- * @param {{ keepOpen?: boolean } | undefined} options
+ * @param {{ keepOpen?: boolean } | undefined} _options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(message, handle, options) {
+export function serialize(message, handle, _options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
     // The Listener stays alive (protected) until the fd is flushed.

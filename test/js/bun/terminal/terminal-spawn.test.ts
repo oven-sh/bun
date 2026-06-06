@@ -497,12 +497,14 @@ describe("Bun.Terminal subprocess integration", () => {
     });
 
     const ready = Promise.withResolvers<void>();
+    const probeReported = Promise.withResolvers<void>();
     const decoder = new TextDecoder();
     let output = "";
     await using terminal = new Bun.Terminal({
       data(_, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
         if (output.includes("CHILD-READY")) ready.resolve();
+        if (output.includes("PROBE-")) probeReported.resolve();
       },
     });
 
@@ -519,6 +521,12 @@ describe("Bun.Terminal subprocess integration", () => {
     terminal.write("warmup\r");
 
     const exitCode = await proc.exited;
+    // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
+    // the verdict line can arrive after proc.exited resolves. The child
+    // prints PROBE-* before exit(0)/exit(42) on both paths, so the marker is
+    // guaranteed to arrive for those codes; on any other exit (crash) the
+    // marker may never come, so don't wait for it.
+    if (exitCode === 0 || exitCode === 42) await probeReported.promise;
     expect(output).toContain("PROBE-CLEAN");
     expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);

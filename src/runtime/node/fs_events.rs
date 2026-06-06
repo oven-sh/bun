@@ -165,13 +165,8 @@ impl CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
     }
 
-    // We Actually never deinit it
-    // pub fn deinit(this: *CoreFoundation) void {
-    //     if(this.handle) | ptr| {
-    //         this.handle = null;
-    //         _  = std.c.dlclose(this.handle);
-    //     }
-    // }
+    // We never deinit this: the dlopen handle is intentionally leaked for the
+    // process lifetime.
 }
 
 // Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
@@ -212,13 +207,8 @@ impl CoreServices {
         *FSEVENTS_CS.get_or_init(init_core_services)
     }
 
-    // We Actually never deinit it
-    // pub fn deinit(this: *CoreServices) void {
-    //     if(this.handle) | ptr| {
-    //         this.handle = null;
-    //         _  = std.c.dlclose(this.handle);
-    //     }
-    // }
+    // We never deinit this: the dlopen handle is intentionally leaked for the
+    // process lifetime.
 }
 
 // Write-once fn-ptr tables; `OnceLock` provides the one-init + acquire/release

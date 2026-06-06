@@ -295,6 +295,7 @@ test.each([
   ["layer-name", "@layer PAD { color: red }"],
   ["scope-selector", "@scope (.PAD) { color: red }"],
   ["container-name", "@container PAD (width > 1px) { color: red }"],
+  ["attribute-namespace-prefix", "[PAD|d] { color: red }"],
 ])("the clone weight counts %s text, not just plain idents", (_name, body) => {
   // Every construct that carries input-sized borrowed text must be charged its
   // text length: raw-token payloads, property names, selector text, wrapped
@@ -345,7 +346,7 @@ test("bun build reports the clone limit instead of writing a multi-megabyte file
     timeout: 20_000,
     killSignal: "SIGKILL",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(proc.signalCode).toBeNull();
   expect(stderr).toContain(CLONE_LIMIT_ERROR);
   expect(exitCode).toBe(1);

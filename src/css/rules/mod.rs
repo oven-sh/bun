@@ -1178,7 +1178,15 @@ mod clone_weight {
                 local_name, value, ..
             } => (local_name.v().len() as u64).saturating_add(value.len() as u64),
             Component::AttributeOther(attr) => {
-                (attr.local_name.v().len() as u64).saturating_add(match &attr.operation {
+                use css::selectors::parser::attrs::NamespaceConstraint;
+                (match &attr.namespace {
+                    Some(NamespaceConstraint::Specific(ns)) => {
+                        (ns.prefix.v().len() as u64).saturating_add(ns.url.len() as u64)
+                    }
+                    _ => 0,
+                })
+                .saturating_add(attr.local_name.v().len() as u64)
+                .saturating_add(match &attr.operation {
                     ParsedAttrSelectorOperation::WithValue { expected_value, .. } => {
                         expected_value.len() as u64
                     }

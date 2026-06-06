@@ -981,4 +981,190 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31921
+  // Classes with accessor members but no decorators are lowered in place
+  // (private backing field + getter/setter); nothing is relocated out of the
+  // class body, so native #names stay in scope and static elements keep
+  // their source order.
+  describe.concurrent("auto-accessor without decorators", () => {
+    test("static accessor initializer can reference a private member", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const C = class Foo {
+          static #m = function (tag) { return { tag }; };
+          static accessor a = Foo.#m("a").tag;
+        };
+        console.log(C.a);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static block can reference a private member", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const C = class Foo {
+          static accessor a = 1;
+          static #m = 5;
+          static { console.log(this.#m); }
+        };
+        console.log(C.a);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor initializers and static blocks run in source order", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        const C = class {
+          static accessor a = (order.push("a"), 1);
+          static { order.push("block"); }
+          static accessor b = (order.push("b"), 2);
+        };
+        console.log(order.join(","), C.a, C.b);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,block,b 1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance accessor initializers run in source order with plain fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        class C {
+          accessor a = (order.push("a"), 1);
+          b = (order.push("b"), this.a + 1);
+        }
+        const c = new C();
+        console.log(order.join(","), c.a, c.b);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b 1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("instance accessor initializer can reference a private field", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class D {
+          #p = 5;
+          accessor a = this.#p + 1;
+        }
+        console.log(new D().a);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private auto-accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Bar {
+          static accessor #p = 7;
+          static read() { return Bar.#p; }
+          static bump() { Bar.#p++; }
+        }
+        console.log(Bar.read());
+        Bar.bump();
+        console.log(Bar.read());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("7\n8\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("backing field name avoids the class's own private names", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          #a = 1;
+          accessor a = 2;
+          readPriv() { return this.#a; }
+        }
+        const f = new Foo();
+        f.a = 3;
+        console.log(f.a, f.readPriv());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("3 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("backing field name does not capture an enclosing class's private name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          static #a = 5;
+          static Inner = class {
+            static accessor a = Outer.#a;
+          };
+        }
+        console.log(Outer.Inner.a);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("computed accessor keys evaluate once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let n = 0;
+        const key = () => (n++, "k" + n);
+        class Baz {
+          accessor [key()] = 4;
+        }
+        const b = new Baz();
+        console.log(n, b.k1);
+        b.k1 = 8;
+        console.log(b.k1);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 4\n8\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("computed accessor keys evaluate once in a decorated class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let n = 0;
+        const key = () => (n++, "k" + n);
+        function dec(v, ctx) {}
+        class Baz {
+          @dec m() {}
+          accessor [key()] = 4;
+        }
+        const b = new Baz();
+        console.log(n, b.k1);
+        b.k1 = 8;
+        console.log(b.k1);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 4\n8\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export default accessor-only class keeps name 'default'", async () => {
+      using dir = tempDir("es-dec-accessor-default-name", {
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name, Cls.a);
+        `,
+        "mod.js": `
+          export default class {
+            static accessor a = 1;
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("default 1\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

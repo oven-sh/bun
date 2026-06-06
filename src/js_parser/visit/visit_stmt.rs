@@ -813,12 +813,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // We only inject a name into classes when decorator lowering
-                        // needs one: legacy TS decorators (`has_decorators`) or
-                        // standard decorator lowering, which also covers classes with
-                        // only auto-accessor fields and no decorators.
-                        if class.class.has_decorators
-                            || class.class.should_lower_standard_decorators
-                        {
+                        // needs one, i.e. when the class actually has decorators
+                        // (legacy TS or standard). Classes with only auto-accessor
+                        // fields and no decorators are lowered in place, stay
+                        // anonymous, and keep `.name === "default"`.
+                        if class.class.has_decorators {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_none()
                             {

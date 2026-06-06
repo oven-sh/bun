@@ -1090,6 +1090,26 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    // https://github.com/oven-sh/bun/issues/29837
+    test("subclass can override an accessor of the same name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A {
+          accessor name = "A";
+        }
+        class B extends A {
+          accessor name = "B";
+          logName() {
+            console.log(this.name);
+            console.log(super.name);
+          }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B\nA\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("backing field name does not capture an enclosing class's private name", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         class Outer {

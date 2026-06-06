@@ -2,7 +2,7 @@ use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
-use crate::types::{OFF, SpanType, TextType, VerbatimLine};
+use crate::types::{SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub const MAX_EMPH_MATCHES: usize = 6;
@@ -166,16 +166,12 @@ impl Parser<'_> {
         // (ref-def merging in blocks.rs/ref_defs.rs) run during the block
         // phase, never re-entrantly from here.
         let merged = core::mem::take(&mut self.buffer);
-        let ret = self.process_inline_content(&merged[..merged_len], block_lines[0].beg);
+        let ret = self.process_inline_content(&merged[..merged_len]);
         self.buffer = merged;
         ret
     }
 
-    pub fn process_inline_content(
-        &mut self,
-        content: &[u8],
-        _base_off: OFF,
-    ) -> Result<(), parser::Error> {
+    pub fn process_inline_content(&mut self, content: &[u8]) -> Result<(), parser::Error> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(parser::Error::StackOverflow);
         }

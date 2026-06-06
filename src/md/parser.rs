@@ -300,8 +300,10 @@ impl<'a> Parser<'a> {
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   process_link, try_match_bracket_link, label_contains_link,
-    //   process_wiki_link, render_ref_link, find_autolink, render_autolink
+    //   compute_bracket_matches, match_bracket, scan_bracket_close,
+    //   enter_label_span, process_link, try_match_bracket_link,
+    //   label_contains_link, process_wiki_link, find_autolink,
+    //   render_autolink
     //
     // line_analysis.rs — impl Parser:
     //   is_setext_underline, is_hr_line, is_atx_header_line,

@@ -3425,6 +3425,30 @@ impl<'a> Parser<'a> {
         self.input.may_revert_rule = true;
     }
 
+    /// Bounds how deeply `light-dark()` origin colors may nest in relative
+    /// color syntax. Each level re-parses the remaining component range once
+    /// per half (see `ComponentParser::parse_from`), so parse work and output
+    /// grow as 2^depth; past the cap the color parse fails and the value
+    /// falls back to an unparsed token list.
+    pub(crate) const MAX_LIGHT_DARK_ORIGIN_DEPTH: u32 = 4;
+
+    /// Enter one level of `light-dark()` origin expansion. On `Ok`, the
+    /// caller must call `exit_light_dark_origin` on every path.
+    #[inline]
+    pub(crate) fn enter_light_dark_origin(&mut self) -> CssResult<()> {
+        if self.input.light_dark_origin_depth >= Self::MAX_LIGHT_DARK_ORIGIN_DEPTH {
+            return Err(self.new_custom_error(ParserError::invalid_value));
+        }
+        self.input.light_dark_origin_depth += 1;
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn exit_light_dark_origin(&mut self) {
+        debug_assert!(self.input.light_dark_origin_depth > 0);
+        self.input.light_dark_origin_depth -= 1;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3993,6 +4017,10 @@ pub struct ParserInput<'a> {
     token_list_parse_failures: u64,
     /// See `StylesheetExtra::may_revert_rule`.
     may_revert_rule: bool,
+    /// Current nesting depth of `light-dark()` origin colors being expanded
+    /// by `ComponentParser::parse_from`. See
+    /// `Parser::MAX_LIGHT_DARK_ORIGIN_DEPTH`.
+    light_dark_origin_depth: u32,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4022,6 +4050,7 @@ impl<'a> ParserInput<'a> {
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
             may_revert_rule: false,
+            light_dark_origin_depth: 0,
         }
     }
 }

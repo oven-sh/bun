@@ -804,6 +804,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         // per-merge re-minify used to drive at the end of that run.
         debug_assert!(!merge_state.pending_minify);
         cascade_merge_with_previous(rules, merge_state, context);
+        // A selector merge in the cascade can make the next pair's selectors
+        // equal and start a new declaration merge, which the cascade returns
+        // on. Settle it now: `sty` is pushed below, which would bury the
+        // pending rule one slot down where no later flush can find it.
+        flush_pending_style_merge(rules, merge_state, context);
     }
 
     // If this iteration staged handler-context rules (e.g. the merged-in rule

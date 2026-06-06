@@ -122,4 +122,11 @@ test("deferred merge re-minify keeps per-merge output", () => {
   expect(cssInternals.minifyTest(".x{color:blue}.a{color:red}.a{color:blue}.b{font-style:italic}", "")).toBe(
     ".x,.a{color:#00f}.b{font-style:italic}",
   );
+
+  // That run-end cascade can itself start a new declaration merge (the
+  // selector merge of .b into .a makes the pair's selectors equal .a,.b),
+  // which must be settled before the next rule is pushed on top of it.
+  expect(
+    cssInternals.minifyTest(".a,.b{color:red}.a{color:blue}.b{color:green}.b{color:blue}.c{font-style:italic}", ""),
+  ).toBe(".a,.b{color:#00f}.c{font-style:italic}");
 });

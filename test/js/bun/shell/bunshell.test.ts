@@ -2668,6 +2668,20 @@ describe("subshell", () => {
       .stdout("1\n2\n3\n4\n")
       .runAsTest("redirection on subshell");
 
+    // https://github.com/oven-sh/bun/issues/11124
+    TestBuilder.command /* sh */ `(echo hello) > test.txt`
+      .fileEquals("test.txt", "hello\n")
+      .runAsTest("subshell stdout redirect to file");
+
+    TestBuilder.command /* sh */ `(echo first) > out.txt; (echo second) >> out.txt`
+      .fileEquals("out.txt", "first\nsecond\n")
+      .runAsTest("subshell append redirect to file");
+
+    TestBuilder.command /* sh */ `(echo works) > $OUTFILE`
+      .env({ ...bunEnv, OUTFILE: "expanded.txt" })
+      .fileEquals("expanded.txt", "works\n")
+      .runAsTest("subshell redirect with variable expansion in path");
+
     // test_oE 'subshell ending with semicolon'
     TestBuilder.command /* sh */ `
 (echo foo;)

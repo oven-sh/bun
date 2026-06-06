@@ -102,7 +102,9 @@ function watch(
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
-function cp(src, dest, options) {
+async function cp(src, dest, options) {
+  // node's fsPromises.cp is async, so validation errors surface as
+  // rejections rather than synchronous throws (unlike the callback form).
   const opts = require("internal/fs/cp-sync").validateCpOptions(options);
   return cpImpl(src, dest, opts);
 }

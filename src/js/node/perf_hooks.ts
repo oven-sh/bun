@@ -144,6 +144,14 @@ class PerformanceNodeEntry {
     };
   }
 }
+// Link the prototype chain so entries are `instanceof PerformanceEntry` like
+// node's PerformanceNodeEntry. `extends PerformanceEntry` can't work (the
+// WebCore constructor throws "Illegal constructor"), and $toClass would
+// replace the prototype object, losing the class's own toJSON; instances
+// carry own data fields, so the inherited brand-checked accessors are
+// shadowed and never invoked.
+Object.setPrototypeOf(PerformanceNodeEntry.prototype, PerformanceEntry.prototype);
+Object.setPrototypeOf(PerformanceNodeEntry, PerformanceEntry);
 Object.defineProperty(PerformanceNodeEntry, "name", { value: "PerformanceNodeEntry" });
 
 class PerformanceNodeObserverEntryList {

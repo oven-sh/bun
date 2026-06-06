@@ -1194,11 +1194,43 @@ impl WindowsBufferedReader {
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
+        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+            // A pending read may still write into the spare capacity (see
+            // `release_buffer_on_teardown`). Copy out the committed bytes and
+            // leak the allocation instead of handing the caller a buffer that
+            // libuv can still write into.
+            let retained = mem::take(&mut self._buffer);
+            let out = retained.as_slice().to_vec();
+            mem::forget(retained);
+            return out;
+        }
         mem::take(&mut self._buffer)
     }
 
     pub fn buffer(&mut self) -> &mut Vec<u8> {
         &mut self._buffer
+    }
+
+    /// Release `_buffer` on reader teardown.
+    ///
+    /// libuv can retain a pointer into the buffer's spare capacity past
+    /// teardown: a line-mode console read keeps a worker thread blocked in
+    /// `ReadConsoleW` writing into the alloc_cb buffer (`uv_read_stop` cancels
+    /// it asynchronously and never returns the buffer through `read_cb`), and
+    /// an operating `uv_fs_read` writes through `File::iov` from the
+    /// threadpool (`uv_cancel` is best-effort). Freeing the allocation while
+    /// such a read is pending lets that write land in freed heap memory and
+    /// corrupt whatever is allocated there next. When a read may still land,
+    /// leak the buffer instead: file sources park it in
+    /// `File::retained_read_buffer` (reclaimed in `on_close_complete`) before
+    /// this runs; console reads have no completion signal left to observe, so
+    /// that leak is permanent but bounded to one spare-capacity buffer per
+    /// torn-down reader.
+    fn release_buffer_on_teardown(&mut self) {
+        let buffer = mem::take(&mut self._buffer);
+        if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+            mem::forget(buffer);
+        }
     }
 
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
@@ -1239,38 +1271,39 @@ impl WindowsBufferedReader {
         }
 
         if !self.vtable.is_streaming_enabled() {
-            self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
             return true;
         }
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `vtable.on_read_chunk` re-enters JS and user code can reach this
         // reader via a fresh `&mut WindowsBufferedReader` from the parent's
         // intrusive `reader` field, writing `self.flags` (e.g. via `pause` /
-        // `start_reading`). Not currently ASM-cached (noalias-hunt SUSPECT),
-        // but one inlining change away from caching `self.flags` across the
-        // call so the trailing `.remove(HAS_INFLIGHT_READ)` RMWs the stale
-        // pre-call value, clobbering any re-entrant flag change. Launder so
-        // the post-call RMW reloads through an opaque pointer; mirrors the
-        // cork fix at b818e70e1c57.
+        // `start_reading`). Launder through an opaque pointer so nothing from
+        // `self` is cached across the call; mirrors the cork fix at
+        // b818e70e1c57. HAS_INFLIGHT_READ is intentionally NOT cleared here:
+        // it is cleared at `on_stream_read`/`on_file_read` entry (the point
+        // where libuv provably returned the buffer), and a re-entrant
+        // `start_reading` may have armed a new read whose flag a trailing
+        // clear would clobber.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` aliases the live `&mut self`; single JS thread. The
         // reader struct is an inline field of its parent (never freed
         // mid-call), so `*this` stays a valid place across re-entry.
         let result = unsafe { (*this).vtable.on_read_chunk(buf, has_more) };
-        // Re-escape so the trailing RMW cannot reuse a spilled `self.flags`
-        // from before `on_read_chunk`.
+        // Re-escape so later accesses cannot reuse a spilled `self` load from
+        // before `on_read_chunk`.
         core::hint::black_box(this);
-        // Clear has_inflight_read after the callback completes to prevent
-        // libuv from starting a new read while we're still processing data
-        // SAFETY: `this` is still live (see above).
-        unsafe { (*this).flags.remove(WindowsFlags::HAS_INFLIGHT_READ) };
         result
     }
 
     fn finish(&mut self) {
-        self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
         self.flags.insert(WindowsFlags::IS_DONE);
-        self._buffer.shrink_to_fit();
+        // A pending read (parked console line read / operating uv_fs_read)
+        // may still write into `_buffer`'s spare capacity; shrinking would
+        // realloc (move or free) the block under it. Keep the allocation
+        // until the read provably returned — see release_buffer_on_teardown.
+        if !self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
+            self._buffer.shrink_to_fit();
+        }
     }
 
     pub(crate) fn done(&mut self) {
@@ -1383,6 +1416,13 @@ impl WindowsBufferedReader {
             core::ptr::from_mut(this) as usize,
             nread_int
         );
+
+        // In every arm below (0 / EOF / error / data) libuv has returned the
+        // alloc_cb buffer: pipe reads complete synchronously inside
+        // uv__pipe_read_data, and a tty read_cb only fires after its reader
+        // thread finished with the buffer. This is the one point where a
+        // stream source provably no longer writes into `_buffer`.
+        this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         match nread_int {
@@ -1692,7 +1732,22 @@ impl WindowsBufferedReader {
     pub fn close_impl<const CALL_DONE: bool>(&mut self) {
         if let Some(source) = self.source.take() {
             match source {
-                Source::SyncFile(file) | Source::File(file) => {
+                Source::SyncFile(mut file) | Source::File(mut file) => {
+                    // An operating/canceling uv_fs_read still writes into
+                    // `_buffer`'s spare capacity through `file.iov` from the
+                    // threadpool (uv_cancel is best-effort). Park the buffer
+                    // on the File so it outlives the pending operation; it is
+                    // dropped with the Box in on_close_complete. Only
+                    // discard paths (deinit/Drop) reach here with a pending
+                    // operation — close() defers via DEFER_DONE_CALLBACK — so
+                    // no caller expects data from `_buffer` afterwards.
+                    if matches!(
+                        file.state,
+                        crate::source::FileState::Operating | crate::source::FileState::Canceling
+                    ) {
+                        debug_assert!(!CALL_DONE);
+                        file.retained_read_buffer = mem::take(&mut self._buffer);
+                    }
                     // Detach - file will close itself after operation completes.
                     // Hand the Box off to libuv: detach() leaves either an
                     // in-flight uv_fs_read (on_file_read) or a scheduled
@@ -1768,24 +1823,24 @@ impl WindowsBufferedReader {
     /// before Drop; both paths are idempotent over an already-taken source.
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        self._buffer = Vec::new();
-        let Some(source) = self.source.take() else {
-            return;
-        };
-        if !source.is_closed() {
-            // closeImpl will take care of freeing the source.
-            // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
-            // linked into the loop's handle queue → UAF. Restore the source so
-            // close_impl can do the proper take + hand-off to libuv
-            // (into_raw + uv_close).
-            self.source = Some(source);
-            self.close_impl::<false>();
-        } else {
-            // Already closing/closed: a uv close callback may still be pending
-            // on this allocation; dropping the Box would free memory libuv
-            // still owns, so leak it instead.
-            core::mem::forget(source);
+        if let Some(source) = self.source.take() {
+            if !source.is_closed() {
+                // closeImpl will take care of freeing the source.
+                // Dropping the `Box<Pipe>` here would free a uv_pipe_t still
+                // linked into the loop's handle queue → UAF. Restore the source
+                // so close_impl can do the proper take + hand-off to libuv
+                // (into_raw + uv_close). close_impl also parks `_buffer` on a
+                // File source with a pending read.
+                self.source = Some(source);
+                self.close_impl::<false>();
+            } else {
+                // Already closing/closed: a uv close callback may still be
+                // pending on this allocation; dropping the Box would free
+                // memory libuv still owns, so leak it instead.
+                core::mem::forget(source);
+            }
         }
+        self.release_buffer_on_teardown();
     }
 
     #[cfg(windows)]
@@ -1894,6 +1949,9 @@ impl Drop for WindowsBufferedReader {
                 core::mem::forget(source);
             }
         }
+        // Must run before drop glue frees `_buffer`: a pending read may still
+        // write into it (see release_buffer_on_teardown).
+        self.release_buffer_on_teardown();
     }
 }
 

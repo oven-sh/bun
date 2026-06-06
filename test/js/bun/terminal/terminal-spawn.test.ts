@@ -453,14 +453,23 @@ describe("Bun.Terminal subprocess integration", () => {
     using dir = tempDir("conpty-stdin-read-cancel", {
       "child-fixture.ts": `
         const reader = Bun.stdin.stream().getReader();
-        // Arms the native reader: libuv queues a cooked-mode console line
-        // read whose destination is the pipe reader's 8 KiB spare capacity.
+        // Warm-up round-trip: arm a cooked-mode console line read and await
+        // the line the parent writes once it sees CHILD-READY. Resolving
+        // proves the whole line-read machinery (libuv worker thread
+        // included) works end to end before cancellation is tested.
+        const warmup = reader.read();
+        console.log("CHILD-READY");
+        await warmup;
+        // Arm the read under test; no more input arrives, so the libuv
+        // worker parks in ReadConsoleW with a pointer into the pipe
+        // reader's 8 KiB spare capacity.
         reader.read().catch(() => {});
-        // Not waiting for time: waiting for the libuv worker to enter
-        // ReadConsoleW (unobservable from JS). If it has not started yet,
-        // cancellation traps the read before any write and the test is
-        // vacuous rather than wrong.
-        await Bun.sleep(200);
+        // The park itself is unobservable from JS; there is no condition to
+        // await. With the machinery proven warm above, a short delay makes
+        // it overwhelmingly likely the worker is inside ReadConsoleW. If it
+        // is not yet, cancellation traps the read before any write and the
+        // run is vacuous rather than wrong.
+        await Bun.sleep(150);
         await reader.cancel();
         // Immediately adopt the 8 KiB block the buggy teardown just freed;
         // mimalloc serves freshly freed blocks of a size class first.
@@ -487,11 +496,13 @@ describe("Bun.Terminal subprocess integration", () => {
       `,
     });
 
+    const ready = Promise.withResolvers<void>();
     const decoder = new TextDecoder();
     let output = "";
     await using terminal = new Bun.Terminal({
       data(_, chunk: Uint8Array) {
         output += decoder.decode(chunk, { stream: true });
+        if (output.includes("CHILD-READY")) ready.resolve();
       },
     });
 
@@ -501,6 +512,11 @@ describe("Bun.Terminal subprocess integration", () => {
       cwd: String(dir),
       terminal,
     });
+    // Fail fast with the child's output if it dies before the handshake.
+    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+
+    await ready.promise;
+    terminal.write("warmup\r");
 
     const exitCode = await proc.exited;
     expect(output).toContain("PROBE-CLEAN");

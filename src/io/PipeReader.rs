@@ -1547,6 +1547,23 @@ impl WindowsBufferedReader {
                     // `this.source`; live for the duration of this callback.
                     let buf = unsafe { (*file_raw).iov.slice_mut() };
                     this.on_read(sys::Result::Ok(len), &mut buf[..len], ReadState::Progress);
+
+                    // close() deferred its teardown while this read was
+                    // operating and uv_cancel lost the race (the threadpool
+                    // worker had already started, so the read completed
+                    // normally instead of with UV_ECANCELED). complete() ran
+                    // at callback entry, so the deferred close can proceed
+                    // now; without this the reader stayed paused forever with
+                    // DEFER_DONE_CALLBACK set and never fired on_reader_done.
+                    // A re-entrant close() from on_read may have already done
+                    // it (IS_DONE).
+                    if this.flags.contains(WindowsFlags::DEFER_DONE_CALLBACK) {
+                        this.flags.remove(WindowsFlags::DEFER_DONE_CALLBACK);
+                        if !this.flags.contains(WindowsFlags::IS_DONE) {
+                            this.close_impl::<true>();
+                        }
+                        return;
+                    }
                 } else {
                     // ops we should not hit this lets fail with EPIPE
                     debug_assert!(false);

@@ -132,7 +132,7 @@ test("bun build reports an error instead of exploding on deeply nested multi-sel
     timeout: 20_000,
     killSignal: "SIGKILL",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(LIMIT_ERROR);
   expect(exitCode).toBe(1);
   // The build must fail before emitting the (multi-megabyte) expanded output.
@@ -371,7 +371,7 @@ test("bun build does not hang on deeply nested multi-selector css spanning @star
     timeout: 20_000,
     killSignal: "SIGKILL",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Must terminate on its own (reporting the limit error), not be SIGKILLed.
   expect(proc.signalCode).toBeNull();
   expect(stderr).toContain(LIMIT_ERROR);

@@ -25,7 +25,7 @@ export interface CookiesGetFilter {
 let nextOpId = 1;
 const pendingOps = new Map<number, { resolve: (v: Cookie[]) => void; reject: (e: Error) => void }>();
 
-export function routeCookiesEvent(ev: { opId?: unknown; success?: unknown; cookies?: unknown }): void {
+export function routeCookiesEvent(ev: Record<string, unknown>): void {
   const pending = pendingOps.get(ev.opId as number);
   if (!pending) return;
   pendingOps.delete(ev.opId as number);

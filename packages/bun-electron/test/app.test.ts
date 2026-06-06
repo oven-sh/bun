@@ -16,7 +16,7 @@ async function runFixture(name: string): Promise<{ stdout: string; exitCode: num
     stderr: "pipe",
   });
   const timer = setTimeout(() => proc.kill(), 60_000);
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   clearTimeout(timer);
   return { stdout: stdout.trim(), exitCode };
 }

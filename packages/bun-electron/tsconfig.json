@@ -9,7 +9,7 @@
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true,
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom"],
     "types": ["bun"]
   },
   "include": ["src", "scripts", "test"]

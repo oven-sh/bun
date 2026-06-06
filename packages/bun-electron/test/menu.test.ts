@@ -79,10 +79,15 @@ describe("Menu module", () => {
 
 describe("MenuItem module", () => {
   test("clicking a normal item invokes the click handler with the item", () => {
-    let clickedWith: MenuItem | null = null;
-    const item = new MenuItem({ label: "hello", click: (menuItem) => (clickedWith = menuItem) });
+    const clicks: MenuItem[] = [];
+    const item = new MenuItem({
+      label: "hello",
+      click: (menuItem) => {
+        clicks.push(menuItem);
+      },
+    });
     item.click();
-    expect(clickedWith).toBe(item);
+    expect(clicks[0]).toBe(item);
   });
 
   test("clicking a checkbox toggles checked", () => {

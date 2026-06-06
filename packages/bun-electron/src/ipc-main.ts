@@ -59,15 +59,9 @@ function makeEvent(win: BrowserWindow): IpcMainEvent {
 
 export function routeIpcEvent(ev: native.NativeEvent): void {
   const win = windowById(ev.windowId as number);
-  if (!win && ev.type !== "ipc-sync") return;
 
-  const args = decodeArgs(ev.args);
-
-  if (ev.type === "ipc-message") {
-    ipcMain.emit(String(ev.channel), makeEvent(win), ...args);
-    return;
-  }
-
+  // ipc-sync may arrive without an owning window (the beipc scheme handler can
+  // be reached before the window registry is populated); handle it first.
   if (ev.type === "ipc-sync") {
     const resourceId = ev.resourceId as number;
     let payload: { channel?: string; args?: unknown[] } = {};
@@ -92,6 +86,16 @@ export function routeIpcEvent(ev: native.NativeEvent): void {
     ipcMain.emit(channel, event, ...syncArgs);
     // Electron returns undefined when no listener sets returnValue.
     reply(undefined);
+    return;
+  }
+
+  // All remaining event types require the owning window.
+  if (!win) return;
+
+  const args = decodeArgs(ev.args);
+
+  if (ev.type === "ipc-message") {
+    ipcMain.emit(String(ev.channel), makeEvent(win), ...args);
     return;
   }
 

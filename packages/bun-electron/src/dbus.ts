@@ -351,7 +351,9 @@ export class DBusConnection {
       this.sock.on("error", reject);
     });
     await this.auth();
-    this.sock.on("data", (d) => this.onData(d));
+    this.sock.on("data", (d: Buffer | string) =>
+      this.onData(typeof d === "string" ? Buffer.from(d) : d),
+    );
     this.uniqueName = (await this.call({
       destination: "org.freedesktop.DBus",
       path: "/org/freedesktop/DBus",

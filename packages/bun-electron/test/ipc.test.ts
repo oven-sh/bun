@@ -60,7 +60,7 @@ describe("ipc main", () => {
   describe("ipcRenderer.invoke / ipcMain.handle", () => {
     test("receives the response from the handler", async () => {
       const w = await loadedWindow();
-      ipcMain.handle("test-invoke", (event, a, b) => a + b);
+      ipcMain.handle("test-invoke", (event, a, b) => (a as number) + (b as number));
       const result = await w.webContents.executeJavaScript(`ipcRenderer.invoke("test-invoke", 2, 40)`);
       expect(result).toBe(42);
     });
@@ -68,8 +68,9 @@ describe("ipc main", () => {
     test("resolves with the result of an async handler", async () => {
       const w = await loadedWindow();
       ipcMain.handle("test-invoke", async (event, x) => {
+        const n = x as number;
         await new Promise(resolve => setTimeout(resolve, 10));
-        return { doubled: x * 2 };
+        return { doubled: n * 2 };
       });
       const result = await w.webContents.executeJavaScript(`ipcRenderer.invoke("test-invoke", 21)`);
       expect(result).toEqual({ doubled: 42 });

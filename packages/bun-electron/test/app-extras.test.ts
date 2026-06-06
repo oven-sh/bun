@@ -43,7 +43,7 @@ describe("app extras", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
         expect(exitCode).toBe(0);
         const result = JSON.parse(stdout.trim());
         expect(result.got).toBe(false);

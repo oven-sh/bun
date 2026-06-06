@@ -404,7 +404,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
     stdio: ["inherit", "pipe", "pipe"],
   });
   const [exitCode, out, err] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
-  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`;
+  const crashMsg = `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode (exit code ${exitCode}${exitCode && exitCode > 256 ? ` / 0x${exitCode.toString(16)}` : ""})`;
   if (exitCode !== 0) {
     throw new Error(`${crashMsg}: ${err}\n${out}`.trim());
   }

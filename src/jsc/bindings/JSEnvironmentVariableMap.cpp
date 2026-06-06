@@ -5,6 +5,7 @@
 #include "JSEnvironmentVariableMap.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include <mutex>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayInlines.h>
@@ -73,8 +74,16 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         return true;
 
     // DEP0104: under --pending-deprecation, assigning a non-string,
-    // non-number, non-boolean value warns before being coerced.
+    // non-number, non-boolean value warns before being coerced. Node emits
+    // this at most once per process (EmitProcessEnvWarning's one-shot flag).
+    static std::once_flag processEnvWarningFlag;
+    bool shouldEmitDeprecationWarning = false;
     if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
+        std::call_once(processEnvWarningFlag, [&] {
+            shouldEmitDeprecationWarning = true;
+        });
+    }
+    if (shouldEmitDeprecationWarning) [[unlikely]] {
         Bun::Process::emitWarning(globalObject,
             jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
             jsString(vm, String("DeprecationWarning"_s)),
@@ -108,7 +117,10 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
         return false;
     }
 
-    if (!(descriptor.configurablePresent() && descriptor.configurable()
+    // Node's EnvDefiner requires a [[Value]] alongside the three attributes,
+    // so a value-less data descriptor is rejected rather than defining the
+    // property as undefined.
+    if (!(descriptor.value() && descriptor.configurablePresent() && descriptor.configurable()
             && descriptor.writablePresent() && descriptor.writable()
             && descriptor.enumerablePresent() && descriptor.enumerable())) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
@@ -127,11 +139,9 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
         return true;
 
     PropertyDescriptor coerced = descriptor;
-    if (descriptor.value()) {
-        JSString* string = descriptor.value().toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        coerced.setValue(string);
-    }
+    JSString* string = descriptor.value().toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    coerced.setValue(string);
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
 }
 
@@ -463,9 +473,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     // On Windows process.env is wrapped in the windowsEnv Proxy (for
     // case-insensitive lookups), whose traps intercept every operation before
     // it would reach the exotic JSEnvironmentVariableMap method table — and
-    // whose internal setup (toJSON, Bun.inspect.custom) is incompatible with
-    // the exotic put (string coercion, symbol-key TypeError). Keep the plain
-    // object there; the Node-specific semantics live in the Proxy traps.
+    // whose internal setup (the symbol-keyed Bun.inspect.custom helper) would
+    // hit the exotic put's symbol-key TypeError. Keep the plain object there;
+    // the Node-specific semantics live in the Proxy traps.
     JSC::JSObject* object = nullptr;
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);

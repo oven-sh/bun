@@ -118,6 +118,20 @@ it("process.env defineProperty matches assignment semantics", () => {
     }),
   ).toThrow(TypeError);
 
+  // ...a data descriptor without a [[Value]] is rejected...
+  expect(() =>
+    Object.defineProperty(process.env, "NO_VALUE_DESCRIPTOR", {
+      configurable: true,
+      writable: true,
+      enumerable: true,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+    }),
+  );
+  expect(process.env.NO_VALUE_DESCRIPTOR).toBeUndefined();
+
   // ...and empty variable names are silently ignored
   // (https://github.com/nodejs/node/issues/32920).
   Object.defineProperty(process.env, "", {
@@ -711,11 +725,13 @@ describe.concurrent(() => {
     });
   });
 
+  // _rawDebug is not listed: it is a real implementation now (it writes a
+  // formatted line to fd 2); its coverage lives in the vendored
+  // test-process-raw-debug.js.
   const undefinedStubs = [
     "_debugEnd",
     "_debugProcess",
     "_linkedBinding",
-    "_rawDebug",
     "_startProfilerIdleNotifier",
     "_stopProfilerIdleNotifier",
     "_tickCallback",

@@ -476,7 +476,9 @@ export function windowsEnv(
           "'process.env' does not accept an accessor(getter/setter) descriptor",
         );
       }
-      if (attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
+      // Node also requires a [[Value]]: a value-less data descriptor is
+      // rejected rather than defining the property as undefined.
+      if (!("value" in attributes) || attributes.configurable !== true || attributes.writable !== true || attributes.enumerable !== true) {
         throw $ERR_INVALID_OBJECT_DEFINE_PROPERTY(
           "'process.env' only accepts a configurable, writable, and enumerable data descriptor",
         );

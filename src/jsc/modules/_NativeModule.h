@@ -121,7 +121,10 @@
       auto *function = JSC::JSFunction::create(                                \
           vm, globalObject, 1, name.string(), ptr,                             \
           JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, ptr);       \
-      defaultObject->putDirect(vm, name, function);                            \
+      /* Match `put`: only populate the shared object on first build; a       \
+         user-deleted property on the cached object stays deleted. */         \
+      if (!defaultObjectWasCached)                                             \
+        defaultObject->putDirect(vm, name, function);                          \
       value = function;                                                        \
     }                                                                          \
     exportNames.append(name);                                                  \

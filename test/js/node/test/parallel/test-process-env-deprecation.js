@@ -25,3 +25,8 @@ common.expectWarning(
 process.env.FOO = 'apple';
 process.env.ABC = undefined;
 assert.strictEqual(process.env.ABC, 'undefined');
+
+// The warning is emitted at most once per process; a second qualifying
+// assignment must not warn again (expectWarning above enforces exactly one).
+process.env.DEF = null;
+assert.strictEqual(process.env.DEF, 'null');

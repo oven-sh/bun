@@ -175,7 +175,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let callback = arguments[3];
 
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::FALSE);
+        // null = the message can never be delivered (vs. false = queued
+        // under backpressure); RoundRobinHandle.handoff() reclaims on null.
+        return Ok(JSValue::NULL);
     };
 
     if message.is_undefined() {
@@ -231,7 +233,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             native_fd,
             subprocess.pid() as u32,
         ) {
-            return Ok(JSValue::FALSE);
+            return Ok(JSValue::NULL);
         }
         native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
     }
@@ -268,10 +270,12 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         JSValue::NULL,
         native_handle,
     );
-    Ok(if success == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
+    // true = sent; false = queued under backpressure (the reply callback
+    // still fires); null = hard failure, the callback will never fire.
+    Ok(match success {
+        SerializeAndSendResult::Success => JSValue::TRUE,
+        SerializeAndSendResult::Backoff => JSValue::FALSE,
+        SerializeAndSendResult::Failure => JSValue::NULL,
     })
 }
 

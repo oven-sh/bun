@@ -157,7 +157,7 @@ export default class RoundRobinHandle {
     const message = { act: "newconn", key: this.key };
 
     this.inFlight.set(worker.id, handle);
-    sendHelper(worker.process[kHandle], message, handle, reply => {
+    const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
       // remove() may have reclaimed the handle when the worker died before
       // acking - or the worker was re-added and a newer handoff is in
       // flight; a stale reply must not touch either handle.
@@ -168,6 +168,14 @@ export default class RoundRobinHandle {
 
       this.handoff(worker);
     });
+    if (sent === null) {
+      // Hard send failure (closed channel, or the Windows socket export
+      // failed on a live worker): the reply callback will never fire, so
+      // reclaim the connection for another worker. `false` means queued
+      // under backpressure and must NOT be reclaimed - the reply is coming.
+      this.inFlight.delete(worker.id);
+      this.distribute(0, handle);
+    }
   }
 }
 

@@ -112,6 +112,11 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 
   int rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
   if (rc != 0) {
+    /* uv_p was malloc'd (not zeroed) and never initialized by libuv; a later
+     * us_poll_free would read indeterminate handle flags. Release it now so
+     * the free path takes its !uv_p early-exit. */
+    free(p->uv_p);
+    p->uv_p = NULL;
     return rc;
   }
   /* See us_poll_start for why the handle is unref'd. */

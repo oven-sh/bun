@@ -1110,6 +1110,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
             }
             fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
             if (fd == LIBUS_SOCKET_ERROR) {
+                /* Keep the contract: *error always set when we return failure. */
+                *error = LIBUS_ERR;
                 continue;
             }
 #if defined(SO_REUSEADDR) && !defined(_WIN32)

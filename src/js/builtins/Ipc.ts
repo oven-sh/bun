@@ -239,7 +239,10 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen({ fd }, () => {
+      // exclusive: a cluster worker must adopt the received fd directly via
+      // kRealListen; the default path would ship the bare fd *number* to the
+      // primary through cluster._getServer and leak the actual handle.
+      server.listen({ fd, exclusive: true }, () => {
         emit(target, serialized.message, server);
       });
       return;

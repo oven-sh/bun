@@ -2720,8 +2720,9 @@ function onClusterConnection(err, clientHandle) {
   }
   if (self.maxConnections != null && self._connections >= self.maxConnections) {
     // The handle delivered over IPC is a bare fd wrapper with no
-    // getpeername/getsockname, so there is no address data for a "drop"
-    // event (node's onconnection also closes without "drop" in that case).
+    // getpeername/getsockname, so there is no address data - node's
+    // onconnection still emits a bare "drop" in that case.
+    self.emit("drop");
     clientHandle.close();
     return;
   }

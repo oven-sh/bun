@@ -184,32 +184,6 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
-    if callback.is_function() {
-        let _ = ipc_data.internal_msg_queue.callbacks.put(
-            ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
-        );
-    }
-
-    // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
-    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
-
-    // similar code as bun.jsc.Subprocess.doSend
-    #[cfg(debug_assertions)]
-    {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        bun_output::scoped_log!(
-            IPC,
-            "primary: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
-        );
-    }
-
     // Cluster handle handoff (round-robin `newconn`, shared listen handles):
     // the JS side passes an object exposing a numeric `.fd`. The fd rides the
     // wire as SCM_RIGHTS ancillary data attached to this message's bytes; the
@@ -245,10 +219,11 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         message.put(global, b"$hasHandle", JSValue::TRUE);
         // Windows: the fd cannot ride the pipe as ancillary data; serialize
         // the socket for the worker process and attach it to the message. A
-        // failed export (worker already dead, WSA error) means the handle can
-        // never arrive - report send failure instead of emitting a newconn
-        // the worker could not act on; the caller's worker-removal path
-        // reclaims the pending connection.
+        // failed export (dead worker, or transient WSA errors like ENOBUFS on
+        // a live one) means the handle can never arrive - report send failure
+        // instead of emitting a newconn the worker could not act on. This
+        // runs before the reply callback is registered and before `seq` is
+        // bumped, so nothing is orphaned by the early return.
         #[cfg(windows)]
         if !crate::ipc_host::attach_windows_socket_payload(
             global,
@@ -260,6 +235,32 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         }
         native_handle = Some(bun_jsc::ipc::Handle::init(native_fd, handle));
     }
+    if callback.is_function() {
+        let _ = ipc_data.internal_msg_queue.callbacks.put(
+            ipc_data.internal_msg_queue.seq,
+            StrongOptional::create(callback, global),
+        );
+    }
+
+    // sequence number for InternalMsgHolder
+    message.put(
+        global,
+        b"seq",
+        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
+    );
+    ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
+
+    // similar code as bun.jsc.Subprocess.doSend
+    #[cfg(debug_assertions)]
+    {
+        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        bun_output::scoped_log!(
+            IPC,
+            "primary: {}",
+            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+        );
+    }
+
     let success = ipc_data.serialize_and_send(
         global,
         message,
@@ -551,12 +552,14 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
 
         unsafe fn close_fd(fd: c_int) {
+            // SAFETY: caller passes an fd it owns.
             unsafe {
                 libc::close(fd);
             }
         }
 
         fn set_cloexec_nonblock(fd: c_int) {
+            // SAFETY: plain fcntl flag updates on a live caller-owned fd.
             unsafe {
                 let fl = libc::fcntl(fd, libc::F_GETFD);
                 libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC);
@@ -572,7 +575,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             let path_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
             let path_bytes = path_slice.slice();
-            let mut sun: libc::sockaddr_un = unsafe { core::mem::zeroed() };
+            // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
+            let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
             sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
             if path_bytes.len() >= sun.sun_path.len() {
                 return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
@@ -580,6 +584,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             for (i, b) in path_bytes.iter().enumerate() {
                 sun.sun_path[i] = *b as _;
             }
+            // SAFETY: socket/bind FFI with a NUL-safe sockaddr built above;
+            // the fd is closed on every error path.
             unsafe {
                 let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
                 if fd < 0 {
@@ -612,7 +618,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
         // Resolve the address. Cluster normally passes an IP literal or null;
         // a hostname (e.g. "localhost") falls back to getaddrinfo.
-        let mut ss: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+        // SAFETY: sockaddr_storage is plain C data; all-zero is a valid value.
+        let mut ss: libc::sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
         let ss_len: libc::socklen_t;
         if address.is_string() {
             let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
@@ -623,6 +630,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
+            // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
+            // either family; ares_inet_pton writes exactly one in_addr /
+            // in6_addr into the casted view.
             let parsed = unsafe {
                 if family == libc::AF_INET6 {
                     let sin6: &mut libc::sockaddr_in6 =
@@ -650,16 +660,25 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             };
             if !parsed {
                 // Hostname: numeric-service getaddrinfo with the family hint.
-                let mut hints: libc::addrinfo = unsafe { core::mem::zeroed() };
+                // SAFETY: addrinfo is plain C data; all-zero is a valid hints value.
+                let mut hints: libc::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };
                 hints.ai_family = family;
                 hints.ai_socktype = socktype;
                 let mut res: *mut libc::addrinfo = core::ptr::null_mut();
+                // SAFETY: `addr_z` is NUL-terminated; out-params are live locals.
                 let rc = unsafe {
-                    libc::getaddrinfo(addr_z.as_ptr().cast(), core::ptr::null(), &hints, &mut res)
+                    libc::getaddrinfo(
+                        addr_z.as_ptr().cast(),
+                        core::ptr::null(),
+                        &raw const hints,
+                        &raw mut res,
+                    )
                 };
                 if rc != 0 || res.is_null() {
                     return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
                 }
+                // SAFETY: rc == 0 and res was null-checked; ai_addr/ai_addrlen
+                // describe a valid sockaddr that fits in sockaddr_storage.
                 unsafe {
                     let ai = &*res;
                     core::ptr::copy_nonoverlapping(
@@ -684,13 +703,16 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             };
         } else {
             // No address: any-address for the family.
+            // SAFETY: `ss` is a zeroed sockaddr_storage; the casted family
+            // views only write within its bounds. The all-zero in6_addr is
+            // in6addr_any by definition.
             unsafe {
                 if family == libc::AF_INET6 {
                     let sin6: &mut libc::sockaddr_in6 =
                         &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
                     sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
                     sin6.sin6_port = (port as u16).to_be();
-                    sin6.sin6_addr = core::mem::zeroed(); // in6addr_any
+                    sin6.sin6_addr = bun_core::ffi::zeroed_unchecked(); // in6addr_any
                     ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
                 } else {
                     let sin: &mut libc::sockaddr_in =
@@ -703,6 +725,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
         }
 
+        // SAFETY: socket/setsockopt/bind/getsockname FFI on a freshly created
+        // fd with properly sized sockaddr buffers; the fd is closed on every
+        // error path and otherwise ownership transfers to the returned object.
         unsafe {
             let fd = libc::socket(family, socktype, 0);
             if fd < 0 {
@@ -750,9 +775,9 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
             // Report the kernel-assigned port for port-0 binds.
             let mut bound_port = port;
-            let mut out: libc::sockaddr_storage = core::mem::zeroed();
+            let mut out: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
             let mut out_len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-            if libc::getsockname(fd, (&raw mut out).cast(), &mut out_len) == 0 {
+            if libc::getsockname(fd, (&raw mut out).cast(), &raw mut out_len) == 0 {
                 bound_port = if family == libc::AF_INET6 {
                     u16::from_be((*(&raw const out).cast::<libc::sockaddr_in6>()).sin6_port) as i32
                 } else {

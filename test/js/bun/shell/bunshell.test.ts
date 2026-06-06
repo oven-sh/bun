@@ -2687,10 +2687,7 @@ describe("subshell", () => {
       .stderr("")
       .runAsTest("subshell stderr dup to stdout");
 
-    TestBuilder.command /* sh */ `(echo lo) 1>&2`
-      .stdout("")
-      .stderr("lo\n")
-      .runAsTest("subshell stdout dup to stderr");
+    TestBuilder.command /* sh */ `(echo lo) 1>&2`.stdout("").stderr("lo\n").runAsTest("subshell stdout dup to stderr");
 
     TestBuilder.command /* sh */ `echo $( (echo hi 1>&2) 2>&1 )`
       .stdout("hi\n")

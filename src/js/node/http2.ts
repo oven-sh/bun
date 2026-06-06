@@ -3041,6 +3041,7 @@ class ServerHttp2Session extends Http2Session {
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
+      parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
@@ -3356,6 +3357,17 @@ function emitTimeout(session: ClientHttp2Session) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+
+// After the socket is gone a graceful close can never complete — the parser
+// is detached, so the stream's writable side has nothing left to flush
+// through and 'finish'/'close' would never fire. Mirror Node's closeSession,
+// which hard-destroys every stream that is still alive after the
+// close(NGHTTP2_CANCEL) pass.
+function streamSocketClosed(stream: Http2Stream) {
+  if (!stream.destroyed) {
+    stream.destroy();
+  }
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
   #closed: boolean = false;
@@ -3616,6 +3628,7 @@ class ClientHttp2Session extends Http2Session {
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
       parser.forEachStream(streamCancel);
+      parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
@@ -3991,6 +4004,20 @@ class ClientHttp2Session extends Http2Session {
         } else {
           options = { ...options, endStream: true };
         }
+      }
+      // Like Node, a request whose signal is already aborted never touches the
+      // wire: the stream is created without an id and destroyed with an
+      // AbortError on the next tick (_destroy skips the RST for id-less
+      // streams). Sending an RST for a stream the peer never saw is a
+      // connection error that makes conforming servers reply with GOAWAY.
+      if ($isObject(options) && options.signal && options.signal.aborted) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        const signal = options.signal;
+        // The request never started, so the stream counts as aborted but the
+        // 'aborted' event is not emitted — only the AbortError.
+        req[kAborted] = true;
+        process.nextTick(() => req.destroy($makeAbortError(undefined, { cause: signal.reason })));
+        return req;
       }
       let stream_id: number = this.#parser.getNextStream();
       if (stream_id < 0) {

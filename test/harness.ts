@@ -2014,5 +2014,12 @@ export function getPuppeteerInstallEnv(): Record<string, string> {
     hasSystemChromium ||
     (process.platform === "linux" && process.arch === "arm64") ||
     (process.platform === "win32" && (!!process.env.CI || !!process.env.BUILDKITE));
-  return skipBrowserDownload ? { PUPPETEER_SKIP_DOWNLOAD: "1" } : {};
+  if (skipBrowserDownload) {
+    return { PUPPETEER_SKIP_DOWNLOAD: "1" };
+  }
+  // No system browser: download into a fresh per-run cache instead of the
+  // shared agent-global one — a half-extracted download left there by an
+  // earlier failed run otherwise blocks every later install. Pass the same
+  // env to whatever later launches puppeteer so it finds the browser.
+  return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
 }

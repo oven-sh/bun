@@ -24,12 +24,16 @@ if (!browserPath) {
 if (process.platform === "darwin") {
   try {
     const { execSync } = require("child_process");
-    const cachePath = join(process.env.HOME || "~", ".cache", "puppeteer");
+    const cachePath = process.env.PUPPETEER_CACHE_DIR || join(process.env.HOME || "~", ".cache", "puppeteer");
     // Remove quarantine from the entire puppeteer cache
     execSync(`xattr -rd com.apple.quarantine "${cachePath}" 2>/dev/null || true`, { stdio: "ignore" });
     // Also ensure all chrome/chromium binaries in the cache are executable
-    execSync(`find "${cachePath}" -type f -name "Google Chrome for Testing" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
-    execSync(`find "${cachePath}" -type f -name "chrome-headless-shell" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
+    execSync(`find "${cachePath}" -type f -name "Google Chrome for Testing" -exec chmod +x {} + 2>/dev/null || true`, {
+      stdio: "ignore",
+    });
+    execSync(`find "${cachePath}" -type f -name "chrome-headless-shell" -exec chmod +x {} + 2>/dev/null || true`, {
+      stdio: "ignore",
+    });
     execSync(`find "${cachePath}" -type f -name "chrome" -exec chmod +x {} + 2>/dev/null || true`, { stdio: "ignore" });
   } catch {}
 }

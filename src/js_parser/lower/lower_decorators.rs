@@ -762,7 +762,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // private access: rewriting the callee into a
                         // `__privateGet(..)` helper call would otherwise
                         // swallow the nullish test on the callee value.
-                        return Self::lowered_private_index_info(&e.target, map).is_some();
+                        if Self::lowered_private_index_info(&e.target, map).is_some() {
+                            return true;
+                        }
+                        // `o?.#f.b?.()`: the callee is a chain segment with a
+                        // lowered private deeper in. Flattening it in place
+                        // would turn the callee into a ternary value and drop
+                        // the call's `this`; route the call through the
+                        // flattener so the receiver is captured instead.
+                        return e.target.is_optional_chain()
+                            && Self::optional_chain_needs_private_lowering(&e.target, map);
                     }
                     cur = e.target;
                 }
@@ -1043,6 +1052,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
         let expr_loc = expr.loc;
+        // `delete o?.#f.x`: a flattened chain is a ternary value, and
+        // `delete` of a non-reference is a silent no-op. Push the `delete`
+        // into the non-null branch (`o == null ? true : delete
+        // __privateGet(o, _f).x`) so it still removes the property, and
+        // yield `true` when the chain short-circuits, matching the spec.
+        if let js_ast::ExprData::EUnary(mut ue) = expr.data
+            && ue.op == js_ast::OpCode::UnDelete
+            && ue.value.is_optional_chain()
+            && Self::optional_chain_needs_private_lowering(&ue.value, map)
+        {
+            let (lowered, _) = self.lower_optional_chain_with_private(ue.value, map, false);
+            let js_ast::ExprData::EIf(mut ie) = lowered.data else {
+                unreachable!()
+            };
+            ue.value = ie.no;
+            ie.yes = self.new_expr(E::Boolean { value: true }, expr_loc);
+            ie.no = *expr;
+            *expr = lowered;
+            return;
+        }
         // Rewriting a private access inside an optional chain must not lose
         // the chain's short-circuiting: hoist the nullish tests out first.
         if expr.is_optional_chain() && Self::optional_chain_needs_private_lowering(expr, map) {

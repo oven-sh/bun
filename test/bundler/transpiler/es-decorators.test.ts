@@ -1108,6 +1108,40 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("7 undefined 7\n");
       expect(exitCode).toBe(0);
     });
+
+    test("optional call keeps `this` when the callee chain has a private deeper in", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        let captured = null;
+        class Foo {
+          static #f = { b() { captured = this; return 1; } };
+          @dec() go(o) { return o?.#f.b?.(); }
+          @dec() isCaptured(o) { return captured === o?.#f; }
+          @dec() goMissing(o) { return o?.#f.missing?.(); }
+        }
+        const f = new Foo();
+        console.log(f.go(Foo), f.isCaptured(Foo), f.go(undefined), f.goMissing(Foo));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 true undefined undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("delete through a lowered private chain removes the property", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() { return (v, ctx) => {}; }
+        class Foo {
+          static #f = { x: 1 };
+          @dec() del(o) { return delete o?.#f.x; }
+          @dec() has() { return "x" in Foo.#f; }
+        }
+        const f = new Foo();
+        console.log(f.del(undefined), f.has(), f.del(Foo), f.has());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true false\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {

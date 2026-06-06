@@ -307,7 +307,7 @@ it("sources created before close() refuse to use the stale fd", async () => {
     const fh = await fsPromises.open(file, "r+");
     const w = fh.writer();
     await fh.close();
-    expect(w.write(Buffer.from("a"))).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+    await expect(w.write(Buffer.from("a"))).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
     expect(() => w.writeSync(Buffer.from("a"))).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   }
   // pull
@@ -315,7 +315,7 @@ it("sources created before close() refuse to use the stale fd", async () => {
     const fh = await fsPromises.open(file, "r");
     const src = fh.pull();
     await fh.close();
-    expect(
+    await expect(
       (async () => {
         for await (const _ of src);
       })(),
@@ -335,7 +335,7 @@ it("sources created before close() refuse to use the stale fd", async () => {
 it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async () => {
   const dir = tempDirWithFiles("rm-eisdir", { "sub/a.txt": "x" });
   const target = join(dir, "sub");
-  expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
+  await expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
   const { promise, resolve } = Promise.withResolvers();
   fs.rm(target, err => resolve(err));
   expect((await promise)?.code).toBe("ERR_FS_EISDIR");

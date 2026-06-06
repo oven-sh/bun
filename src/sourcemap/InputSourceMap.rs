@@ -52,8 +52,8 @@ struct InvalidSourceMap;
 /// Workhorse returning `Result` so `?` fires cleanup on malformed-payload
 /// bails — critical because JSON can pass the structural checks but still
 /// have a malformed `mappings` VLQ, and we'd otherwise leak everything
-/// allocated up to that point. Zig's `errdefer` becomes Rust's automatic
-/// drop on early return.
+/// allocated up to that point (cleanup rides on `Drop` at each early
+/// return).
 fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourceMap> {
     use bun_ast::StoreResetGuard as DataStoreScope;
 
@@ -206,11 +206,10 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let mut url = &last_line[NEEDLE.len()..];
-    // Trim whitespace on both sides within the line. Matches Zig's
-    // `bun.strings.trim(_, " \r\t")`; a leading space after `=` (e.g.
-    // `//# sourceMappingURL= data:...`) is spec-invalid but some
-    // toolchains emit it, and `parse_data_url` would fail on the
-    // leading space without this.
+    // Trim whitespace (` `, `\r`, `\t`) on both sides within the line: a
+    // leading space after `=` (e.g. `//# sourceMappingURL= data:...`) is
+    // spec-invalid but some toolchains emit it, and `parse_data_url`
+    // would fail on the leading space without this.
     while let Some(&first) = url.first() {
         if first == b' ' || first == b'\r' || first == b'\t' {
             url = &url[1..];
@@ -269,5 +268,3 @@ fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
         InputSourceMap::parse(payload)
     }
 }
-
-// ported from: src/sourcemap/InputSourceMap.zig

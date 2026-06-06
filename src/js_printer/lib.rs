@@ -7751,12 +7751,6 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     }
 
     let precomputed = opts.line_offset_tables.take();
-    // PORT NOTE: Zig passed `?*InputSourceMap` directly; Rust holds the
-    // slot as `Option<Box<InputSourceMap>>` in the SoA and lends a
-    // `&InputSourceMap` through `Options.input_source_map`. Erase the
-    // lifetime to `'static` for the `Builder` field — the borrow lives in
-    // `Graph::input_files[i].input_source_map`, which outlives every
-    // `add_source_mapping` call (see field docs).
     let input_source_map: Option<&'static crate::SourceMap::InputSourceMap> =
         opts.input_source_map.take().map(|r| {
             // SAFETY: the referent lives in

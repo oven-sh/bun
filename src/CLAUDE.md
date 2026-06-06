@@ -372,11 +372,13 @@ bun run build:release --target=aarch64-linux-ohos \
 
 | 限制 | 原因 | 影响 | 应对 |
 |------|------|------|------|
-| `spawnSync({stdout:'pipe'})` 不可用 | OHOS vfork fd 限制：子进程无法 dup2/close/open | spawnSync pipe 输出为空，exitCode 正确 | 改用 `async Bun.spawn()` |
+| **`spawnSync({stdout:'pipe'})`** | ✅ **已修复** — 跳过 `wait_linux_signalfd`（prctl/pidfd 触发 SIGSYS） | spawnSync pipe 正常 | 改用普通 `poll()+wait4()` 循环 |
 | `async Bun.spawn({stdout:'pipe'})` 正常 | 不同内核路径 | ✅ 完整支持 | — |
 | `fstat()` 在 pipe/socket 上返回 EACCES | OHOS SELinux (E008) | fd 状态检查失败 | 用 `fcntl(F_GETFD)` 代替 |
-| `fchmodat2` syscall (#452) 被拦截 | seccomp 策略 | 每次 `bun add` 触发 30+ 次 SIGSYS | SIGSYS handler 捕获后返回 ENOSYS |
+| **`fchmodat2` (#452)** | ✅ **已修复** — `#[cfg(target_env = "ohos")]` 直接跳过 | 不再触发 SIGSYS | 直接走 `fchmodat` fallback |
 | PTY (`Bun.Terminal()`) 创建成功 | SELinux 允许 openpty | 创建 ✅，spawn 输出为空 ❌ | vfork 限制 |
+| **`no_orphans`** | prctl 被 OHOS seccomp 拦截 | ❌ `--no-orphans` 功能不可用（父进程死亡不清理子进程）| 测试框架需补 `killall -9 bun` 清理 |
+| **`PR_SET_PDEATHSIG` / `PR_SET_CHILD_SUBREAPER`** | seccomp 拦截，触发 SIGSYS | `no_orphans` 级联清理断链 | Rust 侧 `#[cfg(not(target_env = "ohos"))]` 跳过 |
 | **`sys::dlopen()` / FFI** | ✅ **已修复** — 动态 libc | dlopen/dlsym 从系统 GLOBAL 实现工作 | `-lc` 动态链接 libc.so |
 | `process.dlopen` | ✅ **路径通** | 需 OHOS SDK 重编 .node（ABI 不匹配）| 当前仅支持系统库 FFI |
 | 二进制需签名 | SELinux 要求 | 启动前需 `binary-sign-tool sign` | L1/L2 自动签名 |
@@ -384,8 +386,9 @@ bun run build:release --target=aarch64-linux-ohos \
 | `pidfd_open`/`close_range` | 未实现 syscall | SIGSYS | `BUN_OHOS_DISABLE_PIDFD` 标志 |
 | `memfd_create` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
 | `copy_file_range` / `openat2` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
+| `fchmodat2` (resolved) | ✅ 已修复 | `#[cfg(target_env = "ohos")]` 跳过 | 直接 `fchmodat` |
 | 多线程 `fork()` 后 fd 不可用 | 内核限制 | 子进程无法访问父进程 fd | — |
-| 全量测试通过率: 94.0%（去重后）| 见下方测试报告 | | |
+| 全量测试通过率: 待更新 | 跑完 CI 更新 | | |
 
 ### 已拦截 syscall 列表
 
@@ -398,7 +401,7 @@ bun run build:release --target=aarch64-linux-ohos \
 | `memfd_create` | 319 | `#[cfg(ohos)]` 提前返回 ENOSYS |
 | `copy_file_range` | 285 | `#[cfg(ohos)]` 提前返回 -1 |
 | `openat2` | 437 | `#[cfg(ohos)]` 提前返回 ENOSYS |
-| `fchmodat2` | 452 | SIGSYS handler |
+| `fchmodat2` | 452 | `#[cfg(target_env = "ohos")]` 跳过，直接 fallback |
 | `process_vm_readv/writev` | 310/311 | SIGSYS handler |
 | `name_to_handle_at` | 303 | SIGSYS handler |
 | `perf_event_open` / `kcmp` | 298/312 | SIGSYS handler |
@@ -411,9 +414,16 @@ bun run build:release --target=aarch64-linux-ohos \
 // 关键标志（c-bindings.cpp）：
 // BUN_OHOS_DISABLE_PIDFD — 跳过 pidfd_open/close_range（SIGSYS 来源）
 //
+// spawnSync (Rust src/spawn/process.rs)：
+//   OHOS: wait_linux_signalfd 跳过（prctl 触发 SIGSYS, pidfd_open 被拦截）
+//         改用普通 poll(pipe_fds, -1) + wait4() 循环
+//         所有 pipe 模式（stdout/stderr/stdin）均正常工作
+//   no_orphans: 在 OHOS 上不可用（PR_SET_PDEATHSIG 触发 SIGSYS）
+//               spawnSync 的 defer 清理逻辑仍运行，但无实际内核支持
+//
 // spawn 路径（process.zig）：
 // .buffer 模式：
-//   options.sync=true (spawnSync): inherit fallback（不创建 pipe）
+//   options.sync=true (spawnSync): socketpair + poll + wait4
 //   options.sync=false (async): 正常 socketpair（event loop 读取）
 // memfd: BUN_OHOS_DISABLE_PIDFD 时禁用（用 socketpair 替代）
 //

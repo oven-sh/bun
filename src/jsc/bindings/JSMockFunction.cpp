@@ -827,7 +827,7 @@ static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, co
     return result;
 }
 
-static EncodedJSValue jsMockFunctionCallImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callframe, JSValue thisValue, JSObject* constructedObject)
+static EncodedJSValue jsMockFunctionCallImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callframe, JSValue thisValue)
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
@@ -879,20 +879,18 @@ static EncodedJSValue jsMockFunctionCallImpl(JSGlobalObject* lexicalGlobalObject
         fn->contexts.set(vm, fn, contexts);
     }
 
-    if (constructedObject) {
-        JSC::JSArray* instances = fn->instances.get();
-        if (instances) {
-            instances->push(globalObject, constructedObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            JSC::ObjectInitializationScope object(vm);
-            instances = JSC::JSArray::tryCreateUninitializedRestricted(
-                object,
-                globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-                1);
-            instances->initializeIndex(object, 0, constructedObject);
-            fn->instances.set(vm, fn, instances);
-        }
+    JSC::JSArray* instances = fn->instances.get();
+    if (instances) {
+        instances->push(globalObject, thisValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        JSC::ObjectInitializationScope object(vm);
+        instances = JSC::JSArray::tryCreateUninitializedRestricted(
+            object,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            1);
+        instances->initializeIndex(object, 0, thisValue);
+        fn->instances.set(vm, fn, instances);
     }
 
     auto invocationId = JSMockModule::nextInvocationId();
@@ -999,7 +997,7 @@ static EncodedJSValue jsMockFunctionCallImpl(JSGlobalObject* lexicalGlobalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    return jsMockFunctionCallImpl(lexicalGlobalObject, callframe, callframe->thisValue(), nullptr);
+    return jsMockFunctionCallImpl(lexicalGlobalObject, callframe, callframe->thisValue());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
@@ -1021,7 +1019,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
         ? JSC::constructEmptyObject(lexicalGlobalObject, prototype)
         : JSC::constructEmptyObject(lexicalGlobalObject);
 
-    JSValue result = JSValue::decode(jsMockFunctionCallImpl(lexicalGlobalObject, callframe, thisObject, thisObject));
+    JSValue result = JSValue::decode(jsMockFunctionCallImpl(lexicalGlobalObject, callframe, thisObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (result.isObject())

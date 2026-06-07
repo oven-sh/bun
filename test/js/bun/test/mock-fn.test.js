@@ -880,6 +880,22 @@ describe("mock()", () => {
       expect(instance).not.toBeNull();
       expect(spy.mock.instances[0]).toBe(instance);
     });
+
+    test("instances is pushed on every invocation", () => {
+      const fn = jest.fn();
+      fn();
+      const instance = new fn();
+      expect(fn.mock.calls).toHaveLength(2);
+      expect(fn.mock.instances).toHaveLength(2);
+      expect(fn.mock.instances[0]).toBe(undefined);
+      expect(fn.mock.instances[1]).toBe(instance);
+      expect(fn.mock.contexts).toEqual(fn.mock.instances);
+
+      const obj = { m: jest.fn() };
+      obj.m();
+      expect(obj.m.mock.instances).toEqual([obj]);
+      expect(obj.m.mock.contexts).toEqual([obj]);
+    });
   });
 });
 

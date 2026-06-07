@@ -402,4 +402,86 @@ describe.concurrent("mock.module per-file scoping", () => {
     expect(stderr + stdout).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  test("CJS consumer that captured a mock-born value is re-run in the next file", async () => {
+    // A pure-CJS consumer copies values out of the mocked module at require
+    // time and never appears in the ESM registry, so clearing the mock can't
+    // restore it in place — teardown must evict it from the require cache so
+    // the next file's require() re-runs it against the real module.
+    using dir = tempDir("issue-31316-cjs-capture", {
+      "dep.ts": `export const v = "REAL";`,
+      "consumer.cjs": `module.exports.v = require("./dep").v;`,
+      "a.test.ts": `
+        import { mock, it, expect } from "bun:test";
+        mock.module("./dep", () => ({ v: "MOCK_A" }));
+        it("A sees the captured mock value", () => {
+          expect(require("./consumer.cjs").v).toBe("MOCK_A");
+        });
+      `,
+      "b.test.ts": `
+        import { it, expect } from "bun:test";
+        it("B sees the captured real value", () => {
+          expect(require("./consumer.cjs").v).toBe("REAL");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("mock.module inside a preload beforeEach is scoped per file", async () => {
+    // Per-test hooks registered in preload run inside test sequences and can
+    // interleave with concurrent test bodies, so their mocks are transient —
+    // they re-run before every test anyway. Observable contract: the next
+    // file's *top-level import* binds the real module (a persistent mock
+    // would shim it at import time), and the re-run hook re-installs the
+    // mock before the test body executes.
+    using dir = tempDir("issue-31316-preload-each", {
+      "dep.ts": `export const v = "REAL";`,
+      "preload.ts": `
+        import { beforeEach, mock } from "bun:test";
+        beforeEach(() => {
+          mock.module("./dep", () => ({ v: "EACH_MOCK" }));
+        });
+      `,
+      "a.test.ts": `
+        import { it, expect } from "bun:test";
+        import { v } from "./dep";
+        it("a", () => { expect(v).toBe("EACH_MOCK"); });
+      `,
+      "b.test.ts": `
+        import { it, expect } from "bun:test";
+        import { v } from "./dep";
+        const atImportTime = v;
+        it("b", () => {
+          expect(atImportTime).toBe("REAL");
+          expect(v).toBe("EACH_MOCK");
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.ts", "a.test.ts", "b.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr + stdout).toContain("2 pass");
+    expect(stderr + stdout).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });

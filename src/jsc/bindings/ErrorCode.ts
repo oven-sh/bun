@@ -128,7 +128,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
-  ["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_INVALID_ADDRESS", Error],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
@@ -327,5 +326,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
   ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
+  ["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", TypeError],
 ];
 export default errors;

@@ -89,6 +89,8 @@ test("bun install reports ECONNRESET when the registry resets the connection dur
     socket.once("data", () => socket.resetAndDestroy());
   });
   const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+  // Left attached after listen succeeds: rejecting a settled promise is a
+  // no-op, and it keeps a later server-level "error" from crashing the test.
   server.once("error", onListenError);
   server.listen(0, "127.0.0.1", onListening);
   await listening;

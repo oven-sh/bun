@@ -92,6 +92,26 @@ uintptr_t* HandleScope::CreateHandle(internal::Isolate* i_isolate, uintptr_t val
     return newSlot->asRawPtrLocation();
 }
 
+uintptr_t* HandleScope::CreateHandle(Isolate* isolate, uintptr_t value)
+{
+    // Same object underneath; v8::Isolate* and internal::Isolate* are nominal
+    // views of our Isolate.
+    return CreateHandle(reinterpret_cast<internal::Isolate*>(isolate), value);
+}
+
+void HandleScope::Initialize(Isolate* isolate)
+{
+    // Mirror V8 14's inline HandleScope::Initialize (v8-local-handle.h):
+    // stash the HandleScopeData snapshot in the V8-visible words and bump
+    // level. The frame is addon-owned and V8-laid-out — do not push a Bun
+    // scope and do not touch Bun-meaning members beyond the three words.
+    auto* data = shim::getHandleScopeData(isolate);
+    m_isolate = isolate;
+    m_previousHandleScope = reinterpret_cast<HandleScope*>(data->next);
+    m_buffer = reinterpret_cast<shim::HandleScopeBuffer*>(data->limit);
+    data->level++;
+}
+
 uintptr_t* HandleScope::Extend(Isolate* isolate)
 {
     // V8 14's inline HandleScope::CreateHandle (v8-local-handle.h) calls Extend when

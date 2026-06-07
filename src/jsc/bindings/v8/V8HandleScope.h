@@ -56,6 +56,16 @@ protected:
 
     // is protected in v8, which matters on windows
     BUN_EXPORT static uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
+    // V8 14's headers also declare a V8_INLINE overload taking v8::Isolate*
+    // with an out-of-class body (v8-local-handle.h); MSVC debug builds import
+    // it instead of emitting it, so it must exist as a real export. Protected
+    // in V8 (affects the MSVC mangling).
+    BUN_EXPORT static uintptr_t* CreateHandle(Isolate* isolate, uintptr_t value);
+    // Same story for the inline constructor's Initialize: under MSVC /Ob0 the
+    // addon-side inline HandleScope constructor calls an imported Initialize.
+    // Initializes the frame in V8's inline style (snapshot next/limit,
+    // level++) — never pushes a Bun scope, mirroring EscapableHandleScopeBase.
+    BUN_EXPORT void Initialize(Isolate* isolate);
 
 private:
     // Out-of-line slow path of V8 14's fully-inline HandleScope (v8-local-handle.h). The inline

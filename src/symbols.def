@@ -602,6 +602,12 @@ EXPORTS
   ?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z
   ?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z
   ?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@internal@2@_K@Z
+  ?CreateHandle@HandleScope@v8@@KAPEA_KPEAVIsolate@2@_K@Z
+  ?Initialize@HandleScope@v8@@IEAAXPEAVIsolate@2@@Z
+  ?QuickIsUndefined@Value@v8@@AEBA_NXZ
+  ?QuickIsNull@Value@v8@@AEBA_NXZ
+  ?QuickIsNullOrUndefined@Value@v8@@AEBA_NXZ
+  ?QuickIsString@Value@v8@@AEBA_NXZ
   ?Extend@HandleScope@v8@@CAPEA_KPEAVIsolate@2@@Z
   ?DeleteExtensions@HandleScope@v8@@AEAAXPEAVIsolate@2@@Z
   ??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z

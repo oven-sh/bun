@@ -174,6 +174,10 @@ test.skipIf(isWindows)("dev server reports route syntax errors without crashing"
     stderr: "pipe",
   });
 
+  // Drain stderr concurrently with the stdout scan below so neither pipe
+  // can fill up and block the child.
+  const stderrPromise = proc.stderr.text();
+
   // The route scan runs during server startup, so "Started development
   // server" only prints after both syntax errors were reported. Without the
   // fix the process dies while printing the 65-param error.
@@ -192,8 +196,7 @@ test.skipIf(isWindows)("dev server reports route syntax errors without crashing"
   expect(await res.text()).toBe("ok");
 
   proc.kill();
-  const stderr = await proc.stderr.text();
-  await proc.exited;
+  const [stderr] = await Promise.all([stderrPromise, proc.exited]);
   // The caret/underline must line up with the offending "[" — column
   // 8 for the `error: "` prefix plus 7 for `routes/`.
   expect(stderr).toContain(

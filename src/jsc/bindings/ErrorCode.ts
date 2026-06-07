@@ -122,7 +122,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_UNSUPPORTED_PROTOCOL", Error],
   ["ERR_HTTP2_INVALID_SETTING_VALUE", TypeError, "TypeError", RangeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
-  ["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", TypeError],
   ["ERR_INCOMPATIBLE_OPTION_PAIR", TypeError],
   ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
   ["ERR_INVALID_ARG_TYPE", TypeError],
@@ -363,5 +362,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
+  ["ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", TypeError],
 ];
 export default errors;

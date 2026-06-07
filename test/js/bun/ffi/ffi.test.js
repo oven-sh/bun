@@ -1058,10 +1058,12 @@ describe("library close()", () => {
   it("CFunction stays callable while only .native is retained", async () => {
     const cb = new JSCallback(x => x * 2, { returns: "i32", args: ["i32"] });
     let native;
+    let closeLib;
     {
       const wrapped = CFunction({ returns: "i32", args: ["i32"], ptr: cb.ptr });
       expect(wrapped(21)).toBe(42);
       native = wrapped.native;
+      closeLib = wrapped.close;
       expect(native).not.toBe(wrapped);
     }
     // The wrapper may now be collected; the FinalizationRegistry must not
@@ -1071,6 +1073,10 @@ describe("library close()", () => {
       await Bun.sleep(0); // give FinalizationRegistry cleanup a chance to run
       expect(native(21)).toBe(42);
     }
+    // Close explicitly: a library left open at process exit leaks its TCC
+    // states by design, which LeakSanitizer reports on the ASAN CI lane.
+    closeLib();
+    expect(() => native(21)).toThrow(closedError);
     cb.close();
   });
 });

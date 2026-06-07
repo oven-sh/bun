@@ -42,24 +42,29 @@ describe.concurrent(
           stdout: "inherit",
           stderr: "pipe",
         });
-        expect(await stderr.text()).toBeEmpty();
+        // Debug builds emit benign `debug warn:` lines (e.g. the standalone
+        // graph's madvise hint); only non-debug output fails the test.
+        const stderrText = (await stderr.text())
+          .split(/\r?\n/)
+          .filter(line => line.length > 0 && !line.startsWith("debug warn:"))
+          .join("\n");
+        expect(stderrText).toBeEmpty();
         expect(await exited).toBe(0);
       }
+      async function testRound(baseDir: string, outfile: string) {
+        await testCompile(outfile);
+        await testExec(outfile);
+        fs.rmSync(baseDir, { recursive: true, force: true });
+      }
       const tmpdir = tmpdirSync();
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile-${Date.now()}`;
-        const outfile = path.join(baseDir, "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile2-${Date.now()}`;
-        const outfile = path.join(baseDir, "b/u/n", "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
+      const baseDir1 = `${tmpdir}/bun-build-outfile-${Date.now()}`;
+      const baseDir2 = `${tmpdir}/bun-build-outfile2-${Date.now()}`;
+      // The two rounds are independent; run them concurrently so two debug
+      // `--compile` invocations fit within the test timeout.
+      await Promise.all([
+        testRound(baseDir1, path.join(baseDir1, "index.exe")),
+        testRound(baseDir2, path.join(baseDir2, "b/u/n", "index.exe")),
+      ]);
     });
 
     test("works with utf8 bom", async () => {
@@ -465,4 +470,63 @@ test("multi-entry build writes each entry point into the output directory", asyn
   const b = await Bun.file(path.join(String(dir), "dist", "b.js")).text();
   expect(a).toContain('"A"');
   expect(b).toContain('"B"');
+});
+
+// https://github.com/oven-sh/bun/issues/31957
+test("--preserve-symlinks resolves a symlinked file's imports from the link path", async () => {
+  using dir = tempDir("build-preserve-symlinks", {
+    "shared/math.ts": `import { dec } from "fakedec";\nexport const x = dec(1);`,
+    "app/package.json": `{ "name": "app", "dependencies": { "fakedec": "1.0.0" } }`,
+    "app/node_modules/fakedec/package.json": `{ "name": "fakedec", "version": "1.0.0", "main": "index.js" }`,
+    "app/node_modules/fakedec/index.js": `module.exports.dec = n => n + " fakedec-from-app-node-modules";`,
+    "app/index.ts": `import { x } from "./shared/math.ts";\nconsole.log("got", x);`,
+  });
+  // realpath the base so the only symlink in play is the one created below
+  // (macOS tmpdir lives under /var -> /private/var)
+  const root = realpathSync(String(dir));
+  // "junction" avoids needing symlink privileges on Windows; the type argument
+  // is ignored on POSIX. The resolver dereferences junctions like symlinks.
+  fs.symlinkSync(join(root, "shared"), join(root, "app", "shared"), "junction");
+
+  async function build(args: string[], outdir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "--outdir", outdir],
+      env: bunEnv,
+      cwd: root,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const bundle =
+      exitCode === 0 ? await Bun.file(join(root, outdir, fs.readdirSync(join(root, outdir))[0])).text() : "";
+    return { stderr, exitCode, bundle };
+  }
+
+  // Default: the entry realpaths to shared/math.ts, which has no node_modules
+  // with "fakedec" above it (matches node's and esbuild's default).
+  {
+    const { stderr, exitCode } = await build([join("app", "shared", "math.ts")], "out-default");
+    expect(stderr).toContain('Could not resolve: "fakedec"');
+    expect(exitCode).not.toBe(0);
+  }
+
+  // --preserve-symlinks with the entry point itself behind the symlink:
+  // resolution keeps the link path, so app/node_modules/fakedec is found.
+  {
+    const { stderr, exitCode, bundle } = await build(
+      ["--preserve-symlinks", join("app", "shared", "math.ts")],
+      "out-entry",
+    );
+    expect(stderr).not.toContain("Could not resolve");
+    expect(exitCode).toBe(0);
+    expect(bundle).toContain("fakedec-from-app-node-modules");
+  }
+
+  // --preserve-symlinks with the symlinked file reached through an import.
+  {
+    const { stderr, exitCode, bundle } = await build(["--preserve-symlinks", join("app", "index.ts")], "out-import");
+    expect(stderr).not.toContain("Could not resolve");
+    expect(exitCode).toBe(0);
+    expect(bundle).toContain("fakedec-from-app-node-modules");
+  }
 });

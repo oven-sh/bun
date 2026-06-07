@@ -1733,7 +1733,16 @@ impl<'a> Resolver<'a> {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                     let symlink_path =
                         unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                    if !symlink_path.is_empty() {
+                    // A composed realpath cached by a realpath-mode resolver
+                    // (`symlink_is_composed`) must not leak into a
+                    // `preserve_symlinks` resolution: the entry is not a
+                    // symlink, and rewriting the path would undo the
+                    // preserved link spelling. An actual symlink's target is
+                    // applied in both modes.
+                    if !symlink_path.is_empty()
+                        && !(self.opts.preserve_symlinks
+                            && query.entry().cache().symlink_is_composed)
+                    {
                         path.set_realpath(symlink_path);
                         if !result.file_fd.is_valid() {
                             result.file_fd = query.entry().cache().fd;
@@ -3451,6 +3460,7 @@ impl<'a> Resolver<'a> {
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
+        DirInfo::sync_preserve_symlinks_mode(self.opts.preserve_symlinks);
         Self::assert_valid_cache_key(dir_path);
         let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
@@ -4146,6 +4156,7 @@ impl<'a> Resolver<'a> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
         // doesn't keep `self` borrowed across the body.
         let _unlock = self.mutex.lock_guard();
+        DirInfo::sync_preserve_symlinks_mode(self.opts.preserve_symlinks);
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {

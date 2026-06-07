@@ -367,6 +367,12 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub kind: EntryKind,
+    /// `symlink` was composed from a realpath'd parent directory
+    /// (`set_cache_symlink`) rather than read from an actual symlink
+    /// (`resolve_kind`). Composed values assume realpath-based resolution,
+    /// so `preserve_symlinks` resolvers sharing this process-wide cache must
+    /// not consume them; an actual symlink's target is valid in both modes.
+    pub symlink_is_composed: bool,
 }
 
 impl Default for EntryCache {
@@ -375,6 +381,7 @@ impl Default for EntryCache {
             symlink: Interned::EMPTY,
             fd: Fd::INVALID,
             kind: EntryKind::File,
+            symlink_is_composed: false,
         }
     }
 }
@@ -431,10 +438,14 @@ impl Entry {
         self.cache.set(c);
     }
 
+    /// Cache a realpath composed from the parent directory's `abs_real_path`
+    /// (see `EntryCache::symlink_is_composed`). Targets of actual symlinks
+    /// are only ever written by `resolve_kind`.
     #[inline(always)]
     pub fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
+        c.symlink_is_composed = true;
         self.cache.set(c);
     }
 
@@ -837,6 +848,7 @@ impl DirEntry {
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
+                    symlink_is_composed: false,
                 }));
                 addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
                 p
@@ -2273,6 +2285,7 @@ impl RealFS {
             kind: EntryKind::File,
             symlink: Interned::EMPTY,
             fd: Fd::INVALID,
+            symlink_is_composed: false,
         };
 
         let dir = dir_;

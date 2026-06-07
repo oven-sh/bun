@@ -1410,6 +1410,7 @@ pub mod fs {
                 kind: EntryKind::File,
                 symlink: Interned::EMPTY,
                 fd: Fd::INVALID,
+                symlink_is_composed: false,
             };
 
             let combo: [&[u8]; 2] = [dir_, base];

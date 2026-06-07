@@ -633,9 +633,27 @@ impl Execution {
             group_log::log(format_args!("-> entry.timeout: 0"));
             entry.timespec = Timespec::EPOCH;
         }
+
+        // A hook registered during `--preload` (e.g. a preload script's
+        // `beforeAll`) executes here, after `loadPreloads()` cleared
+        // `vm.is_in_preload`. Flag its whole execution window — including
+        // async continuations, since the entry stays active until its promise
+        // settles — so `mock.module()` inside it installs process-lifetime
+        // mocks like preload top-level code. Only hooks can carry
+        // `AddedInPhase::Preload` (`test()` is rejected during preload), and
+        // jest ordering runs tests only after `beforeAll` hooks settle, so no
+        // test callback can observe the flag.
+        if entry.added_in_phase == AddedInPhase::Preload {
+            VirtualMachine::get().as_mut().is_in_preload_hook = true;
+        }
     }
 
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
+    fn on_entry_completed(entry: NonNull<ExecutionEntry>) {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        if unsafe { entry.as_ref() }.added_in_phase == AddedInPhase::Preload {
+            VirtualMachine::get().as_mut().is_in_preload_hook = false;
+        }
+    }
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {

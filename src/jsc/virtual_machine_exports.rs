@@ -27,7 +27,10 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
 
 // HOST_EXPORT(Bun__VirtualMachine__isInPreload, c)
 pub fn is_in_preload(this: &VirtualMachine) -> bool {
-    this.is_in_preload
+    // Hooks registered during `--preload` (e.g. a preload `beforeAll`) run
+    // later, during a test file's execution phase, but mocks they install
+    // must be process-lifetime like preload top-level code.
+    this.is_in_preload || this.is_in_preload_hook
 }
 
 // HOST_EXPORT(Bun__getVM, c)

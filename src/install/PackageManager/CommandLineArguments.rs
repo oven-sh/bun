@@ -1559,10 +1559,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // cwd and hit ENOENT (or walk into a wrong absolute path). After the
         // first successful chdir the process cwd IS the requested target, so
         // the subsequent parse can safely skip.
-        static CWD_APPLIED: std::sync::atomic::AtomicBool =
-            std::sync::atomic::AtomicBool::new(false);
+        static CWD_APPLIED: core::sync::atomic::AtomicBool =
+            core::sync::atomic::AtomicBool::new(false);
         if let Some(cwd_) = args.option(b"--cwd") {
-            if !CWD_APPLIED.load(std::sync::atomic::Ordering::Relaxed) {
+            if !CWD_APPLIED.load(core::sync::atomic::Ordering::Relaxed) {
                 let mut buf = PathBuffer::uninit();
                 let mut buf2 = PathBuffer::uninit();
 
@@ -1593,7 +1593,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     );
                     Global::crash();
                 }
-                CWD_APPLIED.store(true, std::sync::atomic::Ordering::Relaxed);
+                CWD_APPLIED.store(true, core::sync::atomic::Ordering::Relaxed);
             }
         }
 

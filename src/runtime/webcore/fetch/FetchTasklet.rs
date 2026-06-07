@@ -1289,13 +1289,26 @@ impl FetchTasklet {
             BunString::static_(fail.name())
         };
 
+        // The ECONNRESET tag has two producers: the mid-TLS-handshake reset
+        // sentinel (`get_cert_error_from_no`) and the plain-HTTP sendfile
+        // body path surfacing the raw errno (`SendFile::write`, which is
+        // `url.is_http()`-only). Only emit the TLS-specific message when some
+        // hop of this request actually performs a TLS handshake.
+        let used_tls = self.http.as_ref().is_some_and(|http_| {
+            http_.url.is_https()
+                || http_
+                    .http_proxy
+                    .as_ref()
+                    .is_some_and(|proxy| proxy.is_https())
+        });
+
         let message = match fail {
             e if e == err!("ConnectionClosed") => BunString::static_(
                 "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
             ),
             // Connection reset/closed before the TLS handshake completed;
             // message matches Node's ConnResetException for the same case.
-            e if e == err!("ECONNRESET") => BunString::static_(
+            e if e == err!("ECONNRESET") && used_tls => BunString::static_(
                 "Client network socket disconnected before secure TLS connection was established",
             ),
             e if e == err!("FailedToOpenSocket") => {

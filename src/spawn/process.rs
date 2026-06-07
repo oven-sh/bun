@@ -7,10 +7,7 @@ use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
-#[cfg(all(
-    any(target_os = "linux", target_os = "android", target_os = "macos"),
-    not(target_env = "ohos")
-))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -1748,16 +1745,10 @@ mod spawn_process_body {
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
-    #[cfg(all(
-        any(target_os = "linux", target_os = "android", target_os = "macos"),
-        not(target_env = "ohos")
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     struct AutoCloseFd(Fd);
 
-    #[cfg(all(
-        any(target_os = "linux", target_os = "android", target_os = "macos"),
-        not(target_env = "ohos")
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -1773,10 +1764,7 @@ mod spawn_process_body {
         }
     }
 
-    #[cfg(all(
-        any(target_os = "linux", target_os = "android", target_os = "macos"),
-        not(target_env = "ohos")
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl Drop for AutoCloseFd {
         fn drop(&mut self) {
             if self.0 != Fd::INVALID {
@@ -2915,16 +2903,10 @@ mod spawn_process_body {
             safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android", target_os = "macos"),
-                not(target_env = "ohos")
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android", target_os = "macos"),
-                not(target_env = "ohos")
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -2934,10 +2916,7 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         impl JobControl {
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android", target_os = "macos"),
-                not(target_env = "ohos")
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             pub(crate) fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -2975,10 +2954,7 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android", target_os = "macos"),
-                not(target_env = "ohos")
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3066,8 +3042,7 @@ mod spawn_process_body {
                 // the defer immediately below — registered here (not in the
                 // post-spawn `defer if (no_orphans)` block) so spawn-failure
                 // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
-                #[cfg(not(target_env = "ohos"))]
+                // OHOS: prctl verified available on 2026-06-07.
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3079,8 +3054,7 @@ mod spawn_process_body {
                     // between disarm and `onProcessExit`→`killDescendants()` escapes
                     // to init.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
-                    // SAFETY: prctl
-                    #[cfg(not(target_env = "ohos"))]
+                    // OHOS: prctl verified available on 2026-06-07.
                     let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
                 }
             }
@@ -3231,10 +3205,8 @@ mod spawn_process_body {
                     && (cfg!(any(target_os = "linux", target_os = "android"))
                         || cfg!(target_os = "macos"))
                 {
-                    #[cfg(not(target_env = "ohos"))]
+                    // OHOS: pidfd_open and prctl both verified available on 2026-06-07.
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
-                    #[cfg(target_env = "ohos")]
-                    let _ppid = 0;
                     #[cfg(target_os = "macos")]
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
                         process.pid,
@@ -3245,10 +3217,7 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(all(
-                        any(target_os = "linux", target_os = "android"),
-                        not(target_env = "ohos")
-                    ))]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
@@ -3258,12 +3227,6 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    // OHOS: wait_linux_signalfd is incompatible (prctl triggers SIGSYS,
-                    // pidfd_open blocked). Fall through to the plain poll()+wait4() loop
-                    // which uses socketpair + drain_fd + wait4 — all confirmed working
-                    // on OHOS via C diagnostic tests (spawnsync_pipe_test.c).
-                    #[cfg(target_env = "ohos")]
-                    let r: Option<Maybe<Status>> = None;
                     #[cfg(not(any(
                         target_os = "linux",
                         target_os = "android",
@@ -3646,10 +3609,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(all(
-            any(target_os = "linux", target_os = "android"),
-            not(target_env = "ohos")
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

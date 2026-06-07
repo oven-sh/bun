@@ -82,6 +82,87 @@ test(
   timeout,
 );
 
+// Regression: terminating a worker that had just spawned children of its own
+// freed its VirtualMachine in shutdown() while the children were still inside
+// start_vm() reading it (transform options, env clone, standalone graph) —
+// ASAN heap-use-after-free in VirtualMachine::init_worker. shutdown() now
+// terminates its children and waits for them to get past that access first.
+test(
+  "terminating a worker while its nested children are starting does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${perRound}; j++) new Worker("data:text/javascript,");
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${rounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          // The children are still starting up on their own threads; this
+          // used to free the middle worker's VM out from under them.
+          await middle.terminate();
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: a child whose entry-point resolution fails (revoked blob URL)
+// while its termination is already in flight used to crash on the error
+// path: flush_logs panicked with "unhandled exception" on JsError::Terminated,
+// and the stale TerminationException tripped
+// ASSERT(vm.hasTerminationRequest()) in VMTraps::deferTerminationSlow.
+test(
+  "terminating a worker whose children fail entry resolution does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${perRound}; j++) {
+            const blob = new Blob(["postMessage(1);"], { type: "application/javascript" });
+            const url = URL.createObjectURL(blob);
+            new Worker(url);
+            URL.revokeObjectURL(url);
+          }
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${rounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          await middle.terminate();
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

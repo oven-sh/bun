@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 
@@ -49,7 +49,7 @@ describe.concurrent("path buffer pool (used by Bun.which)", () => {
           console.log("OK");
         `,
       ],
-      env: { ...bunEnv, PATH: String(dir) },
+      env: mergeWindowEnvs([bunEnv, { PATH: String(dir) }]),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -102,7 +102,7 @@ describe.concurrent("path buffer pool (used by Bun.which)", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(String(files), "main.js")],
-      env: { ...bunEnv, PATH: String(dir) },
+      env: mergeWindowEnvs([bunEnv, { PATH: String(dir) }]),
       stdout: "pipe",
       stderr: "pipe",
     });

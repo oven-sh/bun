@@ -857,11 +857,7 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
             npm_config_registry: `http://localhost:${port}/`,
           },
         });
-        return Promise.all([
-          subprocess.stderr.text(),
-          subprocess.stdout.text(),
-          subprocess.exited,
-        ] as const);
+        return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
       };
 
       // First run creates the cache root under umask 0o002 and installs into it.

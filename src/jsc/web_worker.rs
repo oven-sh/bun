@@ -1217,8 +1217,17 @@ impl WebWorker {
         let mut exit_code: i32 = 0;
         let mut global_object: Option<*const JSGlobalObject> = None;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
-            // other thread can dereference it now — `&mut` is exclusive.
+            // SAFETY: vm_ptr valid; unpublished above under vm_lock, so the
+            // vm_lock-guarded readers (notify_need_termination /
+            // terminate_all_and_wait) can no longer reach it. The HTTP client
+            // thread may still dereference it through a `FetchTasklet`'s
+            // gated `javascript_vm` backref until the `close()` below
+            // returns; those gated sections touch only the lock-free
+            // `concurrent_tasks` queue, the uws loop, and the plain
+            // `is_shutting_down` bool — whose racy read against the store
+            // below is long-standing and tolerated (a stale `false` just
+            // means one more task lands in the queue for the drain; the gate,
+            // not the flag, is the teardown cutoff).
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM

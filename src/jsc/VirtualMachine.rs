@@ -3669,8 +3669,10 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.worker = Some(std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast());
-        // `parent_vm()` is a `BackRef`; the parent outlives this worker while
-        // `parent_poll_ref` is held (see web_worker.rs file header).
+        // `parent_vm()` is a `BackRef` kept valid through `start_vm()` (which
+        // calls this): the parent's exit path terminates-and-waits for this
+        // worker before freeing its VM (see the `parent` field doc in
+        // web_worker.rs).
         let parent = worker.parent_vm();
         vm_ref.standalone_module_graph = parent.standalone_module_graph;
         // The worker's resolver also

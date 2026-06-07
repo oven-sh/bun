@@ -331,9 +331,7 @@ describe.concurrent("fetch-tls", () => {
           // Node's exact message for this case. On Windows CI the error
           // carries a different (still ECONNRESET-coded) message, so the
           // exact-text assertion is POSIX-only.
-          expect(err.message).toBe(
-            "Client network socket disconnected before secure TLS connection was established",
-          );
+          expect(err.message).toBe("Client network socket disconnected before secure TLS connection was established");
         }
       } finally {
         for (const s of sockets) s.destroy();

@@ -1087,18 +1087,35 @@ describe("Bun.Image", () => {
       },
     );
 
-    test("fit:'outside' overshoot with raised maxPixels clamps to the per-side cap, not a crash", async () => {
-      // With maxPixels raised, the tall-thin overshoot slips past the
-      // pixel-count guards, so the scaled side must clamp to the 0x3FFFF
-      // per-side cap before reaching the i32-dim resize kernel. A 1×100000
-      // source into a 4×1 box wants 4×400000; the off-axis side clamps to
-      // 262143.
+    test("fit:'cover' tall-thin overshoot in the small-box window still rejects, never distorts", async () => {
+      // A 100×100 box keeps every pixel-count guard under the default
+      // maxPixels if the scaled side were clamped to the per-side cap
+      // (100×262143 ≈ 26M < 268M), so a clamp here would silently emit a
+      // ~38× vertically squished image. The honest scaled canvas is
+      // 100×10000000 = 1e9 pixels, which must reject.
       const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
-      const out = await new Bun.Image(tall, { maxPixels: 4_000_000_000 })
-        .resize(4, 1, { fit: "outside" })
-        .png()
-        .bytes();
-      expect(await new Bun.Image(out).metadata()).toEqual({ width: 4, height: 262143, format: "png" });
+      await expect(new Bun.Image(tall).resize(100, 100, { fit: "cover" }).png().bytes()).rejects.toThrow(/maxPixels/);
+    });
+
+    test("fit:'outside' overshoot past i32 dims rejects even with raised maxPixels, not a crash", async () => {
+      // 1×100000 into a 30000×1 box wants 30000×3000000000 — the off-axis
+      // side exceeds i32::MAX, which the resize kernel can never represent,
+      // and maxPixels: 1e15 lets the pixel-count guards pass. Must reject,
+      // never panic at the kernel's int cast.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      await expect(
+        new Bun.Image(tall, { maxPixels: 1e15 }).resize(30000, 1, { fit: "outside" }).png().bytes(),
+      ).rejects.toThrow(/maxPixels/);
+    });
+
+    test("fit:'outside' overshoot under the pixel budget resizes with the honest aspect ratio", async () => {
+      // 1×100000 into a 4×1 box → 4×400000. The off-axis side exceeds the
+      // 0x3FFFF direct-input cap but fits i32 and the default maxPixels
+      // budget (4×400000 = 1.6M), so it must succeed at full aspect — not
+      // clamp to 4×262143.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(tall).resize(4, 1, { fit: "outside" }).png().bytes();
+      expect(await new Bun.Image(out).metadata()).toEqual({ width: 4, height: 400000, format: "png" });
     });
 
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {

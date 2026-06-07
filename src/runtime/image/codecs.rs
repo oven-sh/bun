@@ -828,9 +828,12 @@ pub fn pad(
     // the center. Simpler than writing only the border strips and avoids a
     // branch per row (one tight pattern fill, then one memcpy per image
     // row). A solid-colour fill at RGBA8 auto-vectorises on the platforms
-    // we ship.
-    for px in out.chunks_exact_mut(4) {
-        px.copy_from_slice(&bg);
+    // we ship. The default transparent-black background matches the
+    // zero-initialized allocation, so skip the pass entirely then.
+    if bg != [0u8; 4] {
+        for px in out.chunks_exact_mut(4) {
+            px.copy_from_slice(&bg);
+        }
     }
     let src_stride: usize = (sw as usize) * 4;
     let dst_stride: usize = (dw as usize) * 4;

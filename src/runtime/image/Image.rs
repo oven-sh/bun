@@ -1981,7 +1981,7 @@ impl<'a> PipelineTask<'a> {
             d.rgba = next;
         }
         if let Some(r) = p.resize {
-            let t = resolve_resize(r, d.width, d.height);
+            let t = resolve_resize(r, d.width, d.height)?;
             // Guard both the resize canvas AND the H-then-V intermediate
             // (always resize_w × src_h — image_resize.cpp pass order is
             // fixed). A 1×N source → resize(W,1) has tiny input AND output
@@ -2103,7 +2103,7 @@ struct ResolvedResize {
 }
 
 /// Map a resize spec to concrete output dims given the current dims.
-fn resolve_resize(r: Resize, sw: u32, sh: u32) -> ResolvedResize {
+fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs::Error> {
     let mut w = r.w;
     // Widen before multiplying — `r.w` is user-controlled and `sh` is
     // bounded only by `max_pixels`, so the u32 product can wrap; and the
@@ -2135,22 +2135,33 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> ResolvedResize {
             Fit::Outside | Fit::Cover => sx.max(sy),
             Fit::Fill => unreachable!(),
         };
-        // Clamp to the 0x3FFFF per-side cap after scaling, mirroring the
-        // auto-height clamp above — `outside`/`cover` pick the max scale,
-        // so a tall-thin source can push the off-axis side past the cap
-        // (1×10M source into a 500×500 box → 5e9). Downstream kernels
-        // take i32 dims and `.expect()` the cast, so an unclamped value
-        // panics once a raised maxPixels lets it through the product
-        // guards; with the default maxPixels the resize_w×src_h
-        // intermediate guard still rejects these tall-thin sources.
-        w = 1u32.max(((sw as f64) * s).round().min(0x3FFFF as f64) as u32);
-        h = 1u32.max(((sh as f64) * s).round().min(0x3FFFF as f64) as u32);
-    }
-    if r.without_enlargement && (w > sw || h > sh) {
+        // `outside`/`cover` pick the max scale, so a tall-thin source can
+        // push the off-axis side arbitrarily high (1×10M source into a
+        // 500×500 box → 5e9). The dims stay exact in f64 (bounded by
+        // i32::MAX × 0x3FFFF < 2^53) so decide in float space:
+        //  - withoutEnlargement short-circuits to the source dims, same
+        //    as it always did for an over-box scale;
+        //  - a side past i32::MAX can never be represented downstream
+        //    (the resize kernel takes i32 dims), so reject it loudly —
+        //    clamping instead would silently change the aspect ratio;
+        //  - anything else narrows exactly and the caller's maxPixels
+        //    product guards decide whether the canvas is affordable.
+        let wf = ((sw as f64) * s).round().max(1.0);
+        let hf = ((sh as f64) * s).round().max(1.0);
+        if r.without_enlargement && (wf > sw as f64 || hf > sh as f64) {
+            w = sw;
+            h = sh;
+        } else if wf > i32::MAX as f64 || hf > i32::MAX as f64 {
+            return Err(codecs::Error::TooManyPixels);
+        } else {
+            w = wf as u32;
+            h = hf as u32;
+        }
+    } else if r.without_enlargement && (w > sw || h > sh) {
         w = sw;
         h = sh;
     }
-    match r.fit {
+    Ok(match r.fit {
         Fit::Fill | Fit::Inside | Fit::Outside => ResolvedResize {
             resize_w: w,
             resize_h: h,
@@ -2193,7 +2204,7 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> ResolvedResize {
                 off_y: (out_h - h) / 2,
             }
         }
-    }
+    })
 }
 
 fn apply_orientation(

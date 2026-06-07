@@ -1693,11 +1693,9 @@ impl FrameworkRouter {
                         }
 
                         if param_count > 64 {
-                            // Highlight the whole path: unlike `fail()` callers
-                            // inside `parse`, there is no narrower span to point
-                            // at. Leaving the cursor unset (the `empty()`
-                            // sentinel) previously made `TinyLog::print` slice
-                            // `rel_path[u32::MAX..]` and crash the dev server.
+                            // Use `fail()` so the cursor is set, highlighting
+                            // the whole path: unlike `fail()` callers inside
+                            // `parse`, there is no narrower span to point at.
                             let _ = log.fail(
                                 format_args!("Pattern cannot have more than 64 param"),
                                 0,

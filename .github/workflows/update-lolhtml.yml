@@ -91,6 +91,9 @@ jobs:
         run: |
           set -euo pipefail
           sed -i -E 's/^(const LOLHTML_COMMIT = ")[0-9a-f]{40}(";)$/\1'"$LATEST"'\2/' scripts/build/deps/lolhtml.ts
+          # process.versions pins the same commit; update it or the process.versions test fails
+          sed -i -E 's/^([[:space:]]*lolhtml: ")[0-9a-f]{40}(",)$/\1'"$LATEST"'\2/' test/js/node/process/process.test.js
+          grep -qF "lolhtml: \"$LATEST\"" test/js/node/process/process.test.js
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
@@ -99,6 +102,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
             scripts/build/deps/lolhtml.ts
+            test/js/node/process/process.test.js
           commit-message: "deps: update lolhtml to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update lolhtml to ${{ steps.check-version.outputs.tag }}"
           delete-branch: true

@@ -676,10 +676,16 @@ impl StandaloneModuleGraph {
                         raw_const.add(bytecode_ptr.offset as usize),
                         bytecode_ptr.length as usize,
                     );
-                    let mi = core::slice::from_raw_parts(
-                        raw_const.add(module_info_ptr.offset as usize),
-                        module_info_ptr.length as usize,
-                    );
+                    // `check_ptr` skips zero-length pointers, so their offset is
+                    // unvalidated; don't even compute `add(offset)` for them.
+                    let mi: &[u8] = if module_info_ptr.length > 0 {
+                        core::slice::from_raw_parts(
+                            raw_const.add(module_info_ptr.offset as usize),
+                            module_info_ptr.length as usize,
+                        )
+                    } else {
+                        b""
+                    };
                     bun_wyhash::hash_with_seed(bun_wyhash::hash(bc), mi)
                 };
                 if actual != u64::from_le_bytes(module.bytecode_hash) {
@@ -744,6 +750,13 @@ impl StandaloneModuleGraph {
                     wtf_string: BunString::empty(),
                 },
             );
+        }
+
+        // The writer never emits duplicate module names, and `entry_point_id`
+        // was validated against the record count while it indexes this
+        // (deduplicating) map, so any `put` overwrite above means corruption.
+        if modules.count() != modules_list_count {
+            return Err(err!("Corrupted module graph: duplicate module name"));
         }
 
         modules.lock_pointers(); // make the pointers stable forever

@@ -339,8 +339,7 @@ pub fn link_into_macho(
     let picked = (0..n_slots)
         .find(|i| {
             let off = table_off + i * size_of::<Slot>();
-            let magic =
-                u64::from_le_bytes(macho.data[off..off + 8].try_into().unwrap());
+            let magic = u64::from_le_bytes(macho.data[off..off + 8].try_into().unwrap());
             let offset = u64::from_le_bytes(macho.data[off + 8..off + 16].try_into().unwrap());
             let length = u64::from_le_bytes(macho.data[off + 16..off + 24].try_into().unwrap());
             (magic & 0x00FF_FFFF_FFFF_FFFF) == Slot::MAGIC_BASE && offset == 0 && length == 0
@@ -358,7 +357,8 @@ pub fn link_into_macho(
     let hash = bun_wyhash::hash(addon_bytes);
     macho.data[dest_off..dest_off + 8].copy_from_slice(&magic.to_le_bytes());
     macho.data[dest_off + 8..dest_off + 16].copy_from_slice(&offset.to_le_bytes());
-    macho.data[dest_off + 16..dest_off + 24].copy_from_slice(&(addon_bytes.len() as u64).to_le_bytes());
+    macho.data[dest_off + 16..dest_off + 24]
+        .copy_from_slice(&(addon_bytes.len() as u64).to_le_bytes());
     macho.data[dest_off + 24..dest_off + 32].copy_from_slice(&hash.to_le_bytes());
     macho.data[dest_off + 32..dest_off + 256].copy_from_slice(&path_buf);
 

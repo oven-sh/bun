@@ -70,7 +70,7 @@ img.resize(800, 600, { filter: "mitchell" });
 | `"cover"`          | Preserve aspect ratio; fill the box and center-crop the rest   |
 | `"contain"`        | Preserve aspect ratio; letterbox with `background` to fill box |
 
-For `fit: "contain"`, pass `background: { r, g, b, alpha }` to set the letterbox colour (RGB 0–255, alpha 0–1). The default is transparent black — renders as black in JPEG (alpha dropped) and a transparent letterbox in PNG/WebP, so callers can composite the output without an extra step.
+For `fit: "contain"`, pass `background: { r, g, b, alpha }` to set the letterbox color (RGB 0–255, alpha 0–1). The default is transparent black — renders as black in JPEG (alpha dropped) and a transparent letterbox in PNG/WebP, so callers can composite the output without an extra step.
 
 `filter` selects the resampling kernel. The default `"lanczos3"` is the right choice for photographs.
 

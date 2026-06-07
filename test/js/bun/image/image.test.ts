@@ -1075,6 +1075,18 @@ describe("Bun.Image", () => {
       expect({ fit, w, h }).toEqual({ fit, w: 8, h: 8 });
     });
 
+    test.each(["outside", "cover"] as const)(
+      "fit:'%s' tall-thin overshoot rejects with maxPixels, not a crash",
+      async fit => {
+        // 1×100000 source into a 50000×1 box → max scale = 50000, so the
+        // off-axis side wants 100000×50000 = 5e9 (past u32). Must surface
+        // as the maxPixels error, never a panic or a silently distorted
+        // canvas.
+        const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+        await expect(new Bun.Image(tall).resize(50000, 1, { fit }).png().bytes()).rejects.toThrow(/maxPixels/);
+      },
+    );
+
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
       const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
       const { data } = decodePngRaw(out);

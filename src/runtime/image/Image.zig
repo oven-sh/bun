@@ -1257,10 +1257,10 @@ pub const PipelineTask = struct {
             // canvases yet a W×N intermediate; with W=262143, N=16383 that's
             // a 17 GiB alloc from a ~200-byte PNG. The src_w×dst_h
             // cross-product is bounded by max(input, output) so doesn't need
-            // its own check. The `contain` pad canvas (out_w × out_h) is
-            // separately capped at `doResize`'s 0x3FFFF per side, so the
-            // product stays within max_pixels by construction when both
-            // sides were clamped there.
+            // its own check. The third clause guards the `contain` pad
+            // canvas (out_w × out_h): each side is capped at `doResize`'s
+            // 0x3FFFF, but the product of two capped sides is still ~256×
+            // the default max_pixels, so it needs its own check.
             if (@as(u64, t.resize_w) * t.resize_h > this.max_pixels or
                 @as(u64, t.resize_w) * d.height > this.max_pixels or
                 @as(u64, t.out_w) * t.out_h > this.max_pixels)
@@ -1347,8 +1347,17 @@ pub const PipelineTask = struct {
                 .outside, .cover => @max(sx, sy),
                 .fill => unreachable,
             };
-            w = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sw)) * s))));
-            h = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sh)) * s))));
+            // Saturate at u32 max before @intFromFloat — `outside`/`cover`
+            // pick the max scale, so a tall-thin source can push the
+            // off-axis side past u32 (1×10M source into a 500×500 box →
+            // 5e9) and out-of-range @intFromFloat is safety-checked UB.
+            // Saturating keeps the value huge so the maxPixels guard
+            // rejects with TooManyPixels; clamping to the 0x3FFFF per-side
+            // cap instead could shrink the product back under maxPixels
+            // and silently emit an aspect-distorted image.
+            const umax: f64 = @floatFromInt(std.math.maxInt(u32));
+            w = @max(1, @as(u32, @intFromFloat(@min(umax, @round(@as(f64, @floatFromInt(sw)) * s)))));
+            h = @max(1, @as(u32, @intFromFloat(@min(umax, @round(@as(f64, @floatFromInt(sh)) * s)))));
         }
         if (r.without_enlargement and (w > sw or h > sh)) {
             w = sw;

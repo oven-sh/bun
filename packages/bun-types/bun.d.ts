@@ -8252,6 +8252,17 @@ declare module "bun" {
       autoOrient?: boolean;
     }
 
+    /**
+     * RGBA letterbox fill for `fit: "contain"`. RGB channels are `0..255`;
+     * `alpha` is `0..1` (Sharp convention). Missing channels default to `0`.
+     */
+    interface Background {
+      r?: number;
+      g?: number;
+      b?: number;
+      alpha?: number;
+    }
+
     interface ResizeOptions {
       /** Resampling kernel. @default "lanczos3" */
       filter?: Filter;
@@ -8277,7 +8288,7 @@ declare module "bun" {
        * renders as black in JPEG (alpha dropped) and as a transparent
        * letterbox in PNG/WebP. Ignored for other fit modes.
        */
-      background?: { r?: number; g?: number; b?: number; alpha?: number };
+      background?: Background;
     }
 
     interface ModulateOptions {

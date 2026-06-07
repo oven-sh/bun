@@ -1988,10 +1988,11 @@ impl<'a> PipelineTask<'a> {
             // canvases yet a W×N intermediate; with W=262143, N=16383
             // that's a 17 GiB alloc from a ~200-byte PNG. The src_w×dst_h
             // cross-product is bounded by max(input, output) so doesn't
-            // need its own check. The `contain` pad canvas (out_w × out_h)
-            // is separately capped at `do_resize`'s 0x3FFFF per side, so
-            // the product stays within max_pixels by construction when
-            // both sides were clamped there.
+            // need its own check. The third clause guards the `contain`
+            // pad canvas (out_w × out_h): each side is capped at
+            // `do_resize`'s 0x3FFFF, but the product of two capped sides
+            // is still ~256× the default max_pixels, so it needs its own
+            // check.
             if (t.resize_w as u64) * (t.resize_h as u64) > self.max_pixels
                 || (t.resize_w as u64) * (d.height as u64) > self.max_pixels
                 || (t.out_w as u64) * (t.out_h as u64) > self.max_pixels
@@ -2134,6 +2135,12 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> ResolvedResize {
             Fit::Outside | Fit::Cover => sx.max(sy),
             Fit::Fill => unreachable!(),
         };
+        // The saturating `as u32` is load-bearing: `outside`/`cover` pick
+        // the max scale, so a tall-thin source can push the off-axis side
+        // past u32 (1×10M source into a 500×500 box → 5e9). Saturation
+        // keeps the value huge so the caller's max_pixels guard rejects
+        // with TooManyPixels instead of silently emitting an
+        // aspect-distorted image.
         w = 1u32.max(((sw as f64) * s).round() as u32);
         h = 1u32.max(((sh as f64) * s).round() as u32);
     }

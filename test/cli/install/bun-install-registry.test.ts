@@ -123,6 +123,37 @@ describe("auto-install", () => {
 });
 
 describe("certificate authority", () => {
+  const mockNpmRegistryFetch = function (port: () => number): (req: Request) => Promise<Response> {
+    return async function (req: Request) {
+      const url = new URL(req.url);
+
+      if (url.pathname.endsWith("/no-deps-1.0.0.tgz")) {
+        return new Response(Bun.file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")));
+      }
+
+      if (url.pathname === "/no-deps" || url.pathname === "/no-deps/") {
+        return Response.json({
+          _id: "no-deps",
+          name: "no-deps",
+          "dist-tags": {
+            latest: "1.0.0",
+          },
+          versions: {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dependencies: {},
+              dist: {
+                tarball: `https://localhost:${port()}/no-deps-1.0.0.tgz`,
+              },
+            },
+          },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+  };
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
       if (req.url.includes("no-deps")) {
@@ -392,6 +423,109 @@ ljelkjwelkgjw;lekj;lkejflkj
     expect(out).not.toContain("no-deps");
     const err = await stderr.text();
     expect(err).toContain("HTTPThread: the CA is invalid");
+    expect(await exited).toBe(1);
+  });
+
+  test(".npmrc strict-ssl=false allows self-signed HTTPS registry and tarball", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockNpmRegistryFetch(() => server.port),
+      ...tls,
+    });
+
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+`,
+      ),
+      write(
+        join(packageDir, ".npmrc"),
+        `
+registry=https://localhost:${server.port}/
+strict-ssl=false
+`,
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    const out = await stdout.text();
+    expect(out).toContain("+ no-deps@");
+
+    const err = await stderr.text();
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("ERR_TLS_CERT_ALTNAME_INVALID");
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+  });
+
+  test("self-signed HTTPS registry is rejected when strict-ssl is not disabled", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockNpmRegistryFetch(() => server.port),
+      ...tls,
+    });
+
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+[install]
+cache = false
+`,
+      ),
+      write(
+        join(packageDir, ".npmrc"),
+        `
+registry=https://localhost:${server.port}/
+`,
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    const out = await stdout.text();
+    expect(out).not.toContain("+ no-deps@");
+
+    const err = stderrForInstall(await stderr.text());
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+
     expect(await exited).toBe(1);
   });
 });

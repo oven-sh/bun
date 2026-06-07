@@ -504,7 +504,9 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    // pinned: engines are "^20.19.0 || ^22.12.0 || >=24.0.0"; newer majors
+    // reject Bun's reported Node version at runtime, so @latest drifts red
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@21.0.0", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",

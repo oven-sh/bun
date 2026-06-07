@@ -88,7 +88,10 @@ test("bun install reports ECONNRESET when the registry resets the connection dur
     socket.on("error", () => {});
     socket.once("data", () => socket.resetAndDestroy());
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+  server.once("error", onListenError);
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
   const port = (server.address() as net.AddressInfo).port;
 
   try {

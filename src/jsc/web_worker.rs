@@ -266,10 +266,14 @@ mod live_workers {
         // OUTSTANDING==0 (A's unregister already ran, B's add hasn't), and
         // return early while B is still starting.
         OUTSTANDING.fetch_add(1, Ordering::Release);
-        // Wake terminateAllAndWait so it re-sweeps and catches this worker
-        // (it may have been created by another worker mid-sweep). No-op if
-        // nothing is waiting.
-        Futex::wake(&OUTSTANDING, 1);
+        // Wake every waiter so each re-sweeps and catches this worker (it may
+        // have been created by another worker mid-sweep). No-op if nothing is
+        // waiting. Wake-all, not wake-one: the main thread and any number of
+        // worker parents (`terminate_children_and_wait`) can wait on
+        // OUTSTANDING concurrently, and a single wake can land on a waiter
+        // whose own condition is unmet, leaving the right one queued on a
+        // stale expected value until its deadline.
+        Futex::wake(&OUTSTANDING, u32::MAX);
         MUTEX.unlock();
     }
 
@@ -297,17 +301,18 @@ mod live_workers {
         MUTEX.unlock();
     }
 
-    /// Decrement `OUTSTANDING` and wake `terminate_all_and_wait`. Split from
-    /// `unlink` so `shutdown()` can defer it until after `dispatchExit` has
-    /// posted the close task — guaranteeing `global_exit` observes that task
-    /// before draining the parent's concurrent queue. Touches no `WebWorker`
-    /// state, so it is safe even if `self` has already been freed.
+    /// Decrement `OUTSTANDING` and wake every `terminate_and_wait` waiter.
+    /// Split from `unlink` so `shutdown()` can defer it until after
+    /// `dispatchExit` has posted the close task — guaranteeing `global_exit`
+    /// observes that task before draining the parent's concurrent queue.
+    /// Touches no `WebWorker` state, so it is safe even if `self` has
+    /// already been freed.
     pub(super) fn mark_exited() {
-        // Wake any waiter in terminateAllAndWait when we hit zero. Waking
-        // unconditionally is fine (spurious wakeups just re-check the
-        // counter) and avoids a compare-before-wake race.
+        // Waking unconditionally is fine (spurious wakeups just re-check the
+        // counter) and avoids a compare-before-wake race. Wake-all, not
+        // wake-one — see the note in `register`.
         OUTSTANDING.fetch_sub(1, Ordering::Release);
-        Futex::wake(&OUTSTANDING, 1);
+        Futex::wake(&OUTSTANDING, u32::MAX);
     }
 
     pub(super) fn unregister(worker: *const WebWorker) {

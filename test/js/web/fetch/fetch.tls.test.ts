@@ -530,7 +530,10 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
+      // Bind the IPv4 loopback explicitly: `hostname: "localhost"` binds ::1
+      // only on some hosts while fetch connects to 127.0.0.1, failing with
+      // ConnectionRefused before the timeout under test can ever fire.
+      hostname: "127.0.0.1",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {

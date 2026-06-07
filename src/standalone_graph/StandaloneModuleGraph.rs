@@ -255,7 +255,7 @@ pub(crate) struct CompiledModuleGraphFile {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum FileSide {
     #[default]
     Server = 0,
@@ -263,7 +263,7 @@ pub enum FileSide {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum Encoding {
     Binary = 0,
     #[default]
@@ -273,7 +273,7 @@ pub enum Encoding {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum ModuleFormat {
     #[default]
     None = 0,
@@ -584,7 +584,7 @@ impl StandaloneModuleGraph {
         // is just as out of bounds as `> count`.
         if offsets.entry_point_id as usize >= modules_list_count {
             return Err(err!(
-                "Corrupted module graph: entry point ID is greater than module list count"
+                "Corrupted module graph: entry point ID is out of bounds"
             ));
         }
 
@@ -592,13 +592,40 @@ impl StandaloneModuleGraph {
         modules.reserve(modules_list_count);
         for i in 0..modules_list_count {
             // SAFETY: index < count derived from byte length above; bytes live for 'static.
-            let module: CompiledModuleGraphFile = unsafe {
-                core::ptr::read_unaligned(
-                    modules_list_base
-                        .add(i * size_of::<CompiledModuleGraphFile>())
-                        .cast::<CompiledModuleGraphFile>(),
-                )
-            };
+            let record_base =
+                unsafe { modules_list_base.add(i * size_of::<CompiledModuleGraphFile>()) };
+
+            // The record's `#[repr(u8)]` enum fields come from the untrusted
+            // blob, and materializing an enum from an out-of-range discriminant
+            // is UB, so validate the raw bytes before `read_unaligned` produces
+            // the typed record.
+            {
+                // SAFETY: `offset < size_of::<CompiledModuleGraphFile>()` and the
+                // whole record is in-bounds per above; u8 reads need no alignment.
+                let enum_byte = |offset: usize| -> u8 { unsafe { record_base.add(offset).read() } };
+                use core::mem::offset_of;
+                if Loader::from_repr(enum_byte(offset_of!(CompiledModuleGraphFile, loader)))
+                    .is_none()
+                    || Encoding::from_repr(enum_byte(offset_of!(CompiledModuleGraphFile, encoding)))
+                        .is_none()
+                    || ModuleFormat::from_repr(enum_byte(offset_of!(
+                        CompiledModuleGraphFile,
+                        module_format
+                    )))
+                    .is_none()
+                    || FileSide::from_repr(enum_byte(offset_of!(CompiledModuleGraphFile, side)))
+                        .is_none()
+                {
+                    return Err(err!(
+                        "Corrupted module graph: invalid enum value in module record"
+                    ));
+                }
+            }
+
+            // SAFETY: record is in-bounds per above and every enum discriminant
+            // was just validated.
+            let module: CompiledModuleGraphFile =
+                unsafe { core::ptr::read_unaligned(record_base.cast::<CompiledModuleGraphFile>()) };
             let module = &module;
 
             check_ptr(raw_len, module.name, true)?;

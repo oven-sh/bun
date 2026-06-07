@@ -21,6 +21,7 @@ use enum_map::Enum;
     Debug,
     Hash,
     Enum,
+    strum::FromRepr,
     strum::IntoStaticStr,
     strum::VariantNames,
 )]

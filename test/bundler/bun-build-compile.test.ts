@@ -605,6 +605,7 @@ describe("compiled executable bytecode integrity", () => {
 
   interface GraphLocation {
     base: number;
+    recordSize: number;
     records: number[];
   }
 
@@ -648,7 +649,7 @@ describe("compiled executable bytecode integrity", () => {
         }
         records.push(rec);
       }
-      if (valid) result = { base, records };
+      if (valid) result = { base, recordSize, records };
     }
     return result;
   }
@@ -709,9 +710,7 @@ describe("compiled executable bytecode integrity", () => {
   // Writes the corrupted executable to a sibling path: overwriting the
   // original in place can hit ETXTBSY while the kernel still holds it open
   // from the pristine run.
-  async function corruptExecutable(exePath: string, fieldOffset: number): Promise<string> {
-    const exe = Buffer.from(await Bun.file(exePath).arrayBuffer());
-    expect(corruptRegions(exe, fieldOffset)).toBeGreaterThan(0);
+  async function writeCorrupted(exePath: string, exe: Buffer): Promise<string> {
     const corruptedPath = isWindows ? exePath.replace(/\.exe$/, "-corrupted.exe") : `${exePath}-corrupted`;
     await Bun.write(corruptedPath, exe);
     chmodSync(corruptedPath, 0o755);
@@ -723,9 +722,16 @@ describe("compiled executable bytecode integrity", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(await sign.exited).toBe(0);
+      const [, , signExit] = await Promise.all([sign.stdout.text(), sign.stderr.text(), sign.exited]);
+      expect(signExit).toBe(0);
     }
     return corruptedPath;
+  }
+
+  async function corruptExecutable(exePath: string, fieldOffset: number): Promise<string> {
+    const exe = Buffer.from(await Bun.file(exePath).arrayBuffer());
+    expect(corruptRegions(exe, fieldOffset)).toBeGreaterThan(0);
+    return writeCorrupted(exePath, exe);
   }
 
   for (const format of ["cjs", "esm"] as const) {
@@ -767,5 +773,28 @@ describe("compiled executable bytecode integrity", () => {
     expect(corrupted.stdout).toContain("module-info-integrity-marker");
     expect(corrupted.stderr).not.toContain("Cache hit for sourceCode");
     expect(corrupted.exitCode).toBe(0);
+  }, 60_000);
+
+  test("out-of-range enum byte in a module record is rejected as corruption", async () => {
+    using dir = tempDir("record-enum-integrity", {
+      "app.js": `console.log("record-enum-integrity-marker");`,
+    });
+    const exePath = await buildExecutable(String(dir), "cjs");
+
+    const exe = Buffer.from(await Bun.file(exePath).arrayBuffer());
+    const graph = findModuleGraph(exe);
+    expect(graph).not.toBeNull();
+    // Stomp the record's loader byte (after the StringPointers and, in the
+    // current format, the 8-byte bytecode hash). Materializing a #[repr(u8)]
+    // enum from an out-of-range discriminant is UB, so the loader must treat
+    // it as graph corruption and refuse to start, not read garbage.
+    const loaderOffset = graph!.recordSize === 60 ? 57 : 49;
+    exe[graph!.records[0] + loaderOffset] = 0xff;
+    const corruptedPath = await writeCorrupted(exePath, exe);
+
+    const corrupted = await runExecutable(corruptedPath);
+    expect(corrupted.stdout).not.toContain("record-enum-integrity-marker");
+    expect(corrupted.stderr).toContain("Corrupted module graph");
+    expect(corrupted.exitCode).not.toBe(0);
   }, 60_000);
 });

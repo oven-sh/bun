@@ -1163,7 +1163,13 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             // otherwise the next import should go straight back to the
             // (restored) preload mock.
             auto ident = JSC::Identifier::fromString(vm, path);
-            moduleLoader->removeEntry(ident);
+            {
+                // JSModuleLoader::visitChildrenImpl iterates the registry maps
+                // on the GC thread under cellLock(); take the same lock so
+                // the removal can't race it.
+                WTF::Locker locker { moduleLoader->cellLock() };
+                moduleLoader->removeEntry(ident);
+            }
             auto* pathString = JSC::jsString(vm, path);
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {

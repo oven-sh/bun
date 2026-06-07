@@ -37,6 +37,7 @@ bun_perf.workspace = true
 bun_resolver.workspace = true
 bun_sourcemap.workspace = true
 bun_sys.workspace = true
+bun_wyhash.workspace = true
 bun_threading.workspace = true
 bun_url.workspace = true
 bun_zlib.workspace = true

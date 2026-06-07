@@ -1207,10 +1207,7 @@ describe("Bun.Image", () => {
       // resets to the source dims — but the long axis still center-crops
       // down to the box, matching Sharp's reset-then-crop semantics.
       const wide = makePng(200, 3, () => [255, 0, 0, 255]);
-      const out = await new Bun.Image(wide)
-        .resize(100, 100, { fit: "cover", withoutEnlargement: true })
-        .png()
-        .bytes();
+      const out = await new Bun.Image(wide).resize(100, 100, { fit: "cover", withoutEnlargement: true }).png().bytes();
       const { w, h } = decodePngRaw(out);
       expect({ w, h }).toEqual({ w: 100, h: 3 });
     });

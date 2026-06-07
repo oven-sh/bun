@@ -396,6 +396,12 @@ test/js/web/websocket/websocket.test.js
 test/js/web/workers/worker.test.ts
 test/regression/issue/11664.test.ts
 
+# Worker teardown intentionally leaks when a parent context is gone before the
+# close task runs (thread-held Worker ref, detached thread bookkeeping); see
+# the file header of src/jsc/web_worker.rs. These tests terminate workers while
+# nested children are still starting, which is exactly that window.
+test/js/web/workers/worker-terminate-lifetime.test.ts
+
 # ASSERTION FAILED: m_cellState == CellState::DefinitelyWhite
 test/js/node/tls/node-tls-upgrade.test.ts
 test/js/third_party/duckdb/duckdb-basic-usage.test.ts

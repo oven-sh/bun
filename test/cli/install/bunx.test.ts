@@ -817,6 +817,69 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
       expect(exited).toBe(0);
     });
+
+    // bunx creates its cache root in the shared temp dir, and
+    // `is_trusted_cache_root` refuses roots that are group/other-writable. A
+    // permissive umask must not widen the root bunx creates for itself, or
+    // the second invocation refuses the cache the first one made (#29723).
+    it.skipIf(isWindows)("reuses its own cache when created under a permissive umask", async () => {
+      const urls: string[] = [];
+      setHandler(
+        dummyRegistry(urls, {
+          "1.0.0": {
+            bin: {
+              "multi-tool": "bin/multi-tool.js",
+            },
+            as: "1.0.0",
+          },
+        }),
+      );
+
+      const run = () => {
+        const subprocess = spawn({
+          cmd: [
+            "sh",
+            "-c",
+            `umask 0002 && exec "$@"`,
+            "sh",
+            bunExe(),
+            "x",
+            "--package",
+            "multi-tool-pkg",
+            "multi-tool",
+          ],
+          cwd: x_dir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: {
+            ...env,
+            npm_config_registry: `http://localhost:${port}/`,
+          },
+        });
+        return Promise.all([
+          subprocess.stderr.text(),
+          subprocess.stdout.text(),
+          subprocess.exited,
+        ] as const);
+      };
+
+      // First run creates the cache root under umask 0o002 and installs into it.
+      {
+        const [err, out, exited] = await run();
+        expect(err).not.toContain("refusing to use bunx cache directory");
+        expect(out).toContain("EXECUTED: multi-tool (main binary)");
+        expect(exited).toBe(0);
+      }
+
+      // Second run must accept the cache root the first run just created.
+      {
+        const [err, out, exited] = await run();
+        expect(err).not.toContain("refusing to use bunx cache directory");
+        expect(out).toContain("EXECUTED: multi-tool (main binary)");
+        expect(exited).toBe(0);
+      }
+    });
   });
 });
 

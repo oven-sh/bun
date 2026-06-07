@@ -1231,6 +1231,12 @@ impl BunxCommand {
             Global::exit(1);
         }
 
+        // The bunx cache root lives in the shared temp directory, and
+        // `is_trusted_cache_root` refuses group/other-writable roots. Request
+        // 0o755 explicitly instead of the umask-honoring default (0o777) so a
+        // permissive umask like 0o002 cannot widen the root into a state bunx
+        // itself rejects; the kernel can only subtract bits from 0o755.
+        bun_sys::mkdir_recursive_at_mode(Fd::cwd(), bunx_cache_dir, 0o755)?;
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {

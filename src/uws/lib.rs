@@ -565,7 +565,22 @@ pub mod ssl_wrapper {
             };
             // we already sent the ssl shutdown
             if Self::r(this).flags.sent_ssl_shutdown() || Self::r(this).flags.fatal_error() {
-                return Self::r(this).flags.received_ssl_shutdown();
+                let received = Self::r(this).flags.received_ssl_shutdown();
+                if fast_shutdown {
+                    // A fast shutdown is a full teardown. The SSL-level
+                    // shutdown already happened (e.g. the peer's close_notify
+                    // was processed mid handle_reading, which sets
+                    // sent_ssl_shutdown before flushing the final decrypted
+                    // bytes), but closed_notified may not be set yet. The
+                    // owner calls this right before detaching/freeing
+                    // handlers.ctx, so mark the wrapper closed now; otherwise
+                    // handle_reading's deferred trigger_close_callback fires
+                    // on_close into the freed ctx. Idempotent via
+                    // closed_notified; read `received` first because the
+                    // callback may re-enter and tear down state.
+                    Self::r(this).trigger_close_callback();
+                }
+                return received;
             }
 
             // Calling SSL_shutdown() only closes the write direction of the

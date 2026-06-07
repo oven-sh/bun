@@ -218,8 +218,8 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        // Callers pass paths interned in FileSystem's filename_store, so the
-        // borrowed key slice outlives this map.
+        // The map boxes its own copy of the key; the &'static borrow is for
+        // the Source stored below.
         let entry = self.index.get_or_put(file_path).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {

@@ -92,9 +92,12 @@ impl SystemError {
         self.dest.ref_();
     }
     /// Bitwise-copy + bump every `bun_core::String` ref. Mirrors Zig
-    /// `var v = this.*; v.ref();`. `bun_core::String` has no `Clone` impl
-    /// (intrusive WTF refcount), so `#[derive(Clone)]` is unavailable; this
-    /// is the manual equivalent. Matches `bun_jsc::SystemError::dupe`.
+    /// `var v = this.*; v.ref();`. `bun_core::String` is `Copy` (kept
+    /// bit-identical to the C++ `BunString` for FFI), so its derived
+    /// `Clone` is a plain bitwise copy that does NOT bump the intrusive WTF
+    /// refcount — a `#[derive(Clone)]` here would compile but produce an
+    /// under-ref'd copy that over-releases on the second deref. This is the
+    /// refcount-aware equivalent. Matches `bun_jsc::SystemError::dupe`.
     pub fn dupe(&self) -> SystemError {
         // SAFETY: `SystemError` is `#[repr(C)]` and every field is either
         // `c_int` (trivially copyable) or `bun_core::String` — a `#[repr(C)]`

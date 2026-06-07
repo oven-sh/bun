@@ -111,6 +111,15 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
     function->dataPtr = ptr;
 }
 
+extern "C" void Bun__JSFFIFunction__invalidate(JSC::EncodedJSValue jsValue)
+{
+    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    if (!function)
+        return;
+
+    function->invalidate();
+}
+
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
@@ -165,23 +174,24 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, un
     return function;
 }
 
-#if OS(WINDOWS)
-
+// All TinyCC-compiled functions are called through this trampoline so that
+// `invalidate()` (library close) can make later calls throw instead of jumping
+// into freed executable memory. On Windows it is additionally required for ABI
+// reasons: JSC host functions use the SYSV ABI while TinyCC emits MS x64 code.
 JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     const auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
-    return function->function()(globalObject, callFrame);
+    const auto ffiFunction = function->function();
+    if (!ffiFunction) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        return JSC::throwVMTypeError(globalObject, scope, "Cannot call this FFI function: its library has been closed"_s);
+    }
+    return ffiFunction(globalObject, callFrame);
 }
-
-#endif
 
 JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
-#if OS(WINDOWS)
     NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
-#else
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, name);
-#endif
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTF::move(FFIFunction)));
     function->finishCreation(vm, executable, length, name);

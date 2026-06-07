@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isGlibcVersionAtLeast } from "harness";
 import { platform } from "os";
 
 import {
@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -378,7 +379,7 @@ function ffiRunner(fast) {
         getDeallocatorBuffer,
       },
       close,
-    } = dlopen("/tmp/bun-ffi-test.dylib", types);
+    } = dlopen("/tmp/bun-ffi-test." + suffix, types);
     it("primitives", () => {
       Bun.gc(true);
       expect(returns_true()).toBe(true);
@@ -969,4 +970,107 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+describe("library close()", () => {
+  const closedError = "Cannot call this FFI function: its library has been closed";
+
+  // Calling a symbol after close() used to jump into the freed TinyCC-compiled
+  // wrapper (use-after-free). Run the whole scenario in a subprocess so a
+  // regression shows up as a crash of the child, not of the test runner.
+  it("calling a symbol after close() throws instead of crashing", async () => {
+    const code = `
+      const { linkSymbols, JSCallback } = require("bun:ffi");
+      const cb = new JSCallback(() => 42, { returns: "i32", args: [] });
+      const lib = linkSymbols({ answer: { returns: "i32", args: [], ptr: cb.ptr } });
+      const answer = lib.symbols.answer;
+      if (answer() !== 42) throw new Error("sanity call failed");
+      lib.close();
+      try {
+        answer();
+        console.log("did not throw");
+      } catch (e) {
+        console.log(e.constructor.name + ": " + e.message);
+      }
+      lib.close(); // close() stays idempotent
+      cb.close();
+      console.log("exiting cleanly");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: `TypeError: ${closedError}\nexiting cleanly\n`,
+      exitCode: 0,
+    });
+  });
+
+  it("close() invalidates both the wrapper and .native", () => {
+    const cb = new JSCallback(x => x + 1, { returns: "i32", args: ["i32"] });
+    const lib = linkSymbols({ increment: { returns: "i32", args: ["i32"], ptr: cb.ptr } });
+    const increment = lib.symbols.increment; // JS wrapper (symbol takes arguments)
+    const native = increment.native; // the underlying native function
+    expect(native).not.toBe(increment);
+    expect(increment(41)).toBe(42);
+    expect(native(41)).toBe(42);
+    lib.close();
+    expect(() => increment(41)).toThrow(closedError);
+    expect(() => native(41)).toThrow(TypeError);
+    expect(() => native(41)).toThrow(closedError);
+    cb.close();
+  });
+
+  it("closing one library does not affect another", () => {
+    const cb = new JSCallback(() => 7, { returns: "i32", args: [] });
+    const libA = linkSymbols({ seven: { returns: "i32", args: [], ptr: cb.ptr } });
+    const libB = linkSymbols({ seven: { returns: "i32", args: [], ptr: cb.ptr } });
+    expect(libA.symbols.seven()).toBe(7);
+    expect(libB.symbols.seven()).toBe(7);
+    libA.close();
+    expect(() => libA.symbols.seven()).toThrow(closedError);
+    expect(libB.symbols.seven()).toBe(7);
+    libB.close();
+    expect(() => libB.symbols.seven()).toThrow(closedError);
+    cb.close();
+  });
+
+  it.skipIf(!libPath)("dlopen() symbols throw after close()", () => {
+    const lib = dlopen(libPath, { strlen: { returns: "usize", args: ["ptr"] } });
+    expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
+    lib.close();
+    expect(() => lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toThrow(closedError);
+  });
+
+  it("CFunction close() invalidates the function", () => {
+    const cb = new JSCallback(() => 9, { returns: "i32", args: [] });
+    const fn = CFunction({ returns: "i32", args: [], ptr: cb.ptr });
+    expect(fn()).toBe(9);
+    fn.close();
+    expect(() => fn()).toThrow(closedError);
+    fn.close(); // idempotent
+    cb.close();
+  });
+
+  it("CFunction stays callable while only .native is retained", async () => {
+    const cb = new JSCallback(x => x * 2, { returns: "i32", args: ["i32"] });
+    let native;
+    {
+      const wrapped = CFunction({ returns: "i32", args: ["i32"], ptr: cb.ptr });
+      expect(wrapped(21)).toBe(42);
+      native = wrapped.native;
+      expect(native).not.toBe(wrapped);
+    }
+    // The wrapper may now be collected; the FinalizationRegistry must not
+    // close the library while the native function is still reachable.
+    for (let i = 0; i < 10; i++) {
+      Bun.gc(true);
+      await Bun.sleep(0); // give FinalizationRegistry cleanup a chance to run
+      expect(native(21)).toBe(42);
+    }
+    cb.close();
+  });
 });

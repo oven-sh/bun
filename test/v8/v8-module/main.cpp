@@ -426,31 +426,14 @@ private:
 Global<Value> GlobalTestWrapper::value;
 
 void GlobalTestWrapper::set(const FunctionCallbackInfo<Value> &info) {
-  // Step markers on stderr (checkSameOutput only compares stdout): the
-  // Windows fixture dies with a silent exit 127 somewhere in here and the
-  // markers in the captured stderr pinpoint the call.
-  fprintf(stderr, "[set] enter\n");
-  fflush(stderr);
   Isolate *isolate = info.GetIsolate();
-  fprintf(stderr, "[set] isolate=%p\n", (void *)isolate);
-  fflush(stderr);
   if (value.IsEmpty()) {
-    fprintf(stderr, "[set] empty -> Undefined\n");
-    fflush(stderr);
     info.GetReturnValue().Set(Undefined(isolate));
   } else {
-    fprintf(stderr, "[set] non-empty -> Get\n");
-    fflush(stderr);
     info.GetReturnValue().Set(value.Get(isolate));
   }
-  fprintf(stderr, "[set] return value set\n");
-  fflush(stderr);
   const auto new_value = info[0];
-  fprintf(stderr, "[set] before Reset\n");
-  fflush(stderr);
   value.Reset(isolate, new_value);
-  fprintf(stderr, "[set] after Reset\n");
-  fflush(stderr);
 }
 
 void GlobalTestWrapper::get(const FunctionCallbackInfo<Value> &info) {
@@ -662,27 +645,15 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
 // inside the scope — including, before the fix, an escape handle allocated at
 // Escape() time after in-scope Local copies.
 Local<String> escape_after_inline_handles(Isolate *isolate) {
-  fprintf(stderr, "[esc] enter\n");
-  fflush(stderr);
   EscapableHandleScope ehs(isolate);
-  fprintf(stderr, "[esc] scope constructed\n");
-  fflush(stderr);
   Local<String> value =
       String::NewFromUtf8(isolate, "escaped-after-inline").ToLocalChecked();
-  fprintf(stderr, "[esc] string created\n");
-  fflush(stderr);
   // These go through the headers' inline CreateHandle (HandleScope::Extend
   // grants) and are swept by DeleteExtensions when the scope closes.
   Local<Value> copy1 = Local<Value>::New(isolate, Local<Value>::Cast(value));
-  fprintf(stderr, "[esc] copy1 (inline Extend) done\n");
-  fflush(stderr);
   Local<Value> copy2 = Local<Value>::New(isolate, copy1);
   (void)copy2;
-  fprintf(stderr, "[esc] copy2 done, escaping\n");
-  fflush(stderr);
   Local<String> escaped = ehs.Escape(value);
-  fprintf(stderr, "[esc] escaped\n");
-  fflush(stderr);
   return escaped;
 }
 

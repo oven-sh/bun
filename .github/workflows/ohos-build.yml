@@ -148,6 +148,20 @@ jobs:
             -o -name "*.test.mjs" -o -name "*.test.cjs" -o -name "*.spec.mjs" -o -name "*.spec.cjs" \
             -o -name "*.test.mts" -o -name "*.test.cts" -o -name "*.spec.mts" -o -name "*.spec.cts" \) \
             -exec sh -c 'd="$0/$(dirname "{}")"; mkdir -p "$d" && cp "{}" "$d/"' "$SHARE" \; 2>/dev/null || true
+          # 同步 bake 测试辅助文件
+          for f in bake/bake-harness.ts bake/exit-code-map.mjs bake/client-fixture.mjs; do
+            if [ -f "bun/test/$f" ]; then
+              mkdir -p "$SHARE/test/$(dirname $f)"
+              cp "bun/test/$f" "$SHARE/test/$f"
+            fi
+          done
+          if [ -d "bun/test/bake/fixtures" ]; then
+            mkdir -p "$SHARE/test/bake/fixtures"
+            cp -r bun/test/bake/fixtures/* "$SHARE/test/bake/fixtures/"
+          fi
+          find bun/test/bake/ -type f ! -name "*.test.ts" ! -name "*.test.tsx" ! -name "*.test.js" ! -name "*.test.jsx" \
+            ! -name "*.spec.ts" ! -name "*.spec.tsx" ! -name "*.spec.js" ! -name "*.spec.jsx" \
+            ! -name "*.test.mjs" ! -name "*.test.cjs" -exec sh -c 'd="$0/$(dirname "{}")"; mkdir -p "$d" && cp "{}" "$d/"' "$SHARE" \; 2>/dev/null || true
           echo "✅ Test files synced"
 
       - name: Cache WebKit build

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { fillRepeating, isBroken, isMacOS, isWindows } from "harness";
+import { fillRepeating, isASAN, isBroken, isMacOS, isWindows } from "harness";
 
 const routes = {
   "/foo": new Response("foo", {
@@ -158,7 +158,8 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
           Bun.gc(true);
 
           const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
-          expect(rss).toBeLessThan(4092);
+          // ASAN's shadow memory + quarantine raise the absolute RSS floor.
+          expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
           const delta = rss - baseline;
           console.log("Final RSS", rss);
           console.log("Delta RSS", delta);

@@ -2644,7 +2644,7 @@ function formatWithOptionsInternal(inspectOptions, args) {
   return str;
 }
 const stripANSI = Bun.stripANSI;
-const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */
@@ -2678,12 +2678,9 @@ function getOwnNonIndexProperties(a, filter = ONLY_ENUMERABLE) {
   return ret;
 }
 function getPromiseDetails(promise) {
-  const state = $getPromiseInternalField(promise, $promiseFieldFlags) & $promiseStateMask;
-  if (state !== $promiseStatePending) {
-    return [
-      state === $promiseStateRejected ? kRejected : kFulfilled,
-      $getPromiseInternalField(promise, $promiseFieldReactionsOrResult),
-    ];
+  const state = $peekPromiseStatus(promise);
+  if (state !== 0) {
+    return [state === 2 ? kRejected : kFulfilled, $peekPromiseSettledValue(promise)];
   }
   return [kPending, undefined];
 }

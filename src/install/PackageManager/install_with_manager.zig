@@ -360,35 +360,44 @@ pub fn installWithManager(
 
                     builder.clamp();
 
+                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
+                    // which grows `buffers.dependencies` and may reallocate it.
+                    // Iterate by index against a snapshot of the original length and
+                    // copy each entry to the stack so neither the loop nor the callee
+                    // ever reads through a pointer into the old backing storage.
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
-                        for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
+                        const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
+                        for (0..dependencies_len) |dependency_i| {
+                            const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
                             if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
                                 manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
                                 manager.enqueueDependencyWithMain(
                                     @truncate(dependency_i),
-                                    dependency,
+                                    &dependency,
                                     invalid_package_id,
                                     false,
                                 ) catch |err| {
-                                    addDependencyError(manager, dependency, err);
+                                    addDependencyError(manager, &dependency, err);
                                 };
                             }
                         }
                     }
 
                     if (manager.summary.catalogs_changed) {
-                        for (manager.lockfile.buffers.dependencies.items, 0..) |*dep, _dep_id| {
+                        const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
+                        for (0..dependencies_len) |_dep_id| {
                             const dep_id: DependencyID = @intCast(_dep_id);
+                            const dep = manager.lockfile.buffers.dependencies.items[dep_id];
                             if (dep.version.tag != .catalog) continue;
 
                             manager.lockfile.buffers.resolutions.items[dep_id] = invalid_package_id;
                             manager.enqueueDependencyWithMain(
                                 dep_id,
-                                dep,
+                                &dep,
                                 invalid_package_id,
                                 false,
                             ) catch |err| {
-                                addDependencyError(manager, dep, err);
+                                addDependencyError(manager, &dep, err);
                             };
                         }
                     }

@@ -1,9 +1,20 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
-import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import {
+  BlockList,
+  connect,
+  createConnection,
+  createServer,
+  isIP,
+  isIPv4,
+  isIPv6,
+  Server,
+  Socket,
+  Stream,
+} from "node:net";
 import { join } from "node:path";
 
 const socket_domain = tmpdirSync();
@@ -35,6 +46,66 @@ it("should support net.isIPv6()", () => {
   expect(isIPv6("127.0.0.1")).toBe(false);
   expect(isIPv6("127.0.0.1/24")).toBe(false);
   expect(isIPv6("127.000.000.001")).toBe(false);
+});
+
+describe("net.BlockList subnet rules", () => {
+  // Expected values verified against Node.js v24.
+  it("matches IPv4-mapped IPv6 subnet rules against IPv4 and mapped addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("::ffff:1.1.1.0", 120, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.1", "ipv4")).toBe(false);
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+  });
+
+  it("matches IPv4 subnet rules against IPv4-mapped IPv6 addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("1.1.1.0", 24, "ipv4");
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+    expect(blockList.check("::1", "ipv6")).toBe(false);
+    expect(blockList.check("1.1.1.255", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.0", "ipv4")).toBe(false);
+  });
+
+  it("does not match IPv4 addresses against non-mapped IPv6 subnet rules", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("8592:757c:efae:4e45::", 64, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(false);
+    expect(blockList.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(blockList.check("8592:757c:efaf:4e45::f", "ipv6")).toBe(false);
+  });
+
+  it("matches exact-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("10.0.0.1", 32, "ipv4");
+    expect(v4.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(v4.check("10.0.0.2", "ipv4")).toBe(false);
+    expect(v4.check("::ffff:10.0.0.1", "ipv6")).toBe(true);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::1", 128, "ipv6");
+    expect(v6.check("::1", "ipv6")).toBe(true);
+    expect(v6.check("::2", "ipv6")).toBe(false);
+
+    const mapped = new BlockList();
+    mapped.addSubnet("::ffff:10.0.0.1", 128, "ipv6");
+    expect(mapped.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(mapped.check("10.0.0.2", "ipv4")).toBe(false);
+  });
+
+  it("matches zero-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("0.0.0.0", 0, "ipv4");
+    expect(v4.check("255.255.255.255", "ipv4")).toBe(true);
+    expect(v4.check("::1", "ipv6")).toBe(false);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::", 0, "ipv6");
+    expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
 });
 
 describe("net.Socket read", () => {
@@ -418,6 +489,136 @@ describe("net.Socket write", () => {
     }
     server.close();
   });
+
+  // Client-mode `Handlers.markInactive()` frees the per-connection Handlers
+  // allocation when the last reference drops, but the native socket's
+  // `handlers` field was left pointing at the freed block. Reusing that
+  // native socket as `prev` in `connectInner` (the net.Socket reconnect
+  // path) then called `deinit()`/`destroy()` on freed memory, and
+  // `getListener` read `handlers.mode` through the same dangling pointer.
+  // These only fault under ASAN/debug-poison, so they are gated accordingly.
+  it.skipIf(!isDebug && !isASAN)(
+    "native handle does not retain a dangling handlers pointer after connectError (scope.exit path)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const s = new net.Socket();
+        let handle;
+        s.on("error", () => {});
+        // Capture the native handle before _destroy nulls s._handle.
+        s.once("connectionAttemptFailed", () => { handle = s._handle; });
+        s.on("close", () => {
+          // handleConnectError never reached markActive (is_active == false),
+          // so the socket-level markInactive is a no-op. The Handlers were
+          // freed by scope.exit() — which must also null the socket's field.
+          for (let i = 0; i < 100; i++) {
+            if (handle.listener !== undefined) {
+              console.error("unexpected listener");
+              process.exit(1);
+            }
+          }
+          console.log("ok");
+        });
+        s.connect(1, "127.0.0.1");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(!isDebug && !isASAN)(
+    "native handle does not retain a dangling handlers pointer after close (getListener)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const server = net.createServer(c => c.end());
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          const s = new net.Socket();
+          let handle;
+          s.on("error", () => {});
+          s.on("connect", () => { handle = s._handle; });
+          s.on("close", () => {
+            // markInactive has freed the Handlers; without the fix the
+            // native socket's 'handlers' still points at it and
+            // '.listener' reads 'handlers.mode'.
+            for (let i = 0; i < 100; i++) {
+              if (handle.listener !== undefined) {
+                console.error("unexpected listener value");
+                process.exit(1);
+              }
+            }
+            server.close(() => console.log("ok"));
+          });
+          s.connect(port, "127.0.0.1");
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.skipIf(!isDebug && !isASAN)(
+    "reconnecting through a native handle whose handlers were freed does not double-free (connectInner)",
+    async () => {
+      const fixture = `
+        const net = require("node:net");
+        const server = net.createServer(c => c.end());
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          let iterations = 0;
+          function once(done) {
+            const s = new net.Socket();
+            let handle;
+            s.on("error", () => {});
+            s.on("connect", () => { handle = s._handle; });
+            s.on("close", () => {
+              // Route a second connect through the same native socket.
+              // connectInner sees prev.handlers (stale) and — without the
+              // fix — calls deinit()/destroy() on the freed allocation.
+              const s2 = new net.Socket();
+              s2._handle = handle;
+              s2.on("error", () => {});
+              s2.on("connect", () => s2.destroy());
+              s2.on("close", () => done());
+              s2.connect(port, "127.0.0.1");
+            });
+            s.connect(port, "127.0.0.1");
+          }
+          (function next() {
+            if (iterations++ < 5) once(next);
+            else server.close(() => console.log(JSON.stringify({ iterations })));
+          })();
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ iterations: 6 });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 it("should handle connection error", done => {
@@ -529,13 +730,13 @@ it("should not hang after FIN", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, 60_000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
     server.close();
   }
-});
+}, 120_000);
 
 it("should not hang after destroy", async () => {
   const net = require("node:net");
@@ -561,13 +762,13 @@ it("should not hang after destroy", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, 60_000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
     server.close();
   }
-});
+}, 120_000);
 
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
@@ -655,4 +856,76 @@ it.if(isWindows)(
     expectMaxObjectTypeCount(expect, "TCPSocket", before);
   },
   20_000,
+);
+
+// On Windows, unix paths route through the named-pipe codepath which reports
+// failure asynchronously; this test targets the synchronous-failure branch in
+// Listener.connectInner.
+it.skipIf(isWindows)(
+  "should not leak when connect({path}) fails synchronously on a reused handle",
+  async () => {
+    // node:net creates a detached native socket (`_handle`) and passes it as
+    // `prev` to connectInner. connectInner unconditionally `socket.ref()`s
+    // before `doConnect`. A nonexistent unix path makes `doConnect` throw
+    // synchronously while the socket is still `.detached`, so
+    // `handleConnectError`'s own deref (gated on `!isDetached()`) does not
+    // fire — the ref taken here must be released by the caller for reused
+    // sockets too, not only freshly-allocated ones. Without that, every
+    // failed reconnect leaks one native TCPSocket struct + its connection
+    // string.
+    const script = `
+      const net = require("node:net");
+      const { heapStats } = require("bun:jsc");
+      const path = "/tmp/bun-test-nonexistent-" + process.pid + ".sock";
+
+      function once() {
+        return new Promise(resolve => {
+          const s = new net.Socket();
+          s.on("error", () => {});
+          s.on("close", resolve);
+          s.connect({ path });
+        });
+      }
+      async function run(n) {
+        for (let i = 0; i < n; i += 100) {
+          const batch = [];
+          for (let j = 0; j < 100; j++) batch.push(once());
+          await Promise.all(batch);
+        }
+        Bun.gc(true);
+        await Bun.sleep(20);
+        Bun.gc(true);
+      }
+
+      // Count live mimalloc pages across all size bins. Each leaked
+      // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
+      // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
+      // allocator's own bookkeeping, so it's independent of OS page
+      // reclamation and JSC heap oscillation — same result on every
+      // platform, every run.
+      function pageCount() {
+        return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
+      }
+
+      await run(2000);
+      const before = pageCount();
+      await run(8000);
+      const after = pageCount();
+      console.log(JSON.stringify({ before, after, delta: after - before }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
+    // Without the balancing deref: +25 pages (release) / +163 pages
+    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
 );

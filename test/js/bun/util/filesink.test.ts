@@ -1,5 +1,6 @@
+import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -217,3 +218,93 @@ if (isWindows) {
     );
   });
 }
+
+// When a write to a pollable fd returns `.pending`, FileSink takes a
+// `must_be_kept_alive_until_eof` ref on itself so it survives until the
+// buffered data is drained. If the write later fails (e.g. EPIPE because the
+// reader closed), neither `onError` nor `onClose` released that ref, so the
+// native FileSink (and its buffers) leaked for the rest of the process even
+// after the JS wrapper was garbage-collected. `heapStats()` only counts JS
+// wrappers, so we check the native live counter directly.
+it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (EPIPE)", async () => {
+  async function once() {
+    const [readFd, writeFd] = createSocketPair();
+    const sink = Bun.file(writeFd).writer();
+
+    // Large enough to overflow the socket send buffer so the write returns
+    // `.pending` and the keep-alive ref is taken.
+    const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+    expect(writePromise).toBeInstanceOf(Promise);
+
+    // Close the reader so the buffered write fails with EPIPE.
+    fs.closeSync(readFd);
+
+    await Promise.resolve(writePromise).catch(() => {});
+    await Promise.resolve(sink.end()).catch(() => {});
+
+    // The writer may have already closed the fd after the error.
+    try {
+      fs.closeSync(writeFd);
+    } catch {}
+  }
+
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 8;
+
+  for (let i = 0; i < iterations; i++) {
+    await once();
+  }
+
+  // Allow finalizers to run.
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+
+  // Before the fix, every iteration leaked one native FileSink because the
+  // `must_be_kept_alive_until_eof` ref was never released on error/close.
+  // One straggler whose JS wrapper has not yet been finalized is acceptable;
+  // more than that indicates a native leak.
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+it("start() without path/fd on an already-open writer does not crash", async () => {
+  const path = join(tmpdirSync(), "filesink-restart.txt");
+  const writer = Bun.file(path).writer();
+  expect(() => writer.start({})).not.toThrow();
+  expect(() => writer.start({ highWaterMark: 1024 })).not.toThrow();
+  writer.write("hello");
+  await writer.end();
+  expect(await Bun.file(path).text()).toBe("hello");
+});
+
+it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
+  const dir = tmpdirSync();
+  const target = join(dir, "ro.txt");
+  fs.writeFileSync(target, "");
+  const writer = Bun.file(target).writer();
+  // Re-point the writer at a read-only fd so the buffered flush in end() fails.
+  const fd = fs.openSync(target, "r");
+  try {
+    writer.start({ fd });
+  } finally {
+    fs.closeSync(fd);
+  }
+  writer.write("x");
+  let endErr: unknown;
+  try {
+    await writer.end();
+  } catch (e) {
+    endErr = e;
+  }
+  expect(endErr).toBeDefined();
+  // Previously this would attempt to write to an invalid fd and crash with a
+  // debug assertion; now it should behave as if the sink is closed.
+  expect(() => writer.write("y")).not.toThrow();
+  expect(() => writer.start({})).not.toThrow();
+  expect(() => writer.write("z")).not.toThrow();
+  expect(() => writer.flush()).not.toThrow();
+  await Promise.resolve(writer.end()).catch(() => {});
+  await 1;
+});

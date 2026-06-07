@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1074,6 +1074,32 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   expect(text).toBe("abdefgh");
 });
 
+it("Bun.file().stream() of a small file does not double-close the controller", async () => {
+  // When the first pull returns data + EOF synchronously, both the native onClose
+  // callback and the pull-result handler enqueue callClose for the same controller.
+  // The second callClose must be a no-op rather than throwing ERR_INVALID_STATE
+  // through reportError → process.on("uncaughtException").
+  using dir = tempDir("file-stream-double-close", { "x.txt": "x" });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.on("uncaughtException", e => {
+         console.log(e?.code ?? e?.name, e?.message);
+         process.exitCode = 1;
+       });
+       Bun.file(process.argv[1]).stream().getReader().releaseLock();`,
+      join(String(dir), "x.txt"),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("Bun.file().stream() read text from large file", async () => {
   // Guard against reading the same repeating chunks
   // There were bugs previously where the stream would
@@ -1204,4 +1230,49 @@ it("handles exceptions during empty stream creation", () => {
     foo();
     throw new Error("not stack overflow");
   }).toThrow("not stack overflow");
+});
+
+it("auto-allocated byte stream chunks are zero-filled before being exposed to the source", async () => {
+  const CHUNK_SIZE = 4096;
+
+  // Populate the allocator's free lists with same-sized blocks full of a
+  // non-zero pattern so a recycled, non-zeroed allocation would be visible.
+  for (let i = 0; i < 256; i++) {
+    new Uint8Array(CHUNK_SIZE).fill(0xaa);
+  }
+  Bun.gc(true);
+
+  let nonZeroIndex = -1;
+  const stream = new ReadableStream({
+    type: "bytes",
+    autoAllocateChunkSize: CHUNK_SIZE,
+    pull(controller) {
+      const request = controller.byobRequest;
+      if (!request) return;
+      const view = request.view;
+      // Per the Streams spec the auto-allocated chunk is `new
+      // ArrayBuffer(autoAllocateChunkSize)`, which is zero-filled. A source
+      // that under-writes and over-reports must hand the reader zeros, not
+      // recycled heap contents.
+      for (let i = 0; i < view.byteLength; i++) {
+        if (view[i] !== 0) {
+          nonZeroIndex = i;
+          break;
+        }
+      }
+      view[0] = 1;
+      request.respond(view.byteLength);
+    },
+  });
+
+  const reader = stream.getReader();
+  const { done, value } = await reader.read();
+  expect(done).toBe(false);
+  expect(nonZeroIndex).toBe(-1);
+  expect(value.byteLength).toBe(CHUNK_SIZE);
+  // The byte the source actually wrote survives...
+  expect(value[0]).toBe(1);
+  // ...and every byte it did not write is zero.
+  expect(value.subarray(1).every(b => b === 0)).toBe(true);
+  reader.cancel();
 });

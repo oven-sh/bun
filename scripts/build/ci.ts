@@ -8,7 +8,7 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
@@ -16,6 +16,7 @@ import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { crossFeaturesJson } from "./features-json.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -55,7 +56,7 @@ interface SpawnAnnotatedOptions {
  * locally use plain spawnSync for zero-overhead no-ops.
  *
  * Tees stdout/stderr to the terminal AND a buffer. On non-zero exit,
- * parses the buffer for compiler errors (zig/clang/cmake) and posts each
+ * parses the buffer for compiler errors (rustc/clang/cmake) and posts each
  * as a Buildkite annotation. If nothing parseable is found, posts a generic
  * "build failed" annotation with the full output. Prints duration at end.
  *
@@ -199,7 +200,7 @@ export async function spawnWithAnnotations(
 //
 // CI splits builds per-platform into three parallel steps:
 //   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-zig  → bun-zig.o (this node uploads)
+//   build-rust → libbun_rust.a (this node uploads)
 //   build-bun  → downloads both, links (this node downloads first)
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
@@ -209,7 +210,7 @@ export async function spawnWithAnnotations(
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Upload build artifacts after a successful cpp-only or zig-only build.
+ * Upload build artifacts after a successful cpp-only or rust-only build.
  * Runs `buildkite-agent artifact upload` with paths relative to buildDir.
  *
  * Large archives (libbun-*.a, >1GB) are gzipped — buildkite artifact
@@ -227,10 +228,23 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     return;
   }
 
-  if (cfg.mode === "zig-only") {
-    const paths = output.zigObjects.map(obj => relative(cfg.buildDir, obj));
-    console.log(`Uploading ${paths.length} zig artifacts...`);
-    upload(paths, cfg.buildDir);
+  if (cfg.mode === "rust-only") {
+    // Relative to buildDir so link-only's `artifact download '*' .` recreates
+    // the rust-target/<triple>/<profile>/ layout that `rustLibPath(cfg)`
+    // expects. gzip on posix (release staticlib is ~200MB of mostly bitcode
+    // when LTO is on); .lib on Windows is uploaded raw — same convention as
+    // the cpp archive below.
+    const paths = output.rustObjects.map(obj => relative(cfg.buildDir, obj));
+    console.log(`Uploading ${paths.length} rust artifact(s)...`);
+    if (cfg.windows) {
+      upload(paths, cfg.buildDir);
+    } else {
+      for (const p of paths) run(["gzip", "-1", "-k", p], cfg.buildDir);
+      upload(
+        paths.map(p => `${p}.gz`),
+        cfg.buildDir,
+      );
+    }
     return;
   }
 
@@ -240,14 +254,22 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
   }
 
   // ─── Phase 1: upload dep libs (before we rm anything) ───
-  const depPaths: string[] = [];
-  for (const dep of output.deps) {
-    for (const lib of dep.libs) {
-      depPaths.push(relative(cfg.buildDir, lib));
+  // In Buildkite, ninja already uploaded these via the bk_upload edge in
+  // bun.ts (overlapped with the cxx compile). The stamp is the witness; if
+  // it's missing (agent unavailable mid-build, or running cpp-only outside
+  // a real BK job), fall back to uploading here so link-only still gets them.
+  if (existsSync(resolve(cfg.buildDir, ".dep-libs-uploaded"))) {
+    console.log("Dep libs already uploaded during build");
+  } else {
+    const depPaths: string[] = [];
+    for (const dep of output.deps) {
+      for (const lib of dep.libs) {
+        depPaths.push(relative(cfg.buildDir, lib));
+      }
     }
+    console.log(`Uploading ${depPaths.length} dep libs...`);
+    upload(depPaths, cfg.buildDir);
   }
-  console.log(`Uploading ${depPaths.length} dep libs...`);
-  upload(depPaths, cfg.buildDir);
 
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
@@ -327,6 +349,7 @@ function upload(paths: string[], cwd: string): void {
 function computeBunTriplet(cfg: Config): string {
   let t = `bun-${cfg.os}-${cfg.arch}`;
   if (cfg.abi === "musl") t += "-musl";
+  if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
   return t;
 }
@@ -355,12 +378,21 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Env vars match cmake's (BuildBun.cmake ~1462).
   // No setarch wrapper — cmake doesn't use one for features.mjs either
   // (only for the --revision smoke test).
-  console.log("Generating features.json...");
-  run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
-    BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-    BUN_DEBUG_QUIET_LOGS: "1",
-    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-  });
+  // Cross-compiled binaries can't run on the build host — every field is a
+  // build-time constant, so generate the same payload host-side instead
+  // (the feature list is parsed out of src/analytics/lib.rs; see
+  // features-json.ts).
+  if (cfg.crossTarget !== undefined) {
+    console.log("Generating features.json (host-side; cross-compiled binary cannot run here)...");
+    writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
+  } else {
+    console.log("Generating features.json...");
+    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+      BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+      BUN_DEBUG_QUIET_LOGS: "1",
+      BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    });
+  }
 
   const zipPaths: string[] = [];
 
@@ -447,11 +479,11 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
 /**
  * Download artifacts from sibling buildkite steps before a link-only build.
  * Derives sibling step keys from BUILDKITE_STEP_KEY (swap `-build-bun` →
- * `-build-cpp` / `-build-zig`). Gunzips any .gz files after download.
+ * `-build-cpp` / `-build-rust`). Gunzips any .gz files after download.
  *
  * Call BEFORE ninja — the downloaded files are ninja's link inputs.
  */
-export function downloadArtifacts(cfg: Config): void {
+export async function downloadArtifacts(cfg: Config): Promise<void> {
   if (cfg.mode !== "link-only") return;
 
   const stepKey = process.env.BUILDKITE_STEP_KEY;
@@ -461,7 +493,7 @@ export function downloadArtifacts(cfg: Config): void {
     });
   }
 
-  // step key is `<target>-build-bun`; siblings are `<target>-build-{cpp,zig}`.
+  // step key is `<target>-build-bun`; siblings are `<target>-build-{cpp,rust}`.
   const m = stepKey.match(/^(.+)-build-bun$/);
   if (m === null) {
     throw new BuildError(`Unexpected BUILDKITE_STEP_KEY: ${stepKey}`, {
@@ -470,22 +502,34 @@ export function downloadArtifacts(cfg: Config): void {
   }
   const targetKey = m[1]!;
 
-  for (const suffix of ["cpp", "zig"]) {
+  // Both downloads at once (buildkite-agent already parallelizes within a
+  // step's artifact set; this overlaps the two STEPS). Gunzip after BOTH
+  // complete — the rust .a is gzipped too on posix, and the .gz scan is a
+  // recursive walk so we want every artifact on disk first.
+  const dl = (suffix: "cpp" | "rust") => {
     const step = `${targetKey}-build-${suffix}`;
     console.log(`Downloading artifacts from ${step}...`);
-    // '*' glob — download everything that step uploaded.
-    run(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
-  }
+    return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
+  };
+  await Promise.all([dl("cpp"), dl("rust")]);
 
-  // Gunzip any compressed archives (libbun-*.a.gz → libbun-*.a).
-  // -f: overwrite if already decompressed (idempotent re-run).
-  const gzFiles = existsSync(cfg.buildDir)
-    ? readdirSync(cfg.buildDir).filter(f => f.endsWith(".gz") && statSync(resolve(cfg.buildDir, f)).isFile())
-    : [];
-  for (const gz of gzFiles) {
-    console.log(`Decompressing ${gz}...`);
-    run(["gunzip", "-f", gz], cfg.buildDir);
-  }
+  // Recursive: rust artifact lands under rust-target/<triple>/<profile>/.
+  const gzFiles: string[] = [];
+  const walk = (dir: string) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = resolve(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
+    }
+  };
+  walk(cfg.buildDir);
+  await Promise.all(
+    gzFiles.map(gz => {
+      console.log(`Decompressing ${gz}...`);
+      return runAsync(["gunzip", "-f", gz], cfg.buildDir);
+    }),
+  );
 }
 
 /** Run a command synchronously, throw BuildError on non-zero exit. */
@@ -503,4 +547,16 @@ function run(argv: string[], cwd: string, env?: Record<string, string>): void {
       hint: `Command: ${argv.join(" ")}`,
     });
   }
+}
+
+/** Async variant of `run()` for overlapping independent steps. */
+function runAsync(argv: string[], cwd: string): Promise<void> {
+  return new Promise((res, rej) => {
+    const child = nodeSpawn(argv[0]!, argv.slice(1), { cwd, stdio: "inherit" });
+    child.on("error", (err: Error) => rej(new BuildError(`Failed to spawn ${argv[0]}`, { cause: err })));
+    child.on("close", (code: number | null) => {
+      if (code === 0) res();
+      else rej(new BuildError(`${argv[0]} exited with code ${code}`, { hint: `Command: ${argv.join(" ")}` }));
+    });
+  });
 }

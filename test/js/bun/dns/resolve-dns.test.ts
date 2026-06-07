@@ -1,6 +1,6 @@
 import { SystemError, dns } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
 import { isIP, isIPv4, isIPv6 } from "node:net";
 
 const backends = ["system", "libc", "c-ares"];
@@ -113,6 +113,57 @@ describe("dns", () => {
     });
   });
 
+  // Hostnames longer than the fixed stack buffer used by the libc/system
+  // backends (bun.PathBuffer, which is MAX_PATH_BYTES: 1024 on macOS, 4096 on
+  // Linux, ~98302 on Windows) previously overflowed when writing the NUL
+  // terminator. They must reject cleanly on every backend. 100 000 bytes
+  // exceeds the buffer on every platform so the doLookup guard is what fires.
+  test.each(backends)("lookup() with oversized hostname rejects [backend: %s]", async backend => {
+    const long = Buffer.alloc(100_000, "a").toString();
+    // @ts-expect-error
+    await expect(dns.lookup(long, { backend })).rejects.toMatchObject({
+      name: "DNSException",
+      code: "DNS_ENOTFOUND",
+      syscall: "getaddrinfo",
+    });
+  });
+
+  test("lookup() with oversized .local hostname rejects via system backend in subprocess", async () => {
+    // A `.local` suffix forces the c-ares backend to fall through to the
+    // system resolver, which is the path that wrote past its stack buffer.
+    // Run in a subprocess so the panic that the unfixed debug build raises on
+    // the worker thread shows up as a non-zero exit instead of aborting the
+    // whole test file.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const long = Buffer.alloc(100_000, "a").toString() + ".local";
+          const settled = await Promise.allSettled([
+            Bun.dns.lookup(long, { backend: "system" }),
+            Bun.dns.lookup(long, { backend: "libc" }),
+            Bun.dns.lookup(long),
+          ]);
+          for (const result of settled) {
+            if (result.status !== "rejected") throw new Error("expected rejection");
+            if (result.reason?.code !== "DNS_ENOTFOUND") {
+              throw new Error("expected DNS_ENOTFOUND, got " + result.reason?.code);
+            }
+          }
+          console.log("ok");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
   test("lookup with non-object second argument should not crash", async () => {
     // Non-object cell values (like strings) passed as options should be ignored, not crash.
     // @ts-expect-error
@@ -141,6 +192,43 @@ describe("dns", () => {
 
     test("valid triple should succeed", () => {
       expect(() => dns.setServers([[4, "8.8.8.8", 53]])).not.toThrow();
+    });
+  });
+
+  describe("UTF-16 string arguments", () => {
+    // Builds a JSString backed by a 16-bit (UTF-16) buffer even though the
+    // contents are plain ASCII. Passing such strings used to hit a debug
+    // assertion (ZigString::slice() on UTF-16 string) instead of being
+    // transcoded.
+    const utf16 = (s: string) =>
+      new TextDecoder("utf-16le").decode(new Uint8Array([...s].flatMap(c => [c.charCodeAt(0), 0])));
+
+    test("lookupService() with a UTF-16 invalid address throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => Bun.dns.lookupService(utf16("1,2,3"), 443)).toThrow(
+        `The "address" argument is invalid. Received type string ('1,2,3')`,
+      );
+    });
+
+    test("lookupService() with a UTF-16 valid address does not crash", async () => {
+      // The reverse lookup result is environment-dependent; the assertion is
+      // that the address parses (no synchronous throw) and nothing panics.
+      // @ts-expect-error
+      await Bun.dns.lookupService(utf16("127.0.0.1"), 443).catch(() => {});
+    });
+
+    test("resolve() with a UTF-16 record type does not crash", async () => {
+      // A valid record type must be accepted (no synchronous throw); the
+      // query result itself is environment-dependent.
+      // @ts-expect-error
+      await Bun.dns.resolve(utf16("localhost"), utf16("AAAA")).catch(() => {});
+    });
+
+    test("resolve() with a UTF-16 invalid record type throws TypeError", () => {
+      // @ts-expect-error
+      expect(() => Bun.dns.resolve("localhost", utf16("BOGUS"))).toThrow(
+        `The property "record" is invalid. Expected one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, received type string ('BOGUS')`,
+      );
     });
   });
 });

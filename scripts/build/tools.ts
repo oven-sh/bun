@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readdirSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { Arch, OS, Toolchain } from "./config.ts";
@@ -167,7 +167,7 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print version to stderr (e.g. some zig builds). Check both.
+  // Some tools print their version to stderr instead of stdout. Check both.
   const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
   if (version !== undefined) return { version };
   // Parse failed — include what we saw (truncated) so the error is
@@ -366,15 +366,43 @@ function findLlvmTool(
  * Call this once at configure time. All tool paths are absolute.
  * Throws BuildError if any required tool is missing.
  *
+ * `os`/`arch` are the HOST (where to search, executable suffixes, install
+ * hints). `targetOs` is what we're building FOR — it decides which tool
+ * *family* is needed: a windows target wants the MSVC-style drivers
+ * (clang-cl, llvm-lib, lld-link, llvm-rc) even when the host is linux/macOS,
+ * since those all ship in every LLVM distribution and are inherently
+ * cross-capable. Defaults to the host (native build).
+ *
  * zig/bun/esbuild are resolved separately (they come from cache/, not PATH)
  * so pass them in as placeholders for now; they'll be filled by downloaders.
  */
 export function resolveLlvmToolchain(
   os: OS,
   arch: Arch,
+  targetOs: OS = os,
 ): Pick<
   Toolchain,
-  "cc" | "cxx" | "ar" | "ranlib" | "ld" | "strip" | "dsymutil" | "ccache" | "rc" | "mt" | "clangVersion"
+  | "cc"
+  | "cxx"
+  | "hostCc"
+  | "hostCxx"
+  | "ar"
+  | "ranlib"
+  | "ld"
+  | "ld64Lld"
+  | "rustLld"
+  | "rustLlvmVersion"
+  | "rustSysroot"
+  | "rustHostTriple"
+  | "strip"
+  | "llvmStrip"
+  | "dsymutil"
+  | "ccache"
+  | "rc"
+  | "mt"
+  | "nasm"
+  | "clangVersion"
+  | "clangResourceDir"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -382,28 +410,63 @@ export function resolveLlvmToolchain(
   // install is highest-priority wins consistently.
   const paths = llvmSearchPaths(os, arch);
 
+  // The MSVC-style tool family is selected by the TARGET: building for
+  // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
+  const msvcTarget = targetOs === "windows";
+
   // clang — version-checked. clang++ is the same binary (hardlink or
   // symlink) from the same install; a second version-check spawn would
   // just return the same answer. We still locate it separately so the
   // "not found" error names the right tool.
-  const ccResult = findLlvmTool(os === "windows" ? "clang-cl" : "clang", paths, os, {
+  const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
   });
-  const cxx = findLlvmTool(os === "windows" ? "clang-cl" : "clang++", paths, os, {
+  const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
 
-  // ar: llvm-ar (or llvm-lib on Windows)
+  // Resource dir (builtin headers live at <resource-dir>/include). Needed by
+  // darwin cross-compiles, which rebuild the include search path explicitly
+  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
+  // skipped for windows targets, where nothing consumes it (and cc is
+  // clang-cl, which takes MSVC-style flags).
+  let clangResourceDir: string | undefined;
+  if (!msvcTarget) {
+    const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (!probe.error && probe.status === 0) {
+      const dir = (probe.stdout ?? "").trim();
+      if (dir.length > 0) clangResourceDir = dir;
+    }
+  }
+
+  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
+  // the same as cc/cxx, but when cross-compiling for windows from a unix
+  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
+  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
+  // clang/clang++.
+  let hostCc: string | undefined;
+  let hostCxx: string | undefined;
+  if (msvcTarget && os !== "windows") {
+    hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
+    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
+  }
+
+  // ar: llvm-ar (or llvm-lib for windows targets)
   // No version check — ar doesn't always print a parseable version,
   // and any ar from the same LLVM install is fine.
-  const ar = findLlvmTool(os === "windows" ? "llvm-lib" : "llvm-ar", paths, os, {
+  const ar = findLlvmTool(msvcTarget ? "llvm-lib" : "llvm-ar", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix only — Windows uses llvm-lib which doesn't need it)
+  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
   // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
   // same thing for our direct archives, but deps may call ranlib explicitly.
   let ranlib: string | undefined;
@@ -414,10 +477,10 @@ export function resolveLlvmToolchain(
     })?.path;
   }
 
-  // ld: ld.lld on Linux (passed as --ld-path=), lld-link on Windows.
+  // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
-  if (os === "windows") {
+  if (msvcTarget) {
     ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
     ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
@@ -425,32 +488,74 @@ export function resolveLlvmToolchain(
     ld = ""; // darwin: unused
   }
 
-  // strip: GNU strip on Linux (more features), llvm-strip elsewhere
-  let strip: string;
-  if (os === "linux") {
-    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
-  } else {
-    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+  // ld64.lld: lld's Mach-O port. Only used when a non-darwin host
+  // cross-compiles FOR darwin (resolveConfig swaps it in as cfg.ld); the
+  // target isn't known here, so resolve it opportunistically — it ships in
+  // the same LLVM install as ld.lld, and the lookup is a handful of stats.
+  let ld64Lld: string | undefined;
+  if (os !== "darwin" && os !== "windows") {
+    ld64Lld = findLlvmTool("ld64.lld", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // dsymutil: darwin only
+  // strip: GNU strip on Linux (more features), llvm-strip elsewhere.
+  // llvm-strip is also resolved on Linux (optional) — GNU strip can't read
+  // Mach-O, so darwin cross-compiles need it (resolveConfig swaps it in).
+  let strip: string;
+  let llvmStrip: string | undefined;
+  if (os === "linux") {
+    strip = findTool({ names: ["strip"], required: true, hint: "Install binutils for your distro" })?.path ?? "";
+    llvmStrip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: false })?.path;
+  } else {
+    strip = findLlvmTool("llvm-strip", paths, os, { checkVersion: false, required: true })?.path ?? "";
+    llvmStrip = strip;
+  }
+
+  // dsymutil: required on darwin; optional elsewhere (needed only when
+  // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
   if (os === "darwin") {
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: true })?.path;
+  } else if (os !== "windows") {
+    dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows only. Passed to nested cmake — when CMAKE_C_COMPILER
-  // is an explicit path, cmake's find_program for these may not search
-  // the compiler's directory, so we resolve them here and pass
-  // explicitly. rc is required (cmake's try_compile on windows uses
-  // it); mt is optional (not all LLVM distros ship it — source.ts sets
+  // rc/mt: windows targets only. Passed to nested cmake — when
+  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
+  // may not search the compiler's directory, so we resolve them here and
+  // pass explicitly. rc is required (cmake's try_compile on windows uses
+  // it, and the final link embeds windows-app-info.res); mt is optional
+  // (not all LLVM distros ship it — source.ts sets
   // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
   let rc: string | undefined;
   let mt: string | undefined;
-  if (os === "windows") {
+  if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
+
+  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
+  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).
+  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a
+  // 5-10× crypto perf hit, so this is required when targeting win-x64.
+  let nasm: string | undefined;
+  if (msvcTarget) {
+    nasm = findTool({
+      names: ["nasm"],
+      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
+      // `arch` here is the HOST arch — the target isn't known yet inside
+      // resolveToolchain(). compile.ts:nasm() asserts at the use site
+      // with the same hint, so a missing nasm still fails clearly.
+      required: false,
+      hint:
+        os === "windows"
+          ? "Install from https://nasm.us or `winget install NASM.NASM`"
+          : "Install nasm from your distro (apt install nasm) or https://nasm.us",
+    })?.path;
+  }
+
+  // rust-lld: optional alternative linker for cross-language LTO when
+  // rustc's bundled LLVM is newer than clang's. See findRustLld().
+  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -467,15 +572,25 @@ export function resolveLlvmToolchain(
   return {
     cc: ccResult.path,
     clangVersion: ccResult.version,
+    clangResourceDir,
     cxx,
+    hostCc,
+    hostCxx,
     ar,
     ranlib,
     ld,
+    ld64Lld,
+    rustLld,
+    rustLlvmVersion,
+    rustSysroot,
+    rustHostTriple,
     strip,
+    llvmStrip,
     dsymutil,
     ccache,
     rc,
     mt,
+    nasm,
   };
 }
 
@@ -500,6 +615,106 @@ export interface CargoToolchain {
   cargo: string;
   cargoHome: string;
   rustupHome: string;
+}
+
+/**
+ * Locate rustc's bundled lld and its LLVM version.
+ *
+ * rustc ships its own copy of lld (built against the same LLVM rustc emits
+ * bitcode with). When `-Clinker-plugin-lto` is on and rustc's LLVM is newer
+ * than clang's, clang's `ld.lld` can't read the rust bitcode ("Unknown
+ * attribute kind"). LLVM bitcode is forward-compatible only — a newer lld
+ * reads older bitcode, never the reverse — so the fix is to link with
+ * rust-lld instead, which reads both clang's (older) and rustc's (same)
+ * bitcode.
+ *
+ * The path under `gcc-ld/` is a wrapper that invokes the sibling
+ * `rust-lld` binary in the right "flavor" (ld.lld / ld64.lld / lld-link),
+ * matching what `--ld-path=` expects on each platform. On Windows we use
+ * `rust-lld.exe` directly since lld-link mode is selected by argv[0] there.
+ *
+ * Returns undefined for both fields if rustc isn't installed or its sysroot
+ * doesn't have the expected layout (e.g. distro-packaged rustc without the
+ * `rust-lld` component).
+ */
+export function findRustLld(os: OS): {
+  rustLld: string | undefined;
+  rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` — needed for bundled `llvm-nm` even when rust-lld itself isn't used. */
+  rustSysroot: string | undefined;
+  /** `host:` line from `rustc -vV` — the rustlib subdirectory name. */
+  rustHostTriple: string | undefined;
+} {
+  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
+  // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
+  const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
+  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  if (rustc === undefined) return none;
+
+  // The link-only CI mode runs `findRustLld()` on an agent that downloads
+  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
+  // would auto-install — but the download blows past a short spawnSync timeout
+  // and the silent failure leaves `rustLld` undefined, which falls back to the
+  // system lld. With cross-language LTO that means lld 21 reading rust-emitted
+  // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
+  // install` so the proxy resolves instantly: idempotent ~70ms when already
+  // installed, downloads on a stale agent. Skip when there's no pinned channel
+  // or no rustup — the `rustc` queries below will just use whatever's there.
+  const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const channel = readRustToolchainChannel();
+  if (rustup !== undefined && channel !== undefined) {
+    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
+      encoding: "utf8",
+      timeout: 300_000,
+      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
+    });
+  }
+
+  // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
+  // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
+  // Generous timeout: if the toolchain install above was skipped (no rustup),
+  // this proxy invocation may still be the one that auto-installs.
+  const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
+    encoding: "utf8",
+    timeout: 300_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout?.trim();
+  const vv = spawnSync(rustc, ["-vV"], {
+    encoding: "utf8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).stdout;
+  if (!sysroot || !vv) return none;
+
+  const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
+  const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
+  if (rustHostTriple === undefined) return { ...none, rustSysroot: sysroot, rustLlvmVersion };
+
+  const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
+  const candidate =
+    os === "windows"
+      ? join(bin, "rust-lld.exe")
+      : os === "darwin"
+        ? join(bin, "gcc-ld", "ld64.lld")
+        : join(bin, "gcc-ld", "ld.lld");
+  const rustLld = isExecutable(candidate) ? candidate : undefined;
+  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
+}
+
+/**
+ * Read the pinned channel from `rust-toolchain.toml` at the repo root.
+ * Mirrors `readRustToolchainChannel()` in config.ts but stays in `tools.ts`
+ * because `findRustLld()` runs during `resolveToolchain()` — *before*
+ * `resolveConfig()` reads the channel into `cfg.rustToolchain`. Both walk the
+ * same file; keeping the parse local avoids an import cycle.
+ */
+function readRustToolchainChannel(): string | undefined {
+  // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
+  const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
+  if (!existsSync(path)) return undefined;
+  const m = /^\s*channel\s*=\s*"([^"]+)"/m.exec(readFileSync(path, "utf8"));
+  return m?.[1];
 }
 
 /**

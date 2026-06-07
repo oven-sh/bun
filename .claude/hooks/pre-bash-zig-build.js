@@ -74,6 +74,13 @@ if (argv0 === "zig") {
   }
 }
 
+// Disallow direct `rustfmt`: it doesn't read the workspace edition from
+// Cargo.toml the way `cargo fmt` does, so its output can disagree with CI's
+// Format job (`cargo fmt --all --check`).
+if (argv0 === "rustfmt") {
+  denyWithReason("error: Don't run `rustfmt` directly. Run `cargo fmt --all` — it's what CI checks.");
+}
+
 // Check if argv0 is timeout and the command is "bun bd"
 if (argv0 === "timeout") {
   // Find the actual command after timeout and its arguments

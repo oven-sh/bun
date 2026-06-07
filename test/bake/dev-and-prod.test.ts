@@ -1,5 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
-import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
+import { writeFileSync } from "node:fs";
+import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -206,93 +207,112 @@ devTest("hmr handles rapid consecutive edits", {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    "index.ts": hmrSelfAcceptingModule("render 1"),
+    "index.ts": hmrSelfAcceptingModule("render initial"),
   },
   async test(dev) {
-    await using client = await dev.client("/");
-    await client.expectMessage("render 1");
+    // allowUnlimitedReloads (Windows-only): writeFileSync on Windows is
+    // CreateFile(truncate) + WriteFile + CloseHandle as separate syscalls;
+    // ReadDirectoryChangesW in the dev-server process can fire between the
+    // first two and bundle a 0-byte module that never calls accept(),
+    // tripping fullReload(). Rather than skip Windows entirely, let the
+    // client absorb the reload there — the reloaded page still logs the
+    // expected value and the test proceeds. On POSIX leave it off so an
+    // unexpected fullReload still fails the test.
+    await using client = await dev.client("/", {
+      allowUnlimitedReloads: process.platform === "win32",
+    });
+    await client.expectMessage("render initial");
 
-    // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
-    await client.js`
-      const tracked = [];
-      globalThis.__hmrErrors = tracked;
-
-      const maybeRecord = value => {
-        const message =
-          typeof value === "string"
-            ? value
-            : value?.message ?? value?.reason ?? "";
-        if (typeof message === "string" && message.includes("Unknown HMR script")) {
-          console.log("HMR_ERROR: " + message);
-          tracked.push(message);
-          return true;
-        }
-        return false;
-      };
-
-      window.addEventListener("error", event => {
-        if (maybeRecord(event.error ?? event.message)) {
-          event.preventDefault();
-        }
-      });
-
-      window.addEventListener("unhandledrejection", event => {
-        if (maybeRecord(event.reason)) {
-          event.preventDefault();
-        }
-      });
-
-      const hmrSymbol = Symbol.for("bun:hmr");
-      const originalHmr = globalThis[hmrSymbol];
-      if (typeof originalHmr === "function") {
-        globalThis[hmrSymbol] = function (...args) {
-          try {
-            return originalHmr.apply(this, args);
-          } catch (error) {
-            maybeRecord(error);
-          }
+    const waitForMessage = (value: string) =>
+      new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+          timer = null;
+          cleanup();
+          reject(
+            new Error(`Timed out waiting for ${JSON.stringify(value)}; buffered: ${JSON.stringify(client.messages)}`),
+          );
+        }, 5_000 * WAIT_MULTIPLIER);
+        const cleanup = () => {
+          if (timer !== null) clearTimeout(timer);
+          client.off("message", onMessage);
+          client.off("exit", onExit);
         };
-      }
-    `;
-
-    for (let i = 2; i <= 10; i++) {
-      await Bun.write(dev.join("index.ts"), hmrSelfAcceptingModule(`render ${i}`));
-      await Bun.sleep(1);
-    }
-
-    // Wait event-driven for "render 10" to appear. Intermediate renders may
-    // be skipped (watcher coalescing) and the final render may fire multiple
-    // times (duplicate reloads), so we just listen for any occurrence.
-    const finalRender = "render 10";
-    await new Promise<void>((resolve, reject) => {
-      const check = () => {
-        for (const msg of client.messages) {
-          if (typeof msg === "string" && msg.includes("HMR_ERROR")) {
-            cleanup();
-            reject(new Error("Unexpected HMR error message: " + msg));
-            return;
-          }
-          if (msg === finalRender) {
+        const onMessage = () => {
+          if (client.messages.includes(value)) {
             cleanup();
             resolve();
-            return;
           }
-        }
-      };
-      const cleanup = () => {
-        client.off("message", check);
-      };
-      client.on("message", check);
-      // Check messages already buffered.
-      check();
-    });
-    // Drain all buffered messages — intermediate renders and possible
-    // duplicates of the final render are expected and harmless.
+        };
+        // The harness emits "exit" before setting `client.exited`, so a
+        // dedicated listener is needed; reading `client.exited` inside a
+        // shared handler would still be `false` when "exit" fires.
+        const onExit = () => {
+          cleanup();
+          reject(new Error(`Client exited while waiting for ${JSON.stringify(value)}`));
+        };
+        if (client.exited) return onExit();
+        client.on("message", onMessage);
+        client.on("exit", onExit);
+        onMessage();
+      });
+
+    // Regression coverage for https://github.com/oven-sh/bun/issues/19736:
+    // when multiple hot_update payloads with the SAME sourceMapId reach the
+    // client before earlier <script> callbacks fire, the runtime must queue
+    // them (Map<id, entry[]>) rather than overwrite (Map<id, entry>, which
+    // threw "Unknown HMR script: ...").
+    //
+    // Writing IDENTICAL content N times forces same-sourceMapId duplicates
+    // on every platform. Use synchronous writeFileSync so truncate + write
+    // + close happen back-to-back on the calling thread; the previous
+    // `Bun.write` here is two separate async libuv ops on Windows with a
+    // JS-thread round-trip in between, giving the bundler a multi-ms window
+    // to read 0 bytes. writeFileSync shrinks that window to microseconds —
+    // usually enough, but the residual race is why allowUnlimitedReloads is
+    // set above.
+    const target = dev.join("index.ts");
+    const rapidContent = hmrSelfAcceptingModule("render rapid");
+    for (let i = 0; i < 10; i++) {
+      writeFileSync(target, rapidContent);
+    }
+
+    // Wait until at least one rapid hot_update has been applied.
+    await waitForMessage("render rapid");
+
+    // Barrier: one more write, then wait for it to appear at the client.
+    // Hot-updates are delivered over a single ordered WebSocket and applied
+    // FIFO, so once the sentinel's console.log arrives every prior update
+    // already in the pipe has been applied. Don't use dev.batchChanges()
+    // here: if a bundle from the rapid burst is still in flight when the
+    // batch 'H' arrives, the harness's seenFiles promise can hang.
+    writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
+    await waitForMessage("render sentinel");
+
+    // Watcher coalescing / double-firing makes the exact count
+    // non-deterministic, but every message must be one of the two values
+    // we wrote. If #19736 regresses, "Unknown HMR script: ..." is thrown
+    // inside the bun:hmr callback, which propagates as an unhandled
+    // rejection in client-fixture.mjs and exits the subprocess non-zero —
+    // failing this test at disposal without an explicit assertion here.
+    const expected = new Set(["render rapid", "render sentinel"]);
+    for (const msg of client.messages) {
+      if (!expected.has(msg)) {
+        throw new Error(`Unexpected HMR message: ${JSON.stringify(msg)}`);
+      }
+    }
     client.messages.length = 0;
 
-    const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
-    if (hmrErrors.length > 0) {
-      throw new Error("Unexpected HMR errors: " + hmrErrors.join(", "));
-    }
+    // The barrier guarantees ordering of in-flight updates but does not
+    // bound how many bundles the server may still start (e.g. a queued
+    // next_bundle.reload_event, or the sentinel write's IN_MODIFY and
+    // IN_CLOSE_WRITE landing in separate inotify reads). Keep a listener
+    // active through `await using` disposal that swallows expected values
+    // so only genuinely unexpected output trips the unread-messages check.
+    client.on("message", (m: unknown) => {
+      if (expected.has(m as string)) {
+        const i = client.messages.indexOf(m);
+        if (i !== -1) client.messages.splice(i, 1);
+      }
+    });
   },
 });

@@ -889,3 +889,20 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
     Error.stackTraceLimit = origLimit;
   }
 });
+
+test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () => {
+  const origLimit = Error.stackTraceLimit;
+  try {
+    Error.stackTraceLimit = "foo";
+    const obj = {};
+    expect(() => Error.captureStackTrace(obj)).not.toThrow();
+    expect(typeof obj.stack).toBe("string");
+
+    delete Error.stackTraceLimit;
+    const obj2 = {};
+    expect(() => Error.captureStackTrace(obj2)).not.toThrow();
+    expect(typeof obj2.stack).toBe("string");
+  } finally {
+    Error.stackTraceLimit = origLimit;
+  }
+});

@@ -408,7 +408,7 @@ pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTT
         assert(active_requests > 0);
     }
 
-    if (!bun.http.http_thread.queued_tasks.isEmpty() and AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
+    if ((!bun.http.http_thread.queued_tasks.isEmpty() or bun.http.http_thread.deferred_tasks.items.len > 0) and AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
         bun.http.http_thread.loop.loop.wakeup();
     }
 }
@@ -459,14 +459,14 @@ pub const HTTPChannelContext = struct {
 
 const string = []const u8;
 
-const DotEnv = @import("../env_loader.zig");
+const DotEnv = @import("../dotenv/env_loader.zig");
 const HTTPThread = @import("./HTTPThread.zig");
 const Headers = @import("./Headers.zig");
 const std = @import("std");
-const Encoding = @import("./Encoding.zig").Encoding;
+const Encoding = @import("../http_types/Encoding.zig").Encoding;
 
-const PercentEncoding = @import("../url.zig").PercentEncoding;
-const URL = @import("../url.zig").URL;
+const PercentEncoding = @import("../url/url.zig").PercentEncoding;
+const URL = @import("../url/url.zig").URL;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

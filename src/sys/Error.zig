@@ -1,12 +1,10 @@
 //! Error type that preserves useful information from the operating system
 const Error = @This();
 
-const retry_errno = if (Environment.isLinux)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-else if (Environment.isMac)
-    @as(Int, @intCast(@intFromEnum(E.AGAIN)))
+const retry_errno = if (Environment.isWindows)
+    @as(Int, @intCast(@intFromEnum(E.INTR)))
 else
-    @as(Int, @intCast(@intFromEnum(E.INTR)));
+    @as(Int, @intCast(@intFromEnum(E.AGAIN)));
 
 const todo_errno = std.math.maxInt(Int) - 1;
 
@@ -155,7 +153,7 @@ pub fn name(this: *const Error) []const u8 {
             // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
             @setRuntimeSafety(false);
             if (this.from_libuv) {
-                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
+                break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(-@as(c_int, this.errno)))));
             }
 
             break :brk @as(SystemErrno, @enumFromInt(this.errno));
@@ -322,25 +320,15 @@ pub inline fn todo() Error {
     return Error{ .errno = todo_errno, .syscall = .TODO };
 }
 
-pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
-    return this.toSystemError().toErrorInstance(ptr);
-}
-
-/// Like `toJS` but populates the error's stack trace with async frames from the
-/// given promise's await chain. Use when rejecting a promise from native code
-/// at the top of the event loop (threadpool callback) — otherwise the error
-/// will have an empty stack trace.
-pub fn toJSWithAsyncStack(this: Error, ptr: *jsc.JSGlobalObject, promise: *jsc.JSPromise) bun.JSError!jsc.JSValue {
-    return this.toSystemError().toErrorInstanceWithAsyncStack(ptr, promise);
-}
+pub const toJS = @import("../sys_jsc/error_jsc.zig").toJS;
+pub const toJSWithAsyncStack = @import("../sys_jsc/error_jsc.zig").toJSWithAsyncStack;
+pub const TestingAPIs = @import("../sys_jsc/error_jsc.zig").TestingAPIs;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
-
-const jsc = bun.jsc;
-const SystemError = jsc.SystemError;
+const SystemError = bun.jsc.SystemError;
 
 const sys = bun.sys;
 const E = sys.E;

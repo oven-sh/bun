@@ -8,6 +8,7 @@ function getOptions() {
         key: Bun.file(paths.key),
         cert: Bun.file(paths.cert),
         ca: Bun.file(paths.ca),
+        rejectUnauthorized: false,
       },
     };
   }

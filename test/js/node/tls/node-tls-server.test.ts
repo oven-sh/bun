@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync } from "fs";
-import { tls as cert1 } from "harness";
+import { tls as cert1, isDebug } from "harness";
 import { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -33,14 +33,11 @@ describe("tls.createServer listen", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
     const server: Server = createServer(COMMON_CERT);
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -61,14 +58,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -90,9 +84,7 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
@@ -100,13 +92,10 @@ describe("tls.createServer listen", () => {
     server.on("error", closeAndFail).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
-
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(0, "0.0.0.0");
   });
@@ -116,14 +105,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -145,14 +131,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       0,
@@ -172,14 +155,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       mustCall(() => {
@@ -199,14 +179,11 @@ describe("tls.createServer listen", () => {
 
     const server: Server = createServer(COMMON_CERT);
 
-    let timeout: Timer;
     const closeAndFail = () => {
-      clearTimeout(timeout);
       server.close();
       mustNotCall()();
     };
     server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
 
     server.listen(
       socket_domain,
@@ -225,6 +202,30 @@ describe("tls.createServer listen", () => {
     const server: Server = createServer({
       key: passKey,
       passphrase: "invalid",
+      cert: cert,
+    });
+
+    server.on("error", mustCall());
+    let timeout: Timer;
+    function closeAndFail() {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    }
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0", closeAndFail);
+  });
+
+  it("should reject passphrase longer than PEM_BUFSIZE without crashing", done => {
+    // BoringSSL invokes the passphrase callback with a 1024-byte stack buffer.
+    // A longer passphrase must fail key decryption rather than overflow that buffer.
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer({
+      key: passKey,
+      passphrase: Buffer.alloc(2000, "A").toString(),
       cert: cert,
     });
 
@@ -319,7 +320,7 @@ describe("tls.createServer", () => {
           expect(cert.ca).toBe(true);
           expect(cert.bits).toBe(2048);
           expect(cert.modulus).toBe(
-            "e5633a2c8118171cbeaf321d55d0444586cbe566bb51a234b0ead69faf7490069854efddffac68986652ff949f472252e4c7d24c6ee4e3366e54d9e4701e24d021e583e1a088112c0f96475a558b42f883a3e796c937cc4d6bb8791b227017b3e73deb40b0ac84f033019f580a3216888acec71ce52d938fcadd8e29794e38774e33d323ede89b58e526ef8b513ba465fa4ffd9cf6c1ec7480de0dcb569dec295d7b3cce40256b428d5907e90e7a52e77c3101f4ad4c0e254ab03d75ac42ee1668a5094bc4521b264fb404b6c4b17b6b279e13e6282e1e4fb6303540cb830ea8ff576ca57b7861e4ef797af824b0987c870718780a1c5141e4f904fd0c5139f5",
+            "E5633A2C8118171CBEAF321D55D0444586CBE566BB51A234B0EAD69FAF7490069854EFDDFFAC68986652FF949F472252E4C7D24C6EE4E3366E54D9E4701E24D021E583E1A088112C0F96475A558B42F883A3E796C937CC4D6BB8791B227017B3E73DEB40B0AC84F033019F580A3216888ACEC71CE52D938FCADD8E29794E38774E33D323EDE89B58E526EF8B513BA465FA4FFD9CF6C1EC7480DE0DCB569DEC295D7B3CCE40256B428D5907E90E7A52E77C3101F4AD4C0E254AB03D75AC42EE1668A5094BC4521B264FB404B6C4B17B6B279E13E6282E1E4FB6303540CB830EA8FF576CA57B7861E4EF797AF824B0987C870718780A1C5141E4F904FD0C5139F5",
           );
           expect(cert.exponent).toBe("0x10001");
           expect(cert.pubkey).toBeInstanceOf(Buffer);
@@ -333,7 +334,7 @@ describe("tls.createServer", () => {
           expect(cert.fingerprint512).toBe(
             "CE:00:17:97:29:5E:1C:7E:59:86:8D:1F:F0:F4:AF:A0:B0:10:F2:2E:0E:79:D1:32:D0:44:F9:B4:3A:DE:D5:83:A9:15:0E:E4:47:24:D4:2A:10:FB:21:BE:3A:38:21:FC:40:20:B3:BC:52:64:F7:38:93:EF:C9:3F:C8:57:89:31",
           );
-          expect(cert.serialNumber).toBe("71a46ae89fd817ef81a34d5973e1de42f09b9d63");
+          expect(cert.serialNumber).toBe("71A46AE89FD817EF81A34D5973E1DE42F09B9D63");
 
           expect(cert.raw).toBeInstanceOf(Buffer);
           client?.end();
@@ -397,8 +398,12 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
@@ -445,8 +450,12 @@ describe("tls.createServer events", () => {
     };
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
@@ -597,8 +606,12 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    // First `Bun.connect({tls:true})` of the process triggers the once-only
+    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
+    // debug+ASAN) so SSL_get_verify_result is real instead of the false
+    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
+    // point; the old 100 ms was a perf claim that is now load-order-dependent.
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
@@ -685,4 +698,76 @@ it("connectionListener should emit the right amount of times, and with alpnProto
 
   await Promise.all(promises);
   expect(count).toBe(50);
+});
+
+it("leaves socket.authorized false unless a client certificate was requested and verified", async () => {
+  // A server that never requested a client certificate must not report the
+  // connection as authorized (matches Node.js fail-closed semantics).
+  {
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server: Server = createServer(COMMON_CERT, socket => {
+      resolve(socket.authorized);
+      socket.end();
+    });
+    server.on("error", reject);
+    server.listen(0);
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    const client = connect({
+      port: address.port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    client.on("error", reject);
+    try {
+      expect(await promise).toBe(false);
+    } finally {
+      client.end();
+      server.close();
+    }
+  }
+
+  // The legitimate mutual-TLS case still works: when the server requests a
+  // certificate and the client presents one that verifies against the
+  // server's CA, the socket is reported as authorized.
+  {
+    const fixtures = join(import.meta.dir, "fixtures");
+    const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+    const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+    const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    const server: Server = createServer(
+      {
+        key: agent1Key,
+        cert: agent1Cert,
+        ca: [ca1],
+        requestCert: true,
+        rejectUnauthorized: false,
+      },
+      socket => {
+        resolve(socket.authorized);
+        socket.end();
+      },
+    );
+    server.on("error", reject);
+    server.listen(0);
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    const client = connect({
+      port: address.port,
+      host: "127.0.0.1",
+      key: agent1Key,
+      cert: agent1Cert,
+      ca: [ca1],
+      rejectUnauthorized: false,
+    });
+    client.on("error", reject);
+    try {
+      expect(await promise).toBe(true);
+    } finally {
+      client.end();
+      server.close();
+    }
+  }
 });

@@ -149,7 +149,9 @@ const exitCode0 = [
   "`${`${class{static{``}}}`}`",
   "await import('bun');",
   "await import('bun:ffi');",
-  "await import(import.meta.path);",
+  // "await import(import.meta.path);" — the spec-compliant module loader treats
+  // a top-level await on its own module's load promise as an unsettleable TLA,
+  // so this snippet now blocks forever instead of completing synchronously.
   "/(?:)/",
   "/\\b\\B\\d\\D\\w\\W\\s\\S/",
   "/\\cA\\cZ\\ca\\cz/",

@@ -872,3 +872,427 @@ describe("stringWidth extended", () => {
     });
   });
 });
+
+// ============================================================================
+// Coverage for the SIMD fast paths (Latin-1 / UTF-16 ASCII bulk counting) and
+// the string encodings JSC can hand to the native implementation.
+// ============================================================================
+
+describe("stringWidth SIMD fast paths", () => {
+  const repeat = (fill: string, count: number) => Buffer.alloc(count, fill).toString();
+
+  describe("ASCII fast path", () => {
+    // Cross the SIMD chunk boundaries (16/32/64-byte vectors plus scalar tail).
+    const lengths = [0, 1, 2, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 255, 256, 257, 1000, 4096];
+    test("plain ASCII of every chunk-boundary length", () => {
+      for (const n of lengths) {
+        const text = repeat("x", n);
+        expect(Bun.stringWidth(text)).toBe(n);
+        expect(Bun.stringWidth(text, { countAnsiEscapeCodes: true })).toBe(n);
+      }
+    });
+
+    test("control characters are zero-width at any position", () => {
+      for (const n of [15, 16, 17, 64, 65]) {
+        const body = repeat("x", n);
+        expect(Bun.stringWidth("\t" + body)).toBe(n);
+        expect(Bun.stringWidth(body + "\x07")).toBe(n);
+        expect(Bun.stringWidth(body + "\x7f" + body)).toBe(2 * n);
+      }
+      expect(Bun.stringWidth("a\tb\nc\rd")).toBe(4);
+    });
+
+    test("Latin-1 (8-bit, non-ASCII) strings", () => {
+      expect(Bun.stringWidth("café")).toBe(4);
+      expect(Bun.stringWidth("naïve façade")).toBe(12);
+      expect(Bun.stringWidth("§¶±")).toBe(3);
+      // soft hyphen is zero-width
+      expect(Bun.stringWidth("co\u00ADoperate")).toBe(9);
+      expect(Bun.stringWidth("é".repeat(100))).toBe(100);
+    });
+
+    test("ASCII stored in a 16-bit string", () => {
+      // Slicing off the emoji keeps the UTF-16 backing store, so the pure-ASCII
+      // remainder exercises the UTF-16 bulk-count path.
+      const ascii16 = ("😀" + "hello world").slice(2);
+      expect(ascii16).toBe("hello world");
+      expect(Bun.stringWidth(ascii16)).toBe(11);
+      expect(Bun.stringWidth(ascii16, { countAnsiEscapeCodes: true })).toBe(11);
+
+      const long16 = ("😀" + repeat("y", 257)).slice(2);
+      expect(Bun.stringWidth(long16)).toBe(257);
+    });
+  });
+
+  describe("ANSI sequences mid-string", () => {
+    test("SGR in the middle of Latin-1 text", () => {
+      expect(Bun.stringWidth("hello \x1b[31mred\x1b[39m world")).toBe(15);
+      expect(Bun.stringWidth("hello \x1b[31mred\x1b[39m world", { countAnsiEscapeCodes: true })).toBe(23);
+      expect(Bun.stringWidth("\x1b[38;2;255;100;0mX\x1b[39m")).toBe(1);
+      expect(Bun.stringWidth(repeat("a", 30) + "\x1b[31m" + repeat("b", 30) + "\x1b[39m")).toBe(60);
+    });
+
+    test("SGR in the middle of UTF-16 text", () => {
+      expect(Bun.stringWidth("安\x1b[31m康\x1b[39m!")).toBe(5);
+      expect(Bun.stringWidth("安\x1b[31m康", { countAnsiEscapeCodes: true })).toBe(8);
+      expect(Bun.stringWidth("😀\x1b[1mok\x1b[22m😀")).toBe(6);
+    });
+
+    test("OSC-8 hyperlinks mid-string", () => {
+      // BEL-terminated
+      expect(Bun.stringWidth("see \x1b]8;;https://bun.com\x07Bun\x1b]8;;\x07 docs")).toBe(12);
+      // ST (ESC \)-terminated
+      expect(Bun.stringWidth("see \x1b]8;;https://bun.com\x1b\\Bun\x1b]8;;\x1b\\ docs")).toBe(12);
+      // UTF-16 string with a hyperlink around CJK text
+      expect(Bun.stringWidth("\x1b]8;;https://bun.com\x07文档\x1b]8;;\x07")).toBe(4);
+    });
+  });
+
+  describe("emoji and ZWJ sequences", () => {
+    test("emoji widths", () => {
+      expect(Bun.stringWidth("😀")).toBe(2);
+      expect(Bun.stringWidth("👩‍👩‍👧‍👦")).toBe(2); // family ZWJ sequence
+      expect(Bun.stringWidth("🏳️‍🌈")).toBe(2); // flag + VS16 + ZWJ
+      expect(Bun.stringWidth("🇺🇸")).toBe(2); // regional indicator pair
+      expect(Bun.stringWidth("👍🏽")).toBe(2); // skin tone modifier
+      expect(Bun.stringWidth("1️⃣")).toBe(2); // keycap
+    });
+
+    test("emoji embedded in long ASCII runs", () => {
+      expect(Bun.stringWidth(repeat("a", 40) + "😀" + repeat("b", 40))).toBe(82);
+      expect(Bun.stringWidth("👩‍👩‍👧‍👦".repeat(10))).toBe(20);
+      expect(Bun.stringWidth("ok 👍🏽 done, 🇺🇸 flag")).toBe(19);
+    });
+  });
+
+  describe("East Asian wide characters", () => {
+    test("wide and fullwidth", () => {
+      expect(Bun.stringWidth("中文")).toBe(4);
+      expect(Bun.stringWidth("こんにちは")).toBe(10);
+      expect(Bun.stringWidth("안녕하세요")).toBe(10);
+      expect(Bun.stringWidth("Ａ")).toBe(2); // fullwidth latin
+      expect(Bun.stringWidth("ｱｲｳ")).toBe(3); // halfwidth katakana
+      expect(Bun.stringWidth("ノード.js")).toBe(9);
+      expect(Bun.stringWidth("中" + repeat("a", 64) + "文")).toBe(68);
+    });
+
+    test("ambiguous-width characters", () => {
+      expect(Bun.stringWidth("★☆")).toBe(2);
+      expect(Bun.stringWidth("★☆", { ambiguousIsNarrow: false })).toBe(4);
+      expect(Bun.stringWidth("±", { ambiguousIsNarrow: true })).toBe(1);
+    });
+  });
+});
+
+test("options lookup ignores Object.prototype pollution", () => {
+  try {
+    (Object.prototype as any).countAnsiEscapeCodes = true;
+    (Object.prototype as any).ambiguousIsNarrow = false;
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", {})).toBe(5);
+    expect(Bun.stringWidth("★", {})).toBe(1);
+    // An explicit own property still wins.
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", { countAnsiEscapeCodes: true })).toBe(13);
+    // Inherited properties from a non-Object.prototype prototype are honored,
+    // same as the previous implementation.
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", { __proto__: { countAnsiEscapeCodes: true } } as any)).toBe(13);
+  } finally {
+    delete (Object.prototype as any).countAnsiEscapeCodes;
+    delete (Object.prototype as any).ambiguousIsNarrow;
+  }
+});
+
+// The Latin-1 ANSI-excluding width is computed by a single-pass SIMD kernel
+// (highway_visible_latin1_width_exclude_ansi) that classifies 16-64 byte
+// chunks into bitmasks and carries in-CSI / in-OSC state across chunk
+// boundaries. These tests pin its behavior at and around those boundaries and
+// against a scalar reference implementation of the same escape semantics:
+//   CSI  ESC [ <params> <final byte in [0x40, 0x7E]>   -> zero width
+//   OSC  ESC ] <payload> (BEL | 0x9C | ESC \)           -> zero width
+//   bare ESC followed by anything else                  -> only the ESC is dropped
+//   C0 controls, DEL, C1 controls, soft hyphen (0xAD)   -> zero width
+describe("ANSI escapes across SIMD chunk boundaries", () => {
+  const ESC = "\x1b";
+  const rep = (fill: string, count: number) => Buffer.alloc(fill.length * count, fill, "latin1").toString("latin1");
+
+  function referenceWidthExcludeAnsiLatin1(str: string): number {
+    let width = 0;
+    let i = 0;
+    const len = str.length;
+    while (i < len) {
+      const c = str.charCodeAt(i);
+      if (c === 0x1b) {
+        if (i + 1 >= len) {
+          i++;
+          continue;
+        }
+        const next = str.charCodeAt(i + 1);
+        if (next === 0x5b /* [ */) {
+          i += 2;
+          while (i < len && !(str.charCodeAt(i) >= 0x40 && str.charCodeAt(i) <= 0x7e)) i++;
+          i++;
+          continue;
+        }
+        if (next === 0x5d /* ] */) {
+          i += 2;
+          while (i < len) {
+            const t = str.charCodeAt(i);
+            if (t === 0x07 || t === 0x9c) {
+              i++;
+              break;
+            }
+            if (t === 0x1b && i + 1 < len && str.charCodeAt(i + 1) === 0x5c /* \ */) {
+              i += 2;
+              break;
+            }
+            i++;
+          }
+          continue;
+        }
+        i++;
+        continue;
+      }
+      width += c >= 0x20 && !(c >= 0x7f && c <= 0x9f) && c !== 0xad ? 1 : 0;
+      i++;
+    }
+    return width;
+  }
+
+  const expectMatchesReference = (str: string) => {
+    expect(Bun.stringWidth(str)).toBe(referenceWidthExcludeAnsiLatin1(str));
+  };
+
+  test("plain ASCII around chunk-size lengths", () => {
+    for (const n of [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257]) {
+      expect(Bun.stringWidth(rep("a", n))).toBe(n);
+    }
+  });
+
+  test("SGR sequences at every offset across a chunk boundary", () => {
+    // Slide a short SGR pair across positions 0..192 so the ESC, the '[', the
+    // parameters and the final byte each land on 16/32/64-byte boundaries.
+    for (let pad = 0; pad <= 192; pad++) {
+      const str = rep("a", pad) + `${ESC}[31m` + "bcd" + `${ESC}[0m` + rep("e", 8);
+      expect(Bun.stringWidth(str)).toBe(pad + 3 + 8);
+    }
+  });
+
+  test("OSC hyperlink payload spanning many chunks", () => {
+    const url = "https://example.com/" + rep("x", 300);
+    for (const terminator of ["\x07", `${ESC}\\`, "\x9c"]) {
+      const link = `${ESC}]8;;${url}${terminator}click here${ESC}]8;;${terminator}`;
+      expect(Bun.stringWidth(link)).toBe("click here".length);
+      // And with text before/after whose width must still be counted.
+      expect(Bun.stringWidth(rep("a", 70) + link + rep("b", 70))).toBe(70 + "click here".length + 70);
+    }
+  });
+
+  test("ESC ST terminator straddling a chunk boundary", () => {
+    // Position the two-byte "ESC \" OSC terminator so it straddles 64-byte
+    // boundaries (ESC at 63, '\' at 64, etc.).
+    for (let pad = 50; pad <= 80; pad++) {
+      const str = rep("a", 10) + `${ESC}]8;;${rep("u", pad)}${ESC}\\done`;
+      expect(Bun.stringWidth(str)).toBe(10 + 4);
+      expectMatchesReference(str);
+    }
+  });
+
+  test("dense SGR runs (bash prompt shape)", () => {
+    const unit = `${ESC}[31mword${ESC}[0m ${ESC}[32mword${ESC}[0m ${ESC}[33mword${ESC}[0m`;
+    for (const n of [1, 3, 10, 100, 500]) {
+      const str = rep(unit, n);
+      // "word word word" = 14 visible columns per unit (incl. two spaces).
+      expect(Bun.stringWidth(str)).toBe(14 * n);
+    }
+  });
+
+  test("truecolor SGR parameters crossing chunk boundaries", () => {
+    const unit = `${ESC}[38;2;255;128;64mhello${ESC}[39m`;
+    for (const n of [1, 2, 5, 50, 200]) {
+      expect(Bun.stringWidth(rep(unit, n))).toBe(5 * n);
+    }
+  });
+
+  test("unterminated sequences at the end of long strings", () => {
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}[31;38;2;1;2;3`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}]0;title with no terminator`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 100) + ESC)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 63) + ESC)).toBe(63);
+    expect(Bun.stringWidth(rep("a", 64) + ESC)).toBe(64);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}[`)).toBe(100);
+    expect(Bun.stringWidth(rep("a", 63) + `${ESC}[`)).toBe(63);
+    expect(Bun.stringWidth(rep("a", 100) + `${ESC}]`)).toBe(100);
+  });
+
+  test("bare ESC followed by ordinary characters", () => {
+    // Only the ESC itself is dropped; the next character still counts.
+    expect(Bun.stringWidth(`${ESC}A`)).toBe(1);
+    expect(Bun.stringWidth(rep("a", 63) + `${ESC}A` + rep("b", 10))).toBe(63 + 1 + 10);
+    expect(Bun.stringWidth(rep(`${ESC}a`, 100))).toBe(100);
+    // ESC ESC [1m : the first ESC is dropped, the second starts a CSI.
+    expect(Bun.stringWidth(`${ESC}${ESC}[1mx${ESC}[0m`)).toBe(1);
+  });
+
+  test("malformed CSI with an ESC inside the parameters", () => {
+    // The scan for the final byte treats the second '[' (0x5B) as the final
+    // byte of the first sequence, so "32m" remains visible. This matches the
+    // previous implementation.
+    expect(Bun.stringWidth(`${ESC}[31;${ESC}[32m`)).toBe(3);
+    expectMatchesReference(`${ESC}[31;${ESC}[32m`);
+    expectMatchesReference(rep("a", 60) + `${ESC}[31;${ESC}[32m` + rep("b", 60));
+  });
+
+  test("Latin-1 high bytes, C1 controls and soft hyphen mixed with escapes", () => {
+    // é (0xE9) is width 1, soft hyphen (0xAD) and C1 control (0x85) are width 0.
+    const latin1 = "caf\xe9\xad\x85!";
+    expect(Bun.stringWidth(latin1)).toBe(5);
+    const str = rep(latin1, 40) + `${ESC}[31m` + rep(latin1, 40) + `${ESC}[0m`;
+    expect(Bun.stringWidth(str)).toBe(5 * 80);
+    expectMatchesReference(str);
+  });
+
+  test("matches the scalar reference on pseudo-random escape-heavy inputs", () => {
+    // Deterministic LCG so failures are reproducible.
+    let seed = 0x12345678;
+    const next = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed;
+    };
+    const alphabet = "\x1b[]m;19aZ \x07\x9c\\\xad\x01\x7f\x80\x9f\xa0\xe9\xff@~?K";
+    const mismatches: string[] = [];
+    for (let iter = 0; iter < 500; iter++) {
+      const len = next() % 300;
+      let chars = "";
+      for (let k = 0; k < len; k++) chars += alphabet[next() % alphabet.length];
+      const width = Bun.stringWidth(chars);
+      const expected = referenceWidthExcludeAnsiLatin1(chars);
+      if (width !== expected) {
+        // Record the exact input bytes so failures are reproducible.
+        const dump = [...chars].map(c => "\\x" + c.charCodeAt(0).toString(16).padStart(2, "0")).join("");
+        mismatches.push(`${dump}: got ${width}, expected ${expected}`);
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  test("countAnsiEscapeCodes: true still counts escape bytes", () => {
+    const unit = `${ESC}[31mword${ESC}[0m`;
+    // "word" (4) plus the non-control bytes of the two escape sequences
+    // ("[31m" and "[0m" = 7); the ESC bytes themselves are control characters
+    // and contribute 0 even when counted.
+    expect(Bun.stringWidth(unit, { countAnsiEscapeCodes: true })).toBe(11);
+    expect(Bun.stringWidth(rep(unit, 100), { countAnsiEscapeCodes: true })).toBe(1100);
+  });
+});
+
+// The UTF-16 path has a SIMD bulk kernel (highway_visible_utf16_width) that
+// counts runs of codepoints which are always their own grapheme cluster with
+// a fixed width, bailing to the scalar grapheme loop for everything else.
+// These tests pin the kernel's allowlisted ranges against the scalar
+// classifier and the clustering behavior at the bail points.
+describe("UTF-16 bulk width fast path", () => {
+  // Must mirror the ranges in ClassifyBulkUTF16Unit (highway_strings.cpp).
+  const narrowRanges: Array<[number, number]> = [
+    [0x20, 0x7e],
+    [0xa0, 0x2ff],
+    [0x370, 0x482],
+    [0x48a, 0x52f],
+  ];
+  const narrowExcluded = new Set([0xa9, 0xad, 0xae]);
+  const wideRanges: Array<[number, number]> = [
+    [0x3041, 0x3096],
+    [0x309b, 0x30ff],
+    [0x3400, 0x4dbf],
+    [0x4e00, 0x9fff],
+    [0xac00, 0xd7a3],
+    [0xff01, 0xff60],
+  ];
+
+  test("every codepoint in the allowlisted ranges has the expected fixed width", () => {
+    const mismatches: string[] = [];
+    const checkRange = (lo: number, hi: number, perChar: number, excluded?: Set<number>) => {
+      // Walk the range in chunks so every codepoint passes through the SIMD
+      // path, and the chunk sum catches any unexpected cluster joining.
+      const chunkSize = 256;
+      for (let start = lo; start <= hi; start += chunkSize) {
+        const end = Math.min(start + chunkSize - 1, hi);
+        let chars = "";
+        let expected = 0;
+        for (let cp = start; cp <= end; cp++) {
+          if (excluded?.has(cp)) continue;
+          chars += String.fromCharCode(cp);
+          expected += perChar;
+        }
+        const got = Bun.stringWidth(chars);
+        if (got !== expected) {
+          mismatches.push(`U+${start.toString(16)}..U+${end.toString(16)}: got ${got}, expected ${expected}`);
+        }
+      }
+    };
+    for (const [lo, hi] of narrowRanges) checkRange(lo, hi, 1, narrowExcluded);
+    for (const [lo, hi] of wideRanges) checkRange(lo, hi, 2);
+    expect(mismatches).toEqual([]);
+  });
+
+  test("excluded and boundary codepoints keep their scalar behavior", () => {
+    expect(Bun.stringWidth("\xa9")).toBe(1); // © is excluded from the bulk path (Extended_Pictographic)
+    expect(Bun.stringWidth("\xae")).toBe(1); // ®
+    expect(Bun.stringWidth("\xad")).toBe(0); // soft hyphen
+    expect(Bun.stringWidth("a\xa9b\xaec\xadd")).toBe(6);
+    expect(Bun.stringWidth("\u0483")).toBe(1); // combining Cyrillic titlo (just past 0x482, excluded from bulk)
+    expect(Bun.stringWidth("я\u0483")).toBe(2); // joins the previous letter as one cluster
+    expect(Bun.stringWidth("\u3099")).toBe(2); // combining voicing mark alone (wide, joins nothing)
+    expect(Bun.stringWidth("\u3040")).toBe(1); // unassigned, just below the hiragana letters range
+    expect(Bun.stringWidth("\u309a")).toBe(2); // combining semi-voiced mark (excluded from bulk)
+  });
+
+  test("clusters still join across the bulk/scalar boundary", () => {
+    // Combining voicing mark right after a bulk kana run: joins the last kana.
+    expect(Bun.stringWidth("か\u3099")).toBe(4);
+    expect(Bun.stringWidth("こんにちはか\u3099")).toBe(14);
+    // Jamo T after a Hangul LV syllable: one cluster.
+    expect(Bun.stringWidth("가\u11a8")).toBe(3);
+    expect(Bun.stringWidth("각")).toBe(2);
+    // Combining acute after a CJK ideograph at the end of a long bulk run.
+    expect(Bun.stringWidth("中".repeat(40) + "\u0301")).toBe(80);
+    // Combining mark after an ASCII run inside a longer mixed string.
+    expect(Bun.stringWidth("abc中で🎉x\u0301y")).toBe(11);
+    // ZWJ emoji sequence immediately after a CJK run.
+    expect(Bun.stringWidth("日本👩‍👩‍👧‍👦")).toBe(6);
+  });
+
+  test("matches expected widths for common non-ASCII scripts", () => {
+    expect(Bun.stringWidth("αβγδε")).toBe(5);
+    expect(Bun.stringWidth("привет")).toBe(6);
+    expect(Bun.stringWidth("ĀāĂăĄą")).toBe(6);
+    expect(Bun.stringWidth("ɐɑɒɓɔɕ")).toBe(6);
+    expect(Bun.stringWidth("\u309b\u309c\u309d\u30fb\u30fc")).toBe(10);
+    expect(Bun.stringWidth("ＡＢＣ！")).toBe(8);
+    expect(Bun.stringWidth("㐀㐁㐂")).toBe(6);
+    expect(Bun.stringWidth("こんにちは世界".repeat(64))).toBe(14 * 64);
+    expect(Bun.stringWidth("한국어 텍스트")).toBe(13);
+  });
+
+  test("ambiguousIsNarrow: false skips the bulk path but stays correct", () => {
+    expect(Bun.stringWidth("αβγδε", { ambiguousIsNarrow: false })).toBe(10);
+    expect(Bun.stringWidth("привет", { ambiguousIsNarrow: false })).toBe(12);
+    expect(Bun.stringWidth("abcαβγ中中", { ambiguousIsNarrow: false })).toBe(3 + 6 + 4);
+    expect(Bun.stringWidth("abcαβγ中中")).toBe(3 + 3 + 4);
+    // CJK is unambiguous: same width either way.
+    expect(Bun.stringWidth("こんにちは世界", { ambiguousIsNarrow: false })).toBe(14);
+  });
+
+  test("escape sequences interleaved with bulk runs", () => {
+    expect(Bun.stringWidth("\x1b[31m中文\x1b[0m")).toBe(4);
+    expect(Bun.stringWidth("中文\x1b[31m中文\x1b[0m中文")).toBe(12);
+    expect(Bun.stringWidth("\x1b]8;;https://example.com\x07日本語リンク\x1b]8;;\x07")).toBe(12);
+    expect(Bun.stringWidth("αβ\x1b[38;2;255;0;0mγδ\x1b[0m中", { countAnsiEscapeCodes: false })).toBe(6);
+    expect(Bun.stringWidth("\x1b[31m中文\x1b[0m", { countAnsiEscapeCodes: true })).toBe(4 + 7);
+  });
+
+  test("long mixed-script strings match the sum of their parts", () => {
+    const part = "hello 世界 Ωμέγα Привет ｗｉｄｅ 가나다 ";
+    const partWidth = Bun.stringWidth(part);
+    expect(partWidth).toBe(40); // 6 + 5 + 6 + 7 + 9 + 7
+    expect(Bun.stringWidth(part.repeat(50))).toBe(partWidth * 50);
+  });
+});

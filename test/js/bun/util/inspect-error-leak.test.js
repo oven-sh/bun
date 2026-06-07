@@ -20,5 +20,7 @@ test("Printing errors does not leak", () => {
   const after = Math.floor(process.memoryUsage.rss() / 1024);
   const diff = ((after - baseline) / 1024) | 0;
   console.log(`RSS increased by ${diff} MB`);
-  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 20 : 10);
+  // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+  // retention inflate RSS even when nothing is leaking.
+  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(isASAN ? 400 : 10);
 }, 10_000);

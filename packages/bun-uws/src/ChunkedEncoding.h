@@ -33,12 +33,16 @@ namespace uWS {
     constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x4000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x2000000000000000;
     constexpr uint64_t STATE_WAITING_FOR_LF = 1ull << (sizeof(uint64_t) * 8 - 4);//0x1000000000000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF);//0x0FFFFFFFFFFFFFFF;
+    /* RFC 7230 4.1: chunk-size = 1*HEXDIG. Tracks that at least one hex digit has
+     * been consumed for the current chunk-size line, across packet boundaries.
+     * Without this a bare "\r\n" or ";ext\r\n" would parse as size 0. */
+    constexpr uint64_t STATE_HAS_HEXDIG = 1ull << (sizeof(uint64_t) * 8 - 5);//0x0800000000000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF | STATE_HAS_HEXDIG);//0x07FFFFFFFFFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
-    /* Overflow guard: if any of bits 55-59 are set before the next *16, one more
+    /* Overflow guard: if any of bits 54-58 are set before the next *16, one more
      * hex digit (plus the +2 for the trailing CRLF of chunk-data) would carry into
-     * STATE_WAITING_FOR_LF at bit 60. Limits chunk size to 14 hex digits (~72 PB). */
-    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x1Full << (sizeof(uint64_t) * 8 - 9);//0x0F80000000000000;
+     * STATE_HAS_HEXDIG at bit 59. Limits chunk size to 14 hex digits (~72 PB). */
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x1Full << (sizeof(uint64_t) * 8 - 10);//0x07C0000000000000;
 
     inline uint64_t chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
@@ -72,8 +76,9 @@ namespace uWS {
         if (state & STATE_WAITING_FOR_LF) [[unlikely]] {
             if (!data.length()) return state;
             if (data[0] != '\n') return STATE_IS_ERROR;
+            if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
             data.remove_prefix(1);
-            return ((state & ~(STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION)) + 2)
+            return ((state & ~(STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
                    | STATE_HAS_SIZE | STATE_IS_CHUNKED;
         }
 
@@ -96,7 +101,7 @@ namespace uWS {
                 else if ((unsigned)(d - 'a') < 6)            n = d - 'a' + 10;
                 else return STATE_IS_ERROR;
                 if (chunkSize(state) & STATE_SIZE_OVERFLOW) [[unlikely]] return STATE_IS_ERROR;
-                state = ((state & STATE_SIZE_MASK) * 16ull + n) | STATE_IS_CHUNKED;
+                state = ((state & STATE_SIZE_MASK) * 16ull + n) | STATE_IS_CHUNKED | STATE_HAS_HEXDIG;
                 ++p; --len;
             }
         }
@@ -114,9 +119,10 @@ namespace uWS {
                     return state | STATE_WAITING_FOR_LF;
                 }
                 if (*p != '\n') return STATE_IS_ERROR;
+                if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
                 ++p; --len;
                 data = std::string_view(p, len);
-                return ((state & ~STATE_IS_CHUNKED_EXTENSION) + 2)
+                return ((state & ~(STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
                        | STATE_HAS_SIZE | STATE_IS_CHUNKED;
             }
             if (c <= 32) return STATE_IS_ERROR;
@@ -147,21 +153,30 @@ namespace uWS {
     static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false) {
         while (data.length()) {
 
-            // if in "drop trailer mode", just drop up to what we have as size
+            // if in "drop trailer mode", consume the terminator bytes after the
+            // zero-chunk. This is 2 bytes (\r\n) with no trailer, or 4 bytes
+            // (\r\n\r\n) with trailer=true. Upstream uWS consumed these bytes
+            // blindly, which let attackers smuggle a second request by placing
+            // arbitrary bytes (e.g. "X:POST /admin HTTP/1.1\r\n") where the
+            // final CRLF belongs. Strict validation closes that desync.
+            //
+            // chunkSize() starts at 2 or 4 and counts down as bytes arrive; its
+            // parity gives the expected byte (even -> \r, odd -> \n). The parity
+            // rule is the same for both initial sizes, so TCP segment
+            // boundaries that split the terminator are handled naturally.
             if (((state & STATE_IS_CHUNKED) == 0) && hasChunkSize(state) && chunkSize(state)) {
-
-                //printf("Parsing trailer now\n");
-
-                while(data.length() && chunkSize(state)) {
+                while (data.length() && chunkSize(state)) {
+                    char expected = (chunkSize(state) & 1) ? '\n' : '\r';
+                    if (data[0] != expected) {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
                     data.remove_prefix(1);
                     decChunkSize(state, 1);
 
                     if (chunkSize(state) == 0) {
-
-                        /* This is an actual place where we need 0 as state */
+                        /* Terminator fully consumed — parsing is complete. */
                         state = 0;
-
-                        /* The parser MUST stop consuming here */
                         return std::nullopt;
                     }
                 }

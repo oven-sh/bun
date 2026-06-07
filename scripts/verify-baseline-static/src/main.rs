@@ -25,7 +25,7 @@ use object::{Object, ObjectSection, ObjectSymbol, SectionKind, SymbolKind, Symbo
 ///
 /// Nehalem (Core i7, 2008) is the last Intel microarch before AVX. Bun's
 /// baseline build targets it via `-march=nehalem` (cmake/CompilerFlags.cmake:33)
-/// and `std.Target.x86.cpu.nehalem` (build.zig).
+/// and the Rust crates' `target-cpu=nehalem` equivalent.
 ///
 /// Notably ABSENT: AES-NI and PCLMULQDQ are Westmere (2010), not Nehalem.
 /// This trips people up because they're legacy-encoded (no VEX prefix) and
@@ -152,6 +152,14 @@ fn is_harmless_on_nehalem(insn: &Instruction) -> bool {
         return true;
     }
 
+    // CLDEMOTE encodes in hint/NOP space (0f 1c /0) and is architecturally
+    // treated as a NOP on CPUs that don't enumerate it (SDM vol. 2A). Newer
+    // UCRT string routines (e.g. strpbrk) emit it unconditionally as a cache
+    // hint; on Nehalem it NOPs and the routine behaves identically.
+    if insn.mnemonic() == Mnemonic::Cldemote {
+        return true;
+    }
+
     false
 }
 
@@ -222,6 +230,13 @@ fn is_impossible_feature(feat: CpuidFeature) -> bool {
 ///   LLVM's per-build internalisation ID (e.g. `__xgetbv.llvm.21110093...`).
 ///   Pure noise.
 ///
+/// - trailing `.[0-9]+` suffix → stripped
+///   LLVM's collision-avoidance rename when (regular-)LTO internalisation
+///   pulls two same-named locals into one module (e.g.
+///   `...Finder14with_pair_impl.1859`). The number is per-build noise, just
+///   like `.llvm.NNNN`. Mangled C/C++/Rust names never contain `.`, so this
+///   only ever touches compiler-generated suffixes.
+///
 /// Non-Rust symbols pass through unchanged: the `Cs[alnum]+_` pattern is
 /// specific enough not to collide with C/C++/asm names in practice (it
 /// requires an uppercase C immediately followed by lowercase s and a
@@ -233,6 +248,18 @@ fn canonicalize_symbol(name: &str) -> String {
         Some(i) if name[i + 6..].bytes().all(|b| b.is_ascii_digit()) => &name[..i],
         _ => name,
     };
+
+    // Then strip plain trailing `.NNNN` LTO-rename suffixes (possibly
+    // stacked, e.g. `foo.12.34`).
+    let mut base = base;
+    while let Some(i) = base.rfind('.') {
+        let digits = &base[i + 1..];
+        if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
+            base = &base[..i];
+        } else {
+            break;
+        }
+    }
 
     // Scan for Cs<base62>_ and replace. Hand-rolled rather than pulling in
     // the regex crate for one pattern. The disambiguator is base-62

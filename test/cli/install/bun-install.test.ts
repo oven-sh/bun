@@ -8923,7 +8923,7 @@ describe.concurrent("bun-install", () => {
           cwd: pkgDir,
           env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
           stderr: "pipe",
-          stdout: "pipe",
+          stdout: "ignore",
           stdin: "ignore",
         });
         const [errText, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

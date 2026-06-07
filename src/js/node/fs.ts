@@ -534,13 +534,13 @@ var access = function access(path, mode, callback) {
         // let the native call produce the error (respects force/ENOENT)
       }
       if (stats?.isDirectory()) {
-        const err = new Error(`Path is a directory: rm returned EISDIR (is a directory) ${path}`);
-        err.code = "ERR_FS_EISDIR";
-        err.info = { code: "EISDIR", message: "is a directory", path, syscall: "rm", errno: 21 };
-        err.errno = 21;
-        err.syscall = "rm";
-        err.path = path;
-        throw err;
+        throw require("internal/fs/cp-sync").fsEisdirError({
+          code: "EISDIR",
+          message: "is a directory",
+          path,
+          syscall: "rm",
+          errno: $processBindingConstants.os.errno.EISDIR,
+        });
       }
     }
     return fs.rmSync(path, options);

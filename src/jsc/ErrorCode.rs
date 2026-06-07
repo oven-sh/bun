@@ -685,9 +685,13 @@ impl ErrorCode {
     pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
     /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
     pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(314);
+    /// `ERR_FS_CP_EEXIST` (instanceof Error)
+    pub const FS_CP_EEXIST: ErrorCode = ErrorCode(315);
+    /// `ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY` (instanceof Error)
+    pub const FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode(316);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 315;
+    pub const COUNT: u16 = 317;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1045,6 +1049,8 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
+    pub const ERR_FS_CP_EEXIST: ErrorCode = ErrorCode::FS_CP_EEXIST;
+    pub const ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode::FS_CP_SYMLINK_TO_SUBDIRECTORY;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1377,6 +1383,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_REQUIRED",
     "ERR_POSTGRES_CONNECTION_FAILED",
     "ERR_MYSQL_CONNECTION_FAILED",
+    "ERR_FS_CP_EEXIST",
+    "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

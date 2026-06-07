@@ -61,10 +61,7 @@ function fsCpDirToNonDirError(context) {
 }
 
 function fsCpEExistError(context) {
-  // ERR_FS_CP_EEXIST is not in the ErrorCode registry yet
-  const err = new Error();
-  err.code = "ERR_FS_CP_EEXIST";
-  return decorateSystemError(err, "Target already exists", context);
+  return decorateSystemError($ERR_FS_CP_EEXIST(context.message), "Target already exists", context);
 }
 
 function fsCpEinvalError(context) {
@@ -88,10 +85,11 @@ function fsCpSocketError(context) {
 }
 
 function fsCpSymlinkToSubdirectoryError(context) {
-  // ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY is not in the ErrorCode registry yet
-  const err = new Error();
-  err.code = "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY";
-  return decorateSystemError(err, "Cannot overwrite symlink in subdirectory of self", context);
+  return decorateSystemError(
+    $ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY(context.message),
+    "Cannot overwrite symlink in subdirectory of self",
+    context,
+  );
 }
 
 function fsCpUnknownError(context) {
@@ -110,8 +108,17 @@ function getValidMode(mode) {
   return mode;
 }
 
+const kValidatedCpOptions = Symbol("kValidatedCpOptions");
+
 function validateCpOptions(options) {
-  if (options === undefined) return { ...defaultCpOptions };
+  // Callback fs.cp validates before delegating to fs.promises.cp; the brand
+  // lets the second pass skip re-validating the same object.
+  if (options?.[kValidatedCpOptions]) return options;
+  if (options === undefined) {
+    options = { ...defaultCpOptions };
+    options[kValidatedCpOptions] = true;
+    return options;
+  }
   validateObject(options, "options");
   options = { ...defaultCpOptions, ...options };
   validateBoolean(options.dereference, "options.dereference");
@@ -129,6 +136,7 @@ function validateCpOptions(options) {
   if (options.filter !== undefined) {
     validateFunction(options.filter, "options.filter");
   }
+  options[kValidatedCpOptions] = true;
   return options;
 }
 

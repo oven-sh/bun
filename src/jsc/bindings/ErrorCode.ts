@@ -325,5 +325,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_FS_CP_EEXIST", Error],
+  ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
 ];
 export default errors;

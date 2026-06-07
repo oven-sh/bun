@@ -123,6 +123,12 @@ let resourceLimits = {};
 // objects like FileHandle that are not natively transferable in Bun. On send, each such
 // object in the transferList is replaced inside workerData by a serializable marker object;
 // on receive, markers are swapped back for reconstructed instances.
+// A plain string key on purpose: Symbols don't survive structured clone, and
+// Bun has no native HostObject hook, so the marker must ride along inside the
+// cloned graph (including Map/Set entries). This is in-band signaling: a user
+// object that fabricates the key in workerData will deserialize on the worker
+// side where node would deliver it unchanged. That's accepted - it is not a
+// privilege boundary (worker threads share the parent's fd table anyway).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
 
 function isJSTransferableMarker(value: object): boolean {
@@ -164,7 +170,8 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
   memo.set(value, value);
   if ($isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      value[i] = unpackJSTransferables(value[i], memo);
+      // skip holes so sparse arrays stay sparse, like structured clone
+      if (i in value) value[i] = unpackJSTransferables(value[i], memo);
     }
     return value;
   }
@@ -278,7 +285,10 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
     if ($isArray(value)) {
       const out = new Array(value.length);
       seen.set(value, out);
-      for (let i = 0; i < value.length; i++) out[i] = replace(value[i]);
+      // skip holes so sparse arrays stay sparse, like structured clone
+      for (let i = 0; i < value.length; i++) {
+        if (i in value) out[i] = replace(value[i]);
+      }
       return out;
     }
     // Mirror structured clone: Map/Set entries (keys included) participate

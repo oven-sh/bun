@@ -368,27 +368,31 @@ bun run build:release --target=aarch64-linux-ohos \
 - **交叉编译器**: `aarch64-linux-ohos-clang`
 - **sysroot**: `--sysroot=<SDK>/ohos/native/sysroot`
 
-### 已知限制
+### ✅ 已修复问题
+
+| 问题 | 修复方式 | 提交 |
+|------|----------|------|
+| `spawnSync({stdout:'pipe'})` 输出为空 | 跳过 `wait_linux_signalfd`（prctl/pidfd 触发 SIGSYS），改用普通 `poll()+wait4()` 循环 | `a532c50ee4` |
+| `fchmodat2` (#452) SIGSYS 噪声 | `#[cfg(target_env = "ohos")]` 跳过，直接走 `fchmodat` fallback | `fd3456e10c` |
+| `sys::dlopen()` / FFI 不可用 | 动态链接 `libc.so`，`-lc` 编译标志 | `8f92231b33` |
+| `CouldntReadCurrentDirectory` | `run_command.rs` 中静默处理 EPERM/EACCES | `c4d2db7bf4` |
+| Hardlinker EPERM copy 缺父目录 | copy fallback 前创建父目录 | `fd3456e10c` |
+
+### 已知限制（平台限制，不可通过修改 Bun 代码修复）
 
 | 限制 | 原因 | 影响 | 应对 |
 |------|------|------|------|
-| **`spawnSync({stdout:'pipe'})`** | ✅ **已修复** — 跳过 `wait_linux_signalfd`（prctl/pidfd 触发 SIGSYS） | spawnSync pipe 正常 | 改用普通 `poll()+wait4()` 循环 |
-| `async Bun.spawn({stdout:'pipe'})` 正常 | 不同内核路径 | ✅ 完整支持 | — |
 | `fstat()` 在 pipe/socket 上返回 EACCES | OHOS SELinux (E008) | fd 状态检查失败 | 用 `fcntl(F_GETFD)` 代替 |
-| **`fchmodat2` (#452)** | ✅ **已修复** — `#[cfg(target_env = "ohos")]` 直接跳过 | 不再触发 SIGSYS | 直接走 `fchmodat` fallback |
 | PTY (`Bun.Terminal()`) 创建成功 | SELinux 允许 openpty | 创建 ✅，spawn 输出为空 ❌ | vfork 限制 |
-| **`no_orphans`** | prctl 被 OHOS seccomp 拦截 | ❌ `--no-orphans` 功能不可用（父进程死亡不清理子进程）| 测试框架需补 `killall -9 bun` 清理 |
-| **`PR_SET_PDEATHSIG` / `PR_SET_CHILD_SUBREAPER`** | seccomp 拦截，触发 SIGSYS | `no_orphans` 级联清理断链 | Rust 侧 `#[cfg(not(target_env = "ohos"))]` 跳过 |
-| **`sys::dlopen()` / FFI** | ✅ **已修复** — 动态 libc | dlopen/dlsym 从系统 GLOBAL 实现工作 | `-lc` 动态链接 libc.so |
-| `process.dlopen` | ✅ **路径通** | 需 OHOS SDK 重编 .node（ABI 不匹配）| 当前仅支持系统库 FFI |
+| `no_orphans` | prctl 被 OHOS seccomp 拦截 | ❌ `--no-orphans` 功能不可用（父进程死亡不清理子进程）| 测试框架需补 `killall -9 bun` 清理 |
+| `PR_SET_PDEATHSIG` / `PR_SET_CHILD_SUBREAPER` | seccomp 拦截，触发 SIGSYS | `no_orphans` 级联清理断链 | Rust 侧 `#[cfg(not(target_env = "ohos"))]` 跳过 |
+| `process.dlopen` | 路径通但 ABI 不匹配 | 需 OHOS SDK 重编 .node | 当前仅支持系统库 FFI |
 | 二进制需签名 | SELinux 要求 | 启动前需 `binary-sign-tool sign` | L1/L2 自动签名 |
 | `/tmp` 只读 | 文件系统限制 | 临时文件创建失败 | 自动 fallback 到 `$TMPDIR` |
 | `pidfd_open`/`close_range` | 未实现 syscall | SIGSYS | `BUN_OHOS_DISABLE_PIDFD` 标志 |
 | `memfd_create` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
 | `copy_file_range` / `openat2` | 未实现 syscall | SIGSYS | `#[cfg(ohos)]` 提前返回 ENOSYS |
-| `fchmodat2` (resolved) | ✅ 已修复 | `#[cfg(target_env = "ohos")]` 跳过 | 直接 `fchmodat` |
 | 多线程 `fork()` 后 fd 不可用 | 内核限制 | 子进程无法访问父进程 fd | — |
-| 全量测试通过率: 待更新 | 跑完 CI 更新 | | |
 
 ### 已拦截 syscall 列表
 

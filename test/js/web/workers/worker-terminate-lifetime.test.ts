@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -115,6 +115,48 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: #31224. Windows worker scheduling Bun.write then exit(0) used
+// to crash in JSNextTickQueue::drain from the uv_fs_write completion firing
+// after the worker's JSC VM was torn down.
+test.skipIf(!isWindows)(
+  "worker that schedules Bun.write to stdout then exits does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workers = [];
+        for (let i = 0; i < ${perRound}; i++) {
+          workers.push(new Worker("data:text/javascript," + encodeURIComponent(\`
+            Bun.write(Bun.stdout, new Uint8Array(512 * 1024).fill(120)).then(() => {
+              console.error("stdout write microtask ran after worker shutdown");
+              process.exit(42);
+            });
+            process.exit(0);
+          \`)));
+        }
+        const codes = await Promise.all(workers.map(w => new Promise(r => {
+          w.addEventListener("close", e => r(e.code ?? e.exitCode ?? 0), { once: true });
+        })));
+        for (const c of codes) if (c !== 0) { console.error("bad exit", c); process.exit(1); }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Drain stdout concurrently — the workers write ~`perRound * 512 KiB` to it
+    // and the child blocks on pipe backpressure if we never read it.
+    const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdout write microtask ran after worker shutdown");
+    expect(stderr).not.toContain("bad exit");
     expect(exitCode).toBe(0);
   },
   timeout,

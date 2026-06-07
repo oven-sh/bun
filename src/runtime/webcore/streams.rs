@@ -531,6 +531,24 @@ impl WritablePending {
             WritableFuture::None => {}
         }
     }
+
+    /// Drop the pending future without resolving the promise. Forgets the
+    /// `Promise` variant's `JSPromiseStrong` because the JSC `HandleSet` is
+    /// already freed when this runs on the Windows worker-shutdown path.
+    pub fn discard(&mut self) {
+        if self.state != PendingState::Pending {
+            return;
+        }
+        self.state = PendingState::Used;
+        self.result = Writable::Done;
+        let taken = core::mem::replace(&mut self.future, WritableFuture::None);
+        match &taken {
+            // SAFETY: intentional leak — see fn doc.
+            #[allow(clippy::mem_forget)]
+            WritableFuture::Promise { .. } => core::mem::forget(taken),
+            WritableFuture::Handler(_) | WritableFuture::None => drop(taken),
+        }
+    }
 }
 
 impl Writable {

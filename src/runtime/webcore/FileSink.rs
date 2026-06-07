@@ -438,6 +438,21 @@ impl FileSink {
 
             (*this).run_pending_later.has.set(false);
 
+            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
+                // JSC HandleSet and JSGlobalObject are freed by the time
+                // this fires on Windows Loop::shutdown's final uv_run;
+                // neutralize every field that would touch them.
+                (*this).pending.with_mut(|p| p.discard());
+                (*this).signal.with_mut(|s| s.clear());
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                #[allow(clippy::mem_forget)]
+                {
+                    core::mem::forget((*this).js_sink_ref.replace(Default::default()));
+                    core::mem::forget((*this).readable_stream.replace(Default::default()));
+                }
+                return;
+            }
+
             let _entered = (*this).event_loop().entered();
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
@@ -1305,7 +1320,11 @@ impl FileSink {
         #[cfg(windows)]
         self_.magic.set(FILESINK_DEAD);
         // pending/readable_stream/js_sink_ref are dropped by Box drop below.
-        if let Some(global) = self_.js_global() {
+        // `registered` gate skips `bun_vm()` when the JSC global may be freed
+        // (worker-shutdown discard path, #31224).
+        if self_.auto_flusher.get().registered.get()
+            && let Some(global) = self_.js_global()
+        {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
             let vm = global.bun_vm().as_mut();
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self_, vm);

@@ -4751,6 +4751,7 @@ pub fn write_file_with_source_destination(
                 source_blob.borrowed_view(),
                 write_file_promise,
                 WriteFilePromise::run,
+                WriteFilePromise::discard,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}

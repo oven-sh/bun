@@ -33,6 +33,13 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
 
+/// Frees the `ctx` passed alongside `WriteFileOnWriteFileCallback` without
+/// resolving the promise. Called on the worker-shutdown discard path.
+///
+/// # Safety
+/// Must match the concrete `ctx` type `on_complete_callback` was paired with.
+pub type WriteFileOnDiscardCallback = unsafe fn(ctx: *mut c_void);
+
 pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
 
 // `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
@@ -619,6 +626,7 @@ mod windows_impl {
         pub file_blob: Blob,
         pub bytes_blob: Blob,
         pub on_complete_callback: WriteFileOnWriteFileCallback,
+        pub on_complete_discard: WriteFileOnDiscardCallback,
         pub on_complete_ctx: *mut c_void,
         pub mkdirp_if_not_exists: bool,
         pub uv_bufs: [uv::uv_buf_t; 1],
@@ -661,6 +669,7 @@ mod windows_impl {
             event_loop: *mut EventLoop,
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
+            on_complete_discard: WriteFileOnDiscardCallback,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
@@ -678,6 +687,7 @@ mod windows_impl {
                 bytes_blob,
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
+                on_complete_discard,
                 mkdirp_if_not_exists: mkdirp,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
@@ -1083,6 +1093,25 @@ mod windows_impl {
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
         /// On return, `*this` has been freed and must not be accessed again.
         pub unsafe fn on_finish(this: *mut Self) -> WriteFileWindowsError {
+            // SAFETY: caller contract — `this` is live; `event_loop` is the
+            // VM-owned EventLoop with process lifetime.
+            let is_shutting_down = unsafe {
+                (*(*this).event_loop)
+                    .virtual_machine
+                    .is_some_and(|vm| vm.as_ref().is_shutting_down())
+            };
+            if is_shutting_down {
+                // SAFETY: caller contract — `this` is live.
+                let (discard, ctx) =
+                    unsafe { ((*this).on_complete_discard, (*this).on_complete_ctx) };
+                // SAFETY: caller contract — `this` is live; consumed here.
+                unsafe { Self::deinit(this) };
+                // SAFETY: `ctx` is the boxed handler paired with `discard`
+                // at `create_with_ctx`; `discard` consumes it.
+                unsafe { discard(ctx) };
+                return WriteFileWindowsError::WriteFileWindowsDeinitialized;
+            }
+
             // SAFETY: VM-owned EventLoop lives for process lifetime; the guard
             // forms short-lived `&mut` only at the enter/exit call sites (see
             // EventLoopEnterGuard docs) so it does not alias `*this`.
@@ -1264,6 +1293,7 @@ mod windows_impl {
             bytes_blob: Blob,
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
+            discard: WriteFileOnDiscardCallback,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             // see `WriteFile::create` — caller supplies an erased
@@ -1274,6 +1304,7 @@ mod windows_impl {
                 event_loop,
                 context.cast::<c_void>(),
                 callback,
+                discard,
                 mkdirp_if_not_exists,
             )
         }
@@ -1317,6 +1348,22 @@ impl WriteFilePromise {
             }
         }
         Ok(())
+    }
+
+    /// Frees the boxed handler on the shutdown path. Forgets the
+    /// `JSPromiseStrong` because the JSC `HandleSet` is already gone.
+    ///
+    /// # Safety
+    /// `handler` must be a Box-allocated `WriteFilePromise`. Consumed.
+    pub unsafe fn discard(handler: *mut c_void) {
+        // SAFETY: caller contract — boxed `WriteFilePromise`; consumed here.
+        unsafe {
+            let mut boxed = bun_core::heap::take(handler.cast::<Self>());
+            // SAFETY: intentional leak — see fn doc.
+            #[allow(clippy::mem_forget)]
+            core::mem::forget(core::mem::take(&mut boxed.promise));
+            drop(boxed);
+        }
     }
 }
 

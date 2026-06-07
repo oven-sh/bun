@@ -948,7 +948,9 @@ function asyncWrap(fn: any, name: string) {
       let closing = false;
       let pendingEndPromise = null;
       let error = null;
-      let asyncPending = false;
+      // Count of in-flight async writes (write() doesn't serialize callers,
+      // so several can be on the threadpool at once).
+      let asyncPending = 0;
       // Set when end()/fail() must tear down while an async write is still on
       // the threadpool: writeAll/writevAll run it from their finally so the
       // fd is never closed under an in-flight write.
@@ -994,7 +996,7 @@ function asyncWrap(fn: any, name: string) {
 
       // Write a single buffer with retry on zero-byte writes (up to 5 retries).
       async function writeAll(buf, offset, length, position, signal) {
-        asyncPending = true;
+        asyncPending++;
         try {
           let retries = 0;
           while (length > 0) {
@@ -1022,15 +1024,16 @@ function asyncWrap(fn: any, name: string) {
           if (!closed && !error) error = err;
           throw err;
         } finally {
-          asyncPending = false;
-          runDeferredTeardown();
+          if (--asyncPending === 0) {
+            runDeferredTeardown();
+          }
         }
       }
 
       // Writev with retry. On partial write, concatenates remaining
       // buffers and falls back to writeAll.
       async function writevAll(buffers, position, signal) {
-        asyncPending = true;
+        asyncPending++;
         try {
           let totalSize = 0;
           for (let i = 0; i < buffers.length; i++) {
@@ -1071,8 +1074,9 @@ function asyncWrap(fn: any, name: string) {
           if (!closed && !error) error = err;
           throw err;
         } finally {
-          asyncPending = false;
-          runDeferredTeardown();
+          if (--asyncPending === 0) {
+            runDeferredTeardown();
+          }
         }
       }
 

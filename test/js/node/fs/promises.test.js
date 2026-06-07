@@ -386,3 +386,19 @@ it("fail()/end() with autoClose defer the close past an in-flight write", async 
     expect(fh.fd).toBe(-1);
   }
 });
+
+it("teardown waits for every concurrent in-flight write", async () => {
+  const dir = tempDirWithFiles("writer-concurrent", { "a.bin": "" });
+  const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+  const w = fh.writer({ autoClose: true, start: 0 });
+  const big = Buffer.alloc(4 << 20, 65);
+  // two unawaited writes in flight; the first one finishing must not run the
+  // deferred teardown while the second is still on the threadpool
+  const p1 = w.write(big);
+  const p2 = w.write(big);
+  w.fail(new Error("stop"));
+  await p1;
+  await p2; // must not reject with EBADF
+  expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength * 2);
+  expect(fh.fd).toBe(-1);
+});

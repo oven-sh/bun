@@ -148,11 +148,14 @@ class FSWatcher extends EventEmitter {
   }
 
   ref() {
-    refNativeWatcher(this);
+    // like node, honour a replaced _handle and support chaining
+    if (this._handle) this._handle.ref();
+    return this;
   }
 
   unref() {
-    unrefNativeWatcher(this);
+    if (this._handle) this._handle.unref();
+    return this;
   }
 
   // https://github.com/nodejs/node/blob/9f51c55a47702dc6a0ca3569853dd7ba022bf7bb/lib/internal/fs/watchers.js#L259-L263

@@ -1077,9 +1077,9 @@ class Dir {
   #pendingOp: Promise<any> | null = null;
 
   #dirConcurrentError() {
-    const err = new Error("Cannot do synchronous work on directory handle with concurrent asynchronous operations");
-    err.code = "ERR_DIR_CONCURRENT_OPERATION";
-    return err;
+    return $ERR_DIR_CONCURRENT_OPERATION(
+      "Cannot do synchronous work on directory handle with concurrent asynchronous operations",
+    );
   }
 
   #enqueue(run) {

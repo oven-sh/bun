@@ -94,25 +94,29 @@ class MockFunctionContext {
       if (callIndex + 1 === ctx.#times) {
         ctx.restore();
       }
-      const call: Record<string, unknown> = {
-        arguments: args,
-        error: undefined,
-        result: undefined,
-        stack: new Error(),
-        target,
-        this: thisArg,
-      };
-      ctx.#calls.push(call);
+      // node records the call in a finally *after* invoking, so a reentrant
+      // implementation observes callCount() === N (not N+1), recursive calls
+      // record in completion order, and the stack is captured post-invoke.
+      let result: unknown;
+      let error: unknown;
       try {
-        const result =
+        result =
           target === undefined
             ? (implementation as Function).$apply(thisArg, args)
             : Reflect.construct(implementation as Function, args, target as Function);
-        call.result = result;
         return result;
-      } catch (error) {
-        call.error = error;
-        throw error;
+      } catch (e) {
+        error = e;
+        throw e;
+      } finally {
+        ctx.#calls.push({
+          arguments: args,
+          error,
+          result,
+          stack: new Error(),
+          target,
+          this: thisArg,
+        });
       }
     };
   }

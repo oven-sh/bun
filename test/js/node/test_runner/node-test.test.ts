@@ -213,3 +213,16 @@ describe("node:test mock tracker semantics", () => {
     );
   });
 });
+
+test("the call record is pushed after the implementation runs, like node", () => {
+  const { mock } = require("node:test");
+  let inside = -1;
+  const f = mock.fn(function () {
+    inside = f.mock.callCount();
+    return 1;
+  });
+  f();
+  expect(inside).toBe(0);
+  expect(f.mock.callCount()).toBe(1);
+  mock.reset();
+});

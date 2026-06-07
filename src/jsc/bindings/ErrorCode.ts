@@ -327,5 +327,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
   ["ERR_FS_CP_EEXIST", Error],
   ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
+  ["ERR_DIR_CONCURRENT_OPERATION", Error],
 ];
 export default errors;

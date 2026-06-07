@@ -160,6 +160,7 @@ test.concurrent(
         export * from "pkg-b" with { arbitrary: "val" };
         export * as ns from "pkg-c" with { another: "val" };
         export { Foo } from "pkg-d" with { resolutionMode: "import" };
+        import defer * as D from "pkg-e" with { someKey: "v" };
       }
       console.log("ok");
     `,

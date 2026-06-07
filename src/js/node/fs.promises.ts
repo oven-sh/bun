@@ -949,6 +949,17 @@ function asyncWrap(fn: any, name: string) {
       let pendingEndPromise = null;
       let error = null;
       let asyncPending = false;
+      // Set when end()/fail() must tear down while an async write is still on
+      // the threadpool: writeAll/writevAll run it from their finally so the
+      // fd is never closed under an in-flight write.
+      let deferredTeardown: (() => void) | null = null;
+      function runDeferredTeardown() {
+        if (deferredTeardown !== null) {
+          const teardown = deferredTeardown;
+          deferredTeardown = null;
+          teardown();
+        }
+      }
 
       validateBoolean(autoClose, "options.autoClose");
 
@@ -1012,6 +1023,7 @@ function asyncWrap(fn: any, name: string) {
           throw err;
         } finally {
           asyncPending = false;
+          runDeferredTeardown();
         }
       }
 
@@ -1060,6 +1072,7 @@ function asyncWrap(fn: any, name: string) {
           throw err;
         } finally {
           asyncPending = false;
+          runDeferredTeardown();
         }
       }
 
@@ -1086,6 +1099,18 @@ function asyncWrap(fn: any, name: string) {
         if (closed) return;
         closed = true;
         handle[kLocked] = false;
+        if (asyncPending) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          deferredTeardown = () => {
+            releaseRef();
+            if (autoClose) {
+              handle.close().$then(resolve, reject);
+            } else {
+              resolve(undefined);
+            }
+          };
+          return promise;
+        }
         releaseRef();
         if (autoClose) {
           await handle.close();
@@ -1279,10 +1304,18 @@ function asyncWrap(fn: any, name: string) {
           error = reason ?? $ERR_INVALID_STATE("Failed");
           closed = true;
           handle[kLocked] = false;
-          releaseRef();
-          if (autoClose) {
-            handle[kCloseSync]();
+          const teardown = () => {
+            releaseRef();
+            if (autoClose) {
+              handle[kCloseSync]();
+            }
+          };
+          if (asyncPending) {
+            // an async write is still using the fd - tear down after it lands
+            deferredTeardown = teardown;
+            return;
           }
+          teardown();
         },
 
         [SymbolAsyncDispose]() {

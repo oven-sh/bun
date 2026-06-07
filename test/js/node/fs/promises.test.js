@@ -358,3 +358,31 @@ it("close() while an operation is in flight actually closes the fd", async () =>
   // this process between the close and this check, so EBADF is deterministic
   expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
 });
+
+it("fail()/end() with autoClose defer the close past an in-flight write", async () => {
+  const dir = tempDirWithFiles("writer-teardown", { "a.bin": "", "b.bin": "" });
+  // fail() while a large write is on the threadpool must not close the fd
+  // under it; the write completes, then the handle closes.
+  {
+    const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 65);
+    const pending = w.write(big);
+    w.fail(new Error("stop"));
+    await pending; // must not reject with EBADF
+    expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1); // deferred teardown closed the handle
+  }
+  // end() while a write is pending waits for it and reports all bytes
+  {
+    const fh = await fsPromises.open(join(dir, "b.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 66);
+    const pending = w.write(big);
+    const total = await w.end();
+    await pending;
+    expect(total).toBe(big.byteLength);
+    expect(fs.statSync(join(dir, "b.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1);
+  }
+});

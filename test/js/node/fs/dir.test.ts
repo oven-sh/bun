@@ -168,3 +168,26 @@ describe("fs.opendir async validation", () => {
     }
   });
 });
+
+describe("opendirSync string encoding shorthand", () => {
+  it("treats a string options argument as the encoding", () => {
+    const dirname = path.join(os.tmpdir(), "opendir-enc-" + String(Math.random() * 100).substring(0, 6));
+    fs.mkdirSync(dirname);
+    // latin1 makes the shorthand observable: the utf8 bytes of the name are
+    // reinterpreted per-byte. (encoding: "buffer" dirents are a pre-existing
+    // native readdir gap unrelated to the shorthand.)
+    fs.writeFileSync(path.join(dirname, "na\u00efve.txt"), "x");
+    try {
+      const dir = fs.opendirSync(dirname, "latin1");
+      const entry = dir.readSync();
+      expect(entry?.name).toBe(Buffer.from("na\u00efve.txt", "utf8").toString("latin1"));
+      dir.closeSync();
+      // an invalid encoding passed as the shorthand is validated like node
+      expect(() => fs.opendirSync(dirname, "nope")).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    } finally {
+      fs.rmSync(dirname, { recursive: true, force: true });
+    }
+  });
+});

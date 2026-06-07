@@ -1044,6 +1044,8 @@ class Dir {
     if (options != null && typeof options !== "object" && typeof options !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
+    // node's getOptions: a string is encoding shorthand
+    if (typeof options === "string") options = { encoding: options };
     const encoding = options?.encoding;
     if (encoding != null && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
       throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");

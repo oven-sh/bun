@@ -1235,7 +1235,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 //    and ProxyTunnel.rs.
 // ────────────────────────────────────────────────────────────────────────
 
-/// Maps an X509 verify code
+/// Maps the `error_no` of the uSockets handshake verify error
 /// onto a `bun_core::Error` whose name is the upper-snake error tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
@@ -1243,6 +1243,17 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 // `<openssl/x509.h>`. Inlined as literals so
 // this file doesn't grow a dep on a header-generated const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
+    // A connection reset/closed before the TLS handshake completes is
+    // delivered as a synthesized verify error with a negative `error_no`
+    // (`ssl_trigger_handshake_econnreset` in
+    // packages/bun-usockets/src/crypto/openssl.c: error -46, code
+    // "ECONNRESET"). `X509_V_ERR_*` codes are all non-negative, so a negative
+    // value is never a certificate problem; report the connection error
+    // (Node surfaces this case as ECONNRESET too) instead of
+    // UNKNOWN_CERTIFICATE_VERIFICATION_ERROR.
+    if error_no < 0 {
+        return err!(ECONNRESET);
+    }
     let name: &'static str = match error_no {
         0 => "OK", // X509_V_OK
         2 => "UNABLE_TO_GET_ISSUER_CERT",

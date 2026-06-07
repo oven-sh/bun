@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -287,6 +288,49 @@ describe.concurrent("fetch-tls", () => {
       );
     });
   });
+
+  // A connection reset/closed mid-TLS-handshake involves no certificate at
+  // all, so it must surface as ECONNRESET (like Node), not as a certificate
+  // verification error. https://github.com/oven-sh/bun/issues/31949
+  for (const [closeMode, closeSocket] of [
+    ["resets (RST)", (socket: net.Socket) => socket.resetAndDestroy()],
+    ["closes (FIN)", (socket: net.Socket) => socket.destroy()],
+  ] as const) {
+    it(`fetch reports ECONNRESET when the server ${closeMode} the connection during the TLS handshake`, async () => {
+      // Raw TCP listener: accepts the connection, reads the ClientHello, and
+      // kills the socket without ever writing a TLS byte back.
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer(socket => {
+        sockets.add(socket);
+        socket.on("close", () => sockets.delete(socket));
+        socket.on("error", () => {});
+        socket.once("data", () => closeSocket(socket));
+      });
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(0, "127.0.0.1", onListening);
+      try {
+        await listening;
+        const port = (server.address() as net.AddressInfo).port;
+
+        let err: any;
+        try {
+          await fetch(`https://127.0.0.1:${port}/`, { keepalive: false });
+          expect.unreachable();
+        } catch (e) {
+          err = e;
+        }
+
+        expect(err).toBeInstanceOf(Error);
+        expect({ code: err.code, message: err.message }).toEqual({
+          code: "ECONNRESET",
+          message: "Client network socket disconnected before secure TLS connection was established",
+        });
+      } finally {
+        for (const s of sockets) s.destroy();
+        server.close();
+      }
+    });
+  }
 
   it("fetch with checkServerIdentity failing should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {

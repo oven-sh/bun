@@ -1293,6 +1293,11 @@ impl FetchTasklet {
             e if e == err!("ConnectionClosed") => BunString::static_(
                 "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
             ),
+            // Connection reset/closed before the TLS handshake completed;
+            // message matches Node's ConnResetException for the same case.
+            e if e == err!("ECONNRESET") => BunString::static_(
+                "Client network socket disconnected before secure TLS connection was established",
+            ),
             e if e == err!("FailedToOpenSocket") => {
                 BunString::static_("Was there a typo in the url or port?")
             }

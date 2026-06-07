@@ -1,6 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { resolve } from "path";
 
 declare global {
@@ -364,6 +364,23 @@ describe("errors", () => {
     expect(() => {
       plugin(opts as any);
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
+  });
+
+  it("handles a 'target' whose toString throws", () => {
+    const setup = jest.fn();
+    const opts = {
+      setup,
+      target: {
+        toString() {
+          throw new Error("boom from target toString");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("boom from target toString");
+    expect(setup).not.toHaveBeenCalled();
   });
 
   it("invalid loaders throw", () => {

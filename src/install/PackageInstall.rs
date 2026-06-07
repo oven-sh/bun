@@ -1863,12 +1863,41 @@ impl<'a> PackageInstall<'a> {
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)
                             {
-                                if err.get_errno() != sys::E::EEXIST {
-                                    return Err(err.into());
+                                match err.get_errno() {
+                                    sys::E::EEXIST => {
+                                        let _ = sys::unlinkat(destination_dir, entry.path);
+                                        sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
+                                    }
+                                    sys::E::EPERM | sys::E::EACCES => {
+                                        // OHOS SELinux blocks symlinkat; fall back to copy
+                                        let Some(dir) = bun_paths::dirname(entry.path.as_bytes()) else {
+                                            return Err(err.into());
+                                        };
+                                        let _ = destination_dir.make_path(dir);
+                                        let inf = match sys::File::openat(destination_dir.fd(), entry.path, sys::O::RDONLY, 0) {
+                                            Ok(f) => f,
+                                            Err(_) => return Err(err.into()),
+                                        };
+                                        let outf = match sys::File::create(destination_dir.fd(), entry.path, true) {
+                                            Ok(f) => f,
+                                            Err(ref e) if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM => {
+                                                let _ = sys::unlinkat(destination_dir, entry.path);
+                                                match sys::File::create(destination_dir.fd(), entry.path, true) {
+                                                    Ok(f) => f,
+                                                    Err(_) => return Err(err.into()),
+                                                }
+                                            }
+                                            Err(_) => return Err(err.into()),
+                                        };
+                                        if sys::copy_file::copy_file(inf.handle(), outf.handle()).is_err() {
+                                            return Err(err.into());
+                                        }
+                                        if let Ok(stat) = sys::fstat(inf.handle()) {
+                                            let _ = sys::fchmod(outf.handle(), stat.st_mode);
+                                        }
+                                    }
+                                    _ => return Err(err.into()),
                                 }
-
-                                let _ = sys::unlinkat(destination_dir, entry.path);
-                                sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
                             }
 
                             real_file_count += 1;

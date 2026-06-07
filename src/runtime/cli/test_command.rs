@@ -143,6 +143,15 @@ mod bun_test {
     }
 }
 
+/// SIGALRM handler for the test-process safety-net timeout.
+/// When the event-loop timer cannot fire (blocking syscall, GC deadlock, etc.),
+/// this hard-exits the process to prevent 40-minute hangs.
+extern "C" fn sig_alrm_handler(_sig: i32) {
+    // `_exit` is async-signal-safe and does not run atexit handlers or
+    // global destructors — safe to call from a signal handler.
+    unsafe { libc::_exit(124) };
+}
+
 pub(crate) fn escape_xml(
     str_: &[u8],
     writer: &mut impl bun_io::Write,
@@ -2042,6 +2051,25 @@ impl TestCommand {
         let mut inline_snapshots_to_write: ArrayHashMap<FileId, Vec<InlineSnapshotToWrite>> =
             ArrayHashMap::new();
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
+
+        // Arm per-process SIGALRM safety-net: if the test process hangs (blocking
+        // syscall, JSC GC deadlock, etc.) and the event-loop timer cannot fire,
+        // this alarm will force-exit the process via signal handler.
+        // Give 60s extra headroom beyond the per-test timeout so the event-loop
+        // timer (first line of defense) has time to fire normally.
+        {
+            let timeout_ms = ctx.test_options.default_timeout_ms;
+            if timeout_ms > 0 && timeout_ms < u32::MAX {
+                let extra_sec = 60u32;
+                let total_sec = timeout_ms / 1000 + extra_sec;
+                // SAFETY: `alarm`, `signal`, `_exit` are async-signal-safe POSIX functions.
+                // This is a safety-net that only fires when normal timeout fails.
+                unsafe {
+                    libc::signal(libc::SIGALRM, core::mem::transmute::<usize, extern "C" fn(i32)>(sig_alrm_handler as usize));
+                    libc::alarm(total_sec);
+                }
+            }
+        }
 
         // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
         // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned

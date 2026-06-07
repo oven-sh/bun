@@ -166,3 +166,50 @@ describe("node:test mock", () => {
     expect(fn()).toBe("original");
   });
 });
+
+describe("node:test mock tracker semantics", () => {
+  const { mock } = require("node:test");
+
+  test("restoreAll keeps mocks associated; reset disassociates", () => {
+    // mirrors observed node behavior exactly
+    const f = mock.fn(
+      () => "orig",
+      () => "mocked",
+    );
+    expect(f()).toBe("mocked");
+    mock.restoreAll();
+    expect(f()).toBe("orig");
+    // still tracked after restoreAll: reset() reverts a re-installed
+    // implementation again
+    f.mock.mockImplementation(() => "again");
+    expect(f()).toBe("again");
+    mock.reset();
+    expect(f()).toBe("orig");
+    // after reset() the context is disassociated: restoreAll no longer
+    // touches it
+    f.mock.mockImplementation(() => "post-reset");
+    mock.restoreAll();
+    expect(f()).toBe("post-reset");
+    mock.reset();
+  });
+
+  test("queued once-implementations survive restoreAll like node", () => {
+    const g = mock.fn(
+      () => "g-orig",
+      () => "g-mocked",
+    );
+    g.mock.mockImplementationOnce(() => "g-once", 1);
+    mock.restoreAll();
+    expect([g(), g(), g()]).toEqual(["g-orig", "g-once", "g-orig"]);
+    mock.reset();
+  });
+
+  test("mock.method validates a non-object options argument", () => {
+    const obj = {
+      foo() {},
+    };
+    expect(() => mock.method(obj, "foo", () => {}, 5)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});

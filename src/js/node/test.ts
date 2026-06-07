@@ -67,11 +67,16 @@ class MockFunctionContext {
   }
 
   restore() {
-    this.#implementation = undefined;
-    this.#onceImplementations.clear();
-    const restore = this.#restore;
-    this.#restore = undefined;
-    restore?.();
+    // node semantics: a method mock reinstalls the original descriptor but the
+    // context keeps its implementation (calling the detached mock function
+    // still uses it); a bare fn mock reverts to calling the original. Queued
+    // once-implementations survive, and restore() stays re-runnable so a
+    // still-tracked context can be restored again by reset().
+    if (this.#restore !== undefined) {
+      this.#restore();
+    } else {
+      this.#implementation = undefined;
+    }
   }
 
   static {
@@ -206,6 +211,9 @@ function mockMethod(
   if ((typeof objectOrFunction !== "object" || objectOrFunction === null) && !$isCallable(objectOrFunction)) {
     throw $ERR_INVALID_ARG_TYPE("object", "object", objectOrFunction);
   }
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
   const {
     getter = false,
     setter = false,
@@ -331,13 +339,15 @@ const mock = {
     });
   },
   reset() {
+    // restoreAll() plus disassociating the mocks from the tracker, like node.
     mock.restoreAll();
+    kMockContexts.length = 0;
   },
   restoreAll() {
     // Restores method mocks to their original descriptor and makes bare
-    // mock.fn() mocks call their original function again, like node.
+    // mock.fn() mocks call their original function again, like node. Unlike
+    // reset(), the mocks stay associated with the tracker.
     for (const ctx of kMockContexts) ctx.restore();
-    kMockContexts.length = 0;
   },
   module() {
     throwNotImplemented("mock.module()", 5090, "Use `bun:test` in the interim.");

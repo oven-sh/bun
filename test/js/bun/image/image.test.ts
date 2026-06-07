@@ -1080,6 +1080,19 @@ describe("Bun.Image", () => {
       expect(rgbaAt(data, 4, 0, 0)).toEqual([10, 20, 30, 128]);
     });
 
+    test("fit:'contain' background without alpha is opaque like Sharp", async () => {
+      // Passing a background means the caller wants a visible fill —
+      // alpha defaults to 1 like Sharp's Color({r, g, b}), not to the
+      // transparent omitted-background default.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 255, g: 255, b: 255 } })
+        .png()
+        .bytes();
+      const { data } = decodePngRaw(out);
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([255, 255, 255, 255]);
+    });
+
     test.each(["cover", "contain"] as const)("fit:'%s' with square-into-square is a no-op on dims", async fit => {
       const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
       const { w, h } = decodePngRaw(out);

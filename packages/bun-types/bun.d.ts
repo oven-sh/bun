@@ -8253,8 +8253,9 @@ declare module "bun" {
     }
 
     /**
-     * RGBA letterbox fill for `fit: "contain"`. RGB channels are `0..255`;
-     * `alpha` is `0..1` (Sharp convention). Missing channels default to `0`.
+     * RGBA letterbox fill for `fit: "contain"`. RGB channels are `0..255`
+     * and default to `0`; `alpha` is `0..1` (Sharp convention) and defaults
+     * to `1`, so `{ r: 255, g: 255, b: 255 }` is an opaque white fill.
      */
     interface Background {
       r?: number;
@@ -8289,10 +8290,12 @@ declare module "bun" {
        */
       withoutEnlargement?: boolean;
       /**
-       * Letterbox colour for `fit:"contain"`. Each channel defaults to `0`;
-       * `alpha` is `0..1` (Sharp convention). Default is transparent black —
-       * renders as black in JPEG (alpha dropped) and as a transparent
-       * letterbox in PNG/WebP. Ignored for other fit modes.
+       * Letterbox colour for `fit:"contain"`. RGB channels default to `0`
+       * and `alpha` (`0..1`, Sharp convention) defaults to `1` when a
+       * background object is passed. Omitting the option entirely gives a
+       * transparent black letterbox — renders as black in JPEG (alpha
+       * dropped) and as a transparent letterbox in PNG/WebP. Ignored for
+       * other fit modes.
        */
       background?: Background;
     }

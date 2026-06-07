@@ -280,12 +280,16 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Parse Sharp-shaped `{r, g, b, alpha}`. RGB channels are 0-255; `alpha` is
-/// 0-1 (Sharp convention) and maps linearly to 0-255 in storage. Missing
-/// channels default to 0 so `{alpha: 1}` gives opaque black, the most common
-/// request after the default transparent letterbox.
+/// Parse Sharp-shaped `{r, g, b, alpha}`. RGB channels are 0-255 and default
+/// to 0; `alpha` is 0-1 (Sharp convention) and defaults to opaque — passing
+/// a background object at all means the caller wants a visible fill, the
+/// same as Sharp's `Color({r, g, b})`. The fully transparent letterbox is
+/// the *omitted*-background default.
 fn parse_background(global: &JSGlobalObject, bg: JSValue) -> JsResult<Background> {
-    let mut out = Background::default();
+    let mut out = Background {
+        a: 255,
+        ..Background::default()
+    };
     if let Some(v) = bg.get(global, "r")? {
         if v.is_number() {
             out.r = coerce_int!(u8, v.as_number(), 0.0, 255.0);

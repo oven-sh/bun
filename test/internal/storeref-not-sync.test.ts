@@ -26,7 +26,11 @@ test("StoreRef does not implement Sync", () => {
   // The original #30800 hole. Cross-thread mutation must go through cloned
   // (moved) handles whose call sites discharge `data_mut`'s exclusivity
   // precondition — never through a shared `&StoreRef`.
-  const hasSyncImpl = source.includes("unsafe impl Sync for StoreRef");
+  //
+  // Anchored to the start of a line (`^\s*unsafe`) so `// `-prefixed prose —
+  // e.g. the trip-wire comment in `webcore_types.rs`, which quotes the exact
+  // phrase — can never match.
+  const hasSyncImpl = /^\s*unsafe impl\s+Sync\s+for\s+StoreRef\b/m.test(source);
   expect(hasSyncImpl).toBe(false);
 });
 

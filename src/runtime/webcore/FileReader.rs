@@ -116,9 +116,11 @@ impl ReadDuringJSOnPullResult {
 
 pub enum Lazy {
     None,
-    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
-    /// raw pointer carries mutable provenance from `heap::alloc` for the
-    /// direct field writes in `open_file_blob`.
+    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`)
+    /// because `Store` carries its own intrusive refcount and frees itself
+    /// when it hits zero; `Arc` would add a second, conflicting
+    /// refcount/deallocation path (see the `StoreRef` doc in
+    /// `webcore_types.rs`).
     Blob(blob::StoreRef),
 }
 

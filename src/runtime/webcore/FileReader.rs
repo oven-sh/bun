@@ -391,8 +391,6 @@ impl FileReader {
                 }
                 blob::store::Data::File(file) => {
                     let mut file_local = file.clone();
-                    // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
-                    // is hoisted after the match below since both arms fall through.
                     let open_result = Lazy::open_file_blob(&mut file_local);
                     // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
                     drop(store);

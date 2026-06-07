@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { isGlibcVersionAtLeast } from "harness";
-import { platform } from "os";
+import { freemem, platform } from "os";
 
 import {
   dlopen as _dlopen,
@@ -698,6 +698,12 @@ it("FFI functions are not constructors", () => {
   } finally {
     cb.close();
   }
+
+  // runtime functions like the node:os natives are created through
+  // JSFFIFunction::create rather than createForFFI
+  expect(freemem()).toBeGreaterThan(0);
+  expect(() => new freemem()).toThrow(TypeError);
+  expect(() => Reflect.construct(freemem, [])).toThrow(TypeError);
 });
 
 const libPath =

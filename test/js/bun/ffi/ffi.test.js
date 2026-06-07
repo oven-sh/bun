@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isGlibcVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isArm64, isGlibcVersionAtLeast, isWindows } from "harness";
 import { platform } from "os";
 
 import {
@@ -972,7 +972,10 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
   }
 });
 
-describe("library close()", () => {
+// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
+const isFFIUnavailable = isWindows && isArm64;
+
+describe.skipIf(isFFIUnavailable)("library close()", () => {
   const closedError = "Cannot call this FFI function: its library has been closed";
 
   // Calling a symbol after close() used to jump into the freed TinyCC-compiled

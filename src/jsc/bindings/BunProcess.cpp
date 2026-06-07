@@ -333,6 +333,10 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
 }
 
 extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
+extern "C" bool Bun__tryLoadNapiLinkSlot(const char* path, size_t len, void** out_handle, bool* out_is_ns_module);
+#if OS(DARWIN)
+extern "C" void* Bun__darwinLookupSymbolInModule(void* module, const char* name);
+#endif
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -477,13 +481,33 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     [[maybe_unused]] bool fromEmbedded = false;
+    // NAPI link-slot addons are loaded from memory rather than via a
+    // filesystem path. On macOS the handle is an `NSModule` (from
+    // `NSLinkModule`), which needs `NSLookupSymbolInModule` in place of
+    // `dlsym`; on Linux it's an ordinary `dlopen()` handle sourced from a
+    // memfd. `slotHandle` short-circuits the path-based `dlopen()` below.
+    void* slotHandle = nullptr;
+    bool slotIsNSModule = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
-        BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
-        if (resolved.tag != BunStringTag::Dead) {
-            filename = resolved.transferToWTFString();
-            // The extracted file is content-hashed and shared across dlopens
-            // and restarts (#29587), so it is never deleted here.
+        auto pathUtf8 = filename.utf8();
+        if (!Bun__tryLoadNapiLinkSlot(pathUtf8.data(), pathUtf8.length(), &slotHandle, &slotIsNSModule)) {
+            // Not a link slot — fall through to the module-graph extractor
+            // for bundler-embedded addons.
+            BunString bunStr = Bun::toString(filename);
+            BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+            if (resolved.tag != BunStringTag::Dead) {
+                filename = resolved.transferToWTFString();
+                // The extracted file is content-hashed and shared across dlopens
+                // and restarts (#29587), so it is never deleted here.
+                fromEmbedded = true;
+            }
+        } else if (!slotHandle) {
+            // Path matched a slot but the in-memory load failed (e.g. the
+            // embedded image isn't a valid Mach-O bundle). Surface that as a
+            // dlopen error rather than trying to find it on disk.
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                makeString("failed to load linked native addon '"_s, filename, "' from embedded image"_s));
+        } else {
             fromEmbedded = true;
         }
     }
@@ -512,30 +536,40 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
-    BunString filename_str = Bun::toString(filename);
-    HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
-#else
-#if OS(LINUX)
-    // A glibc-linked addon loaded into a musl process segfaults inside the
-    // loader (gcompat provides the soname but not the ABI). Inspect the ELF
-    // DT_NEEDED list first so the user sees a catchable error instead of a
-    // crash report. Skipped for addons embedded via `bun build --compile`.
-    // See https://github.com/oven-sh/bun/issues/15753.
-    if (!fromEmbedded) {
-        char soname[64] = { 0 };
-        if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
-            WTF::StringBuilder msg;
-            msg.append(filename);
-            msg.append(" is linked against glibc (DT_NEEDED "_s);
-            msg.append(WTF::StringView::fromLatin1(soname));
-            msg.append("), but this Bun build uses musl. glibc-targeted native addons cannot be loaded on Alpine/musl even with gcompat. Use a glibc-based image (e.g. oven/bun:debian) or install a musl build of this addon."_s);
-            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
-        }
+    HMODULE handle;
+    if (slotHandle) {
+        handle = reinterpret_cast<HMODULE>(slotHandle);
+    } else {
+        BunString filename_str = Bun::toString(filename);
+        handle = Bun__LoadLibraryBunString(&filename_str);
     }
+#else
+    void* handle;
+    if (slotHandle) {
+        handle = slotHandle;
+    } else {
+#if OS(LINUX)
+        // A glibc-linked addon loaded into a musl process segfaults inside the
+        // loader (gcompat provides the soname but not the ABI). Inspect the ELF
+        // DT_NEEDED list first so the user sees a catchable error instead of a
+        // crash report. Skipped for addons embedded via `bun build --compile`.
+        // See https://github.com/oven-sh/bun/issues/15753.
+        if (!fromEmbedded) {
+            char soname[64] = { 0 };
+            if (Bun__addonNeedsGlibcOnMusl(utf8.data(), utf8.length(), soname, sizeof(soname))) [[unlikely]] {
+                WTF::StringBuilder msg;
+                msg.append(filename);
+                msg.append(" is linked against glibc (DT_NEEDED "_s);
+                msg.append(WTF::StringView::fromLatin1(soname));
+                msg.append("), but this Bun build uses musl. glibc-targeted native addons cannot be loaded on Alpine/musl even with gcompat. Use a glibc-based image (e.g. oven/bun:debian) or install a musl build of this addon."_s);
+                return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg.toString());
+            }
+        }
 #endif
-    CrashHandler__setDlOpenAction(utf8.data());
-    void* handle = dlopen(utf8.data(), RTLD_LAZY);
-    CrashHandler__setDlOpenAction(nullptr);
+        CrashHandler__setDlOpenAction(utf8.data());
+        handle = dlopen(utf8.data(), RTLD_LAZY);
+        CrashHandler__setDlOpenAction(nullptr);
+    }
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
@@ -689,26 +723,39 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
         return JSValue::encode(jsUndefined());
     }
 
-#if OS(WINDOWS)
-#define dlsym GetProcAddress
+    // Symbol lookup that routes NSModule handles (from in-memory NAPI link
+    // slots on macOS) through `NSLookupSymbolInModule` instead of `dlsym`.
+    // Every other handle — including Linux memfd-backed link slots — is a
+    // plain dlopen/LoadLibrary handle.
+    const auto lookupSymbol = [&](const char* name) -> void* {
+#if OS(DARWIN)
+        if (slotIsNSModule) return Bun__darwinLookupSymbolInModule(handle, name);
 #endif
+        (void)slotIsNSModule;
+#if OS(WINDOWS)
+        return reinterpret_cast<void*>(GetProcAddress(handle, name));
+#else
+        return dlsym(handle, name);
+#endif
+    };
 
     // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
     // and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
-    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(dlsym(handle, "napi_register_module_v1"));
+    auto napi_register_module_v1 = reinterpret_cast<napi_value (*)(napi_env, napi_value)>(lookupSymbol("napi_register_module_v1"));
 
-    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(dlsym(handle, "node_api_module_get_api_version_v1"));
-
-#if OS(WINDOWS)
-#undef dlsym
-#endif
+    auto node_api_module_get_api_version_v1 = reinterpret_cast<int32_t (*)()>(lookupSymbol("node_api_module_get_api_version_v1"));
 
     if (!napi_register_module_v1) {
+        // Link-slot handles are memoised per process and native addons
+        // can't be unloaded, so leave those in place; closing them would
+        // also strand the cached entry in loaded_handles[].
+        if (!slotHandle) {
 #if OS(WINDOWS)
-        FreeLibrary(handle);
+            FreeLibrary(handle);
 #else
-        dlclose(handle);
+            dlclose(handle);
 #endif
+        }
 
         if (!scope.exception()) [[likely]] {
             JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
@@ -749,13 +796,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     JSC::JSValue resultValue = encoded == 0 ? exports : JSValue::decode(encoded);
 
     if (auto resultObject = resultValue.getObject()) {
-#if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
         // If this is a native bundler plugin we want to store the handle from dlopen
         // as we are going to call `dlsym()` on it later to get the plugin implementation.
-        const char** pointer_to_plugin_name = (const char**)dlsym(handle, "BUN_PLUGIN_NAME");
-#elif OS(WINDOWS)
-        const char** pointer_to_plugin_name = (const char**)GetProcAddress(handle, "BUN_PLUGIN_NAME");
-#endif
+        const char** pointer_to_plugin_name = reinterpret_cast<const char**>(lookupSymbol("BUN_PLUGIN_NAME"));
         if (pointer_to_plugin_name) {
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now

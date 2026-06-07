@@ -8283,8 +8283,9 @@ declare module "bun" {
       /**
        * Never upscale — if the source is already smaller, leave it. Only the
        * image itself is exempt from enlarging: `fit: "contain"` still pads
-       * the canvas to the requested box, while `fit: "cover"` skips its crop
-       * and passes the smaller source through unchanged.
+       * the canvas to the requested box, and `fit: "cover"` skips the
+       * upscale but still center-crops any axis where the source exceeds
+       * the box.
        */
       withoutEnlargement?: boolean;
       /**

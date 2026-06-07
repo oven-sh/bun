@@ -1190,15 +1190,29 @@ describe("Bun.Image", () => {
       expect(h).toBe(3);
     });
 
-    test("withoutEnlargement + fit:'cover' skips both the upscale and the crop", async () => {
+    test("withoutEnlargement + fit:'cover' passes a both-axes-smaller source through unchanged", async () => {
       // The resize resets to the source dims, and cover's output clamps to
-      // min(box, resized) — so a smaller source passes through unchanged.
+      // min(box, resized) — nothing left to crop when the source fits the
+      // box on both axes.
       const out = await new Bun.Image(cornersPng) // 4×3
         .resize(100, 100, { fit: "cover", withoutEnlargement: true })
         .png()
         .bytes();
       const { w, h } = decodePngRaw(out);
       expect({ w, h }).toEqual({ w: 4, h: 3 });
+    });
+
+    test("withoutEnlargement + fit:'cover' still crops an axis that exceeds the box", async () => {
+      // The short axis would need enlarging (scale > 1), so the resize
+      // resets to the source dims — but the long axis still center-crops
+      // down to the box, matching Sharp's reset-then-crop semantics.
+      const wide = makePng(200, 3, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(wide)
+        .resize(100, 100, { fit: "cover", withoutEnlargement: true })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 100, h: 3 });
     });
 
     test("withoutEnlargement + fit:'contain' still pads the canvas to the box", async () => {

@@ -1155,7 +1155,13 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
     // no binding to restore — the consumer itself must re-run.
     WTF::HashSet<JSC::JSCell*> poisonedCJSModules;
     // Require-map keys (filenames) queued for eviction by the CJS walk.
-    WTF::Vector<JSC::JSValue> cjsKeysToEvict;
+    // MarkedArgumentBuffer, not a plain Vector: these JSValues are held
+    // across allocating calls (jsString, JSMapIterator::create, map
+    // mutations), and heap-backed storage is invisible to the conservative
+    // scanner — an eviction below can sever a queued string's last other
+    // root before its turn comes.
+    JSC::MarkedArgumentBuffer cjsKeysToEvict;
+    size_t cjsKeysDrained = 0;
     // Poison a cached CJS module and walk its `m_parent` chain: the *first*
     // requirer of an ESM(-mocked) module gets no `m_children` edge (the
     // namespace early-return in `overridableRequire` skips the recording
@@ -1324,9 +1330,9 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
     // re-run. Pure-CJS consumers never appear in the ESM registry, hence the
     // separate walk over the require map. Keys are collected per pass and
     // removed afterwards to keep iteration and mutation separate.
-    if (!poisonedCJSModules.isEmpty()) {
+    if (!poisonedCJSModules.isEmpty() && !cjsKeysToEvict.hasOverflowed()) {
         bool changed = true;
-        while (changed || !cjsKeysToEvict.isEmpty()) {
+        while (changed || cjsKeysDrained < cjsKeysToEvict.size()) {
             changed = false;
             auto* iter = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
             if (!scope.clearExceptionExceptTermination() || !iter) {
@@ -1350,11 +1356,12 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                     }
                 }
             }
-            if (!scope.clearExceptionExceptTermination()) {
+            if (!scope.clearExceptionExceptTermination() || cjsKeysToEvict.hasOverflowed()) {
                 break;
             }
-            auto keys = std::exchange(cjsKeysToEvict, {});
-            for (auto& depKey : keys) {
+            size_t drainEnd = cjsKeysToEvict.size();
+            for (size_t i = cjsKeysDrained; i < drainEnd; ++i) {
+                JSC::JSValue depKey = cjsKeysToEvict.at(i);
                 requireMap->remove(global, depKey);
                 if (!scope.clearExceptionExceptTermination()) {
                     break;
@@ -1369,6 +1376,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 WTF::Locker locker { moduleLoader->cellLock() };
                 moduleLoader->removeEntry(ident);
             }
+            cjsKeysDrained = drainEnd;
         }
     }
 

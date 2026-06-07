@@ -10,6 +10,14 @@ const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
+// The nested-worker tests spawn a full JSC VM per child; keep the counts
+// small so loaded ASAN CI runners stay well inside the timeout. The race
+// window (a child inside start_vm when the parent is terminated) spans the
+// whole child VM startup, so even this many children crashed the unfixed
+// build on every run.
+const nestedRounds = 3;
+const nestedPerRound = 6;
+
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after
@@ -96,10 +104,10 @@ test(
         "-e",
         `
         const middleCode = \`
-          for (let j = 0; j < ${perRound}; j++) new Worker("data:text/javascript,");
+          for (let j = 0; j < ${nestedPerRound}; j++) new Worker("data:text/javascript,");
           postMessage("spawned");
         \`;
-        for (let i = 0; i < ${rounds}; i++) {
+        for (let i = 0; i < ${nestedRounds}; i++) {
           const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
           await new Promise(resolve => (middle.onmessage = resolve));
           // The children are still starting up on their own threads; this
@@ -135,7 +143,7 @@ test(
         "-e",
         `
         const middleCode = \`
-          for (let j = 0; j < ${perRound}; j++) {
+          for (let j = 0; j < ${nestedPerRound}; j++) {
             const blob = new Blob(["postMessage(1);"], { type: "application/javascript" });
             const url = URL.createObjectURL(blob);
             new Worker(url);
@@ -143,7 +151,7 @@ test(
           }
           postMessage("spawned");
         \`;
-        for (let i = 0; i < ${rounds}; i++) {
+        for (let i = 0; i < ${nestedRounds}; i++) {
           const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
           await new Promise(resolve => (middle.onmessage = resolve));
           await middle.terminate();

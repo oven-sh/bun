@@ -635,8 +635,10 @@ impl WebWorker {
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
         // worker keeping the process alive. Exception: a nested worker (parent is
-        // itself a worker, not joined on exit) must hold the parent-loop keepalive
-        // regardless, because the child holds a non-owning `BackRef` to the parent VM.
+        // itself a worker) must hold the parent-loop keepalive regardless: the
+        // child holds a non-owning `BackRef` to the parent VM, and keeping the
+        // parent's loop alive avoids the child being terminated by the parent's
+        // natural exit (`shutdown()` step 3.5).
         if !default_unref || parent_ref.worker_ref().is_some() {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.

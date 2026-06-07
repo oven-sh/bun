@@ -203,6 +203,11 @@ pub const Shebang = struct {
             if (eqlComptime(program, "-S")) {
                 rest = tokenizer.rest();
                 program = tokenizer.next() orelse return parseFromBinPath(bin_path);
+            } else if (bun.strings.hasPrefixComptime(program, "-S")) {
+                // Joined short-option form (`-Sbun ...`): the optarg starts at
+                // byte 2 of the same token, so no lookahead is needed.
+                rest = rest[2..];
+                program = program[2..];
             }
             const is_node_or_bun = eqlComptime(program, "bun") or eqlComptime(program, "node");
             return try Shebang.init(rest, is_node_or_bun);

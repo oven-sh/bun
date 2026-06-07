@@ -1087,6 +1087,20 @@ describe("Bun.Image", () => {
       },
     );
 
+    test("fit:'outside' overshoot with raised maxPixels clamps to the per-side cap, not a crash", async () => {
+      // With maxPixels raised, the tall-thin overshoot slips past the
+      // pixel-count guards, so the scaled side must clamp to the 0x3FFFF
+      // per-side cap before reaching the i32-dim resize kernel. A 1×100000
+      // source into a 4×1 box wants 4×400000; the off-axis side clamps to
+      // 262143.
+      const tall = makePng(1, 100000, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(tall, { maxPixels: 4_000_000_000 })
+        .resize(4, 1, { fit: "outside" })
+        .png()
+        .bytes();
+      expect(await new Bun.Image(out).metadata()).toEqual({ width: 4, height: 262143, format: "png" });
+    });
+
     test("modulate({saturation:0}) greyscales: R=G=B per pixel", async () => {
       const out = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).png().bytes();
       const { data } = decodePngRaw(out);

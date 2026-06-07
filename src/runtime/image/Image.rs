@@ -2135,14 +2135,16 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> ResolvedResize {
             Fit::Outside | Fit::Cover => sx.max(sy),
             Fit::Fill => unreachable!(),
         };
-        // The saturating `as u32` is load-bearing: `outside`/`cover` pick
-        // the max scale, so a tall-thin source can push the off-axis side
-        // past u32 (1×10M source into a 500×500 box → 5e9). Saturation
-        // keeps the value huge so the caller's max_pixels guard rejects
-        // with TooManyPixels instead of silently emitting an
-        // aspect-distorted image.
-        w = 1u32.max(((sw as f64) * s).round() as u32);
-        h = 1u32.max(((sh as f64) * s).round() as u32);
+        // Clamp to the 0x3FFFF per-side cap after scaling, mirroring the
+        // auto-height clamp above — `outside`/`cover` pick the max scale,
+        // so a tall-thin source can push the off-axis side past the cap
+        // (1×10M source into a 500×500 box → 5e9). Downstream kernels
+        // take i32 dims and `.expect()` the cast, so an unclamped value
+        // panics once a raised maxPixels lets it through the product
+        // guards; with the default maxPixels the resize_w×src_h
+        // intermediate guard still rejects these tall-thin sources.
+        w = 1u32.max(((sw as f64) * s).round().min(0x3FFFF as f64) as u32);
+        h = 1u32.max(((sh as f64) * s).round().min(0x3FFFF as f64) as u32);
     }
     if r.without_enlargement && (w > sw || h > sh) {
         w = sw;

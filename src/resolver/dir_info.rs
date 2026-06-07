@@ -329,6 +329,33 @@ fn hash_map_instance_init() -> *mut HashMap {
     }
 }
 
+/// `preserve_symlinks` mode the singleton's contents were computed with.
+/// `DirInfo.abs_real_path` is either the realpath (default) or the symlink
+/// path (`preserve_symlinks`), so an entry cached under one mode is wrong for
+/// the other. Resolvers can differ per `Bun.build` call within one process.
+static CACHE_PRESERVE_SYMLINKS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Invalidate every cached `DirInfo` when `preserve_symlinks` differs from
+/// the mode the cache was filled with. Key-lookup entry points call this
+/// before `get_or_put` so a resolver never consumes entries computed with
+/// the other mode. The import-resolution entry point
+/// (`dir_info_cached_maybe_log`) holds the resolver mutex across check and
+/// fill, which is what serializes mode changes in practice: `Bun.build`
+/// runs execute one at a time on the bundle thread, and runtime resolvers
+/// keep one mode for the process lifetime.
+#[inline(always)]
+pub fn sync_preserve_symlinks_mode(preserve_symlinks: bool) {
+    use core::sync::atomic::Ordering;
+    if CACHE_PRESERVE_SYMLINKS.load(Ordering::Relaxed) != preserve_symlinks {
+        CACHE_PRESERVE_SYMLINKS.store(preserve_symlinks, Ordering::Relaxed);
+        // SAFETY: ARENA — `hash_map_instance()` is the never-null BSSMap
+        // singleton (process-lifetime; never freed). `clear` takes the map's
+        // own mutex; orphaned slots stay valid for live `DirInfoRef`s.
+        unsafe { (*hash_map_instance()).clear() };
+    }
+}
+
 /// Look up a `DirInfo` slot in the process-lifetime BSSMap singleton by index
 /// and wrap it as a [`DirInfoRef`]. Single `unsafe` deref site for
 /// `hash_map_instance()` index reads; `get_parent` /

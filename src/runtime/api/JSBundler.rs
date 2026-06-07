@@ -144,6 +144,7 @@ pub mod js_bundler {
         pub public_path: OwnedString,
         pub conditions: StringSet,
         pub packages: options::PackagesOption,
+        pub preserve_symlinks: bool,
         pub format: options::Format,
         pub bytecode: bool,
         pub banner: OwnedString,
@@ -210,6 +211,7 @@ pub mod js_bundler {
                 public_path: OwnedString::default(),
                 conditions: StringSet::default(),
                 packages: options::PackagesOption::Bundle,
+                preserve_symlinks: false,
                 format: options::Format::Esm,
                 bytecode: false,
                 banner: OwnedString::default(),
@@ -704,6 +706,12 @@ pub mod js_bundler {
                 "\"bundle\", \"external\"",
             )? {
                 this.packages = packages;
+            }
+
+            if let Some(preserve_symlinks) =
+                config.get_boolean_loose(global_this, "preserveSymlinks")?
+            {
+                this.preserve_symlinks = preserve_symlinks;
             }
 
             // Parse JSX configuration

@@ -2606,34 +2606,7 @@ pub fn len_of_js_number(value: f64) -> u32 {
 
     // Rust's `{}` formatter for f64 uses the shortest round-trip decimal
     // form (like Zig's `{d}`), matching the printer's float fallback.
-    // Worst-case f64 (~1.8e308) is ~309 digits; a 350-byte scratch buffer
-    // clears that with headroom. If the format ever overruns, bias toward
-    // the buffer length (rejects the fold rather than silently accepting
-    // an inflated result).
-    struct SliceWriter<'a> {
-        buf: &'a mut [u8],
-        pos: usize,
-    }
-    impl<'a> core::fmt::Write for SliceWriter<'a> {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            let remaining = self.buf.len() - self.pos;
-            if s.len() > remaining {
-                return Err(core::fmt::Error);
-            }
-            self.buf[self.pos..self.pos + s.len()].copy_from_slice(s.as_bytes());
-            self.pos += s.len();
-            Ok(())
-        }
-    }
-    let mut buf = [0u8; 350];
-    let mut writer = SliceWriter {
-        buf: &mut buf,
-        pos: 0,
-    };
-    match core::fmt::write(&mut writer, format_args!("{}", abs_value)) {
-        Ok(_) => neg_prefix + writer.pos as u32,
-        Err(_) => neg_prefix + 350,
-    }
+    neg_prefix + count_float(abs_value) as u32
 }
 
 #[deprecated(note = "use digit_count / digit_count_i64")]

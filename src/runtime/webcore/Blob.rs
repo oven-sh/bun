@@ -6313,18 +6313,20 @@ fn resolve_file_stat(store: &StoreRef) {
     // Cross-thread aliasing note: worker-thread `ReadFile` tasks (POSIX)
     // can concurrently hold a shared `&Data` to this same `Store` via
     // `do_read_file`'s `StoreRef::clone` (see `read_file.rs`
-    // `resolve_size_and_last_modified`). They only access the `AtomicU64`
-    // `last_modified` field through `&File`, never `&mut`. The JS-thread
-    // `&mut File` materialized below formally aliases that `&File` under
-    // Rust's memory model, but every overlapping field-write by this
-    // function produces the same fstat-derived value that the worker
-    // would write, so the race is idempotent; the atomic closes the
-    // observable data-level race on `last_modified` and the remaining
-    // aliasing is compiler-level only (writes to `max_size`/`mode`/
-    // `seekable` happen once per `Store` lifetime and are benign on the
-    // overlap window). Converting the whole `File` to interior-mutable
-    // fields would close the aliasing too, but is out of scope for
-    // #30800 (which introduced `unsafe fn data_mut`).
+    // `resolve_size_and_last_modified`); those only access the `AtomicU64`
+    // `last_modified` field through `&File`, never `&mut`, and the atomic
+    // closes that observable data-level race. POSIX `WriteFile::run_with_fd`
+    // (`write_file.rs`) is a second worker-pool `&File` borrower: on
+    // fd-backed destinations it reads the non-atomic `seekable`/`mode`
+    // fields, so the JS-thread `&mut File` materialized below can race
+    // those reads at the data level. Both overlaps are benign in practice:
+    // every overlapping field-write by this function produces the same
+    // fstat-derived value a re-stat would (idempotent), and
+    // `seekable`/`mode`/`max_size` are small `Copy` types written once per
+    // `Store` lifetime. The `&mut File` still formally aliases the worker
+    // `&File`s under Rust's memory model; converting the whole `File` to
+    // interior-mutable fields would close both overlaps, but is out of
+    // scope for #30800 (which introduced `unsafe fn data_mut`).
     let file = unsafe { store.data_mut() }.as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {

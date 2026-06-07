@@ -1184,10 +1184,9 @@ pub mod store {
     // This is a partial guard. `StoreRef: Clone + Send` still lets callers
     // route cross-thread access through cloned handles (every worker-pool
     // `ReadFile`/`CopyFile`/`WriteFile` task is constructed this way), and
-    // container types with their own `unsafe impl Sync` — notably `Blob`
-    // (`webcore_types.rs:96`), which exposes `fn store(&self) ->
-    // Option<&StoreRef>` — can hand out `&StoreRef` from a `&Blob` shared
-    // across threads. Therefore the *load-bearing* guard for the
+    // container types with their own `unsafe impl Sync` — notably `Blob`,
+    // which exposes `fn store(&self) -> Option<&StoreRef>` — can hand out
+    // `&StoreRef` from a `&Blob` shared across threads. Therefore the *load-bearing* guard for the
     // single-owner contract is the `unsafe fn data_mut` precondition the
     // caller must discharge in writing; `!Sync` is a compile-time hint
     // that catches the most obvious misuse. If a future use case genuinely

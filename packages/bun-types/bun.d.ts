@@ -8280,7 +8280,12 @@ declare module "bun" {
        * @default "fill"
        */
       fit?: "fill" | "inside" | "outside" | "cover" | "contain";
-      /** Never upscale — if the source is already smaller, leave it. */
+      /**
+       * Never upscale — if the source is already smaller, leave it. Only the
+       * image itself is exempt from enlarging: `fit: "contain"` still pads
+       * the canvas to the requested box, while `fit: "cover"` skips its crop
+       * and passes the smaller source through unchanged.
+       */
       withoutEnlargement?: boolean;
       /**
        * Letterbox colour for `fit:"contain"`. Each channel defaults to `0`;

@@ -1190,6 +1190,34 @@ describe("Bun.Image", () => {
       expect(h).toBe(3);
     });
 
+    test("withoutEnlargement + fit:'cover' skips both the upscale and the crop", async () => {
+      // The resize resets to the source dims, and cover's output clamps to
+      // min(box, resized) — so a smaller source passes through unchanged.
+      const out = await new Bun.Image(cornersPng) // 4×3
+        .resize(100, 100, { fit: "cover", withoutEnlargement: true })
+        .png()
+        .bytes();
+      const { w, h } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 4, h: 3 });
+    });
+
+    test("withoutEnlargement + fit:'contain' still pads the canvas to the box", async () => {
+      // Only the image itself is never enlarged; the letterbox canvas is
+      // still the requested box, with the source centered.
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(6, 4, { fit: "contain", withoutEnlargement: true, background: { r: 0, g: 255, b: 0, alpha: 1 } })
+        .png()
+        .bytes();
+      const { w, h, data } = decodePngRaw(out);
+      expect({ w, h }).toEqual({ w: 6, h: 4 });
+      // Source is centered at (2,1)..(3,2); corners are background.
+      expect(rgbaAt(data, 6, 0, 0)).toEqual([0, 255, 0, 255]);
+      expect(rgbaAt(data, 6, 2, 1)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 6, 3, 2)).toEqual([255, 0, 0, 255]);
+      expect(rgbaAt(data, 6, 5, 3)).toEqual([0, 255, 0, 255]);
+    });
+
     test("new Response(image) encodes and sets Content-Type", async () => {
       const res = new Response(new Bun.Image(gradientPng).resize(4, 4).webp());
       expect(res.headers.get("content-type")).toBe("image/webp");

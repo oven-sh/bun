@@ -448,15 +448,9 @@ pub unsafe fn copy_file_range(
     len: usize,
     flags: u32,
 ) -> isize {
-    // OHOS seccomp blocks copy_file_range with uncatchable SIGSYS.
-    #[cfg(target_env = "ohos")]
-    {
-        let _ = (in_, off_in, out, off_out, len, flags);
-        return -1;
-    }
+    // OHOS: copy_file_range verified available (rc=16 on 2026-06-07).
     // SAFETY: raw `copy_file_range(2)`; kernel validates fds; offset ptrs may
     // be null.
-    #[cfg(not(target_env = "ohos"))]
     {
         unsafe {
             libc::syscall(

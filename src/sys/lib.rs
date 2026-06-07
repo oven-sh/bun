@@ -3533,26 +3533,19 @@ mod posix_impl {
     /// [`can_use_memfd`] to false.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn memfd_create(name: &core::ffi::CStr, flags_: MemfdFlags) -> Maybe<Fd> {
-        // OHOS seccomp blocks memfd_create with uncatchable SIGSYS.
-        #[cfg(target_env = "ohos")]
-        {
-            let _ = (name, flags_);
-            MEMFD_ENOSYS.store(true, core::sync::atomic::Ordering::Relaxed);
-            return Err(Error::from_code_int(libc::ENOSYS, Tag::memfd_create));
-        }
-        #[cfg(not(target_env = "ohos"))]
+        // OHOS: memfd_create verified available (returned fd=4 on 2026-06-07).
         {
             let mut flags: u32 = flags_ as u32;
             loop {
-                // bionic only added the `memfd_create()` libc wrapper at API 30; we
-                // link against API 28. Raw-syscall it (kernel has had it since 3.17).
+                // Android/OHOS: libc may not have memfd_create wrapper.
+                // Raw-syscall it (kernel has had it since 3.17).
                 // SAFETY: `name` is a valid NUL-terminated C string.
-                #[cfg(target_os = "android")]
+                #[cfg(any(target_os = "android", target_env = "ohos"))]
                 let rc = unsafe {
                     libc::syscall(libc::SYS_memfd_create, name.as_ptr(), flags) as core::ffi::c_int
                 };
                 // SAFETY: `name` is a valid NUL-terminated C string.
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
                 let rc = unsafe { libc::memfd_create(name.as_ptr(), flags) };
                 if rc < 0 {
                     let e = last_errno();

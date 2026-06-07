@@ -404,9 +404,16 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
             }
             w.vm_lock.unlock();
         }
+        // Snapshot OUTSTANDING while still holding the mutex: `unlink()`
+        // (which needs the mutex) always precedes the `mark_exited()`
+        // decrement+wake, so every entry counted in `matching` still has its
+        // decrement ahead of `n`. Loading after unlock would let the last
+        // matching child unlink+decrement in the gap, leaving `matching`
+        // stale while `*addr == n` — Futex::wait below would then sleep
+        // through the already-fired wake until the deadline.
+        let n = live_workers::OUTSTANDING.load(Ordering::Acquire);
         live_workers::MUTEX.unlock();
 
-        let n = live_workers::OUTSTANDING.load(Ordering::Acquire);
         let done = match parent_filter {
             // A child past `unlink()` no longer reads the parent VM, so
             // list membership (not OUTSTANDING) is the filtered condition.
@@ -421,9 +428,6 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
             log!("terminateAllAndWait: timed out with {} outstanding", n);
             return;
         }
-        // `unlink()` is always followed by `mark_exited()`, which decrements
-        // OUTSTANDING and wakes this futex — so the filtered wait is woken
-        // for every child that leaves the list.
         let _ = Futex::wait(&live_workers::OUTSTANDING, n, Some(deadline_ns - elapsed));
     }
 }

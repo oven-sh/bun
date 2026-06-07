@@ -579,3 +579,193 @@ describe("compiled binary in a deleted cwd", () => {
 });
 
 // file command test works well
+
+// A `bun build --compile --bytecode` executable embeds both the bundled source
+// and its JSC bytecode. JSC's bytecode decoder trusts interior offsets/sizes,
+// so if the embedded bytecode is modified after compilation (partial download,
+// disk corruption, binary rewriters like rcedit/signtool), feeding it to the
+// decoder crashes the process at startup. The StandaloneModuleGraph records a
+// hash of each module's bytecode + module_info at build time and falls back to
+// parsing the embedded source when it no longer matches.
+describe("compiled executable bytecode integrity", () => {
+  // Container layout from src/standalone_graph/StandaloneModuleGraph.rs: the
+  // embedded payload ends with [Offsets struct][16-byte trailer], and every
+  // StringPointer inside is relative to the payload start.
+  const TRAILER = Buffer.from("\n---- Bun! ----\n");
+  // #[repr(C)] Offsets { byte_count: usize, modules_ptr: StringPointer,
+  //   entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }
+  const OFFSETS_SIZE = 32;
+  // #[repr(C)] CompiledModuleGraphFile: 6 StringPointers (name, contents,
+  // sourcemap, bytecode, module_info, bytecode_origin_path), bytecode_hash
+  // ([u8; 8]), then 4 one-byte enums. 52 is the pre-hash record size, kept so
+  // the locator also works on older builds (where the run then crashes).
+  const RECORD_SIZES = [60, 52];
+  const RECORD_BYTECODE_OFFSET = 24;
+  const RECORD_MODULE_INFO_OFFSET = 32;
+
+  interface GraphLocation {
+    base: number;
+    records: number[];
+  }
+
+  // The trailer string also lives in the bun binary's read-only data, so every
+  // occurrence is validated structurally and the last valid one (the embedded
+  // graph, which is placed after the runtime's own bytes) wins.
+  function findModuleGraph(exe: Buffer): GraphLocation | null {
+    let result: GraphLocation | null = null;
+    let pos = -1;
+    while ((pos = exe.indexOf(TRAILER, pos + 1)) !== -1) {
+      const offsetsPos = pos - OFFSETS_SIZE;
+      if (offsetsPos < 0) continue;
+      const byteCountBig = exe.readBigUInt64LE(offsetsPos);
+      if (byteCountBig === 0n || byteCountBig > BigInt(offsetsPos)) continue;
+      const byteCount = Number(byteCountBig);
+      const base = offsetsPos - byteCount;
+      const modulesOffset = exe.readUInt32LE(offsetsPos + 8);
+      const modulesLength = exe.readUInt32LE(offsetsPos + 12);
+      const entryPointId = exe.readUInt32LE(offsetsPos + 16);
+      if (modulesLength === 0 || modulesOffset + modulesLength > byteCount) continue;
+      const recordSize = RECORD_SIZES.find(size => modulesLength % size === 0);
+      if (recordSize === undefined) continue;
+      const count = modulesLength / recordSize;
+      if (entryPointId >= count) continue;
+
+      const records: number[] = [];
+      let valid = true;
+      for (let i = 0; i < count; i++) {
+        const rec = base + modulesOffset + i * recordSize;
+        const nameOffset = exe.readUInt32LE(rec);
+        const nameLength = exe.readUInt32LE(rec + 4);
+        const contentsOffset = exe.readUInt32LE(rec + 8);
+        const contentsLength = exe.readUInt32LE(rec + 12);
+        if (nameLength === 0 || nameOffset + nameLength > byteCount) {
+          valid = false;
+          break;
+        }
+        if (contentsOffset + contentsLength > byteCount) {
+          valid = false;
+          break;
+        }
+        records.push(rec);
+      }
+      if (valid) result = { base, records };
+    }
+    return result;
+  }
+
+  // XORs 64 bytes in the middle of each module's region (bytecode or
+  // module_info), far past the 4-byte JSC cache-version header at the start,
+  // which is the only part the decoder checks before trusting the rest.
+  function corruptRegions(exe: Buffer, fieldOffset: number): number {
+    const graph = findModuleGraph(exe);
+    expect(graph).not.toBeNull();
+    let corrupted = 0;
+    for (const rec of graph!.records) {
+      const offset = exe.readUInt32LE(rec + fieldOffset);
+      const length = exe.readUInt32LE(rec + fieldOffset + 4);
+      if (length === 0) continue;
+      const start = graph!.base + offset + (length >> 1);
+      const n = Math.min(64, length - (length >> 1));
+      for (let i = 0; i < n; i++) exe[start + i] ^= 0xa5;
+      corrupted++;
+    }
+    return corrupted;
+  }
+
+  async function buildExecutable(dir: string, format: "cjs" | "esm"): Promise<string> {
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        `--format=${format}`,
+        join(dir, "app.js"),
+        "--outfile",
+        join(dir, "app"),
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+    return join(dir, isWindows ? "app.exe" : "app");
+  }
+
+  async function runExecutable(exePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    await using proc = Bun.spawn({
+      cmd: [exePath],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Writes the corrupted executable to a sibling path: overwriting the
+  // original in place can hit ETXTBSY while the kernel still holds it open
+  // from the pristine run.
+  async function corruptExecutable(exePath: string, fieldOffset: number): Promise<string> {
+    const exe = Buffer.from(await Bun.file(exePath).arrayBuffer());
+    expect(corruptRegions(exe, fieldOffset)).toBeGreaterThan(0);
+    const corruptedPath = isWindows ? exePath.replace(/\.exe$/, "-corrupted.exe") : `${exePath}-corrupted`;
+    await Bun.write(corruptedPath, exe);
+    chmodSync(corruptedPath, 0o755);
+    if (isMacOS) {
+      // Re-sign so the ad-hoc code signature covers the corrupted bytes;
+      // otherwise the kernel kills the process before it can start.
+      await using sign = Bun.spawn({
+        cmd: ["codesign", "--force", "--sign", "-", corruptedPath],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await sign.exited).toBe(0);
+    }
+    return corruptedPath;
+  }
+
+  for (const format of ["cjs", "esm"] as const) {
+    test(`corrupted embedded bytecode falls back to source (${format})`, async () => {
+      using dir = tempDir(`bytecode-integrity-${format}`, {
+        "app.js": `console.log("bytecode-integrity-marker");`,
+      });
+      const exePath = await buildExecutable(String(dir), format);
+
+      // Pristine executable: the bytecode hash matches, so JSC decodes the
+      // embedded bytecode instead of parsing source.
+      const clean = await runExecutable(exePath);
+      expect(clean.stdout).toContain("bytecode-integrity-marker");
+      expect(clean.stderr).toContain("Cache hit for sourceCode");
+      expect(clean.exitCode).toBe(0);
+
+      const corruptedPath = await corruptExecutable(exePath, RECORD_BYTECODE_OFFSET);
+
+      // Corrupted bytecode must be rejected before it reaches JSC's decoder,
+      // falling back to the embedded source. Not a crash, not a silent decode.
+      const corrupted = await runExecutable(corruptedPath);
+      expect(corrupted.stdout).toContain("bytecode-integrity-marker");
+      expect(corrupted.stderr).not.toContain("Cache hit for sourceCode");
+      expect(corrupted.exitCode).toBe(0);
+    }, 60_000);
+  }
+
+  test("corrupted embedded module_info falls back to source (esm)", async () => {
+    using dir = tempDir("module-info-integrity", {
+      "app.js": `console.log("module-info-integrity-marker");`,
+    });
+    const exePath = await buildExecutable(String(dir), "esm");
+
+    // module_info is covered by the same hash as the bytecode: both are
+    // produced together at build time and parsed with the same trust.
+    const corruptedPath = await corruptExecutable(exePath, RECORD_MODULE_INFO_OFFSET);
+
+    const corrupted = await runExecutable(corruptedPath);
+    expect(corrupted.stdout).toContain("module-info-integrity-marker");
+    expect(corrupted.stderr).not.toContain("Cache hit for sourceCode");
+    expect(corrupted.exitCode).toBe(0);
+  }, 60_000);
+});

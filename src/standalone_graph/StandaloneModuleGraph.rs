@@ -240,6 +240,14 @@ pub(crate) struct CompiledModuleGraphFile {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: StringPointer,
+    /// wyhash over the serialized `bytecode` range chained with the
+    /// `module_info` range; all-zero when there is no bytecode. JSC's bytecode
+    /// decoder trusts interior offsets/sizes, so a corrupted executable must be
+    /// detected before the blob reaches it (`from_bytes` falls back to the
+    /// embedded source on mismatch). Stored as little-endian bytes: a `u64`
+    /// field would add struct padding that leaks uninitialized memory when the
+    /// record is serialized with `sliceAsBytes`.
+    pub bytecode_hash: [u8; 8],
     pub encoding: Encoding,
     pub loader: Loader,
     pub module_format: ModuleFormat,
@@ -552,6 +560,16 @@ impl StandaloneModuleGraph {
         // the bytecode/module_info regions never have a shared reference formed over them.
         let raw_const: *const u8 = raw_ptr;
 
+        // Every offset/length below comes straight from the (possibly
+        // corrupted or truncated) executable, and the `slice_to*` helpers only
+        // debug_assert their bounds, so validate here and make release builds fail
+        // with an error instead of reading out of bounds.
+        if offsets.byte_count > raw_len {
+            return Err(err!("Corrupted module graph: byte count is out of bounds"));
+        }
+        check_ptr(raw_len, offsets.modules_ptr, false)?;
+        check_ptr(raw_len, offsets.compile_exec_argv_ptr, true)?;
+
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
@@ -562,7 +580,9 @@ impl StandaloneModuleGraph {
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
-        if offsets.entry_point_id as usize > modules_list_count {
+        // `>=`: the ID indexes the module list (`entry_point()`), so `== count`
+        // is just as out of bounds as `> count`.
+        if offsets.entry_point_id as usize >= modules_list_count {
             return Err(err!(
                 "Corrupted module graph: entry point ID is greater than module list count"
             ));
@@ -580,8 +600,16 @@ impl StandaloneModuleGraph {
                 )
             };
             let module = &module;
+
+            check_ptr(raw_len, module.name, true)?;
+            check_ptr(raw_len, module.contents, true)?;
+            check_ptr(raw_len, module.sourcemap, false)?;
+            check_ptr(raw_len, module.bytecode, false)?;
+            check_ptr(raw_len, module.module_info, false)?;
+            check_ptr(raw_len, module.bytecode_origin_path, true)?;
+
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
-            // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
+            // (checked above) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
             let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
                 (
@@ -591,6 +619,47 @@ impl StandaloneModuleGraph {
                     slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
                 )
             };
+
+            // Verify the embedded bytecode (and its module_info, which is
+            // parsed with the same level of trust) against the hash recorded
+            // by `to_bytes`. JSC's bytecode decoder trusts interior
+            // offsets/sizes, so a blob corrupted after compilation (partial
+            // download, disk corruption, binary rewriters) would crash it.
+            // Fall back to parsing the embedded source instead.
+            let mut bytecode_ptr = module.bytecode;
+            let mut module_info_ptr = module.module_info;
+            let mut bytecode_origin_path = if module.bytecode_origin_path.length > 0 {
+                bytecode_origin.as_bytes()
+            } else {
+                b""
+            };
+            if bytecode_ptr.length > 0 {
+                // SAFETY: both subranges are in-bounds (checked above). These
+                // shared references die inside this block; JSC's in-place
+                // writes to the bytecode/module_info regions can only happen
+                // after `from_bytes` returns.
+                let actual = unsafe {
+                    let bc = core::slice::from_raw_parts(
+                        raw_const.add(bytecode_ptr.offset as usize),
+                        bytecode_ptr.length as usize,
+                    );
+                    let mi = core::slice::from_raw_parts(
+                        raw_const.add(module_info_ptr.offset as usize),
+                        module_info_ptr.length as usize,
+                    );
+                    bun_wyhash::hash_with_seed(bun_wyhash::hash(bc), mi)
+                };
+                if actual != u64::from_le_bytes(module.bytecode_hash) {
+                    bun_core::debug_warn!(
+                        "embedded bytecode for {} failed its integrity check; falling back to source",
+                        bstr::BStr::new(name.as_bytes())
+                    );
+                    bytecode_ptr = StringPointer::default();
+                    module_info_ptr = StringPointer::default();
+                    bytecode_origin_path = b"";
+                }
+            }
+
             let _ = modules.put(
                 name.as_bytes(),
                 File {
@@ -607,26 +676,22 @@ impl StandaloneModuleGraph {
                     } else {
                         LazySourceMap::None
                     },
-                    bytecode: if module.bytecode.length > 0 {
+                    bytecode: if bytecode_ptr.length > 0 {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
+                        // bytecode in place. Subrange is in-bounds (checked above) and
                         // disjoint from every read-only subslice handed out above — no
-                        // `&[u8]` is ever formed over this range.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
+                        // `&[u8]` outlives the hash check over this range.
+                        unsafe { slice_to_mut(raw_ptr, raw_len, bytecode_ptr) }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
-                    module_info: if module.module_info.length > 0 {
+                    module_info: if module_info_ptr.length > 0 {
                         // SAFETY: see bytecode above.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
+                        unsafe { slice_to_mut(raw_ptr, raw_len, module_info_ptr) }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
-                    bytecode_origin_path: if module.bytecode_origin_path.length > 0 {
-                        bytecode_origin.as_bytes()
-                    } else {
-                        b""
-                    },
+                    bytecode_origin_path,
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
@@ -652,6 +717,24 @@ impl StandaloneModuleGraph {
             flags: offsets.flags,
         })
     }
+}
+
+/// Bounds check for a blob-controlled `StringPointer` read from the embedded
+/// section. The `slice_to*` helpers below only `debug_assert!` their bounds,
+/// so `from_bytes` calls this first: a corrupted executable must fail with an
+/// error in release builds, not read out of bounds. `nul_terminated` subranges
+/// additionally require the trailing NUL written by `append_count_z`.
+fn check_ptr(len: usize, ptr: StringPointer, nul_terminated: bool) -> Result<(), BunError> {
+    // Zero-length pointers are never dereferenced (`slice_to*` return empty).
+    if ptr.length == 0 {
+        return Ok(());
+    }
+    // u64 arithmetic: `offset + length + 1` can overflow u32 but not u64.
+    let end = u64::from(ptr.offset) + u64::from(ptr.length) + u64::from(nul_terminated);
+    if end > len as u64 {
+        return Err(err!("Corrupted module graph: file data is out of bounds"));
+    }
+    Ok(())
 }
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
@@ -819,8 +902,12 @@ pub(crate) fn to_bytes(
                 let writable_after_padding = string_builder.writable();
                 writable_after_padding[0..bytecode.len()]
                     .copy_from_slice(&bytecode[0..bytecode.len()]);
-                let unaligned_space = &writable_after_padding[bytecode.len()..];
-                let len = bytecode.len() + unaligned_space.len().min(128);
+                // Zero the trailing slack included in the stored length so the
+                // range hashes deterministically and no uninitialized heap
+                // bytes leak into the emitted executable.
+                let slack = (writable_after_padding.len() - bytecode.len()).min(128);
+                writable_after_padding[bytecode.len()..bytecode.len() + slack].fill(0);
+                let len = bytecode.len() + slack;
                 string_builder.len += len;
                 break 'brk StringPointer {
                     offset: aligned_offset as u32,
@@ -847,6 +934,19 @@ pub(crate) fn to_bytes(
                 };
             }
             break 'brk StringPointer::default();
+        };
+
+        // Both ranges are final at this point (the builder only appends), so
+        // hash them now for the runtime integrity check in `from_bytes`.
+        let bytecode_hash: [u8; 8] = if bytecode.length > 0 {
+            let written = string_builder.written_slice();
+            bun_wyhash::hash_with_seed(
+                bun_wyhash::hash(bytecode.slice(written)),
+                module_info.slice(written),
+            )
+            .to_le_bytes()
+        } else {
+            [0; 8]
         };
 
         // Note: `src/sys/File.rs` is still cfg-gated upstream, so the
@@ -940,6 +1040,7 @@ pub(crate) fn to_bytes(
             bytecode,
             module_info,
             bytecode_origin_path,
+            bytecode_hash,
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,

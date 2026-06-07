@@ -183,9 +183,7 @@ describe("opendirSync string encoding shorthand", () => {
       expect(entry?.name).toBe(Buffer.from("na\u00efve.txt", "utf8").toString("latin1"));
       dir.closeSync();
       // an invalid encoding passed as the shorthand is validated like node
-      expect(() => fs.opendirSync(dirname, "nope")).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-      );
+      expect(() => fs.opendirSync(dirname, "nope")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     } finally {
       fs.rmSync(dirname, { recursive: true, force: true });
     }

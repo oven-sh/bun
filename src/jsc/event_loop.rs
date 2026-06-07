@@ -1605,4 +1605,3 @@ impl ConcurrentEnqueueGate {
         unsafe { bun_core::heap::destroy(this) };
     }
 }
-

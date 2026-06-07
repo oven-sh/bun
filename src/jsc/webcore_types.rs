@@ -1195,7 +1195,7 @@ pub mod store {
     // inside `Store`.
 
     // Compile-time trip-wire: if `StoreRef` ever gains `Sync`, both blanket
-    // impls of `NotSyncCheck` apply and `_NOT_SYNC` fails to compile with
+    // impls of `_NotSyncCheck` apply and `_NOT_SYNC` fails to compile with
     // "conflicting impls". Guards against a future `unsafe impl Sync for
     // StoreRef` being added without revisiting `data_mut`'s contract (same
     // pattern as `src/runtime/shell/subproc.rs` `__pipe_reader_thread_confined`).
@@ -1207,13 +1207,12 @@ pub mod store {
     // tighten `Blob: !Sync` once its call sites are audited.
     mod __store_ref_not_sync {
         use super::StoreRef;
-        trait NotSyncCheck<A> {
+        trait _NotSyncCheck<A> {
             const OK: () = ();
         }
-        impl<T: ?Sized> NotSyncCheck<()> for T {}
-        impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
-        #[allow(dead_code)]
-        const _NOT_SYNC: () = <StoreRef as NotSyncCheck<_>>::OK;
+        impl<T: ?Sized> _NotSyncCheck<()> for T {}
+        impl<T: ?Sized + Sync> _NotSyncCheck<u8> for T {}
+        const _NOT_SYNC: () = <StoreRef as _NotSyncCheck<_>>::OK;
     }
 }
 pub use store::{Store, StoreRef};

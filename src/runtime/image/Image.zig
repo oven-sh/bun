@@ -79,33 +79,9 @@ extern fn JSC__JSValue__unpinArrayBuffer(v: jsc.JSValue) void;
 extern fn JSC__JSValue__borrowBytesForOffThread(v: jsc.JSValue, out_ptr: *[*]const u8, out_len: *usize) i32;
 
 pub const Fit = enum {
-    /// Stretch to exactly w×h (default). No aspect-ratio preservation.
     fill,
-    /// Preserve aspect ratio; scale so the result fits *inside* w×h.
-    /// Output ≤ w×h on both sides.
     inside,
-    /// Preserve aspect ratio; scale so the result *contains* w×h.
-    /// Output ≥ w×h on both sides. No crop — caller sees the larger image.
-    outside,
-    /// Preserve aspect ratio; scale like `outside` and center-crop to exactly
-    /// w×h. Like CSS `object-fit: cover`.
-    cover,
-    /// Preserve aspect ratio; scale like `inside` and letterbox with
-    /// `background` to exactly w×h. Like CSS `object-fit: contain`.
-    contain,
     pub const Map = bun.ComptimeEnumMap(Fit);
-};
-
-/// RGBA background used by `fit: "contain"` to fill the letterbox. Defaults
-/// to transparent black — renders as black in JPEG (alpha dropped) and as a
-/// transparent letterbox in PNG/WebP, so callers can composite without an
-/// extra `removeAlpha`. Sharp's default is opaque black; using transparent
-/// here keeps the alpha channel of PNG/WebP output usable.
-pub const Background = struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-    a: u8 = 0,
 };
 
 pub const Resize = struct {
@@ -114,7 +90,6 @@ pub const Resize = struct {
     filter: codecs.Filter = .lanczos3,
     fit: Fit = .fill,
     without_enlargement: bool = false,
-    background: Background = .{},
 };
 
 /// One slot per operation, not an op list — calling `.resize()` twice
@@ -303,33 +278,9 @@ pub fn doResize(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallF
         if (try opt.getOptionalEnum(global, "filter", codecs.Filter)) |v| r.filter = v;
         if (try opt.getOptionalEnum(global, "fit", Fit)) |v| r.fit = v;
         if (try opt.get(global, "withoutEnlargement")) |v| r.without_enlargement = v.toBoolean();
-        if (try opt.get(global, "background")) |bg| if (bg.isObject()) {
-            r.background = try parseBackground(global, bg);
-        };
     }
     this.pipeline.resize = r;
     return callframe.this();
-}
-
-/// Parse Sharp-shaped `{r, g, b, alpha}`. RGB channels are 0-255; `alpha` is
-/// 0-1 (Sharp convention) and maps linearly to 0-255 in storage. Missing
-/// channels default to 0 so `{alpha: 1}` gives opaque black, the most common
-/// request after the default transparent letterbox.
-fn parseBackground(global: *jsc.JSGlobalObject, bg: jsc.JSValue) bun.JSError!Background {
-    var out: Background = .{};
-    if (try bg.get(global, "r")) |v| if (v.isNumber()) {
-        out.r = coerceInt(u8, v.asNumber(), 0, 255);
-    };
-    if (try bg.get(global, "g")) |v| if (v.isNumber()) {
-        out.g = coerceInt(u8, v.asNumber(), 0, 255);
-    };
-    if (try bg.get(global, "b")) |v| if (v.isNumber()) {
-        out.b = coerceInt(u8, v.asNumber(), 0, 255);
-    };
-    if (try bg.get(global, "alpha")) |v| if (v.isNumber()) {
-        out.a = coerceInt(u8, v.asNumber() * 255.0, 0, 255);
-    };
-    return out;
 }
 
 pub fn doRotate(this: *Image, global: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -1251,75 +1202,28 @@ pub const PipelineTask = struct {
         }
         if (p.resize) |r| {
             const t = resolveResize(r, d.width, d.height);
-            // Guard both the resize canvas AND the H-then-V intermediate
-            // (always resize_w × src_h — image_resize.cpp pass order is
-            // fixed). A 1×N source → resize(W,1) has tiny input AND output
-            // canvases yet a W×N intermediate; with W=262143, N=16383 that's
-            // a 17 GiB alloc from a ~200-byte PNG. The src_w×dst_h
-            // cross-product is bounded by max(input, output) so doesn't need
-            // its own check. The third clause guards the `contain` pad
-            // canvas (out_w × out_h): each side is capped at `doResize`'s
-            // 0x3FFFF, but the product of two capped sides is still ~256×
-            // the default max_pixels, so it needs its own check.
-            if (@as(u64, t.resize_w) * t.resize_h > this.max_pixels or
-                @as(u64, t.resize_w) * d.height > this.max_pixels or
-                @as(u64, t.out_w) * t.out_h > this.max_pixels)
+            // Guard the output canvas AND the H-then-V intermediate (always
+            // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
+            // source → resize(W,1) has tiny input AND output canvases yet a
+            // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
+            // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded
+            // by max(input, output) so doesn't need its own check.
+            if (@as(u64, t.w) * t.h > this.max_pixels or
+                @as(u64, t.w) * d.height > this.max_pixels)
                 return error.TooManyPixels;
-            if (t.resize_w != d.width or t.resize_h != d.height) {
-                const next = try codecs.resize(d.rgba, d.width, d.height, t.resize_w, t.resize_h, r.filter);
+            if (t.w != d.width or t.h != d.height) {
+                const next = try codecs.resize(d.rgba, d.width, d.height, t.w, t.h, r.filter);
                 bun.default_allocator.free(d.rgba);
                 d.rgba = next;
-                d.width = t.resize_w;
-                d.height = t.resize_h;
-            }
-            // `cover`/`contain` finish by cropping or padding the resized
-            // image to exactly the target box. No-op for the other fit
-            // modes where resize_w×resize_h already equals out_w×out_h.
-            if (t.out_w != d.width or t.out_h != d.height) {
-                const next = switch (r.fit) {
-                    .cover => try codecs.crop(d.rgba, d.width, d.height, t.off_x, t.off_y, t.out_w, t.out_h),
-                    .contain => try codecs.pad(
-                        d.rgba,
-                        d.width,
-                        d.height,
-                        t.out_w,
-                        t.out_h,
-                        t.off_x,
-                        t.off_y,
-                        .{ r.background.r, r.background.g, r.background.b, r.background.a },
-                    ),
-                    // Should never happen — resolveResize keeps resize ==
-                    // out for every other fit. Guard so a future fit mode
-                    // with a mismatched helper doesn't silently fall
-                    // through a no-op branch.
-                    else => unreachable,
-                };
-                bun.default_allocator.free(d.rgba);
-                d.rgba = next;
-                d.width = t.out_w;
-                d.height = t.out_h;
+                d.width = t.w;
+                d.height = t.h;
             }
         }
         if (p.modulate) |m| codecs.modulate(d.rgba, m.brightness, m.saturation);
     }
 
-    /// `resize_w×resize_h` are the dims codecs.resize produces; `out_w×out_h`
-    /// are the final pipeline dims. For fill/inside/outside they match; for
-    /// cover the resize overshoots the box and is then cropped by `off_*`
-    /// pixels from the top-left; for contain the resize undershoots and is
-    /// padded, with `off_*` being the top-left of the resized image inside
-    /// the output box.
-    const ResolvedResize = struct {
-        resize_w: u32,
-        resize_h: u32,
-        out_w: u32,
-        out_h: u32,
-        off_x: u32 = 0,
-        off_y: u32 = 0,
-    };
-
     /// Map a resize spec to concrete output dims given the current dims.
-    fn resolveResize(r: Resize, sw: u32, sh: u32) ResolvedResize {
+    fn resolveResize(r: Resize, sw: u32, sh: u32) struct { w: u32, h: u32 } {
         var w = r.w;
         // Widen before multiplying — `r.w` is user-controlled and `sh` is
         // bounded only by `max_pixels`, so the u32 product can wrap; and the
@@ -1327,79 +1231,17 @@ pub const PipelineTask = struct {
         // → 5e9), so clamp to the same per-side cap doResize uses before the
         // @intCast. The maxPixels guard then rejects the product.
         var h: u32 = if (r.h != 0) r.h else @intCast(@min(@as(u64, 0x3FFFF), @max(1, @as(u64, r.w) * sh / sw)));
-        // Preserve the user-specified target box — `cover`/`contain` need it
-        // after the resize step has reshaped `w`/`h` to the aspect-preserving
-        // scale. `inside`/`outside`/`fill` ignore out_* since resize_* matches.
-        const box_w = w;
-        const box_h = h;
-        // `inside`/`outside`/`cover`/`contain` all preserve aspect ratio; the
-        // only difference is which extreme of the per-side scale we pick and
-        // what we do with any mismatch afterwards:
-        //   inside  → min scale, no finishing step (result fits *in* the box)
-        //   outside → max scale, no finishing step (result *contains* the box)
-        //   cover   → max scale, center-crop to the box (CSS object-fit cover)
-        //   contain → min scale, pad to the box with `background` (CSS contain)
-        if (r.fit != .fill) {
+        if (r.fit == .inside) {
+            // Shrink the box so the source's aspect ratio is preserved and
+            // both sides fit. (Sharp's `fit:'inside'`.)
             const sx = @as(f64, @floatFromInt(w)) / @as(f64, @floatFromInt(sw));
             const sy = @as(f64, @floatFromInt(h)) / @as(f64, @floatFromInt(sh));
-            const s = switch (r.fit) {
-                .inside, .contain => @min(sx, sy),
-                .outside, .cover => @max(sx, sy),
-                .fill => unreachable,
-            };
-            // Saturate at u32 max before @intFromFloat — `outside`/`cover`
-            // pick the max scale, so a tall-thin source can push the
-            // off-axis side past u32 (1×10M source into a 500×500 box →
-            // 5e9) and out-of-range @intFromFloat is safety-checked UB.
-            // Saturating keeps the value huge so the maxPixels guard
-            // rejects with TooManyPixels; clamping to the 0x3FFFF per-side
-            // cap instead could shrink the product back under maxPixels
-            // and silently emit an aspect-distorted image.
-            const umax: f64 = @floatFromInt(std.math.maxInt(u32));
-            w = @max(1, @as(u32, @intFromFloat(@min(umax, @round(@as(f64, @floatFromInt(sw)) * s)))));
-            h = @max(1, @as(u32, @intFromFloat(@min(umax, @round(@as(f64, @floatFromInt(sh)) * s)))));
+            const s = @min(sx, sy);
+            w = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sw)) * s))));
+            h = @max(1, @as(u32, @intFromFloat(@round(@as(f64, @floatFromInt(sh)) * s))));
         }
-        if (r.without_enlargement and (w > sw or h > sh)) {
-            w = sw;
-            h = sh;
-        }
-        return switch (r.fit) {
-            .fill, .inside, .outside => .{ .resize_w = w, .resize_h = h, .out_w = w, .out_h = h },
-            .cover => blk: {
-                // Crop centered; the resize overshoots by `w - box_w` /
-                // `h - box_h` along each axis (non-negative for `outside`
-                // scale). `without_enlargement` can leave the resized image
-                // smaller than the box — clamp the output to what we have
-                // so `crop` never asks for rows/cols that don't exist.
-                const out_w = @min(box_w, w);
-                const out_h = @min(box_h, h);
-                break :blk .{
-                    .resize_w = w,
-                    .resize_h = h,
-                    .out_w = out_w,
-                    .out_h = out_h,
-                    .off_x = (w - out_w) / 2,
-                    .off_y = (h - out_h) / 2,
-                };
-            },
-            .contain => blk: {
-                // Letterbox centered inside the user-specified box; the
-                // resize undershoots so `box - w` / `box - h` are
-                // non-negative (for `inside` scale) and the offset is half
-                // the slack. With `without_enlargement` a smaller source can
-                // still be padded up to the box.
-                const out_w = @max(box_w, w);
-                const out_h = @max(box_h, h);
-                break :blk .{
-                    .resize_w = w,
-                    .resize_h = h,
-                    .out_w = out_w,
-                    .out_h = out_h,
-                    .off_x = (out_w - w) / 2,
-                    .off_y = (out_h - h) / 2,
-                };
-            },
-        };
+        if (r.without_enlargement and (w > sw or h > sh)) return .{ .w = sw, .h = sh };
+        return .{ .w = w, .h = h };
     }
 
     fn applyOrientation(d: *codecs.Decoded, orient: exif.Orientation) codecs.Error!void {

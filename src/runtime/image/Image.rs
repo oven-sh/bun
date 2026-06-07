@@ -303,7 +303,9 @@ fn parse_background(global: &JSGlobalObject, bg: JSValue) -> JsResult<Background
     }
     if let Some(v) = bg.get(global, "alpha")? {
         if v.is_number() {
-            out.a = coerce_int!(u8, v.as_number() * 255.0, 0.0, 255.0);
+            // Round like Sharp (`Math.round(alpha * 255)`) — a plain
+            // narrowing cast truncates, putting 0.5 at 127 instead of 128.
+            out.a = coerce_int!(u8, (v.as_number() * 255.0).round(), 0.0, 255.0);
         }
     }
     Ok(out)

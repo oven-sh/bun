@@ -782,7 +782,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 /// is expected to have range-checked `x + cw <= sw` and `y + ch <= sh` —
 /// `resolve_resize` does this for `fit:'cover'`. Plain per-row memcpy; no
 /// kernel needed since there's no resampling.
-pub fn crop(
+pub(crate) fn crop(
     src: &[u8],
     sw: u32,
     sh: u32,
@@ -811,7 +811,7 @@ pub fn crop(
 /// painted with `bg`. Used by `fit:'contain'` to letterbox. The caller is
 /// expected to have range-checked `ox + sw <= dw` and `oy + sh <= dh`.
 #[allow(clippy::too_many_arguments)]
-pub fn pad(
+pub(crate) fn pad(
     src: &[u8],
     sw: u32,
     sh: u32,

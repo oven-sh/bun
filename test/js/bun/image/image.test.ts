@@ -1069,6 +1069,17 @@ describe("Bun.Image", () => {
       expect(rgbaAt(data, 4, 3, 0)).toEqual([0, 0, 0, 0]);
     });
 
+    test("fit:'contain' background alpha rounds to the nearest step like Sharp", async () => {
+      const red = makePng(2, 2, () => [255, 0, 0, 255]);
+      const out = await new Bun.Image(red)
+        .resize(4, 2, { fit: "contain", background: { r: 10, g: 20, b: 30, alpha: 0.5 } })
+        .png()
+        .bytes();
+      const { data } = decodePngRaw(out);
+      // Math.round(0.5 × 255) = 128 — truncation would store 127.
+      expect(rgbaAt(data, 4, 0, 0)).toEqual([10, 20, 30, 128]);
+    });
+
     test.each(["cover", "contain"] as const)("fit:'%s' with square-into-square is a no-op on dims", async fit => {
       const out = await new Bun.Image(gradientPng).resize(8, 8, { fit }).png().bytes();
       const { w, h } = decodePngRaw(out);

@@ -12,6 +12,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/CyclicModuleRecord.h>
@@ -1147,6 +1148,37 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
         return ident;
     };
 
+    // CJS modules whose cached exports came from a transient mock: the
+    // require-map values of every evicted transient path, plus (transitively)
+    // any cached module whose `m_children` reaches one. A CJS consumer copies
+    // values out of the mocked module at require time, so unlike ESM there is
+    // no binding to restore — the consumer itself must re-run.
+    WTF::HashSet<JSC::JSCell*> poisonedCJSModules;
+    // Require-map keys (filenames) queued for eviction by the CJS walk.
+    WTF::Vector<JSC::JSValue> cjsKeysToEvict;
+    // Poison a cached CJS module and walk its `m_parent` chain: the *first*
+    // requirer of an ESM(-mocked) module gets no `m_children` edge (the
+    // namespace early-return in `overridableRequire` skips the recording
+    // call), but module creation recorded the requirer as the parent.
+    auto poisonModuleAndParents = [&](Bun::JSCommonJSModule* mod) {
+        while (mod && !poisonedCJSModules.contains(mod)) {
+            poisonedCJSModules.add(mod);
+            if (JSC::JSValue filename = mod->filename(); filename && filename.isString()) {
+                cjsKeysToEvict.append(filename);
+            }
+            mod = mod->m_parent.get();
+        }
+    };
+    auto poisonRequireMapEntry = [&](JSC::JSString* pathString) {
+        JSC::JSValue cached = requireMap->get(global, pathString);
+        if (scope.clearExceptionExceptTermination() && cached && cached.isCell()) {
+            poisonedCJSModules.add(cached.asCell());
+            if (auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(cached)) {
+                poisonModuleAndParents(mod->m_parent.get());
+            }
+        }
+    };
+
     for (auto& entry : *records) {
         const auto& path = entry.key;
         auto& record = entry.value;
@@ -1188,6 +1220,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
             // replay, so always drop the require-cache entry — the next
             // `require()` misses and re-runs the restored (preload) factory.
             auto* pathString = JSC::jsString(vm, path);
+            poisonRequireMapEntry(pathString);
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1220,6 +1253,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 moduleLoader->removeEntry(ident);
             }
             auto* pathString = JSC::jsString(vm, path);
+            poisonRequireMapEntry(pathString);
             requireMap->remove(global, pathString);
             if (!scope.clearExceptionExceptTermination()) {
                 break;
@@ -1262,10 +1296,78 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
                 }
             }
             if (!dependentKeys.isEmpty()) {
+                // A dependent that was also `require()`d has a require-map
+                // entry wrapping the same (now-evicted) module; drop and
+                // poison it so the CJS walk below catches its own consumers.
+                for (auto& ident : dependentKeys) {
+                    auto* keyString = JSC::jsString(vm, ident.string());
+                    poisonRequireMapEntry(keyString);
+                    requireMap->remove(global, keyString);
+                    if (!scope.clearExceptionExceptTermination()) {
+                        break;
+                    }
+                }
                 WTF::Locker locker { moduleLoader->cellLock() };
                 for (auto& ident : dependentKeys) {
                     moduleLoader->removeEntry(ident);
                 }
+            }
+        }
+    }
+
+    // Transitively evict CJS consumers of poisoned modules. Two edge kinds
+    // link a consumer to what it required: `m_children` (recorded for
+    // second-and-later requirers and for plain-CJS first requires) and the
+    // dep's `m_parent` back-edge (first requirer — the only edge when the
+    // require resolved to an ESM/mocked namespace). A consumer copies values
+    // out at require time, so there is nothing to restore in place — it must
+    // re-run. Pure-CJS consumers never appear in the ESM registry, hence the
+    // separate walk over the require map. Keys are collected per pass and
+    // removed afterwards to keep iteration and mutation separate.
+    if (!poisonedCJSModules.isEmpty()) {
+        bool changed = true;
+        while (changed || !cjsKeysToEvict.isEmpty()) {
+            changed = false;
+            auto* iter = JSC::JSMapIterator::create(vm, global->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+            if (!scope.clearExceptionExceptTermination() || !iter) {
+                break;
+            }
+            JSC::JSValue key;
+            JSC::JSValue value;
+            while (iter->nextKeyValue(global, key, value)) {
+                auto* mod = dynamicDowncast<Bun::JSCommonJSModule>(value);
+                if (!mod || poisonedCJSModules.contains(mod)) {
+                    continue;
+                }
+                for (const auto& childBarrier : mod->m_children) {
+                    JSC::JSValue child = childBarrier.get();
+                    if (child && child.isCell() && poisonedCJSModules.contains(child.asCell())) {
+                        cjsKeysToEvict.append(key);
+                        poisonedCJSModules.add(mod);
+                        poisonModuleAndParents(mod->m_parent.get());
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (!scope.clearExceptionExceptTermination()) {
+                break;
+            }
+            auto keys = std::exchange(cjsKeysToEvict, {});
+            for (auto& depKey : keys) {
+                requireMap->remove(global, depKey);
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+                // Drop any same-path ESM wrapper record so `import` of this
+                // consumer re-evaluates as well.
+                auto keyStr = depKey.toWTFString(global);
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+                auto ident = JSC::Identifier::fromString(vm, keyStr);
+                WTF::Locker locker { moduleLoader->cellLock() };
+                moduleLoader->removeEntry(ident);
             }
         }
     }

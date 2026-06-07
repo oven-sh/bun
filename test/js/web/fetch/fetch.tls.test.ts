@@ -306,7 +306,10 @@ describe.concurrent("fetch-tls", () => {
         socket.on("error", () => {});
         socket.once("data", () => closeSocket(socket));
       });
-      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
+      // Left attached after listen succeeds: rejecting a settled promise is a
+      // no-op, and it keeps a later server-level "error" from crashing the test.
+      server.once("error", onListenError);
       server.listen(0, "127.0.0.1", onListening);
       try {
         await listening;

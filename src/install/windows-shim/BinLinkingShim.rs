@@ -337,6 +337,11 @@ mod host {
                         idx += 1;
                     }
                     program = &line[prog_start..idx];
+                } else if strings::has_prefix(program, b"-S") {
+                    // Joined short-option form (`-Sbun ...`): the optarg starts at
+                    // byte 2 of the same token, so no lookahead is needed.
+                    rest = &rest[2..];
+                    program = &program[2..];
                 }
                 if program.is_empty() {
                     return Ok(Self::parse_from_bin_path(bin_path));
@@ -590,6 +595,23 @@ mod tests {
         let bp = bin_path();
         let s = parse_ok(b"#!/usr/bin/env -S bun --no-env-file\r\n", &bp);
         assert_eq!(s.launcher, b"bun --no-env-file");
+        assert!(s.is_node_or_bun);
+    }
+
+    // GNU/BSD env also accept the joined short-option form: `-Sbun` == `-S bun`.
+    #[test]
+    fn env_dash_s_joined_form_bun() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -Sbun --no-env-file\n", &bp);
+        assert_eq!(s.launcher, b"bun --no-env-file");
+        assert!(s.is_node_or_bun);
+    }
+
+    #[test]
+    fn env_dash_s_joined_form_node() {
+        let bp = bin_path();
+        let s = parse_ok(b"#!/usr/bin/env -Snode --no-warnings\n", &bp);
+        assert_eq!(s.launcher, b"node --no-warnings");
         assert!(s.is_node_or_bun);
     }
 

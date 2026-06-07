@@ -439,13 +439,14 @@ impl Entry {
     }
 
     /// Cache a realpath composed from the parent directory's `abs_real_path`
-    /// (see `EntryCache::symlink_is_composed`). Targets of actual symlinks
-    /// are only ever written by `resolve_kind`.
+    /// (see `EntryCache::symlink_is_composed`), or clear the cached value
+    /// with `Interned::EMPTY`. Targets of actual symlinks are only ever
+    /// written by `resolve_kind`.
     #[inline(always)]
     pub fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
+        c.symlink_is_composed = !symlink.is_empty();
         c.symlink = symlink;
-        c.symlink_is_composed = true;
         self.cache.set(c);
     }
 

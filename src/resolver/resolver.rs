@@ -3458,6 +3458,12 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<Option<DirInfoRef>, bun_core::Error> {
         debug_assert!(self.package_manager.is_some());
 
+        // The body's SAFETY comments assume the resolver mutex, and the mode
+        // sync below must be serialized with the dir-cache fill. Callers never
+        // hold it: the sole caller (`load_node_modules`) re-enters
+        // `dir_info_cached`, which takes this mutex itself.
+        let _unlock = self.mutex.lock_guard();
+
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         DirInfo::sync_preserve_symlinks_mode(self.opts.preserve_symlinks);

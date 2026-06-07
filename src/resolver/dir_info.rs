@@ -337,13 +337,12 @@ static CACHE_PRESERVE_SYMLINKS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Invalidate every cached `DirInfo` when `preserve_symlinks` differs from
-/// the mode the cache was filled with. Key-lookup entry points call this
-/// before `get_or_put` so a resolver never consumes entries computed with
-/// the other mode. The import-resolution entry point
-/// (`dir_info_cached_maybe_log`) holds the resolver mutex across check and
-/// fill, which is what serializes mode changes in practice: `Bun.build`
-/// runs execute one at a time on the bundle thread, and runtime resolvers
-/// keep one mode for the process lifetime.
+/// the mode the cache was filled with. Key-lookup entry points
+/// (`dir_info_cached_maybe_log`, `dir_info_for_resolution`) call this before
+/// `get_or_put` while holding the resolver mutex, so a resolver never
+/// consumes entries computed with the other mode. Mode changes are rare:
+/// `Bun.build` runs execute one at a time on the bundle thread, and runtime
+/// resolvers keep one mode for the process lifetime.
 #[inline(always)]
 pub fn sync_preserve_symlinks_mode(preserve_symlinks: bool) {
     use core::sync::atomic::Ordering;

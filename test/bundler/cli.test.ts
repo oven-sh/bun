@@ -42,19 +42,22 @@ describe.concurrent(
           stdout: "inherit",
           stderr: "pipe",
         });
-        // Debug builds emit benign `debug warn:` lines (e.g. the standalone
-        // graph's madvise hint); only non-debug output fails the test.
-        const stderrText = (await stderr.text())
+        // Debug builds print the standalone graph's madvise hint
+        // ("hintSourcePagesDontNeed: ...") to stderr; it is the one known
+        // benign line, so filter exactly it and fail on anything else.
+        const unexpectedStderr = (await stderr.text())
           .split(/\r?\n/)
-          .filter(line => line.length > 0 && !line.startsWith("debug warn:"))
-          .join("\n");
-        expect(stderrText).toBeEmpty();
+          .filter(line => line.length > 0 && !/^debug warn: hintSourcePagesDontNeed:/.test(line));
+        expect(unexpectedStderr).toEqual([]);
         expect(await exited).toBe(0);
       }
       async function testRound(baseDir: string, outfile: string) {
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
+        try {
+          await testCompile(outfile);
+          await testExec(outfile);
+        } finally {
+          fs.rmSync(baseDir, { recursive: true, force: true });
+        }
       }
       const tmpdir = tmpdirSync();
       const baseDir1 = `${tmpdir}/bun-build-outfile-${Date.now()}`;

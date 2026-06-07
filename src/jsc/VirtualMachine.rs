@@ -260,6 +260,12 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// True while `bun test` executes a hook that was *registered* during
+    /// `--preload` (e.g. a preload script's `beforeAll`). `mock.module()`
+    /// treats such hooks like preload top-level code: mocks they install are
+    /// process-lifetime, not per-test-file. Set/cleared by the test runner's
+    /// entry lifecycle (`Execution::on_entry_started/_completed`).
+    pub is_in_preload_hook: bool,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,

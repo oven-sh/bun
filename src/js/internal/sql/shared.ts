@@ -996,12 +996,14 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   hasConnectionsAvailable() {
-    if (this.readyConnections.size > 0) return true;
+    if (this.readyConnections?.size > 0) return true;
     if (this.poolStarted) {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        if (connection.state !== PooledConnectionState.closed) {
+        // The slot can still be an unassigned hole while the pool is starting
+        // and a synchronous creation failure re-enters via release().
+        if (connection && connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
         }

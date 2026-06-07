@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -828,6 +829,28 @@ it.skipIf(isFFIUnavailable)("JSCallback tolerates worker.terminate() arriving in
     exitCode: 0,
     signalCode: null,
   });
+});
+
+it("FFI functions are not constructors", () => {
+  const cb = new JSCallback(() => 42, {
+    returns: "int32_t",
+    args: [],
+  });
+  try {
+    const lib = linkSymbols({
+      fn: {
+        returns: "int32_t",
+        args: [],
+        ptr: cb.ptr,
+      },
+    });
+    expect(lib.symbols.fn()).toBe(42);
+    // a native construct handler must never return a primitive
+    expect(() => new lib.symbols.fn()).toThrow(TypeError);
+    expect(() => Reflect.construct(lib.symbols.fn, [])).toThrow(TypeError);
+  } finally {
+    cb.close();
+  }
 });
 
 const libPath =

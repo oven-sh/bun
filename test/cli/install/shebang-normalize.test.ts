@@ -121,7 +121,11 @@ test("bun install handles `#!/usr/bin/env -S bun ...` shebangs in bin scripts", 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [installStderr, installExit] = await Promise.all([install.stderr.text(), install.exited]);
+  const [, installStderr, installExit] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
   expect(installStderr).not.toContain("error");
   expect(installExit).toBe(0);
 
@@ -178,7 +182,13 @@ test.skipIf(!isWindows)("Windows `.bunx` shim encodes `env -S` launcher without 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await install.exited).toBe(0);
+  const [, installStderr, installExit] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
+  expect(installStderr).not.toContain("error");
+  expect(installExit).toBe(0);
 
   const bunxPath = join(consumer, "node_modules", ".bin", "env-dash-s-pkg.bunx");
   const bytes = readFileSync(bunxPath);

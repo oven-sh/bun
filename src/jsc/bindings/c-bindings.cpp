@@ -1038,14 +1038,12 @@ extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\W
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
 #endif
 
-// OHOS kernel sends uncatchable SIGSYS for unimplemented syscalls like
-// pidfd_open. Setting this flag to true makes the Zig pidfd_open stub
-// return ENOSYS, triggering bun's waiter-thread fallback for child exit
-// monitoring instead of calling the unimplemented syscall.
+// OHOS seccomp blocks close_range with uncatchable SIGSYS (verified 2026-06-07).
+// pidfd_open and memfd_create are available (no longer gated by this flag).
 #if defined(__OHOS__)
-extern "C" const bool BUN_OHOS_DISABLE_PIDFD = true;
+extern "C" const bool BUN_OHOS_CLOSE_RANGE_BLOCKED = true;
 #else
-extern "C" const bool BUN_OHOS_DISABLE_PIDFD = false;
+extern "C" const bool BUN_OHOS_CLOSE_RANGE_BLOCKED = false;
 #endif
 
 // OHOS SIGSYS handler — replaces uncatchable SIGSYS with a logged ENOSYS.

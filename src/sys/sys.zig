@@ -2396,14 +2396,13 @@ pub fn send(fd: bun.FD, buf: []const u8, flag: u32) Maybe(usize) {
     }
 }
 
-/// OHOS kernel sends uncatchable SIGSYS instead of -ENOSYS for
-/// unimplemented syscalls. Set in c-bindings.cpp based on __OHOS__.
-extern "C" const BUN_OHOS_DISABLE_PIDFD: bool;
+/// OHOS: close_range blocked by seccomp (SIGSYS), pidfd_open available.
+/// Set in c-bindings.cpp based on __OHOS__.
+extern "C" const BUN_OHOS_CLOSE_RANGE_BLOCKED: bool;
 
 pub fn pidfd_open(pid: std.os.linux.pid_t, flags: u32) Maybe(i32) {
-    if (BUN_OHOS_DISABLE_PIDFD) {
-        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
-    }
+    // OHOS: pidfd_open verified available (returns fd) on 2026-06-07.
+    // No guard needed; directly call the syscall.
     while (true) {
         const rc = linux.pidfd_open(pid, flags);
 
@@ -2633,9 +2632,9 @@ pub fn renameat2(from_dir: bun.FD, from: [:0]const u8, to_dir: bun.FD, to: [:0]c
 
     // OHOS seccomp blocks renameat2 with uncatchable SIGSYS.
     // Fall back to delete+rename path (non-atomic but correct).
-    // BUN_OHOS_DISABLE_PIDFD is true on OHOS (from c-bindings.cpp).
+    // BUN_OHOS_CLOSE_RANGE_BLOCKED is true on OHOS (from c-bindings.cpp).
     if (comptime Environment.isLinux) {
-        if (bun.c.BUN_OHOS_DISABLE_PIDFD) {
+        if (bun.c.BUN_OHOS_CLOSE_RANGE_BLOCKED) {
             if (flags.int() != 0) return .{ .err = Error.fromCode(.NOSYS, .rename) };
             return renameat(from_dir, from, to_dir, to);
         }

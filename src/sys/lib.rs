@@ -3501,24 +3501,12 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    // OHOS kernel may send uncatchable SIGSYS for unimplemented syscalls.
-    // Same flag from c-bindings.cpp that guards pidfd_open.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    unsafe extern "C" {
-        static BUN_OHOS_DISABLE_PIDFD: bool;
-    }
-
     /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
-    /// `memfd_create` has returned ENOSYS/EPERM/EACCES, or when the OHOS
-    /// SIGSYS guard flag is set.
+    /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
+    /// OHOS: memfd_create verified available on 2026-06-07, no guard needed.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
-        // OHOS: return false immediately (prevents calling memfd_create
-        // which could trigger uncatchable SIGSYS on unimplemented syscalls).
-        if unsafe { BUN_OHOS_DISABLE_PIDFD } {
-            return false;
-        }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]

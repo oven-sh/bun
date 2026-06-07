@@ -2,8 +2,6 @@ const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
 const log = bun.Output.scoped(.PROCESS, .visible);
 
-extern "C" const BUN_OHOS_DISABLE_PIDFD: bool;
-
 const win_rusage = struct {
     utime: struct {
         sec: i64 = 0,
@@ -1481,7 +1479,7 @@ pub fn spawnProcessPosix(
             },
             .buffer => {
                 if (Environment.isLinux) use_memfd: {
-                    if (!options.stream and i > 0 and bun.sys.canUseMemfd() and !BUN_OHOS_DISABLE_PIDFD) {
+                    if (!options.stream and i > 0 and bun.sys.canUseMemfd()) {
                         // use memfd if we can
                         const label = switch (i) {
                             0 => "spawn_stdio_stdin",

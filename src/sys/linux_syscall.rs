@@ -466,21 +466,11 @@ pub unsafe fn copy_file_range(
     }
 }
 
-// OHOS kernel sends uncatchable SIGSYS instead of -ENOSYS for
-// unimplemented syscalls. Set in c-bindings.cpp based on __OHOS__.
-unsafe extern "C" {
-    static BUN_OHOS_DISABLE_PIDFD: bool;
-}
-
 /// `pidfd_open(2)` — `Result` shape (caller maps to `bun_sys::Error`).
+/// OHOS: verified available (returns fd) on 2026-06-07.
 #[inline]
 #[cfg(target_os = "linux")]
 pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
-    // OHOS: return ENOSYS before calling the syscall (which would
-    // trigger an uncatchable SIGSYS instead of a clean error code).
-    if unsafe { BUN_OHOS_DISABLE_PIDFD } {
-        return Err(libc::ENOSYS);
-    }
     let pid = rustix::process::Pid::from_raw(pid).ok_or(libc::EINVAL)?;
     let flags = rustix::process::PidfdFlags::from_bits_retain(flags);
     once(rustix::process::pidfd_open(pid, flags)).map(own_fd)
@@ -489,14 +479,10 @@ pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
 /// `cfg(target_os = "linux")`, but the kernel ABI is identical (same generic
 /// syscall number 434 since Linux 5.3, before any Android NDK target shipped).
 /// Raw-syscall it like the other shims here.
+/// OHOS: verified available (returns fd) on 2026-06-07.
 #[inline]
 #[cfg(target_os = "android")]
 pub fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
-    // OHOS: return ENOSYS before calling the syscall (which would
-    // trigger an uncatchable SIGSYS instead of a clean error code).
-    if unsafe { BUN_OHOS_DISABLE_PIDFD } {
-        return Err(libc::ENOSYS);
-    }
     if pid <= 0 {
         return Err(libc::EINVAL);
     }

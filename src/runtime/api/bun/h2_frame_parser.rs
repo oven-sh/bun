@@ -5225,12 +5225,18 @@ impl H2FrameParser {
                     );
                 }
                 let id = last_stream_arg.to_int32();
-                if id < 0 && id as u32 > MAX_STREAM_ID {
+                if id as u32 > MAX_STREAM_ID {
                     return Err(global_object.throw(format_args!(
                         "Expected lastStreamId to be a number between 1 and 2147483647"
                     )));
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
+                // Like Node's native goaway, a lastStreamId <= 0 means "use the
+                // actual last processed stream id" — Node's JS layer defaults the
+                // argument to 0 and relies on this correction, and sending a
+                // literal 0 would tell the peer no streams were processed.
+                if id > 0 {
+                    last_stream_id = id as u32;
+                }
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];

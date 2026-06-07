@@ -3015,11 +3015,17 @@ class ServerHttp2Session extends Http2Session {
     },
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      if (self.destroyed) return;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
-      if (errorCode !== 0) {
-        self.#parser.emitErrorToAllStreams(errorCode);
+      if (errorCode === NGHTTP2_NO_ERROR) {
+        // Graceful shutdown: no new streams, existing ones may finish.
+        self.close();
+      } else {
+        self.#parser?.emitErrorToAllStreams(errorCode);
+        // Like Node, destroy with an error but send our own goaway with
+        // NGHTTP2_NO_ERROR since this side had no error.
+        self.destroy($ERR_HTTP2_SESSION_ERROR(errorCode), NGHTTP2_NO_ERROR);
       }
-      self.close();
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -4021,8 +4027,10 @@ class ClientHttp2Session extends Http2Session {
       // streams). Sending an RST for a stream the peer never saw is a
       // connection error that makes conforming servers reply with GOAWAY.
       if ($isObject(options) && options.signal) {
-        // Node validates the signal before reading .aborted — a duck-typed
-        // { aborted: true } must throw ERR_INVALID_ARG_TYPE, not short-circuit.
+        // Node validates the signal before reading .aborted: any object with an
+        // 'aborted' property passes (so a duck-typed { aborted: true } takes
+        // the abort fast path), while objects without one and non-objects
+        // throw ERR_INVALID_ARG_TYPE synchronously.
         validateAbortSignal(options.signal, "options.signal");
         if (options.signal.aborted) {
           const req = new ClientHttp2Stream(undefined, this, headers);

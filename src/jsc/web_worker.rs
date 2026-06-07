@@ -245,8 +245,16 @@ mod live_workers {
     pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
-    /// `terminateAllAndWait` can futex-wait on it without the mutex.
+    /// `terminate_and_wait` can read it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);
+    /// Monotonic count of registry events (`register` + `mark_exited`); the
+    /// futex word `terminate_and_wait` sleeps on. Waiting on `OUTSTANDING`
+    /// itself would be ABA-prone: one exit plus one register in the gap
+    /// between a waiter's snapshot and its `Futex::wait` restores the exact
+    /// expected value while both wakes fire with no waiter queued, so the
+    /// wait sleeps through events it needed to re-sweep for. A value that
+    /// only increments cannot alias.
+    pub(super) static WAKE_SEQ: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn register(worker: *mut WebWorker) {
         MUTEX.lock();
@@ -269,11 +277,12 @@ mod live_workers {
         // Wake every waiter so each re-sweeps and catches this worker (it may
         // have been created by another worker mid-sweep). No-op if nothing is
         // waiting. Wake-all, not wake-one: the main thread and any number of
-        // worker parents (`terminate_children_and_wait`) can wait on
-        // OUTSTANDING concurrently, and a single wake can land on a waiter
-        // whose own condition is unmet, leaving the right one queued on a
-        // stale expected value until its deadline.
-        Futex::wake(&OUTSTANDING, u32::MAX);
+        // worker parents (`terminate_children_and_wait`) can wait
+        // concurrently, and a single wake can land on a waiter whose own
+        // condition is unmet, leaving the right one queued on a stale
+        // expected value until its deadline.
+        WAKE_SEQ.fetch_add(1, Ordering::Release);
+        Futex::wake(&WAKE_SEQ, u32::MAX);
         MUTEX.unlock();
     }
 
@@ -312,7 +321,8 @@ mod live_workers {
         // counter) and avoids a compare-before-wake race. Wake-all, not
         // wake-one — see the note in `register`.
         OUTSTANDING.fetch_sub(1, Ordering::Release);
-        Futex::wake(&OUTSTANDING, u32::MAX);
+        WAKE_SEQ.fetch_add(1, Ordering::Release);
+        Futex::wake(&WAKE_SEQ, u32::MAX);
     }
 
     pub(super) fn unregister(worker: *const WebWorker) {
@@ -360,13 +370,14 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
         return;
     }
 
-    // Futex-wait on the counter so we sleep rather than burn a core. Each
-    // unregister() wakes us; we re-check and re-wait until zero or deadline.
-    // We re-sweep the list on EVERY iteration: a worker A that was mid-
-    // `WebWorker__create` for a nested worker B when we first swept will
-    // register B after we release the mutex, and B's `requested_terminate`
-    // was never set. Sweeping is O(outstanding) and `requested_terminate`
-    // is a swap, so re-sweeping already-terminated entries is cheap.
+    // Futex-wait on WAKE_SEQ so we sleep rather than burn a core. Each
+    // register()/mark_exited() wakes us; we re-check and re-wait until done
+    // or deadline. We re-sweep the list on EVERY iteration: a worker A that
+    // was mid-`WebWorker__create` for a nested worker B when we first swept
+    // will register B after we release the mutex, and B's
+    // `requested_terminate` was never set. Sweeping is O(outstanding) and
+    // `requested_terminate` is a swap, so re-sweeping already-terminated
+    // entries is cheap.
     let timer = std::time::Instant::now();
     let deadline_ns: u64 = timeout_ms * 1_000_000;
     loop {
@@ -375,6 +386,11 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
         // registered worker, so OUTSTANDING never reaches zero for it).
         let mut matching: usize = 0;
         live_workers::MUTEX.lock();
+        // Snapshot the futex word FIRST, before the condition inputs below
+        // (the sweep and the OUTSTANDING load): any event that invalidates
+        // those inputs bumps WAKE_SEQ afterwards, so Futex::wait sees a
+        // changed value instead of sleeping on a stale snapshot.
+        let seq = live_workers::WAKE_SEQ.load(Ordering::Acquire);
         // MUTEX held while walking the intrusive list; HEAD load is safe.
         let mut it = live_workers::HEAD.load();
         while let Some(nn) = NonNull::new(it) {
@@ -409,13 +425,9 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
             }
             w.vm_lock.unlock();
         }
-        // Snapshot OUTSTANDING while still holding the mutex: `unlink()`
-        // (which needs the mutex) always precedes the `mark_exited()`
-        // decrement+wake, so every entry counted in `matching` still has its
-        // decrement ahead of `n`. Loading after unlock would let the last
-        // matching child unlink+decrement in the gap, leaving `matching`
-        // stale while `*addr == n` — Futex::wait below would then sleep
-        // through the already-fired wake until the deadline.
+        // Loaded under the mutex so an entry counted in `matching` cannot
+        // have unlinked yet; its `mark_exited()` (and WAKE_SEQ bump) is
+        // strictly after our `seq` snapshot.
         let n = live_workers::OUTSTANDING.load(Ordering::Acquire);
         live_workers::MUTEX.unlock();
 
@@ -433,7 +445,7 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
             log!("terminateAllAndWait: timed out with {} outstanding", n);
             return;
         }
-        let _ = Futex::wait(&live_workers::OUTSTANDING, n, Some(deadline_ns - elapsed));
+        let _ = Futex::wait(&live_workers::WAKE_SEQ, seq, Some(deadline_ns - elapsed));
     }
 }
 

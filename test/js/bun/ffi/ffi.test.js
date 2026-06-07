@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -674,6 +675,28 @@ it(".ptr is not leaked", () => {
   for (let fn of [Bun.password.hash, Bun.password.verify, it]) {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
+  }
+});
+
+it("FFI functions are not constructors", () => {
+  const cb = new JSCallback(() => 42, {
+    returns: "int32_t",
+    args: [],
+  });
+  try {
+    const lib = linkSymbols({
+      fn: {
+        returns: "int32_t",
+        args: [],
+        ptr: cb.ptr,
+      },
+    });
+    expect(lib.symbols.fn()).toBe(42);
+    // a native construct handler must never return a primitive
+    expect(() => new lib.symbols.fn()).toThrow(TypeError);
+    expect(() => Reflect.construct(lib.symbols.fn, [])).toThrow(TypeError);
+  } finally {
+    cb.close();
   }
 });
 

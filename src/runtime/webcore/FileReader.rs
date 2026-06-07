@@ -365,7 +365,8 @@ impl FileReader {
             // — see the `Lazy::Blob(store.clone())` source in
             // `ReadableStream::from_blob_copy_ref`). The clone is cheap:
             // `PathLike` bumps its intrusive refcount, `last_modified` is
-            // an `AtomicU64` snapshot, the rest is `Copy`.
+            // an `AtomicU64` snapshot, `mime_type` clones its `Cow`
+            // (typically `Borrowed`), the rest is `Copy`.
             //
             // BEHAVIOR NOTE (vs Zig `FileReader.zig:58,109`): `open_file_blob`
             // writes `file.is_atty = Some(true)` on the `&mut File`. Because

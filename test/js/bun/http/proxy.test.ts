@@ -1022,6 +1022,7 @@ test.skipIf(!isASAN)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
     expect(stdout).toBe("hello\n");
     expect(exitCode).toBe(0);
   },

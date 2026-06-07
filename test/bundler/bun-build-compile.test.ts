@@ -696,7 +696,9 @@ describe("compiled executable bytecode integrity", () => {
     return join(dir, isWindows ? "app.exe" : "app");
   }
 
-  async function runExecutable(exePath: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  async function runExecutable(
+    exePath: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number; signalCode: string | null }> {
     await using proc = Bun.spawn({
       cmd: [exePath],
       env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
@@ -704,7 +706,7 @@ describe("compiled executable bytecode integrity", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
   // Writes the corrupted executable to a sibling path: overwriting the
@@ -795,6 +797,40 @@ describe("compiled executable bytecode integrity", () => {
     const corrupted = await runExecutable(corruptedPath);
     expect(corrupted.stdout).not.toContain("record-enum-integrity-marker");
     expect(corrupted.stderr).toContain("Corrupted module graph");
+    // Rejected with an error, not a crash: the process exited on its own.
+    expect(corrupted.signalCode).toBeNull();
     expect(corrupted.exitCode).not.toBe(0);
+  }, 60_000);
+
+  test("module_info without bytecode is discarded", async () => {
+    using dir = tempDir("module-info-orphan", {
+      "app.js": `console.log("module-info-orphan-marker");`,
+    });
+    const exePath = await buildExecutable(String(dir), "esm");
+
+    const exe = Buffer.from(await Bun.file(exePath).arrayBuffer());
+    const graph = findModuleGraph(exe);
+    expect(graph).not.toBeNull();
+    // Zero the bytecode length field so the hash check is skipped, then
+    // corrupt the module_info payload. The writer only emits module_info
+    // alongside bytecode, so the orphaned (and here corrupted) module_info is
+    // discarded with the rest of the pair instead of being parsed; this pins
+    // the fallback semantics: the app still runs from source, no error, no
+    // bytecode cache.
+    const rec = graph!.records[0];
+    const bytecodeLength = exe.readUInt32LE(rec + RECORD_BYTECODE_OFFSET + 4);
+    expect(bytecodeLength).toBeGreaterThan(0);
+    exe.writeUInt32LE(0, rec + RECORD_BYTECODE_OFFSET + 4);
+    const miOffset = exe.readUInt32LE(rec + RECORD_MODULE_INFO_OFFSET);
+    const miLength = exe.readUInt32LE(rec + RECORD_MODULE_INFO_OFFSET + 4);
+    expect(miLength).toBeGreaterThan(0);
+    for (let i = 0; i < Math.min(64, miLength); i++) exe[graph!.base + miOffset + i] ^= 0xa5;
+    const corruptedPath = await writeCorrupted(exePath, exe);
+
+    const corrupted = await runExecutable(corruptedPath);
+    expect(corrupted.stdout).toContain("module-info-orphan-marker");
+    expect(corrupted.stderr).not.toContain("Cache hit for sourceCode");
+    expect(corrupted.signalCode).toBeNull();
+    expect(corrupted.exitCode).toBe(0);
   }, 60_000);
 });

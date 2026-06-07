@@ -557,7 +557,8 @@ impl StandaloneModuleGraph {
         // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
         // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
         // derive every read-only `&'static [u8]` per-call over its own disjoint subrange only;
-        // the bytecode/module_info regions never have a shared reference formed over them.
+        // the bytecode/module_info regions only get a short-lived `&[u8]` during the hash
+        // check below, dropped before `slice_to_mut` derives their `*mut`.
         let raw_const: *const u8 = raw_ptr;
 
         // Every offset/length below comes straight from the (possibly
@@ -567,8 +568,8 @@ impl StandaloneModuleGraph {
         if offsets.byte_count > raw_len {
             return Err(err!("Corrupted module graph: byte count is out of bounds"));
         }
-        check_ptr(raw_len, offsets.modules_ptr, false)?;
-        check_ptr(raw_len, offsets.compile_exec_argv_ptr, true)?;
+        check_ptr(raw_const, raw_len, offsets.modules_ptr, false)?;
+        check_ptr(raw_const, raw_len, offsets.compile_exec_argv_ptr, true)?;
 
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
@@ -577,6 +578,11 @@ impl StandaloneModuleGraph {
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
+        // The writer always emits an exact multiple of the record size, so a
+        // remainder means the table was truncated or rewritten.
+        if modules_list_bytes.len() % size_of::<CompiledModuleGraphFile>() != 0 {
+            return Err(err!("Corrupted module graph: module table is truncated"));
+        }
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
@@ -628,12 +634,12 @@ impl StandaloneModuleGraph {
                 unsafe { core::ptr::read_unaligned(record_base.cast::<CompiledModuleGraphFile>()) };
             let module = &module;
 
-            check_ptr(raw_len, module.name, true)?;
-            check_ptr(raw_len, module.contents, true)?;
-            check_ptr(raw_len, module.sourcemap, false)?;
-            check_ptr(raw_len, module.bytecode, false)?;
-            check_ptr(raw_len, module.module_info, false)?;
-            check_ptr(raw_len, module.bytecode_origin_path, true)?;
+            check_ptr(raw_const, raw_len, module.name, true)?;
+            check_ptr(raw_const, raw_len, module.contents, true)?;
+            check_ptr(raw_const, raw_len, module.sourcemap, false)?;
+            check_ptr(raw_const, raw_len, module.bytecode, false)?;
+            check_ptr(raw_const, raw_len, module.module_info, false)?;
+            check_ptr(raw_const, raw_len, module.bytecode_origin_path, true)?;
 
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (checked above) and disjoint from the writable bytecode/module_info
@@ -685,6 +691,18 @@ impl StandaloneModuleGraph {
                     module_info_ptr = StringPointer::default();
                     bytecode_origin_path = b"";
                 }
+            } else if module_info_ptr.length > 0 || !bytecode_origin_path.is_empty() {
+                // The writer only emits module_info/bytecode_origin_path
+                // alongside bytecode, so a record carrying either without
+                // bytecode is corrupt (e.g. only the bytecode length field was
+                // stomped, skipping the hash check above). Drop them so the
+                // module falls back to plain source like the mismatch arm.
+                bun_core::debug_warn!(
+                    "module record for {} has module_info without bytecode; falling back to source",
+                    bstr::BStr::new(name.as_bytes())
+                );
+                module_info_ptr = StringPointer::default();
+                bytecode_origin_path = b"";
             }
 
             let _ = modules.put(
@@ -747,11 +765,18 @@ impl StandaloneModuleGraph {
 }
 
 /// Bounds check for a blob-controlled `StringPointer` read from the embedded
-/// section. The `slice_to*` helpers below only `debug_assert!` their bounds,
-/// so `from_bytes` calls this first: a corrupted executable must fail with an
-/// error in release builds, not read out of bounds. `nul_terminated` subranges
-/// additionally require the trailing NUL written by `append_count_z`.
-fn check_ptr(len: usize, ptr: StringPointer, nul_terminated: bool) -> Result<(), BunError> {
+/// section at `base`. The `slice_to*` helpers below only `debug_assert!` their
+/// bounds, so `from_bytes` calls this first: a corrupted executable must fail
+/// with an error in release builds, not read out of bounds. `nul_terminated`
+/// subranges additionally require the trailing NUL written by `append_count_z`
+/// to be in-bounds and actually zero, so the `ZStr` invariant holds for C
+/// string consumers.
+fn check_ptr(
+    base: *const u8,
+    len: usize,
+    ptr: StringPointer,
+    nul_terminated: bool,
+) -> Result<(), BunError> {
     // Zero-length pointers are never dereferenced (`slice_to*` return empty).
     if ptr.length == 0 {
         return Ok(());
@@ -760,6 +785,14 @@ fn check_ptr(len: usize, ptr: StringPointer, nul_terminated: bool) -> Result<(),
     let end = u64::from(ptr.offset) + u64::from(ptr.length) + u64::from(nul_terminated);
     if end > len as u64 {
         return Err(err!("Corrupted module graph: file data is out of bounds"));
+    }
+    if nul_terminated {
+        // SAFETY: `offset + length < len` per the check above; u8 reads need
+        // no alignment.
+        let terminator = unsafe { base.add(ptr.offset as usize + ptr.length as usize).read() };
+        if terminator != 0 {
+            return Err(err!("Corrupted module graph: string is not NUL terminated"));
+        }
     }
     Ok(())
 }

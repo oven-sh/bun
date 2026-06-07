@@ -882,51 +882,19 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 }
 
-// `String.Builder` — owns a back-reference into the parser and mutates
-// `parser.whitespace_buf`. A `&mut Parser` field would be a borrow-checker
-// hazard (the builder borrows `&mut Parser` while the parser also drives
-// scanning). We keep a raw pointer with SAFETY notes.
-// TODO: refactor whitespace_buf out of Parser or pass &mut explicitly.
-pub struct StringBuilder<'a, Enc: Encoding> {
-    // a `&'a mut Parser<'a, Enc>` field would tie the borrow lifetime
-    // to Parser's input lifetime (invariant under &mut), which both fails
-    // borrowck at `string_builder()`.
-    // Use a raw backref (the LIFETIMES.tsv BACKREF resolution).
-    // Private — invariant-bearing raw backref; reach via `parser()`/`parser_mut()`.
-    parser: *mut Parser<'a, Enc>,
+// Plain-scalar string builder. `whitespace_buf` is taken from the parser by
+// `string_builder()` and returned by `done()` for capacity reuse.
+pub struct StringBuilder<'i, Enc: Encoding> {
+    input: &'i [Enc::Unit],
+    whitespace_buf: Vec<Whitespace<Enc>>,
     pub str: YamlString<Enc>,
 }
 
-impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
-    #[inline]
-    fn parser(&self) -> &Parser<'a, Enc> {
-        // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
-        // which stores `self as *mut Parser`; the builder never outlives the parser
-        // stack frame and is the sole mutator of `whitespace_buf` while live.
-        unsafe { &*self.parser }
-    }
-    #[inline]
-    fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
-        // SAFETY: same backref invariant as `parser()`; `&mut self` guarantees
-        // exclusive access to the builder so the derived `&mut Parser` does not
-        // alias another live borrow.
-        unsafe { &mut *self.parser }
-    }
-    /// Shortcut for `self.parser().input` that returns the slice with its
-    /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
-    /// above `match &mut self.str` without tripping borrowck.
-    #[inline]
-    fn input(&self) -> &'a [Enc::Unit] {
-        // SAFETY: same backref invariant as `parser()`; `input` is a `&'a`
-        // borrow stored in the Parser and is unaffected by any mutation this
-        // builder performs.
-        unsafe { (*self.parser).input }
-    }
-
+impl<'i, Enc: Encoding> StringBuilder<'i, Enc> {
     pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        assert!(self.parser().input[pos.cast()] == unit);
+        assert!(self.input[pos.cast()] == unit);
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -944,9 +912,8 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     }
 
     fn drain_whitespace(&mut self) -> Result<(), AllocError> {
-        // reshaped for borrowck — take ownership of buf, process, clear.
-        let buf = core::mem::take(&mut self.parser_mut().whitespace_buf);
-        let input = self.input();
+        let buf = core::mem::take(&mut self.whitespace_buf);
+        let input = self.input;
         for ws in &buf {
             match ws {
                 Whitespace::Source { pos, unit } => {
@@ -976,8 +943,13 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         }
         let mut buf = buf;
         buf.clear();
-        self.parser_mut().whitespace_buf = buf;
+        self.whitespace_buf = buf;
         Ok(())
+    }
+
+    /// Discards pending (not yet drained) whitespace.
+    pub fn clear_whitespace(&mut self) {
+        self.whitespace_buf.clear();
     }
 
     pub fn append_source_whitespace(
@@ -985,14 +957,12 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         unit: Enc::Unit,
         pos: Pos,
     ) -> Result<(), AllocError> {
-        self.parser_mut()
-            .whitespace_buf
-            .push(Whitespace::Source { unit, pos });
+        self.whitespace_buf.push(Whitespace::Source { unit, pos });
         Ok(())
     }
 
     pub fn append_whitespace(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+        self.whitespace_buf.push(Whitespace::New(unit));
         Ok(())
     }
 
@@ -1002,14 +972,14 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         n: usize,
     ) -> Result<(), AllocError> {
         for _ in 0..n {
-            self.parser_mut().whitespace_buf.push(Whitespace::New(unit));
+            self.whitespace_buf.push(Whitespace::New(unit));
         }
         Ok(())
     }
 
     pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 if range.is_empty() {
@@ -1034,7 +1004,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
     ) -> Result<(), AllocError> {
         self.drain_whitespace()?;
 
-        let input = self.input();
+        let input = self.input;
         assert!(&input[off.cast()..end.cast()] == expected);
 
         match &mut self.str {
@@ -1055,7 +1025,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
 
     pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + 1);
@@ -1073,7 +1043,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + s.len());
@@ -1091,7 +1061,7 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
             return Ok(());
         }
         self.drain_whitespace()?;
-        let input = self.input();
+        let input = self.input;
         match &mut self.str {
             YamlString::Range(range) => {
                 let mut list: Vec<Enc::Unit> = Vec::with_capacity(range.len() + n);
@@ -1108,8 +1078,10 @@ impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
         self.str.len()
     }
 
-    pub fn done(mut self) -> YamlString<Enc> {
-        self.parser_mut().whitespace_buf.clear();
+    /// Returns the built string and hands the whitespace buffer back to the parser.
+    pub fn done(mut self, parser: &mut Parser<'i, Enc>) -> YamlString<Enc> {
+        self.whitespace_buf.clear();
+        parser.whitespace_buf = core::mem::take(&mut self.whitespace_buf);
         self.str
     }
 }
@@ -1126,18 +1098,12 @@ pub enum FirstChar {
     Other,
 }
 
-// `parser` is `*mut` because the outer `&mut self` in scan_plain_scalar
-// drives scanning concurrently — see LIFETIMES.tsv BACKREF.
 pub struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub str_builder: StringBuilder<'i, Enc>,
 
     pub resolved: bool,
     pub scalar: Option<NodeScalar<Enc>>,
     pub tag: NodeTag,
-
-    // Private — invariant-bearing raw backref (same pointer as
-    // `str_builder.parser`); never reassign independently.
-    parser: *mut Parser<'i, Enc>,
 
     pub resolved_scalar_len: usize,
 
@@ -1148,7 +1114,7 @@ pub struct ScalarResolverCtx<'i, Enc: Encoding> {
 }
 
 impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
-    pub fn done(self) -> Token<Enc> {
+    pub fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
         let multiline = self.multiline;
         let start = self.start;
         let line_indent = self.line_indent;
@@ -1157,7 +1123,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let scalar_opt = self.scalar;
 
         let scalar: TokenScalar<Enc> = 'scalar: {
-            let scalar_str = self.str_builder.done();
+            let scalar_str = self.str_builder.done(parser);
 
             if let Some(scalar) = scalar_opt {
                 if scalar_str.len() == resolved_scalar_len {
@@ -1187,9 +1153,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         })
     }
 
-    pub fn check_append(&mut self) {
-        // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-        let parser = unsafe { &*self.parser };
+    pub fn check_append(&mut self, parser: &Parser<'i, Enc>) {
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
@@ -1198,8 +1162,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
     }
 
-    pub fn append_source(&mut self, unit: Enc::Unit, pos: Pos) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_source(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        unit: Enc::Unit,
+        pos: Pos,
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_source(unit, pos)
     }
 
@@ -1211,23 +1180,32 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_source_whitespace(unit, pos)
     }
 
-    pub fn append_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_source_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        off: Pos,
+        end: Pos,
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_source_slice(off, end)
     }
 
     // may or may not contain whitespace
-    pub fn append_unknown_source_slice(&mut self, off: Pos, end: Pos) -> Result<(), AllocError> {
+    pub fn append_unknown_source_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        off: Pos,
+        end: Pos,
+    ) -> Result<(), AllocError> {
         for _pos in off.cast()..end.cast() {
             let pos = Pos::from(_pos);
-            // SAFETY: ctx outlived by &mut self in scan_plain_scalar.
-            let unit = unsafe { (*self.parser).input[pos.cast()] };
+            let unit = parser.input[pos.cast()];
             match Enc::wide(unit) {
                 0x20 | 0x09 | 0x0D | 0x0A => {
                     self.str_builder.append_source_whitespace(unit, pos)?;
                 }
                 _ => {
-                    self.check_append();
+                    self.check_append(parser);
                     self.str_builder.append_source(unit, pos)?;
                 }
             }
@@ -1235,8 +1213,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn append(&mut self, unit: Enc::Unit) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append(&mut self, parser: &Parser<'i, Enc>, unit: Enc::Unit) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append(unit)
     }
 
@@ -1244,16 +1222,25 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         self.str_builder.append_whitespace(unit)
     }
 
-    pub fn append_slice(&mut self, str: &[Enc::Unit]) -> Result<(), AllocError> {
-        self.check_append();
+    pub fn append_slice(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        str: &[Enc::Unit],
+    ) -> Result<(), AllocError> {
+        self.check_append(parser);
         self.str_builder.append_slice(str)
     }
 
-    pub fn append_n_times(&mut self, unit: Enc::Unit, n: usize) -> Result<(), AllocError> {
+    pub fn append_n_times(
+        &mut self,
+        parser: &Parser<'i, Enc>,
+        unit: Enc::Unit,
+        n: usize,
+    ) -> Result<(), AllocError> {
         if n == 0 {
             return Ok(());
         }
-        self.check_append();
+        self.check_append(parser);
         self.str_builder.append_n_times(unit, n)
     }
 
@@ -1322,130 +1309,116 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         Ok(())
     }
 
-    pub fn try_resolve_number(&mut self, first_char: FirstChar) -> Result<(), AllocError> {
-        // SAFETY: `self.parser` was set from `&mut self` in scan_plain_scalar
-        // and ctx never outlives it. Route all parser access through the raw
-        // pointer instead of taking `&mut Parser` as an argument — holding an
-        // explicit `&mut Parser` across calls into `self.append_*` (which also
-        // derive `&mut Parser` via StringBuilder::parser_mut) would create two
-        // live `&mut` to the same object (Stacked Borrows UB). Re-deriving on
-        // every access keeps each borrow non-overlapping.
-        let raw_parser: *mut Parser<'i, Enc> = self.parser;
-        macro_rules! parser {
-            () => {
-                // SAFETY: `raw_parser` is `self.parser`, set from `&mut Parser`
-                // in `scan_plain_scalar`; ctx never outlives that borrow and each
-                // expansion's `&mut` is dropped before the next is derived.
-                unsafe { &mut *raw_parser }
-            };
-        }
-
+    pub fn try_resolve_number(
+        &mut self,
+        parser: &mut Parser<'i, Enc>,
+        first_char: FirstChar,
+    ) -> Result<(), AllocError> {
         let nan = f64::NAN;
         let inf = f64::INFINITY;
 
         match first_char {
-            FirstChar::Dot => match Enc::wide(parser!().next()) {
+            FirstChar::Dot => match Enc::wide(parser.next()) {
                 0x6E /* 'n' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"an")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"an")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"nan"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'n'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'n'), n_start)?;
                     return Ok(());
                 }
                 0x4E /* 'N' */ => {
-                    let n_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"aN")) {
+                    let n_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"aN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NaN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"AN")) {
+                    if parser.remain_starts_with(Enc::literal(b"AN")) {
                         self.resolve(NodeScalar::Number(nan), n_start, Enc::literal(b"NAN"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'N'), n_start)?;
+                    self.append_source(parser, Enc::ch(b'N'), n_start)?;
                     return Ok(());
                 }
                 0x69 /* 'i' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'i'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'i'), i_start)?;
                     return Ok(());
                 }
                 0x49 /* 'I' */ => {
-                    let i_start = parser!().pos;
-                    parser!().inc(1);
-                    if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                    let i_start = parser.pos;
+                    parser.inc(1);
+                    if parser.remain_starts_with(Enc::literal(b"nf")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"Inf"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                    if parser.remain_starts_with(Enc::literal(b"NF")) {
                         self.resolve(NodeScalar::Number(inf), i_start, Enc::literal(b"INF"))?;
-                        parser!().inc(2);
+                        parser.inc(2);
                         return Ok(());
                     }
-                    self.append_source(Enc::ch(b'I'), i_start)?;
+                    self.append_source(parser, Enc::ch(b'I'), i_start)?;
                     return Ok(());
                 }
                 _ => {}
             },
             FirstChar::Negative | FirstChar::Positive => {
-                if Enc::wide(parser!().next()) == 0x2E
-                    && (Enc::wide(parser!().peek(1)) == 0x69
-                        || Enc::wide(parser!().peek(1)) == 0x49)
+                if Enc::wide(parser.next()) == 0x2E
+                    && (Enc::wide(parser.peek(1)) == 0x69 || Enc::wide(parser.peek(1)) == 0x49)
                 {
-                    self.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    match Enc::wide(parser!().next()) {
+                    self.append_source(parser, Enc::ch(b'.'), parser.pos)?;
+                    parser.inc(1);
+                    match Enc::wide(parser.next()) {
                         0x69 /* 'i' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'i'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'i'), i_start)?;
                             return Ok(());
                         }
                         0x49 /* 'I' */ => {
-                            let i_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"nf")) {
+                            let i_start = parser.pos;
+                            parser.inc(1);
+                            if parser.remain_starts_with(Enc::literal(b"nf")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"Inf"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"NF")) {
+                            if parser.remain_starts_with(Enc::literal(b"NF")) {
                                 self.resolve(
                                     NodeScalar::Number(if first_char == FirstChar::Negative { -inf } else { inf }),
                                     i_start,
                                     Enc::literal(b"INF"),
                                 )?;
-                                parser!().inc(2);
+                                parser.inc(2);
                                 return Ok(());
                             }
-                            self.append_source(Enc::ch(b'I'), i_start)?;
+                            self.append_source(parser, Enc::ch(b'I'), i_start)?;
                             return Ok(());
                         }
                         _ => {
@@ -1457,9 +1430,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             FirstChar::Other => {}
         }
 
-        let start = parser!().pos;
+        let start = parser.pos;
 
-        let mut decimal = Enc::wide(parser!().next()) == 0x2E /* '.' */;
+        let mut decimal = Enc::wide(parser.next()) == 0x2E /* '.' */;
         let mut x = false;
         let mut o = false;
         let mut e = false;
@@ -1473,13 +1446,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         // loop starts at the second body char with the `decimal`/digit flags
         // already reflecting the first.
         if !matches!(first_char, FirstChar::Negative | FirstChar::Positive) || decimal {
-            parser!().inc(1);
+            parser.inc(1);
         }
 
         let mut first = true;
 
         // labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        let mut __c = Enc::wide(parser.next());
         let (end, valid): (Pos, bool) = 'end: loop {
             match __c {
                 // can only be valid if it ends on:
@@ -1491,28 +1464,28 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 // - ':'
                 0x20 | 0x09 | 0 | 0x0A | 0x0D | 0x3A => {
                     if first && (first_char == FirstChar::Positive || first_char == FirstChar::Negative) {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
-                    break 'end (parser!().pos, true);
+                    break 'end (parser.pos, true);
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    match parser!().context.get() {
+                    match parser.context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
-                        Context::FlowIn | Context::FlowKey => break 'end (parser!().pos, true),
-                        Context::BlockIn | Context::BlockOut => break 'end (parser!().pos, false),
+                        Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
+                        Context::BlockIn | Context::BlockOut => break 'end (parser.pos, false),
                     }
                 }
 
                 0x30 /* '0' */ => {
                     let was_first = first;
                     first = false;
-                    parser!().inc(1);
+                    parser.inc(1);
                     if was_first {
-                        match Enc::wide(parser!().next()) {
+                        match Enc::wide(parser.next()) {
                             0x62 | 0x42 /* 'b' 'B' */ => {
-                                break 'end (parser!().pos, false);
+                                break 'end (parser.pos, false);
                             }
                             c => {
                                 __c = c;
@@ -1520,14 +1493,14 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                             }
                         }
                     }
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x31..=0x39 /* '1'..'9' */ => {
                     first = false;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1537,8 +1510,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                         hex = true;
                     }
                     e = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
@@ -1547,86 +1520,86 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
                     if first {
                         if __c == 0x62 || __c == 0x42 {
-                            break 'end (parser!().pos, false);
+                            break 'end (parser.pos, false);
                         }
                     }
                     first = false;
 
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x78 /* 'x' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     x = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x6F /* 'o' */ => {
                     first = false;
                     if o {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     o = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
                     first = false;
                     if decimal {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
 
                     decimal = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
 
                 0x2B /* '+' */ => {
                     first = false;
                     if x {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     plus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 0x2D /* '-' */ => {
                     first = false;
                     if minus {
-                        break 'end (parser!().pos, false);
+                        break 'end (parser.pos, false);
                     }
                     minus = true;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    parser.inc(1);
+                    __c = Enc::wide(parser.next());
                     continue;
                 }
                 _ => {
-                    break 'end (parser!().pos, false);
+                    break 'end (parser.pos, false);
                 }
             }
         };
         let _ = plus;
 
-        self.append_unknown_source_slice(start, end)?;
+        self.append_unknown_source_slice(parser, start, end)?;
 
         if !valid {
             return Ok(());
         }
 
-        let lexed = parser!().slice(start, end);
+        let lexed = parser.slice(start, end);
         let mut scalar: NodeScalar<Enc> = 'scalar: {
             if x || o || hex {
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
@@ -2376,6 +2349,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub anchors: StringHashMap<Expr>,
     pub tag_handles: StringHashMap<()>,
 
+    /// Backing storage lent to `StringBuilder`; empty while a builder is live.
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub stack_check: StackCheck,
@@ -4438,229 +4412,210 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
+        StringBuilder {
+            input: self.input,
+            whitespace_buf: core::mem::take(&mut self.whitespace_buf),
+            str: YamlString::Range(StringRange {
+                off: Pos::ZERO,
+                end: Pos::ZERO,
+            }),
+        }
+    }
+
     // ── scanPlainScalar ─────────────────────────────────────────────────────
     //
     // This is the largest function in the file: a labeled-switch state machine
-    // with an inner local struct `ScalarResolverCtx` that holds `*Parser` AND a
-    // `StringBuilder` that ALSO holds `*Parser`. Both are BACKREF in
-    // LIFETIMES.tsv → modeled as raw `*mut Parser` here.
-    //
-    // TODO: borrowck reshape — either (a) move
-    // `whitespace_buf` out of Parser, or (b) restructure ctx to take `&mut self`
-    // per call instead of storing it. The raw-pointer aliasing below is sound
-    // because `ctx` never outlives `&mut self` and never re-enters Parser
-    // methods that re-borrow `whitespace_buf`/`input` concurrently.
+    // with an inner `ScalarResolverCtx`.
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
-        let parser: *mut Parser<'i, Enc> = self;
-        macro_rules! parser {
-            () => {
-                // SAFETY: single provenance chain — `parser` was derived from
-                // `&mut self` above; all access routes through it (never reborrow
-                // `self` directly), and each expansion's `&mut` is dropped before
-                // the next is derived.
-                unsafe { &mut *parser }
-            };
-        }
-        // SAFETY: ctx outlived by the &mut self this fn was entered with. Both
-        // `ctx.parser` and `ctx.str_builder.parser` are copies of the SAME raw
-        // pointer (`parser` above) so all derived `&mut Parser` share one
-        // provenance chain.
         let mut ctx = ScalarResolverCtx::<Enc> {
-            str_builder: StringBuilder {
-                parser,
-                str: YamlString::Range(StringRange {
-                    off: Pos::ZERO,
-                    end: Pos::ZERO,
-                }),
-            },
+            str_builder: self.string_builder(),
             resolved: false,
             scalar: None,
             tag: opts.tag,
-            parser,
             resolved_scalar_len: 0,
-            start: parser!().pos,
-            line: parser!().line,
-            line_indent: parser!().line_indent,
+            start: self.pos,
+            line: self.line,
+            line_indent: self.line_indent,
             multiline: false,
         };
 
         // labeled-switch loop
-        let mut __c = Enc::wide(parser!().next());
+        let mut __c = Enc::wide(self.next());
         loop {
             match __c {
                 0 => {
-                    return Ok(ctx.done());
+                    return Ok(ctx.done(self));
                 }
 
                 0x2D /* '-' */ => {
                     // [203] c-directives-end is line-starting at column 0.
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"---"))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"---"))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                        parser!().inc(1);
-                        ctx.try_resolve_number(FirstChar::Negative)?;
-                        __c = Enc::wide(parser!().next());
+                        ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                        self.inc(1);
+                        ctx.try_resolve_number(self, FirstChar::Negative)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
-                    ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2E /* '.' */ => {
-                    if parser!().is_at_line_start()
-                        && parser!().line_indent == Indent::NONE
-                        && parser!().remain_starts_with(Enc::literal(b"..."))
-                        && parser!().is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
+                    if self.is_at_line_start()
+                        && self.line_indent == Indent::NONE
+                        && self.remain_starts_with(Enc::literal(b"..."))
+                        && self.is_any_or_eof_at(Enc::literal(b" \t\n\r"), 3)
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
                     if !ctx.resolved && ctx.str_builder.len() == 0 {
-                        match Enc::wide(parser!().peek(1)) {
+                        match Enc::wide(self.peek(1)) {
                             0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                parser!().inc(1);
-                                ctx.try_resolve_number(FirstChar::Dot)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                self.inc(1);
+                                ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                             _ => {
-                                ctx.try_resolve_number(FirstChar::Other)?;
-                                __c = Enc::wide(parser!().next());
+                                ctx.try_resolve_number(self, FirstChar::Other)?;
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x3A /* ':' */ => {
-                    if parser!().is_s_white_or_b_char_or_eof_at(1) {
-                        return Ok(ctx.done());
+                    if self.is_s_white_or_b_char_or_eof_at(1) {
+                        return Ok(ctx.done(self));
                     }
 
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockOut | Context::BlockIn => {}
                         // [130] `:` is ns-plain-char only when followed by
                         // ns-plain-safe(c); in flow context that excludes
                         // c-flow-indicator.
                         Context::FlowIn | Context::FlowKey => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                                    return Ok(ctx.done());
+                                    return Ok(ctx.done(self));
                                 }
                                 _ => {}
                             }
                         }
                     }
 
-                    ctx.append_source(Enc::ch(b':'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b':'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x23 /* '#' */ => {
-                    if parser!().is_at_line_start()
+                    if self.is_at_line_start()
                         || matches!(
-                            Enc::wide(parser!().input[parser!().pos.sub(1).cast()]),
+                            Enc::wide(self.input[self.pos.sub(1).cast()]),
                             0x20 | 0x09 | 0x0D | 0x0A
                         )
                     {
-                        return Ok(ctx.done());
+                        return Ok(ctx.done(self));
                     }
 
-                    ctx.append_source(Enc::ch(b'#'), parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    ctx.append_source(self, Enc::ch(b'#'), self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                    match parser!().context.get() {
+                    match self.context.get() {
                         Context::BlockIn | Context::BlockOut => {}
                         Context::FlowIn | Context::FlowKey => {
-                            return Ok(ctx.done());
+                            return Ok(ctx.done(self));
                         }
                     }
 
-                    let c = parser!().next();
-                    ctx.append_source(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source(self, c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x20 | 0x09 /* ' ' '\t' */ => {
-                    let c = parser!().next();
-                    ctx.append_source_whitespace(c, parser!().pos)?;
-                    parser!().inc(1);
-                    __c = Enc::wide(parser!().next());
+                    let c = self.next();
+                    ctx.append_source_whitespace(c, self.pos)?;
+                    self.inc(1);
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 0x0D /* '\r' */ => {
-                    if Enc::wide(parser!().peek(1)) == 0x0A {
-                        parser!().inc(1);
+                    if Enc::wide(self.peek(1)) == 0x0A {
+                        self.inc(1);
                     }
                     __c = 0x0A;
                     continue;
                 }
 
                 0x0A /* '\n' */ => {
-                    parser!().newline();
-                    parser!().inc(1);
+                    self.newline();
+                    self.inc(1);
 
-                    let lines = parser!().fold_lines();
+                    let lines = self.fold_lines();
 
-                    if let Some(block_indent) = parser!().block_indents.get() {
-                        match parser!().line_indent.cmp(block_indent) {
+                    if let Some(block_indent) = self.block_indents.get() {
+                        match self.line_indent.cmp(block_indent) {
                             Ordering::Greater => {
                                 // continue (whitespace already stripped)
                             }
                             Ordering::Less | Ordering::Equal => {
                                 // end here. this is the start of a new value.
-                                return Ok(ctx.done());
+                                return Ok(ctx.done(self));
                             }
                         }
                     }
 
                     // clear the leading whitespace before the newline.
-                    // clear via the single raw-pointer provenance chain.
-                    parser!().whitespace_buf.clear();
+                    ctx.str_builder.clear_whitespace();
 
-                    if lines == 0 && !parser!().is_eof() {
+                    if lines == 0 && !self.is_eof() {
                         ctx.append_whitespace(Enc::ch(b' '))?;
                     }
 
                     ctx.append_whitespace_n_times(Enc::ch(b'\n'), lines)?;
 
-                    __c = Enc::wide(parser!().next());
+                    __c = Enc::wide(self.next());
                     continue;
                 }
 
                 _ => {
-                    let c = parser!().next();
+                    let c = self.next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
-                        let start = parser!().pos;
-                        parser!().inc(1);
-                        ctx.append_source(c, start)?;
-                        __c = Enc::wide(parser!().next());
+                        let start = self.pos;
+                        self.inc(1);
+                        ctx.append_source(self, c, start)?;
+                        __c = Enc::wide(self.next());
                         continue;
                     }
 
@@ -4669,153 +4624,153 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // TODO: make more better
                     match __c {
                         0x6E /* 'n' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x4E /* 'N' */ => {
-                            let n_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"ull")) {
+                            let n_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"ull")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"Null"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ULL")) {
+                            if self.remain_starts_with(Enc::literal(b"ULL")) {
                                 ctx.resolve(NodeScalar::Null, n_start, Enc::literal(b"NULL"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, n_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, n_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x7E /* '~' */ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
+                            let start = self.pos;
+                            self.inc(1);
                             ctx.resolve(NodeScalar::Null, start, Enc::literal(b"~"))?;
-                            __c = Enc::wide(parser!().next());
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x74 /* 't' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"true"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x54 /* 'T' */ => {
-                            let t_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"rue")) {
+                            let t_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"rue")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"True"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"RUE")) {
+                            if self.remain_starts_with(Enc::literal(b"RUE")) {
                                 ctx.resolve(NodeScalar::Boolean(true), t_start, Enc::literal(b"TRUE"))?;
-                                parser!().inc(3);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(3);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, t_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, t_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x66 /* 'f' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"false"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                         0x46 /* 'F' */ => {
-                            let f_start = parser!().pos;
-                            parser!().inc(1);
-                            if parser!().remain_starts_with(Enc::literal(b"alse")) {
+                            let f_start = self.pos;
+                            self.inc(1);
+                            if self.remain_starts_with(Enc::literal(b"alse")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"False"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            if parser!().remain_starts_with(Enc::literal(b"ALSE")) {
+                            if self.remain_starts_with(Enc::literal(b"ALSE")) {
                                 ctx.resolve(NodeScalar::Boolean(false), f_start, Enc::literal(b"FALSE"))?;
-                                parser!().inc(4);
-                                __c = Enc::wide(parser!().next());
+                                self.inc(4);
+                                __c = Enc::wide(self.next());
                                 continue;
                             }
-                            ctx.append_source(c, f_start)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, c, f_start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2D /* '-' */ => {
-                            ctx.append_source(Enc::ch(b'-'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Negative)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'-'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Negative)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2B /* '+' */ => {
-                            ctx.append_source(Enc::ch(b'+'), parser!().pos)?;
-                            parser!().inc(1);
-                            ctx.try_resolve_number(FirstChar::Positive)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.append_source(self, Enc::ch(b'+'), self.pos)?;
+                            self.inc(1);
+                            ctx.try_resolve_number(self, FirstChar::Positive)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x30..=0x39 /* '0'..'9' */ => {
-                            ctx.try_resolve_number(FirstChar::Other)?;
-                            __c = Enc::wide(parser!().next());
+                            ctx.try_resolve_number(self, FirstChar::Other)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
 
                         0x2E /* '.' */ => {
-                            match Enc::wide(parser!().peek(1)) {
+                            match Enc::wide(self.peek(1)) {
                                 0x6E | 0x4E | 0x69 | 0x49 /* 'n' 'N' 'i' 'I' */ => {
-                                    ctx.append_source(Enc::ch(b'.'), parser!().pos)?;
-                                    parser!().inc(1);
-                                    ctx.try_resolve_number(FirstChar::Dot)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.append_source(self, Enc::ch(b'.'), self.pos)?;
+                                    self.inc(1);
+                                    ctx.try_resolve_number(self, FirstChar::Dot)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                                 _ => {
-                                    ctx.try_resolve_number(FirstChar::Other)?;
-                                    __c = Enc::wide(parser!().next());
+                                    ctx.try_resolve_number(self, FirstChar::Other)?;
+                                    __c = Enc::wide(self.next());
                                     continue;
                                 }
                             }
                         }
 
                         _ => {
-                            let start = parser!().pos;
-                            parser!().inc(1);
-                            ctx.append_source(c, start)?;
-                            __c = Enc::wide(parser!().next());
+                            let start = self.pos;
+                            self.inc(1);
+                            ctx.append_source(self, c, start)?;
+                            __c = Enc::wide(self.next());
                             continue;
                         }
                     }

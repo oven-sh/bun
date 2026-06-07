@@ -147,10 +147,12 @@ pub enum Fit {
     Inside,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
-static FIT_MAP: phf::Map<&'static [u8], Fit> = phf::phf_map! {
-    b"fill" => Fit::Fill,
-    b"inside" => Fit::Inside,
-};
+bun_core::comptime_string_map! {
+    static FIT_MAP: Fit = {
+        b"fill" => Fit::Fill,
+        b"inside" => Fit::Inside,
+    };
+}
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
         v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")

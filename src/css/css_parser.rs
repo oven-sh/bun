@@ -1313,7 +1313,7 @@ mod rule_parsers {
             name: &[u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // phf-style dispatch on at-rule name (case-insensitive).
+            // Case-insensitive dispatch on at-rule name.
             crate::match_ignore_ascii_case! { name, {
                 b"import" => {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
@@ -2288,8 +2288,8 @@ pub struct ToCssResult {
     pub code: Vec<u8>,
     /// A map of CSS module exports, if the `css_modules` option was enabled
     /// during parsing.
-    // TODO: arena lifetime — CssModuleExports/References borrow the
-    // parser arena. `'static` placeholder until `<'bump>` threads.
+    // TODO: arena lifetime — `'static` placeholder until `Printer` splits the
+    // writer lifetime from the arena lifetime `'a`.
     pub exports: Option<CssModuleExports<'static>>,
     /// A map of CSS module references, if the `css_modules` config had
     /// `dashed_idents` enabled.
@@ -2299,9 +2299,10 @@ pub struct ToCssResult {
     pub dependencies: Option<Vec<Dependency>>,
 }
 
-pub struct ToCssResultInternal {
-    pub exports: Option<CssModuleExports<'static>>,
-    pub references: Option<CssModuleReferences<'static>>,
+/// Like `ToCssResult`, but with the css-module maps at their real borrowed lifetime.
+pub struct ToCssResultInternal<'a> {
+    pub exports: Option<CssModuleExports<'a>>,
+    pub references: Option<CssModuleReferences<'a>>,
     pub dependencies: Option<Vec<Dependency>>,
 }
 
@@ -2631,7 +2632,7 @@ mod stylesheet_impl {
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
-        ) -> PrintResult<ToCssResultInternal> {
+        ) -> PrintResult<ToCssResultInternal<'a>> {
             // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
             // the lone field we re-read after moving `options` into Printer::new.
             let project_root = options.project_root;
@@ -2657,7 +2658,7 @@ mod stylesheet_impl {
             &'a self,
             printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
-        ) -> Result<ToCssResultInternal, PrintErr> {
+        ) -> Result<ToCssResultInternal<'a>, PrintErr> {
             // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
 
@@ -2687,8 +2688,16 @@ mod stylesheet_impl {
                     references_mut,
                 ));
 
-                self.rules.to_css(printer)?;
-                printer.newline()?;
+                // `css_module` holds a pointer-detached `&mut references`; clear
+                // it before any return out of the frame that owns `references`.
+                if let Err(e) = self.rules.to_css(printer) {
+                    printer.css_module = None;
+                    return Err(e);
+                }
+                if let Err(e) = printer.newline() {
+                    printer.css_module = None;
+                    return Err(e);
+                }
 
                 let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
                 let exports = core::mem::take(
@@ -2698,19 +2707,6 @@ mod stylesheet_impl {
                 // moving `references` into the result.
                 printer.css_module = None;
 
-                // SAFETY: `'bump`-erasure — `ToCssResultInternal` carries `'static`
-                // placeholders for `CssModuleExports`/`References` until the arena
-                // lifetime threads (see field TODO at the struct def).
-                let exports = unsafe {
-                    core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
-                };
-                // SAFETY: same `'bump`-erasure as `exports` above; the backing arena
-                // outlives the returned `ToCssResultInternal`.
-                let references = unsafe {
-                    core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
-                        references,
-                    )
-                };
                 return Ok(ToCssResultInternal {
                     dependencies,
                     exports: Some(exports),
@@ -2739,7 +2735,12 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            let result = self.to_css_with_writer(
+            // Destructure in place so the writer borrow ends before `dest` moves.
+            let ToCssResultInternal {
+                exports,
+                references,
+                dependencies,
+            } = self.to_css_with_writer(
                 arena,
                 &mut dest,
                 options,
@@ -2747,11 +2748,22 @@ mod stylesheet_impl {
                 local_names,
                 symbols,
             )?;
+            // SAFETY: the maps only borrow `self` and `arena`, both of which
+            // outlive the returned `ToCssResult`.
+            let exports = exports.map(|exports| unsafe {
+                core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
+            });
+            // SAFETY: same as `exports` above.
+            let references = references.map(|references| unsafe {
+                core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
+                    references,
+                )
+            });
             return Ok(ToCssResult {
                 code: dest,
-                dependencies: result.dependencies,
-                exports: result.exports,
-                references: result.references,
+                dependencies,
+                exports,
+                references,
             });
         }
 
@@ -3662,6 +3674,17 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
+    /// See `ParserInput::token_list_parse_failures`.
+    #[inline]
+    pub fn token_list_parse_failures(&self) -> u64 {
+        self.input.token_list_parse_failures
+    }
+
+    #[inline]
+    pub fn note_token_list_parse_failure(&mut self) {
+        self.input.token_list_parse_failures += 1;
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -4206,6 +4229,15 @@ pub struct ParserInput<'a> {
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
     math_fn_parse_failures: u64,
+    /// Monotonic count of raw token-list parse failures
+    /// (`TokenList::parse_into`). A token-list parse is context-free: it
+    /// fails or succeeds the same way every time it runs over the same
+    /// tokens at the same block-nesting depth. Backtracking callers sample
+    /// this before an alternative that buffers token lists internally; if it
+    /// grew, re-parsing the same range through another token-list-based
+    /// alternative is guaranteed to fail again, so they propagate the error
+    /// instead of retrying (which is exponential in the nesting depth).
+    token_list_parse_failures: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4233,6 +4265,7 @@ impl<'a> ParserInput<'a> {
             nesting_depth: 0,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
+            token_list_parse_failures: 0,
         }
     }
 }
@@ -6006,7 +6039,8 @@ pub mod color {
 
     pub type RGB = (u8, u8, u8);
 
-    pub static NAMED_COLORS: phf::Map<&'static [u8], RGB> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+    pub static NAMED_COLORS: RGB = {
         b"aliceblue" => (240, 248, 255),
         b"antiquewhite" => (250, 235, 215),
         b"aqua" => (0, 255, 255),
@@ -6156,6 +6190,7 @@ pub mod color {
         b"yellow" => (255, 255, 0),
         b"yellowgreen" => (154, 205, 50),
     };
+    }
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>

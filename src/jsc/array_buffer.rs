@@ -707,33 +707,35 @@ pub enum BinaryType {
     // DataView,
 }
 
-pub(crate) static BINARY_TYPE_MAP: phf::Map<&'static [u8], BinaryType> = phf::phf_map! {
-    b"ArrayBuffer" => BinaryType::ArrayBuffer,
-    b"Buffer" => BinaryType::Buffer,
-    // b"DataView" => BinaryType::DataView,
-    b"Float32Array" => BinaryType::Float32Array,
-    b"Float16Array" => BinaryType::Float16Array,
-    b"Float64Array" => BinaryType::Float64Array,
-    b"Int16Array" => BinaryType::Int16Array,
-    b"Int32Array" => BinaryType::Int32Array,
-    b"Int8Array" => BinaryType::Int8Array,
-    b"Uint16Array" => BinaryType::Uint16Array,
-    b"Uint32Array" => BinaryType::Uint32Array,
-    b"Uint8Array" => BinaryType::Uint8Array,
-    b"arraybuffer" => BinaryType::ArrayBuffer,
-    b"buffer" => BinaryType::Buffer,
-    // b"dataview" => BinaryType::DataView,
-    b"float16array" => BinaryType::Float16Array,
-    b"float32array" => BinaryType::Float32Array,
-    b"float64array" => BinaryType::Float64Array,
-    b"int16array" => BinaryType::Int16Array,
-    b"int32array" => BinaryType::Int32Array,
-    b"int8array" => BinaryType::Int8Array,
-    b"nodebuffer" => BinaryType::Buffer,
-    b"uint16array" => BinaryType::Uint16Array,
-    b"uint32array" => BinaryType::Uint32Array,
-    b"uint8array" => BinaryType::Uint8Array,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static BINARY_TYPE_MAP: BinaryType = {
+        b"ArrayBuffer" => BinaryType::ArrayBuffer,
+        b"Buffer" => BinaryType::Buffer,
+        // b"DataView" => BinaryType::DataView,
+        b"Float32Array" => BinaryType::Float32Array,
+        b"Float16Array" => BinaryType::Float16Array,
+        b"Float64Array" => BinaryType::Float64Array,
+        b"Int16Array" => BinaryType::Int16Array,
+        b"Int32Array" => BinaryType::Int32Array,
+        b"Int8Array" => BinaryType::Int8Array,
+        b"Uint16Array" => BinaryType::Uint16Array,
+        b"Uint32Array" => BinaryType::Uint32Array,
+        b"Uint8Array" => BinaryType::Uint8Array,
+        b"arraybuffer" => BinaryType::ArrayBuffer,
+        b"buffer" => BinaryType::Buffer,
+        // b"dataview" => BinaryType::DataView,
+        b"float16array" => BinaryType::Float16Array,
+        b"float32array" => BinaryType::Float32Array,
+        b"float64array" => BinaryType::Float64Array,
+        b"int16array" => BinaryType::Int16Array,
+        b"int32array" => BinaryType::Int32Array,
+        b"int8array" => BinaryType::Int8Array,
+        b"nodebuffer" => BinaryType::Buffer,
+        b"uint16array" => BinaryType::Uint16Array,
+        b"uint32array" => BinaryType::Uint32Array,
+        b"uint8array" => BinaryType::Uint8Array,
+    };
+}
 
 impl BinaryType {
     pub fn to_js_type(self) -> JSType {

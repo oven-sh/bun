@@ -62,6 +62,9 @@ pub struct Parser<'a> {
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
     pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Label-frame stack recycled by process_inline_content (inlines.rs) so
+    // blocks with links do not allocate a frame stack per block.
+    pub label_frames: Vec<crate::inlines::LabelFrame>,
     // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
     // Cell because find_html_tag is a &self query reached from both &self and
     // &mut self scanners.
@@ -193,6 +196,7 @@ impl<'a> Parser<'a> {
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
+            label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,
@@ -296,8 +300,10 @@ impl<'a> Parser<'a> {
     //   find_html_tag
     //
     // links.rs — impl Parser:
-    //   process_link, try_match_bracket_link, label_contains_link,
-    //   process_wiki_link, render_ref_link, find_autolink, render_autolink
+    //   compute_bracket_matches, match_bracket, scan_bracket_close,
+    //   enter_label_span, process_link, try_match_bracket_link,
+    //   label_contains_link, process_wiki_link, find_autolink,
+    //   render_autolink
     //
     // line_analysis.rs — impl Parser:
     //   is_setext_underline, is_hr_line, is_atx_header_line,

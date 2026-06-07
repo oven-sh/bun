@@ -2380,10 +2380,12 @@ pub mod JSZlib {
     }
 
     // bun.ComptimeEnumMap(Library)
-    pub(crate) static LIBRARY_MAP: phf::Map<&'static [u8], Library> = phf::phf_map! {
-        b"zlib" => Library::Zlib,
-        b"libdeflate" => Library::Libdeflate,
-    };
+    bun_core::comptime_string_map! {
+        pub(crate) static LIBRARY_MAP: Library = {
+            b"zlib" => Library::Zlib,
+            b"libdeflate" => Library::Libdeflate,
+        };
+    }
 
     #[bun_jsc::host_fn]
     pub(crate) fn gzip_sync(

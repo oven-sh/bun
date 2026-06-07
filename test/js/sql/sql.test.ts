@@ -1457,7 +1457,9 @@ if (isDockerEnabled()) {
             login_md5.username +
             ":" +
             (login_md5.password || "") +
-            "@localhost:" +
+            "@" +
+            container.host +
+            ":" +
             container.port.toString() +
             "/" +
             options.db,

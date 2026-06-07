@@ -4,7 +4,6 @@
 //! `bun_options_types::TargetExt` (would back-edge into the schema crate).
 
 use enum_map::Enum;
-use phf;
 
 /// Defaults to `Browser`; keep `Default` so resolver can field-default it.
 #[repr(u8)]
@@ -19,14 +18,19 @@ pub enum Target {
     BakeServerComponentsSsr,
 }
 
-impl Target {
-    pub const MAP: phf::Map<&'static [u8], Target> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static TARGET_MAP: Target = {
         b"browser" => Target::Browser,
         b"bun" => Target::Bun,
         b"bun_macro" => Target::BunMacro,
         b"macro" => Target::BunMacro,
         b"node" => Target::Node,
     };
+}
+
+impl Target {
+    /// Same lookup table as [`TARGET_MAP`] (the type is a ZST).
+    pub const MAP: __ComptimeStringMap_TARGET_MAP = __ComptimeStringMap_TARGET_MAP(());
 
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
     // `to_api`/`from(api)` live in `bun_options_types::TargetExt`.

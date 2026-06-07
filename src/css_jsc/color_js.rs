@@ -35,7 +35,7 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
         property_name: &'static str,
     ) -> JsResult<Self> {
         use bun_jsc::ComptimeStringMapExt as _;
-        match Self::MAP.from_js(global, v)? {
+        match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
             None => Err(global.throw_invalid_argument_type(
                 "color",
@@ -46,8 +46,8 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
     }
 }
 
-impl OutputColorFormat {
-    pub(crate) const MAP: phf::Map<&'static [u8], OutputColorFormat> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub(crate) static OUTPUT_COLOR_FORMAT_MAP: OutputColorFormat = {
         b"[r,g,b,a]" => OutputColorFormat::RgbaArray,
         b"[rgb]" => OutputColorFormat::RgbArray,
         b"[rgba]" => OutputColorFormat::RgbaArray,

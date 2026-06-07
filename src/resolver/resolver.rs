@@ -36,11 +36,13 @@ unsafe extern "Rust" {
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
+    /// Errs when the one-time init fails (e.g. the top-level directory is
+    /// unreadable); the failure is sticky across calls.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader<'static>>,
-    ) -> NonNull<dyn AutoInstaller>;
+    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_core::Error>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -543,13 +545,11 @@ pub struct Resolver<'a> {
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
-    /// below `bun_install` in the dep graph. The runtime/bundler that enables
-    /// auto-install (`opts.global_cache != .disable`) is responsible for
-    /// constructing the `PackageManager`
-    /// and assigning it here BEFORE resolution; the resolver does not
-    /// construct it lazily — that would require depending on `bun_install`,
-    /// which depends on us. When `None`, [`get_package_manager`] panics if the
-    /// auto-install path is reached.
+    /// below `bun_install` in the dep graph. `None` until the auto-install
+    /// path is first reached: [`get_package_manager`] then initializes the
+    /// singleton through the link-time `__bun_resolver_init_package_manager`
+    /// factory and caches the pointer here. A failed init (e.g. unreadable
+    /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: Option<NonNull<dyn AutoInstaller>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
@@ -854,9 +854,10 @@ impl<'a> Resolver<'a> {
     ///
     /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
-    /// `dir_cache_mut()` borrow is popped. Callers that need a slot pointer to
-    /// survive a subsequent map access must route both through ONE bound
-    /// `&mut HashMap` (see `dir_info_for_resolution` / `dir_info_cached_maybe_log`).
+    /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
+    /// subsequent map access are re-derived from the raw singleton via
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
+    /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
     pub fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
@@ -876,10 +877,15 @@ impl<'a> Resolver<'a> {
     /// process-static singleton as a `dyn AutoInstaller`. We then wire
     /// `on_wake` and cache the pointer. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
-    /// [`use_package_manager`] is `true`.
-    pub fn get_package_manager(&mut self) -> *mut dyn AutoInstaller {
+    /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
+    /// inside the factory) when the one-time init fails, e.g. the top-level
+    /// directory was deleted or is unreadable — callers surface that as a
+    /// resolve failure rather than panicking.
+    pub fn get_package_manager(
+        &mut self,
+    ) -> core::result::Result<*mut dyn AutoInstaller, bun_core::Error> {
         if let Some(pm) = self.package_manager {
-            return pm.as_ptr();
+            return Ok(pm.as_ptr());
         }
         // SAFETY: `DotEnv::Loader<'a>` is layout-identical across `'a`;
         // `init_with_runtime` only borrows it for the synchronous init (the
@@ -894,11 +900,11 @@ impl<'a> Resolver<'a> {
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) };
+            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
-        pm.as_ptr()
+        Ok(pm.as_ptr())
     }
 
     /// Safe accessor for the optional [`AutoInstaller`] back-reference.
@@ -3000,7 +3006,34 @@ impl<'a> Resolver<'a> {
                 // `log()`. The PackageManager lives in a separate allocation, so
                 // derive a raw pointer once and re-borrow per use — disjoint
                 // from `self`'s storage.
-                let manager_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+                let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+                    Ok(pm) => pm,
+                    Err(err) => {
+                        // One-time init reads the top-level directory, which
+                        // can fail at runtime (cwd deleted, EACCES, a dropped
+                        // network drive). Report it as a catchable resolve
+                        // error; the `Metadata::Resolve` msg carries the text
+                        // for `import.meta.resolveSync` & co.
+                        let top_level_dir = self.fs_ref().top_level_dir;
+                        self.log_mut().add_resolve_error(
+                            None,
+                            bun_ast::Range::NONE,
+                            format_args!(
+                                "Cannot read directory \"{}\": {} while resolving \"{}\"",
+                                bstr::BStr::new(top_level_dir),
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(import_path)
+                            ),
+                            import_path,
+                            kind,
+                            err,
+                        );
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return MatchStatus::Failure(err);
+                    }
+                };
                 macro_rules! manager {
                     () => {
                         // SAFETY: re-borrowed narrowly per use; PackageManager outlives resolver.
@@ -3419,17 +3452,14 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        // Stacked Borrows: bind ONE `&mut HashMap` and route both the lookup and the slot
-        // projection through it so the returned `*mut DirInfo` shares a parent tag with the
-        // borrow it was derived from (a second `dir_cache_mut()` Unique retag of the
-        // whole `BSSMapInner` would otherwise pop it).
-        let dc = self.dir_cache_mut();
-        let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
+        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            return Ok(dc
-                .at_index(dir_cache_info_result.index)
-                .map(DirInfoRef::from_slot));
+            // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
+            // The slot pointer is rooted at the singleton, so the returned ref
+            // survives the caller's later map reborrows.
+            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -3556,12 +3586,15 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-        // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-        let dir_info_ptr: *mut DirInfo::DirInfo = self
-            .dir_cache_mut()
-            .put(&mut dir_cache_info_result, DirInfo::DirInfo::default())
-            .expect("unreachable");
+        // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+        let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+            DirInfo::put_slot(
+                self.dir_cache(),
+                &mut dir_cache_info_result,
+                DirInfo::DirInfo::default(),
+            )
+        }
+        .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
         // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
@@ -3614,7 +3647,13 @@ impl<'a> Resolver<'a> {
         let input_package_id = *input_package_id_;
         // NOTE: see `manager_ptr` note in `load_node_modules` — split the
         // `&mut self` borrow by holding the PackageManager via raw pointer.
-        let pm_ptr: *mut dyn AutoInstaller = self.get_package_manager();
+        // Init failure is unreachable in practice (`load_node_modules`
+        // initialized the manager before calling here), but propagate rather
+        // than unwrap so the invariant isn't load-bearing for safety.
+        let pm_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
+            Ok(pm) => pm,
+            Err(err) => return DependencyToResolve::Failure(err),
+        };
         macro_rules! pm {
             () => {
                 // SAFETY: PackageManager lives in a separate allocation; disjoint from `self`.
@@ -4628,19 +4667,20 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-            // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-            // SAFETY: ARENA — `dir_cache()` singleton (see NOTE). Stacked Borrows: bind
-            // ONE `&mut HashMap` and derive BOTH slot pointers from it so they share a parent
-            // tag — a second `&mut *self.dir_cache()` Unique retag of the whole `BSSMapInner`
-            // (whose `backing_buf` is inline) would pop `dir_info_ptr`'s tag before
-            // `dir_info_uncached` writes through it.
-            // NOTE: erasing `&mut V` to `*mut V` does NOT, by itself, survive a sibling Unique
-            // retag of the parent allocation; the shared `dc` parent is what keeps both live.
-            let dc = self.dir_cache_mut();
-            let dir_info_ptr: *mut DirInfo::DirInfo =
-                dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(DirInfoRef::from_slot);
+            // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
+            // Both slot pointers are rooted at the singleton, so the map
+            // reborrows inside `dir_info_uncached` cannot pop them.
+            let dir_info_ptr: *mut DirInfo::DirInfo = unsafe {
+                DirInfo::put_slot(
+                    self.dir_cache(),
+                    &mut queue_top.result,
+                    DirInfo::DirInfo::default(),
+                )
+            }?;
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -5995,27 +6035,19 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<(), bun_core::Error> {
         let result = _result;
 
-        // SAFETY: RealFS / DirEntry are global ARENA singletons (BSSMap-backed).
-        // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `unsafe { &mut *self.fs() }` calls
-        // (`abs_buf` / `dirname_store.append_slice` in the parent-symlink block) cannot
-        // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
-        // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
-        // TODO: split RealFS borrow once entries iteration is interior-mutability-backed.
+        // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
+        // `Entry::symlink` take it by raw pointer and reborrow only internally,
+        // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
+        // under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // SAFETY: caller passes `_entries` as a live slot in the global BSSMap-backed entries cache (ARENA).
-        let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
-        // NOTE: re-borrow per use; see SAFETY note above.
-        macro_rules! rfs {
-            () => {
-                // SAFETY: `rfs_ptr` points at the process-global RealFS singleton; see note above.
-                // Caller must invoke from an `unsafe` block (all sites wrap the unsafe `kind`/`symlink` call).
-                &mut *rfs_ptr
-            };
-        }
+        // SAFETY: `_entries` is a live slot (caller contract); the payload
+        // `DirEntry` is a separate process-lifetime allocation, so the shared
+        // `BackRef` survives entries-map traffic. All uses below are `&self`
+        // reads under `entries_mutex`.
+        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
-                // SAFETY: `entries_ptr` is a live BSSMap-backed `DirEntry` slot (ARENA); see note above.
-                unsafe { &mut *entries_ptr }
+                dir_entries.get()
             };
         }
 
@@ -6056,8 +6088,8 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6108,8 +6140,8 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -6187,9 +6219,6 @@ impl<'a> Resolver<'a> {
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
-                        // `entries_ptr` is a slot in the BSSMap-backed entries singleton —
-                        // route the read-only `.fd` access through the existing
-                        // `entries!()` re-borrow macro instead of a raw-ptr deref.
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
@@ -6201,8 +6230,8 @@ impl<'a> Resolver<'a> {
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        let mut symlink = unsafe { entry.symlink(rfs!(), self.store_fd) };
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6262,8 +6291,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
                 let entry = lookup.entry();
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { entry.kind(rfs!(), self.store_fd) } == Fs::file_system::EntryKind::File
+                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
@@ -6332,8 +6361,8 @@ impl<'a> Resolver<'a> {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"tsconfig.json".as_slice()];
@@ -6348,8 +6377,8 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];
@@ -6574,6 +6603,9 @@ pub struct BrowserMapPath<'b> {
 }
 
 impl<'b> BrowserMapPath<'b> {
+    /// On a match only `self.remapped` is updated; the matched candidate may
+    /// borrow threadlocal scratch buffers and must never be stored back into
+    /// the checker.
     pub fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 
@@ -6585,8 +6617,6 @@ impl<'b> BrowserMapPath<'b> {
             // cache is process-global); the `'b` borrow on `map` artificially shortens
             // what is process-lifetime storage. `Interned` is the canonical proof type.
             self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
-            // SAFETY: extending borrow of caller-owned slice; consumed before checker is dropped (TODO: thread explicit lifetime).
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
             return true;
         }
 
@@ -6609,10 +6639,6 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
@@ -6636,8 +6662,6 @@ impl<'b> BrowserMapPath<'b> {
         if let Some(_remapped) = map.get(index_path) {
             // SAFETY: ARENA — see `result` note above.
             self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-            // SAFETY: `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
             return true;
         }
 
@@ -6657,10 +6681,6 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
@@ -6682,21 +6702,18 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-// PERF: with only 4 keys — all length 4 — a `phf::Map<&[u8], ModuleType>`
-// hash + index probe would be strictly more work than a single
-// length gate followed by 4-byte compares (which LLVM lowers to one u32
-// load + compare per arm once `len == 4` is established). Mirrors the
-// length-gated dispatch used in `clap::find_param`.
+bun_core::comptime_string_map! {
+    static MODULE_TYPE_FROM_EXT: options::ModuleType = {
+        b".mjs" => options::ModuleType::Esm,
+        b".mts" => options::ModuleType::Esm,
+        b".cjs" => options::ModuleType::Cjs,
+        b".cts" => options::ModuleType::Cjs,
+    };
+}
+
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
-    if ext.len() != 4 {
-        return None;
-    }
-    match ext {
-        b".mjs" | b".mts" => Some(options::ModuleType::Esm),
-        b".cjs" | b".cts" => Some(options::ModuleType::Cjs),
-        _ => None,
-    }
+    MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
 const NODE_MODULE_ROOT_STRING: &[u8] =

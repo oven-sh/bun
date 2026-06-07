@@ -3092,7 +3092,7 @@ pub mod mock {
     pub(crate) fn jest_mock_return_object_type(global_this: &JSGlobalObject, value: JSValue) -> JsResult<ReturnStatus> {
         if let Some(type_string) = value.fast_get(global_this, bun_jsc::BuiltinName::Type)? {
             if type_string.is_string() {
-                if let Some(val) = ReturnStatus::MAP.from_js(global_this, type_string)? {
+                if let Some(val) = RETURN_STATUS_MAP.from_js(global_this, type_string)? {
                     return Ok(val);
                 }
             }
@@ -3160,14 +3160,14 @@ pub mod mock {
         Incomplete,
     }
 
-    impl ReturnStatus {
-        pub(crate) const MAP: phf::Map<&'static [u8], ReturnStatus> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+        /// JS string extraction + lookup is provided by `ComptimeStringMapExt::from_js`
+        /// (see `jest_mock_return_object_type`).
+        pub(crate) static RETURN_STATUS_MAP: ReturnStatus = {
             b"throw" => ReturnStatus::Throw,
             b"return" => ReturnStatus::Return,
             b"incomplete" => ReturnStatus::Incomplete,
         };
-        // JS string extraction + lookup is provided by `ComptimeStringMapExt::from_js`
-        // (see `jest_mock_return_object_type`).
     }
 
     // Formatter for when there are multiple returns or errors

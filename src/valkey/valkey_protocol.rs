@@ -801,19 +801,17 @@ pub enum SubscriptionPushMessage {
     Unsubscribe,
 }
 
+bun_core::comptime_string_map! {
+    static SUBSCRIPTION_PUSH_MESSAGES: SubscriptionPushMessage = {
+        b"message" => SubscriptionPushMessage::Message,
+        b"subscribe" => SubscriptionPushMessage::Subscribe,
+        b"unsubscribe" => SubscriptionPushMessage::Unsubscribe,
+    };
+}
+
 impl SubscriptionPushMessage {
-    // An earlier version used `phf::Map`, which pays a SipHash + indirect
-    // probe per lookup — overkill for three keys whose lengths are all
-    // distinct (7/9/11). A length-gated match rejects the miss case on a
-    // single `usize` compare and confirms the hit with one fixed-size byte
-    // compare.
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        match bytes.len() {
-            7 if bytes == b"message" => Some(Self::Message),
-            9 if bytes == b"subscribe" => Some(Self::Subscribe),
-            11 if bytes == b"unsubscribe" => Some(Self::Unsubscribe),
-            _ => None,
-        }
+        SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
 }

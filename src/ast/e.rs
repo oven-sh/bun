@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
@@ -673,25 +672,19 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
+bun_core::comptime_string_map! {
+    static JSX_SPECIAL_PROP_MAP: JSXSpecialProp = {
+        b"key" => JSXSpecialProp::Key,
+        b"ref" => JSXSpecialProp::Ref,
+        b"__self" => JSXSpecialProp::UnderscoreSelf,
+        b"__source" => JSXSpecialProp::UnderscoreSource,
+    };
+}
+
 impl JSXSpecialProp {
-    // PERF: a `phf::Map` here would compute a full SipHash +
-    // index + slice compare on every JSX prop name even though the
-    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
-    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
-    // rejects almost every miss on a single `usize` compare and never hashes.
-    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        match s.len() {
-            3 => match s {
-                b"key" => Some(Self::Key),
-                b"ref" => Some(Self::Ref),
-                _ => None,
-            },
-            6 if s == b"__self" => Some(Self::UnderscoreSelf),
-            8 if s == b"__source" => Some(Self::UnderscoreSource),
-            _ => None,
-        }
+        JSX_SPECIAL_PROP_MAP.get(s).copied()
     }
 }
 
@@ -1249,20 +1242,22 @@ enum PackageJsonSortFields {
     Fake = 12,
 }
 
-static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = phf_map! {
-    b"name" => PackageJsonSortFields::Name,
-    b"version" => PackageJsonSortFields::Version,
-    b"author" => PackageJsonSortFields::Author,
-    b"repository" => PackageJsonSortFields::Repository,
-    b"config" => PackageJsonSortFields::Config,
-    b"main" => PackageJsonSortFields::Main,
-    b"module" => PackageJsonSortFields::Module,
-    b"dependencies" => PackageJsonSortFields::Dependencies,
-    b"devDependencies" => PackageJsonSortFields::DevDependencies,
-    b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-    b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-    b"exports" => PackageJsonSortFields::Exports,
-};
+bun_core::comptime_string_map! {
+    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
+        b"name" => PackageJsonSortFields::Name,
+        b"version" => PackageJsonSortFields::Version,
+        b"author" => PackageJsonSortFields::Author,
+        b"repository" => PackageJsonSortFields::Repository,
+        b"config" => PackageJsonSortFields::Config,
+        b"main" => PackageJsonSortFields::Main,
+        b"module" => PackageJsonSortFields::Module,
+        b"dependencies" => PackageJsonSortFields::Dependencies,
+        b"devDependencies" => PackageJsonSortFields::DevDependencies,
+        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
+        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
+        b"exports" => PackageJsonSortFields::Exports,
+    };
+}
 
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;

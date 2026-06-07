@@ -121,8 +121,14 @@ test(
 
         for (let i = 0; i < ${slow ? 8 : 16}; i++) {
           const worker = new Worker(new URL("./worker.js", import.meta.url).href);
-          const inFlight = new Promise(resolve => {
-            worker.onmessage = resolve;
+          // Reject on every failure event so a broken worker fails the test
+          // immediately instead of hanging it until the timeout.
+          const { promise: inFlight, resolve: markInFlight, reject: failInFlight } = Promise.withResolvers();
+          worker.onmessage = markInFlight;
+          worker.onmessageerror = () => failInFlight(new Error("worker message failed to deserialize"));
+          worker.onerror = e => failInFlight(new Error("worker error: " + (e?.message ?? e)));
+          worker.addEventListener("close", () => failInFlight(new Error("worker closed before signaling in-flight fetch")), {
+            once: true,
           });
           worker.postMessage(server.port);
           await inFlight;

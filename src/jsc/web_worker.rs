@@ -442,7 +442,14 @@ fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u6
         }
         let elapsed = u64::try_from(timer.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if elapsed >= deadline_ns {
-            log!("terminateAllAndWait: timed out with {} outstanding", n);
+            match parent_filter {
+                Some(_) => log!(
+                    "terminateChildrenAndWait: timed out with {} matching ({} outstanding)",
+                    matching,
+                    n
+                ),
+                None => log!("terminateAllAndWait: timed out with {} outstanding", n),
+            }
             return;
         }
         let _ = Futex::wait(&live_workers::WAKE_SEQ, seq, Some(deadline_ns - elapsed));

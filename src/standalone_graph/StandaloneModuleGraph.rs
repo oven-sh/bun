@@ -704,7 +704,7 @@ impl StandaloneModuleGraph {
                 // stomped, skipping the hash check above). Drop them so the
                 // module falls back to plain source like the mismatch arm.
                 bun_core::debug_warn!(
-                    "module record for {} has module_info without bytecode; falling back to source",
+                    "module record for {} has bytecode metadata without bytecode; falling back to source",
                     bstr::BStr::new(name.as_bytes())
                 );
                 module_info_ptr = StringPointer::default();

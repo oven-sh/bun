@@ -106,8 +106,16 @@ fn napi_link_slots(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
             b"path",
             bun_core::String::clone_utf8(slot.path_slice()).to_js(global)?,
         );
-        obj.put(global, b"offset", JSValue::js_number_from_uint64(slot.offset));
-        obj.put(global, b"length", JSValue::js_number_from_uint64(slot.length));
+        obj.put(
+            global,
+            b"offset",
+            JSValue::js_number_from_uint64(slot.offset),
+        );
+        obj.put(
+            global,
+            b"length",
+            JSValue::js_number_from_uint64(slot.length),
+        );
         // Hex of the hash's little-endian bytes, matching a byte-wise dump of
         // the on-disk slot.
         let mut hex = [0u8; 16];

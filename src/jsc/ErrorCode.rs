@@ -1050,7 +1050,8 @@ impl ErrorCode {
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
     pub const ERR_FS_CP_EEXIST: ErrorCode = ErrorCode::FS_CP_EEXIST;
-    pub const ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode = ErrorCode::FS_CP_SYMLINK_TO_SUBDIRECTORY;
+    pub const ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY: ErrorCode =
+        ErrorCode::FS_CP_SYMLINK_TO_SUBDIRECTORY;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum

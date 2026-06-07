@@ -1,5 +1,11 @@
 {
     __ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm;
+    __ZN2v811HandleScope12CreateHandleEPNS_7IsolateEm;
+    __ZN2v811HandleScope10InitializeEPNS_7IsolateE;
+    __ZNK2v85Value16QuickIsUndefinedEv;
+    __ZNK2v85Value11QuickIsNullEv;
+    __ZNK2v85Value22QuickIsNullOrUndefinedEv;
+    __ZNK2v85Value13QuickIsStringEv;
     __ZN2v811HandleScope16DeleteExtensionsEPNS_7IsolateE;
     __ZN2v811HandleScope6ExtendEPNS_7IsolateE;
     __ZN2v811HandleScopeC1EPNS_7IsolateE;

@@ -3000,6 +3000,12 @@ mod v8_api {
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_7IsolateEm() -> *mut c_void;
+        pub(super) fn _ZN2v811HandleScope10InitializeEPNS_7IsolateE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value16QuickIsUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value11QuickIsNullEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value22QuickIsNullOrUndefinedEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value13QuickIsStringEv() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScope6ExtendEPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScope16DeleteExtensionsEPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScopeC1EPNS_7IsolateE() -> *mut c_void;
@@ -4135,6 +4141,12 @@ pub fn fix_dead_code_elimination() {
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj,
             _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm,
+            _ZN2v811HandleScope12CreateHandleEPNS_7IsolateEm,
+            _ZN2v811HandleScope10InitializeEPNS_7IsolateE,
+            _ZNK2v85Value16QuickIsUndefinedEv,
+            _ZNK2v85Value11QuickIsNullEv,
+            _ZNK2v85Value22QuickIsNullOrUndefinedEv,
+            _ZNK2v85Value13QuickIsStringEv,
             _ZN2v811HandleScope6ExtendEPNS_7IsolateE,
             _ZN2v811HandleScope16DeleteExtensionsEPNS_7IsolateE,
             _ZN2v811HandleScopeC1EPNS_7IsolateE, _ZN2v811HandleScopeD1Ev,

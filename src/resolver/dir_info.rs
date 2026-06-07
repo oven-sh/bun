@@ -343,6 +343,14 @@ static CACHE_PRESERVE_SYMLINKS: core::sync::atomic::AtomicBool =
 /// consumes entries computed with the other mode. Mode changes are rare:
 /// `Bun.build` runs execute one at a time on the bundle thread, and runtime
 /// resolvers keep one mode for the process lifetime.
+///
+/// Tradeoff: `clear` drops only the key index; the slab is append-only (like
+/// `remove`), so each flip orphans the previously filled slots until shutdown
+/// (`Resolver::deinit` still releases their owned resources). That bounds the
+/// cost by flip count, not correctness. Per-mode maps would avoid this but
+/// parent links are raw indexes resolved through this one singleton
+/// (`slot_ptr_at`/`ref_at_index`), and rewriting `abs_real_path` in place
+/// would mutate slots a concurrent reader may hold.
 #[inline(always)]
 pub fn sync_preserve_symlinks_mode(preserve_symlinks: bool) {
     use core::sync::atomic::Ordering;

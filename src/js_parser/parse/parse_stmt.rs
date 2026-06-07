@@ -1534,7 +1534,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.expect(T::TIdentifier)?;
                     p.lexer.expect_contextual_keyword(b"from")?;
 
-                    let path = p.parse_path()?;
+                    // Inside a `declare module` body the whole block is erased,
+                    // so suppress the unsupported-attribute error (matches the
+                    // other import/export sites in this function).
+                    let path = if opts.is_typescript_declare {
+                        p.parse_type_only_path()?
+                    } else {
+                        p.parse_path()?
+                    };
                     p.lexer.expect_or_insert_semicolon()?;
                     return p.process_import_statement(stmt, path, loc, false);
                 }

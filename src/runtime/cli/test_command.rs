@@ -2065,7 +2065,7 @@ impl TestCommand {
                 // SAFETY: `alarm`, `signal`, `_exit` are async-signal-safe POSIX functions.
                 // This is a safety-net that only fires when normal timeout fails.
                 unsafe {
-                    libc::signal(libc::SIGALRM, core::mem::transmute::<usize, extern "C" fn(i32)>(sig_alrm_handler as usize));
+                    libc::signal(libc::SIGALRM, sig_alrm_handler as extern "C" fn(i32) as usize);
                     libc::alarm(total_sec);
                 }
             }

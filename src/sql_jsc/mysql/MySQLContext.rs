@@ -7,6 +7,17 @@ pub struct MySQLContext {
     pub on_query_reject_fn: StrongOptional,
 }
 
+impl MySQLContext {
+    /// Release the JSC `Strong` handles while the VM is still alive. This
+    /// struct is owned by `bun_runtime`'s `RuntimeState`, which drops after
+    /// `~VM` — a `Strong` dropped there unlinks a `HandleNode` from the
+    /// already-freed `HandleSet`.
+    pub fn deinit(&mut self) {
+        self.on_query_resolve_fn.deinit();
+        self.on_query_reject_fn.deinit();
+    }
+}
+
 // The binding object is built in Rust (`mysql.rs` registers this fn through
 // `put_host_functions!`/`IntoJSHostFn`), so no C symbol is needed.
 pub(crate) fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {

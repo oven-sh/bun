@@ -2989,10 +2989,6 @@ where
     }
 
     pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        let stream_needs_deinit = matches!(
-            stream,
-            WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
-        );
         let is_done = stream.is_done();
         // NOTE: reshaped for borrowck — the defer reads `stream` through a
         // raw ptr so the body below can keep borrowing it.
@@ -3000,17 +2996,9 @@ where
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
         scopeguard::defer! {
-            if stream_needs_deinit {
-                // SAFETY: stream lives on the caller's stack frame past the guard.
-                match unsafe { &mut *stream_ptr } {
-                    WebCore::streams::Result::OwnedAndDone(owned)
-                    | WebCore::streams::Result::Owned(owned) => {
-                        // Vec::deinit → Drop in Rust.
-                        *owned = Vec::<u8>::default();
-                    }
-                    _ => unreachable!(),
-                }
-            }
+            // Frees owned payloads and drops the gcProtect of an `Err` JSValue.
+            // SAFETY: stream lives on the caller's stack frame past the guard.
+            unsafe { &mut *stream_ptr }.release();
         }
 
         if this.is_aborted_or_ended() {

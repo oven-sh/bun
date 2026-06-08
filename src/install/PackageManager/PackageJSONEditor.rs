@@ -39,6 +39,46 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
 }
 
+/// Builds the replacement version string for an updated npm dependency,
+/// preserving the original pin style (`1.2.3` / `~1.2.3` / `^1.2.3`) and, for
+/// aliases, the `npm:@scope/pkg@` prefix from `dep_literal`.
+fn replacement_version_literal(
+    version_fmt: impl std::fmt::Display,
+    original_version_literal: &[u8],
+    is_alias: bool,
+    dep_literal: &[u8],
+    exact_versions: bool,
+) -> Vec<u8> {
+    let mut v = Vec::new();
+    if is_alias {
+        // negative because the real package might have a scope
+        // e.g. "dep": "npm:@foo/bar@1.2.3"
+        if let Some(at_index) = strings::last_index_of_char(dep_literal, b'@') {
+            write!(&mut v, "{}@", bstr::BStr::new(&dep_literal[0..at_index]))
+                .expect("infallible: in-memory write");
+        }
+    }
+    let pin_prefix = if exact_versions {
+        ""
+    } else {
+        let version_literal = if is_alias {
+            match strings::last_index_of_char(original_version_literal, b'@') {
+                Some(at_index) => &original_version_literal[at_index + 1..],
+                None => original_version_literal,
+            }
+        } else {
+            original_version_literal
+        };
+        match semver::Version::which_version_is_pinned(version_literal) {
+            semver::PinnedVersion::Patch => "",
+            semver::PinnedVersion::Minor => "~",
+            semver::PinnedVersion::Major => "^",
+        }
+    };
+    write!(&mut v, "{}{}", pin_prefix, version_fmt).expect("infallible: in-memory write");
+    v
+}
+
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
 /// (both `Option<Expr>`, `Copy`) are populated by the JSON parser; the rest
 /// (`ts_decorators`, `class_static_block`, …) are always default for parsed
@@ -435,82 +475,14 @@ pub(crate) fn edit_update_no_args(
                                         }
                                     }
 
-                                    let new_version: Vec<u8> = 'new_version: {
-                                        // `resolution.tag == Npm` checked above.
-                                        let version_fmt = resolution.npm().version.fmt(string_buf);
-                                        if options.exact_versions {
-                                            let mut v = Vec::new();
-                                            write!(&mut v, "{}", version_fmt)
-                                                .expect("infallible: in-memory write");
-                                            break 'new_version v;
-                                        }
-
-                                        let version_literal: &[u8] = 'version_literal: {
-                                            if !is_alias {
-                                                break 'version_literal &entry
-                                                    .value
-                                                    .original_version_literal;
-                                            }
-                                            if let Some(at_index) = strings::last_index_of_char(
-                                                &entry.value.original_version_literal,
-                                                b'@',
-                                            ) {
-                                                break 'version_literal &entry
-                                                    .value
-                                                    .original_version_literal[at_index + 1..];
-                                            }
-                                            &entry.value.original_version_literal
-                                        };
-
-                                        let pinned_version =
-                                            semver::Version::which_version_is_pinned(
-                                                version_literal,
-                                            );
-                                        let mut v = Vec::new();
-                                        match pinned_version {
-                                            semver::PinnedVersion::Patch => {
-                                                write!(&mut v, "{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                            semver::PinnedVersion::Minor => {
-                                                write!(&mut v, "~{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                            semver::PinnedVersion::Major => {
-                                                write!(&mut v, "^{}", version_fmt)
-                                                    .expect("infallible: in-memory write")
-                                            }
-                                        }
-                                        v
-                                    };
-
-                                    if is_alias {
-                                        let dep_literal =
-                                            workspace_dep.version.literal.slice(string_buf);
-
-                                        // negative because the real package might have a scope
-                                        // e.g. "dep": "npm:@foo/bar@1.2.3"
-                                        if let Some(at_index) =
-                                            strings::last_index_of_char(dep_literal, b'@')
-                                        {
-                                            let mut v = Vec::new();
-                                            write!(
-                                                &mut v,
-                                                "{}@{}",
-                                                bstr::BStr::new(&dep_literal[0..at_index]),
-                                                bstr::BStr::new(&new_version)
-                                            )
-                                            .unwrap();
-                                            dep.value = Some(Expr::allocate(
-                                                arena,
-                                                E::EString::init(arena_str(arena, &v)),
-                                                bun_ast::Loc::EMPTY,
-                                            ));
-                                            break 'updated;
-                                        }
-
-                                        // fallthrough and replace entire version.
-                                    }
+                                    // `resolution.tag == Npm` checked above.
+                                    let new_version = replacement_version_literal(
+                                        resolution.npm().version.fmt(string_buf),
+                                        &entry.value.original_version_literal,
+                                        is_alias,
+                                        workspace_dep.version.literal.slice(string_buf),
+                                        options.exact_versions,
+                                    );
 
                                     dep.value = Some(Expr::allocate(
                                         arena,
@@ -1132,73 +1104,16 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
-                                let new_version: Vec<u8> = 'new_version: {
-                                    let version_fmt = resolutions[request.package_id as usize]
+                                let new_version = replacement_version_literal(
+                                    resolutions[request.package_id as usize]
                                         .npm()
                                         .version
-                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice());
-                                    if options.exact_versions {
-                                        let mut v = Vec::new();
-                                        write!(&mut v, "{}", version_fmt)
-                                            .expect("infallible: in-memory write");
-                                        break 'new_version v;
-                                    }
-
-                                    let version_literal: &[u8] = 'version_literal: {
-                                        if !entry.value.is_alias {
-                                            break 'version_literal &entry
-                                                .value
-                                                .original_version_literal;
-                                        }
-                                        if let Some(at_index) = strings::last_index_of_char(
-                                            &entry.value.original_version_literal,
-                                            b'@',
-                                        ) {
-                                            break 'version_literal &entry
-                                                .value
-                                                .original_version_literal[at_index + 1..];
-                                        }
-
-                                        &entry.value.original_version_literal
-                                    };
-
-                                    let pinned_version =
-                                        semver::Version::which_version_is_pinned(version_literal);
-                                    let mut v = Vec::new();
-                                    match pinned_version {
-                                        semver::PinnedVersion::Patch => {
-                                            write!(&mut v, "{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                        semver::PinnedVersion::Minor => {
-                                            write!(&mut v, "~{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                        semver::PinnedVersion::Major => {
-                                            write!(&mut v, "^{}", version_fmt)
-                                                .expect("infallible: in-memory write")
-                                        }
-                                    }
-                                    v
-                                };
-
-                                if entry.value.is_alias {
-                                    let dep_literal = &entry.value.original_version_literal;
-
-                                    if let Some(at_index) =
-                                        strings::last_index_of_char(dep_literal, b'@')
-                                    {
-                                        let mut v = Vec::new();
-                                        write!(
-                                            &mut v,
-                                            "{}@{}",
-                                            bstr::BStr::new(&dep_literal[0..at_index]),
-                                            bstr::BStr::new(&new_version)
-                                        )
-                                        .unwrap();
-                                        break 'npm arena_str(arena, &v);
-                                    }
-                                }
+                                        .fmt(manager.lockfile.buffers.string_bytes.as_slice()),
+                                    &entry.value.original_version_literal,
+                                    entry.value.is_alias,
+                                    &entry.value.original_version_literal,
+                                    options.exact_versions,
+                                );
 
                                 break 'npm arena_str(arena, &new_version);
                             }

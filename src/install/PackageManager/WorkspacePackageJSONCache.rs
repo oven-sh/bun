@@ -2,6 +2,7 @@
 
 use crate::Error;
 use bun_collections::StringHashMap;
+use bun_core::{Global, Output};
 // `Expr` here is the JSON parser's AST node (`bun_ast::Expr`, re-
 // exported via `crate::bun_json`). It is intentionally NOT `bun_ast::Expr`
 // — that lives in a higher-tier crate and is a distinct type. Consumers of
@@ -204,6 +205,30 @@ impl WorkspacePackageJSONCache {
         *entry.value_ptr = value;
 
         GetResult::Entry(entry.value_ptr)
+    }
+
+    /// `get_with_path`, except read/parse failures are fatal: pending log
+    /// messages and the error are printed to stderr, then the process exits.
+    pub fn get_with_path_or_exit(
+        &mut self,
+        log: &mut Log,
+        abs_package_json_path: &[u8],
+        opts: GetJSONOptions,
+    ) -> &mut MapEntry {
+        let (err, fmt) = match self.get_with_path(log, abs_package_json_path, opts) {
+            GetResult::Entry(entry) => return entry,
+            GetResult::ReadErr(err) => (err, "failed to read '{}'"),
+            GetResult::ParseErr(err) => (err, "failed to parse '{}'"),
+        };
+        if log.errors > 0 {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        }
+        Output::err(
+            err,
+            fmt,
+            format_args!("{}", bstr::BStr::new(abs_package_json_path)),
+        );
+        Global::crash();
     }
 
     /// source path is used as the key, needs to be absolute

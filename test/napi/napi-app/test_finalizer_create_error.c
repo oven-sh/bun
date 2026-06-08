@@ -132,9 +132,46 @@ static napi_value setup(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// Env cleanup hook that leaves a pending JSC VM exception behind:
+// napi_throw_error schedules an env-level exception (always allowed),
+// and napi_call_function's prologue (env->throwPendingException())
+// promotes it to a VM-level exception before validating any argument,
+// then returns napi_pending_exception with the exception still set.
+// This is the same state node-canvas reaches on Worker.terminate():
+// a finalizer/hook fails internally, the scheduled exception gets
+// promoted to the VM, and it is still pending when NapiEnv::cleanup()
+// reaches the first wrap finalizer. Without the clearing between the
+// hook phase and the finalizer phase, that first finalizer's first
+// napi call fails with napi_pending_exception and node-addon-api
+// escalates to napi_fatal_error ("Error::Error napi_create_object").
+static void leak_exception_cleanup_hook(void *arg) {
+  napi_env env = (napi_env)arg;
+  napi_throw_error(env, NULL, "leaked from cleanup hook");
+  // Promotes the scheduled exception onto the VM and leaves it there.
+  (void)napi_call_function(env, NULL, NULL, 0, NULL, NULL);
+}
+
+// setupSingle(): object
+//   Registers the exception-leaking cleanup hook and wraps ONE object
+//   whose finalizer immediately calls napi_create_string_utf8 +
+//   napi_create_error and prints the resulting status. Hooks run before
+//   wrap finalizers, so the finalizer only succeeds if cleanup clears
+//   pending exceptions before entering the finalizer phase.
+static napi_value setup_single(napi_env env, napi_callback_info info) {
+  (void)info;
+
+  napi_add_env_cleanup_hook(env, leak_exception_cleanup_hook, env);
+
+  napi_value obj;
+  napi_create_object(env, &obj);
+  napi_wrap(env, obj, NULL, finalize_create_error, NULL, NULL);
+  return obj;
+}
+
 NAPI_MODULE_INIT(/* napi_env env, napi_value exports */) {
   napi_property_descriptor props[] = {
       {"setup", NULL, setup, NULL, NULL, NULL, napi_default, NULL},
+      {"setupSingle", NULL, setup_single, NULL, NULL, NULL, napi_default, NULL},
   };
   napi_define_properties(env, exports, sizeof(props) / sizeof(props[0]), props);
   return exports;

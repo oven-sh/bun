@@ -194,6 +194,19 @@ public:
 
     void cleanup()
     {
+        // The VM can already have a pending exception when cleanup starts:
+        // a Worker torn down via terminate() has JSC's TerminationException
+        // set (termination is trap-based, so clearing the exception object
+        // does not cancel the termination request -- re-entering JS
+        // re-throws it). Cleanup hooks and finalizers are native callbacks
+        // with no JS frame above them to catch anything, so, matching
+        // Node.js, each starts from a clean exception state. Without this,
+        // the first napi call in the first callback that checks the VM
+        // (e.g. napi_create_string_utf8 in a node-addon-api ObjectWrap
+        // finalizer) fails with napi_pending_exception and the addon's
+        // error path escalates to napi_fatal_error. See #30286.
+        clearExceptionsBetweenFinalizers();
+
         while (!m_cleanupHooks.empty()) {
             drain();
         }
@@ -203,6 +216,9 @@ public:
         JSC::DeferGCForAWhile deferGC(m_vm);
 
         m_isFinishingFinalizers = true;
+        // A cleanup hook may itself have leaked an exception; the first
+        // finalizer starts clean too.
+        clearExceptionsBetweenFinalizers();
         // Reverse insertion order so children are torn down before parents (Node.js LIFO).
         // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
         // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.

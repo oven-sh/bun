@@ -763,10 +763,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         match Terminal::create_from_spawn(global_this, &mut term_options) {
                             Ok(created) => {
                                 **terminal_info = Some(TerminalCreateResult {
-                                    // Transfer the +1 ref to `Subprocess.terminal` (released
-                                    // in `Subprocess::finalize`); the scopeguard's
-                                    // `abandon_from_spawn` path covers the error case.
-                                    // `IntrusiveRc::into_raw` is never null (NonNull-backed).
+                                    // `into_raw` leaks the IntrusiveRc's ref, which aliases
+                                    // the JS wrapper's +1 (adopted from `RefCount::init()` in
+                                    // `init_terminal`) — `Subprocess.terminal` is a borrow
+                                    // kept live by the cached `terminal` slot on the
+                                    // Subprocess wrapper, not an independent ref. The
+                                    // scopeguard's `abandon_from_spawn` path covers the
+                                    // error case. `IntrusiveRc::into_raw` is never null
+                                    // (NonNull-backed).
                                     terminal: bun_ptr::BackRef::from(
                                         core::ptr::NonNull::new(created.terminal.into_raw())
                                             .expect("IntrusiveRc non-null"),

@@ -608,12 +608,13 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal.get() {
-            // SAFETY: `terminal` is the live allocation this subprocess holds
-            // a +1 ref on (released in `Subprocess::finalize`). The getter is
-            // `cache: true` and the spawn path pre-fills the cached slot with
-            // the wrapper created by `init_terminal`, so at most one wrapper
-            // adopts the terminal's JS-side ref (released via its finalize →
-            // `deref_`).
+            // SAFETY: `terminal` is kept live by this Subprocess wrapper's
+            // cached `terminal` slot: the getter is `cache: true` and the
+            // spawn path pre-fills that slot (`terminal_set_cached`) with the
+            // Terminal JS wrapper, which owns the native +1 (released via its
+            // finalize → `deref_`). So at most one wrapper ever adopts the
+            // terminal's JS-side ref, and this fallback only runs while that
+            // wrapper is reachable.
             return unsafe { crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this) };
         }
         JSValue::UNDEFINED

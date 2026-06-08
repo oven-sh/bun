@@ -8,16 +8,12 @@ use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::package_manager::{
-    self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
-};
+use bun_install::package_manager::{self, ManifestLoad, Subcommand, populate_manifest_cache};
 use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_wyhash::hash;
 
 use crate::Command;
+use crate::cli::workspace_helpers;
 
 pub(crate) struct OutdatedCommand;
 
@@ -89,68 +85,7 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // Reshaped for borrowck — `load_from_cwd` would otherwise alias
-        // `PackageManager` with its `lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
-        let pm_ptr: *mut PackageManager = manager;
-        let not_silent = manager.options.log_level != LogLevel::Silent;
-        let log_ptr: *mut bun_ast::Log = manager.log;
-
-        // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
-        // no other live `&mut Lockfile` exists at this point.
-        let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-        // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
-        let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
-            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-            // fields disjoint from `lockfile`.
-            Some(unsafe { &mut *pm_ptr }),
-            log,
-        ) {
-            LoadResult::NotFound => {
-                if not_silent {
-                    Output::err_generic("missing lockfile, nothing outdated", ());
-                }
-                Global::crash();
-            }
-            LoadResult::Err(cause) => {
-                if not_silent {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
-                    if ctx.log_ref().has_errors() {
-                        // SAFETY: `log_ptr` aliases `manager.log` which is the
-                        // `*logger.Log` borrowed from `Command::Context`; no
-                        // other `&mut Log` is live here.
-                        let _ =
-                            unsafe { (*log_ptr).print(std::ptr::from_mut(Output::error_writer())) };
-                    }
-                }
-                Global::crash();
-            }
-            LoadResult::Ok(_) => {
-                // `load_from_cwd(&mut self, ..)` populates the
-                // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
-                // is the same storage and no reassignment is needed.
-            }
-        }
+        workspace_helpers::load_lockfile_or_crash(ctx, manager);
 
         if Output::enable_ansi_colors_stdout() {
             Self::outdated_dispatch::<true>(original_cwd, manager)
@@ -165,14 +100,15 @@ impl OutdatedCommand {
     ) -> Result<(), bun_core::Error> {
         if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;
-            let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
+            let workspace_pkg_ids =
+                workspace_helpers::find_matching_workspaces(original_cwd, manager, filters);
             populate_manifest_cache::populate_manifest_cache(
                 manager,
                 populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
             )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &workspace_pkg_ids, true)
         } else if manager.options.do_.recursive() {
-            let all_workspaces = Self::get_all_workspaces(manager);
+            let all_workspaces = workspace_helpers::get_all_workspaces(manager);
             populate_manifest_cache::populate_manifest_cache(
                 manager,
                 populate_manifest_cache::Packages::Ids(&all_workspaces),
@@ -192,118 +128,6 @@ impl OutdatedCommand {
             )?;
             Self::print_outdated_info_table::<ENABLE_ANSI_COLORS>(manager, &ids, false)
         }
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                bun_core::handle_oom(WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0))
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` runs during `PackageManager::init` so the
-        // process-singleton is populated.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => {
-                                    // Borrow the field in-place so the returned slice (which may
-                                    // point into the inline small-string storage) stays valid.
-                                    res.workspace().slice(string_buf)
-                                }
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids
     }
 
     fn group_catalog_dependencies(

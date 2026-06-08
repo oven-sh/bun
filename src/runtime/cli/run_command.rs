@@ -90,6 +90,36 @@ impl Default for ExecCfg {
     }
 }
 
+/// Shared ctx→install/global-cache/offline-mode option projection for the
+/// transpiler and its resolver, used by the run, repl, and bake-production
+/// boot paths.
+pub(crate) fn wire_install_options(b: &mut Transpiler<'_>, ctx: &ContextData) {
+    use bun_options_types::offline_mode::OfflineMode;
+
+    // `BundleOptions::install` is a raw `NonNull` backref into
+    // the CLI's `Box<BunInstall>` (process-lifetime).
+    // `as_deref` yields `&BunInstall`, which
+    // `NonNull::from` converts without the lifetime tie.
+    let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
+    b.options.install = install_ptr;
+    b.resolver.opts.install = install_ptr;
+    b.resolver.opts.global_cache = ctx.debug.global_cache;
+    let offline = ctx
+        .debug
+        .offline_mode_setting
+        .unwrap_or(OfflineMode::Online);
+    b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
+    // resolver's forward-decl `BundleOptions` lacks
+    // `prefer_latest_install`; only the bundler-side mirror carries it.
+    b.options.global_cache = ctx.debug.global_cache;
+    b.options.prefer_offline_install = offline == OfflineMode::Offline;
+    b.options.prefer_latest_install = offline == OfflineMode::Latest;
+    // Stored as `NonNull` (not `&Loader`): `configure_defines()` later
+    // reborrows the same allocation as `&mut Loader`, which would alias a
+    // live `&Loader`. The Loader outlives the resolver.
+    b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+}
+
 pub struct RunCommand;
 
 impl RunCommand {
@@ -781,27 +811,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
         use bun_options_types::context::MacroOptions;
-        use bun_options_types::offline_mode::OfflineMode;
 
-        // `BundleOptions::install` is a raw `NonNull` backref into
-        // the CLI's `Box<BunInstall>` (process-lifetime).
-        // `as_deref` yields `&BunInstall`, which
-        // `NonNull::from` converts without the lifetime tie.
-        let install_ptr = ctx.install.as_deref().map(::core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        let offline = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // resolver's forward-decl `BundleOptions` lacks
-        // `prefer_latest_install`; only the bundler-side mirror carries it.
-        b.options.global_cache = ctx.debug.global_cache;
-        b.options.prefer_offline_install = offline == OfflineMode::Offline;
-        b.options.prefer_latest_install = offline == OfflineMode::Latest;
-        b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+        wire_install_options(b, ctx);
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;

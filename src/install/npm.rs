@@ -643,6 +643,39 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
     Ok(this.combine())
 }
 
+/// Resets and refills `bundled_deps_set` / `bundle_all_deps` from a version's
+/// `bundleDependencies` (or legacy `bundledDependencies`) field.
+fn extract_bundled_deps(
+    version: &JSON::Expr,
+    bump: &bun_alloc::Arena,
+    bundled_deps_set: &mut StringSet,
+    bundle_all_deps: &mut bool,
+) -> Result<(), AllocError> {
+    bundled_deps_set.map.clear_retaining_capacity();
+    *bundle_all_deps = false;
+    let Some(bundled_deps_expr) = version
+        .get(b"bundleDependencies")
+        .or_else(|| version.get(b"bundledDependencies"))
+    else {
+        return Ok(());
+    };
+    match &bundled_deps_expr.data {
+        JSON::ExprData::EBoolean(boolean) => {
+            *bundle_all_deps = boolean.value;
+        }
+        JSON::ExprData::EArray(arr) => {
+            for bundled_dep in arr.slice() {
+                let Some(s) = bundled_dep.as_string(bump) else {
+                    continue;
+                };
+                bundled_deps_set.insert(s)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -1996,7 +2029,7 @@ impl PackageManifest {
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps: bool;
+        let mut bundle_all_deps = false;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2165,35 +2198,12 @@ impl PackageManifest {
                     }
                 }
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
-                {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
-                        }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                extract_bundled_deps(
+                    prop.value.as_ref().expect("infallible: prop has value"),
+                    &bump,
+                    &mut bundled_deps_set,
+                    &mut bundle_all_deps,
+                )?;
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(versioned_deps) = prop
@@ -2432,35 +2442,12 @@ impl PackageManifest {
                     continue;
                 }
 
-                bundled_deps_set.map.clear_retaining_capacity();
-                bundle_all_deps = false;
-                if let Some(bundled_deps_expr) = prop
-                    .value
-                    .as_ref()
-                    .unwrap()
-                    .get(b"bundleDependencies")
-                    .or_else(|| {
-                        prop.value
-                            .as_ref()
-                            .expect("infallible: prop has value")
-                            .get(b"bundledDependencies")
-                    })
-                {
-                    match &bundled_deps_expr.data {
-                        JSON::ExprData::EBoolean(boolean) => {
-                            bundle_all_deps = boolean.value;
-                        }
-                        JSON::ExprData::EArray(arr) => {
-                            for bundled_dep in arr.slice() {
-                                let Some(s) = bundled_dep.as_string(&bump) else {
-                                    continue;
-                                };
-                                bundled_deps_set.insert(s)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                extract_bundled_deps(
+                    prop.value.as_ref().expect("infallible: prop has value"),
+                    &bump,
+                    &mut bundled_deps_set,
+                    &mut bundle_all_deps,
+                )?;
 
                 let mut package_version: PackageVersion = empty_version;
 

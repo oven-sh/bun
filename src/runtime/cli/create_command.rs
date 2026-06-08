@@ -1687,61 +1687,37 @@ impl CreateCommand {
             }
 
             if !bun_paths::is_absolute(positional) {
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
-                        let parts = [home_dir, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
+                // Returns the path length if `parts` joins to an existing template directory.
+                let probe_template_dir = |buf: &mut PathBuffer, parts: &[&[u8]]| -> Option<usize> {
+                    let len = filesystem.abs_buf(parts, buf).len();
+                    buf[len] = 0;
+                    // SAFETY: buf[len] == 0 written above
+                    let outdir_path = bun_core::ZStr::from_buf(&buf[..], len);
+                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path.as_bytes()) {
+                        return None;
                     }
-                }
-
-                'outer: {
-                    let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
-                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                    let len = outdir_path.len();
-                    home_dir_buf[len] = 0;
-                    // SAFETY: home_dir_buf[len] == 0 written above
-                    let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                        break 'outer;
-                    }
-                    if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
+                    bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path)
                         .unwrap_or(false)
-                    {
+                        .then_some(len)
+                };
+
+                // Empty parts are skipped by the path join, so the two-part
+                // BUN_CREATE_DIR candidate pads with `b""`.
+                let candidates: [Option<[&[u8]; 3]>; 3] = [
+                    env_loader
+                        .map
+                        .get(b"BUN_CREATE_DIR")
+                        .map(|home_dir| [home_dir, positional, b"".as_slice()]),
+                    Some([filesystem.top_level_dir, BUN_CREATE_DIR, positional]),
+                    env_loader
+                        .map
+                        .get(b"HOME")
+                        .map(|home_dir| [home_dir, BUN_CREATE_DIR, positional]),
+                ];
+                for parts in candidates.into_iter().flatten() {
+                    if let Some(len) = probe_template_dir(&mut *home_dir_buf, &parts) {
                         example_tag = ExampleTag::LocalFolder;
                         break 'brk &home_dir_buf[..len];
-                    }
-                }
-
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"HOME") {
-                        let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
                     }
                 }
 

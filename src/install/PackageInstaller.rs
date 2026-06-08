@@ -367,6 +367,16 @@ fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
+/// Where to record a newly trusted dependency once its lifecycle scripts are
+/// enqueued.
+#[derive(Clone, Copy)]
+struct TrustedDepRecord {
+    /// Add the alias to `trusted_deps_to_add_to_package_json`.
+    package_json: bool,
+    /// Add the alias to the lockfile's `trusted_dependencies`.
+    lockfile: bool,
+}
+
 impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // BACKREF accessors
@@ -1818,74 +1828,20 @@ impl<'a> PackageInstaller<'a> {
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
                     {
-                        let mut folder_path =
-                            AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                        // `defer folder_path.deinit()` — AbsPath impls Drop.
-                        folder_path
-                            .append(alias.slice(string_buf!()))
-                            .unwrap_or_oom();
-
-                        'enqueue_lifecycle_scripts: {
-                            if self
-                                .manager()
-                                .postinstall_optimizer
-                                .should_ignore_lifecycle_scripts(
-                                    &postinstall_optimizer::PkgInfo {
-                                        name_hash: pkg_name_hash,
-                                        version: if resolution.tag == resolution::Tag::Npm {
-                                            Some(resolution.npm().version)
-                                        } else {
-                                            None
-                                        },
-                                        version_buf: string_buf!(),
-                                    },
-                                    self.lockfile().packages.items_resolutions()
-                                        [package_id as usize]
-                                        .get(self.lockfile().buffers.resolutions.as_slice()),
-                                    self.lockfile().packages.items_meta(),
-                                    self.manager().options.cpu,
-                                    self.manager().options.os,
-                                    Some(self.current_tree_id),
-                                )
-                            {
-                                if PackageManager::verbose_install() {
-                                    bun_core::pretty_errorln!(
-                                        "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                                        bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                    );
-                                }
-                                break 'enqueue_lifecycle_scripts;
-                            }
-
-                            if self.enqueue_lifecycle_scripts(
-                                alias.slice(string_buf!()),
-                                log_level,
-                                &mut folder_path,
-                                package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
-                                resolution,
-                            ) {
-                                if is_trusted_through_update_request {
-                                    self.manager_mut()
-                                        .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(alias.slice(string_buf!())));
-
-                                    if self.lockfile().trusted_dependencies.is_none() {
-                                        self.lockfile_mut().trusted_dependencies =
-                                            Some(Default::default());
-                                    }
-                                    self.lockfile_mut()
-                                        .trusted_dependencies
-                                        .as_mut()
-                                        .unwrap()
-                                        .put(
-                                            truncated_dep_name_hash,
-                                            Box::<[u8]>::from(alias.slice(string_buf!())),
-                                        )
-                                        .unwrap_or_oom();
-                                }
-                            }
-                        }
+                        self.enqueue_lifecycle_scripts_for_trusted(
+                            log_level,
+                            package_id,
+                            pkg_name,
+                            pkg_name_hash,
+                            alias,
+                            truncated_dep_name_hash,
+                            dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                            resolution,
+                            TrustedDepRecord {
+                                package_json: is_trusted_through_update_request,
+                                lockfile: is_trusted_through_update_request,
+                            },
+                        );
                     }
 
                     match resolution.tag {
@@ -2129,73 +2085,20 @@ impl<'a> PackageInstaller<'a> {
             };
 
             if resolution.tag != resolution::Tag::Root && is_trusted {
-                let mut folder_path =
-                    AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                folder_path
-                    .append(alias.slice(string_buf!()))
-                    .unwrap_or_oom();
-
-                'enqueue_lifecycle_scripts: {
-                    if self
-                        .manager()
-                        .postinstall_optimizer
-                        .should_ignore_lifecycle_scripts(
-                            &postinstall_optimizer::PkgInfo {
-                                name_hash: pkg_name_hash,
-                                version: if resolution.tag == resolution::Tag::Npm {
-                                    Some(resolution.npm().version)
-                                } else {
-                                    None
-                                },
-                                version_buf: string_buf!(),
-                            },
-                            self.lockfile().packages.items_resolutions()[package_id as usize]
-                                .get(self.lockfile().buffers.resolutions.as_slice()),
-                            self.lockfile().packages.items_meta(),
-                            self.manager().options.cpu,
-                            self.manager().options.os,
-                            Some(self.current_tree_id),
-                        )
-                    {
-                        if PackageManager::verbose_install() {
-                            bun_core::pretty_errorln!(
-                                "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                                bstr::BStr::new(pkg_name.slice(string_buf!())),
-                            );
-                        }
-                        break 'enqueue_lifecycle_scripts;
-                    }
-
-                    if self.enqueue_lifecycle_scripts(
-                        alias.slice(string_buf!()),
-                        log_level,
-                        &mut folder_path,
-                        package_id,
-                        dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
-                        resolution,
-                    ) {
-                        if is_trusted_through_update_request {
-                            self.manager_mut()
-                                .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(alias.slice(string_buf!())));
-                        }
-
-                        if add_to_lockfile {
-                            if self.lockfile().trusted_dependencies.is_none() {
-                                self.lockfile_mut().trusted_dependencies = Some(Default::default());
-                            }
-                            self.lockfile_mut()
-                                .trusted_dependencies
-                                .as_mut()
-                                .unwrap()
-                                .put(
-                                    truncated_dep_name_hash,
-                                    Box::<[u8]>::from(alias.slice(string_buf!())),
-                                )
-                                .unwrap_or_oom();
-                        }
-                    }
-                }
+                self.enqueue_lifecycle_scripts_for_trusted(
+                    log_level,
+                    package_id,
+                    pkg_name,
+                    pkg_name_hash,
+                    alias,
+                    truncated_dep_name_hash,
+                    dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                    resolution,
+                    TrustedDepRecord {
+                        package_json: is_trusted_through_update_request,
+                        lockfile: add_to_lockfile,
+                    },
+                );
             }
 
             // `destination_dir` is `LazyPackageDestinationDir::NodeModulesPath`
@@ -2223,6 +2126,98 @@ impl<'a> PackageInstaller<'a> {
             self.current_tree_id,
             log_level,
         );
+    }
+
+    /// Enqueue lifecycle scripts for a trusted (or workspace) dependency, then
+    /// record it in `trusted_deps_to_add_to_package_json` and/or the lockfile's
+    /// `trusted_dependencies` as requested.
+    fn enqueue_lifecycle_scripts_for_trusted(
+        &mut self,
+        log_level: Options::LogLevel,
+        package_id: PackageID,
+        pkg_name: String,
+        pkg_name_hash: PackageNameHash,
+        alias: String,
+        truncated_dep_name_hash: TruncatedPackageNameHash,
+        optional: bool,
+        resolution: &Resolution,
+        record: TrustedDepRecord,
+    ) {
+        // SAFETY: `buffers.string_bytes` is append-only and never freed
+        // for the lifetime of this `PackageInstaller`.
+        let string_buf_ptr =
+            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        macro_rules! string_buf {
+            () => {
+                string_buf_ptr.slice()
+            };
+        }
+
+        let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        // `defer folder_path.deinit()` — AbsPath impls Drop.
+        folder_path
+            .append(alias.slice(string_buf!()))
+            .unwrap_or_oom();
+
+        if self
+            .manager()
+            .postinstall_optimizer
+            .should_ignore_lifecycle_scripts(
+                &postinstall_optimizer::PkgInfo {
+                    name_hash: pkg_name_hash,
+                    version: if resolution.tag == resolution::Tag::Npm {
+                        Some(resolution.npm().version)
+                    } else {
+                        None
+                    },
+                    version_buf: string_buf!(),
+                },
+                self.lockfile().packages.items_resolutions()[package_id as usize]
+                    .get(self.lockfile().buffers.resolutions.as_slice()),
+                self.lockfile().packages.items_meta(),
+                self.manager().options.cpu,
+                self.manager().options.os,
+                Some(self.current_tree_id),
+            )
+        {
+            if PackageManager::verbose_install() {
+                bun_core::pretty_errorln!(
+                    "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                    bstr::BStr::new(pkg_name.slice(string_buf!())),
+                );
+            }
+            return;
+        }
+
+        if self.enqueue_lifecycle_scripts(
+            alias.slice(string_buf!()),
+            log_level,
+            &mut folder_path,
+            package_id,
+            optional,
+            resolution,
+        ) {
+            if record.package_json {
+                self.manager_mut()
+                    .trusted_deps_to_add_to_package_json
+                    .push(Box::<[u8]>::from(alias.slice(string_buf!())));
+            }
+
+            if record.lockfile {
+                if self.lockfile().trusted_dependencies.is_none() {
+                    self.lockfile_mut().trusted_dependencies = Some(Default::default());
+                }
+                self.lockfile_mut()
+                    .trusted_dependencies
+                    .as_mut()
+                    .unwrap()
+                    .put(
+                        truncated_dep_name_hash,
+                        Box::<[u8]>::from(alias.slice(string_buf!())),
+                    )
+                    .unwrap_or_oom();
+            }
+        }
     }
 
     /// returns true if scripts are enqueued

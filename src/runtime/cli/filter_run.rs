@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 #[cfg(unix)]
@@ -9,6 +9,9 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::RunCommand;
+use crate::cli::run_processes_shared::{
+    AbortHandler, SHOULD_ABORT, aggregate_exit_code, buffered_stdio, watch_or_reap,
+};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -182,16 +185,7 @@ impl<'a> ProcessHandle<'a> {
             )
         });
 
-        match process.watch_or_reap() {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
-                }
-            }
-        }
+        watch_or_reap(process);
         Ok(())
     }
 
@@ -591,87 +585,11 @@ impl<'a> State<'a> {
         if self.aborted {
             let _ = self.redraw(true);
         }
-        for handle in self.handles.iter() {
-            if let Some(proc) = &handle.process {
-                match &proc.status {
-                    Status::Exited(exited) => {
-                        if exited.code != 0 {
-                            return exited.code;
-                        }
-                    }
-                    Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
-                    }
-                    _ => return 1,
-                }
-            }
-        }
-        0
-    }
-}
-
-struct AbortHandler;
-
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-// Atomic because it is set from a signal handler.
-
-impl AbortHandler {
-    #[cfg(unix)]
-    extern "C" fn posix_signal_handler(
-        sig: i32,
-        info: *const bun_sys::posix::siginfo_t,
-        _: *const c_void,
-    ) {
-        let _ = sig;
-        let _ = info;
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
-    }
-
-    #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(
-        dw_ctrl_type: bun_sys::windows::DWORD,
-    ) -> bun_sys::windows::BOOL {
-        if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
-            SHOULD_ABORT.store(true, Ordering::SeqCst);
-            return bun_sys::windows::TRUE;
-        }
-        bun_sys::windows::FALSE
-    }
-
-    pub(crate) fn install() {
-        #[cfg(unix)]
-        {
-            // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
-            let mut act: libc::sigaction = bun_core::ffi::zeroed();
-            act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
-            // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
-            unsafe {
-                libc::sigemptyset(&raw mut act.sa_mask);
-                libc::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let res = bun_sys::c::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::TRUE,
-            );
-            if res == 0 {
-                if bun_core::env::IS_DEBUG {
-                    bun_core::warn!("Failed to set abort handler\n");
-                }
-            }
-        }
-    }
-
-    pub(crate) fn uninstall() {
-        // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
-        #[cfg(windows)]
-        {
-            // restores default Ctrl+C behavior
-            let _ = bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
-        }
+        aggregate_exit_code(
+            self.handles
+                .iter()
+                .map(|h| h.process.as_ref().map(|p| &p.status)),
+        )
     }
 }
 
@@ -947,18 +865,8 @@ pub(crate) fn run_scripts_with_filter(
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
-                stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
-                stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
+                stdout: buffered_stdio(),
+                stderr: buffered_stdio(),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &script.package_json_path,
                 )

@@ -1380,8 +1380,10 @@ async function getPipelineOptions() {
     dryRun: parseOption(/\[(dry run)\]/i),
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
     imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
-    buildPlatforms: Array.from(buildPlatformsMap.values()),
-    testPlatforms: Array.from(testPlatformsMap.values()),
+    // DEBUG BRANCH ONLY: darwin-aarch64 pipeline running a single test file.
+    buildPlatforms: Array.from(buildPlatformsMap.values()).filter(p => p.os === "darwin" && p.arch === "aarch64"),
+    testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "darwin" && p.arch === "aarch64"),
+    testFiles: ["test/js/node/test/parallel/test-http2-debug-pipe.js"],
   };
 }
 

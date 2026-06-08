@@ -325,7 +325,7 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{BasicParseErrorKind, Parser, ParserOptions, ParserState, Result};
 
     impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
@@ -357,35 +357,6 @@ const _: () = {
     impl AtRuleParser for KeyframesListParser {
         type Prelude = ();
         type AtRule = Keyframe;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for KeyframesListParser {

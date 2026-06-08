@@ -6,7 +6,7 @@
 // `EnvironmentVariableName::{parse, to_css}`, `Function::to_css`,
 // `CustomProperty::parse`, `UnparsedProperty::parse` are now real.
 //
-// A few leaf calls (Url::parse/to_css, CustomIdent::to_css) are still
+// A few leaf calls (Url::parse, CustomIdent::to_css) are still
 // ``-gated in *other* files; those bodies are inlined verbatim
 // under `mod ext` below so the hub compiles without touching
 // `values/{url,ident}.rs`. `DashedIdentReference::{parse_with_options,to_css}`
@@ -45,7 +45,7 @@ use crate::generics::{CssEql, CssHash, DeepClone};
 use bun_alloc::Arena;
 
 // ─── External-gate shims ───────────────────────────────────────────────────
-// `TokenList::{parse,to_css}` bottom out on a handful of leaf fns that still
+// `TokenList::parse` bottoms out on a handful of leaf fns that still
 // carry `` in *other* files (`values/{url,ident}.rs`,
 // `css_modules.rs`). Those gates are stale — every dependency they cite now
 // exists — but this round's edit scope is `custom.rs` + `css_parser.rs` only.
@@ -71,76 +71,6 @@ mod ext {
             import_record_idx,
             loc: dependencies::Location::from_source_location(loc),
         })
-    }
-
-    /// Inline of `Url::to_css` (gated in `values/url.rs` on `WriteAll for
-    /// Vec<u8>`, which this round adds in css_parser.rs).
-    pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
-        let import_record = dest.import_record(this.import_record_idx)?;
-        let is_internal = import_record.tag.is_internal();
-        // `get_import_record_url` reborrows &mut *dest, so capture
-        // `is_internal` first.
-        let url: &'static [u8] = {
-            let u = dest.get_import_record_url(this.import_record_idx)?;
-            // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
-            unsafe { &*std::ptr::from_ref::<[u8]>(u) }
-        };
-
-        if dest.minify && !is_internal {
-            let mut buf: Vec<u8> = Vec::new();
-            // PERF(alloc) we could use stack fallback here?
-            let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
-
-            // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
-            // then serialize as a string and choose the shorter version.
-            if buf.len() > url.len() + 7 {
-                let mut buf2: Vec<u8> = Vec::new();
-                // PERF(alloc) we could use stack fallback here?
-                let _ = css_parser::serializer::serialize_string(url, &mut buf2);
-                if buf2.len() + 5 < buf.len() {
-                    dest.write_str("url(")?;
-                    dest.write_str(&buf2)?;
-                    return dest.write_char(b')');
-                }
-            }
-
-            dest.write_str(&buf)?;
-        } else {
-            dest.write_str("url(")?;
-            dest.serialize_string(url)?;
-            dest.write_char(b')')?;
-        }
-        Ok(())
     }
 
     /// Forwarder to `DashedIdentReference::parse_with_options` (now un-gated
@@ -348,7 +278,7 @@ impl TokenList {
                             Some(url.loc),
                         );
                     }
-                    ext::url_to_css(url, dest)?;
+                    url.to_css(dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Var(var) => {

@@ -247,7 +247,9 @@ impl WindowsNamedPipeContext {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
                 // `&mut named_pipe` and the borrow ends before `handle_error` runs JS.
                 let js_err = err.to_js(unsafe { &(*this).global_this });
-                s.handle_error(js_err);
+                // SAFETY: `s` is the context's stored construct-path socket
+                // allocation (set when the pipe was created/connected).
+                unsafe { s.handle_error(js_err) };
             });
         } else {
             match_socket!(socket, |s: NewSocket<SSL>| _ =

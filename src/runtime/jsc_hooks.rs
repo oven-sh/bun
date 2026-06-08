@@ -1476,6 +1476,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     terminate_all_workers_and_wait,
     retroactively_report_discovered_tests,
     cancel_all_timers,
+    release_runtime_state_js_handles,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1606,6 +1607,34 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
         crate::timer::All::cancel_all_timeout_objects(ptr::addr_of_mut!((*state).timer), vm);
+    }
+}
+
+/// `RuntimeHooks::release_runtime_state_js_handles` — release the JSC GC
+/// handles owned by [`RuntimeState`] while the JSC VM is still alive: the SQL
+/// contexts' `Strong` callbacks, and the per-VM DNS data (dropping it runs
+/// `ares_destroy`, which fires pending-query callbacks that reject JS
+/// promises and drop `JSPromiseStrong` handles). [`RuntimeState`] itself
+/// drops in [`deinit_runtime_state`], which runs after `~VM` — a `Strong`
+/// dropped there unlinks a `HandleNode` from the already-freed `HandleSet`.
+///
+/// # Safety
+/// Must run on the JS thread with `runtime_state` still installed, after the
+/// last JS that can repopulate these handles (socket-group close callbacks)
+/// and before JSC teardown (`WebWorker__teardownJSCVM` /
+/// `Zig__GlobalObject__destructOnExit`).
+unsafe fn release_runtime_state_js_handles(_vm: *mut VirtualMachine) {
+    let state = runtime_state();
+    if state.is_null() {
+        return;
+    }
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; each
+    // `&mut` field borrow ends before the next statement. The c-ares
+    // destruction callbacks fired by the `GlobalData` drop enqueue event-loop
+    // tasks and deref the resolver, but never re-enter `runtime_state()`.
+    unsafe {
+        (*state).sql_rare.deinit_js_handles();
+        drop((*state).global_dns_data.take());
     }
 }
 

@@ -82,6 +82,102 @@ test(
   timeout,
 );
 
+// Regression: worker shutdown tore down the JSC VM (freeing its HandleSet)
+// before dropping bun_runtime's RuntimeState, so the SQL contexts' Strong
+// handles — populated at module load by internal/sql/{postgres,mysql}'s
+// top-level init — were released against freed memory (segfault in
+// Bun__StrongRef__delete → JSC::HandleSet::deallocate →
+// WTF::SentinelLinkedList::remove during WebWorker::shutdown).
+//
+// Malloc=1 makes WebKit's fastMalloc use the system allocator (bmalloc
+// DebugHeap) so ASAN builds poison the freed HandleSet/HandleBlock memory
+// and report the use-after-free deterministically; with libpas the freed
+// pages stay mapped and the bug only crashes when the pool reuses them.
+test("worker that loaded Bun.SQL exits without touching freed JSC handles", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Touching Bun.SQL requires the bun:sql internal module, whose
+        // top-level init() stores Strong refs in the worker's per-VM SQL
+        // contexts. The worker then drains and exits naturally, running the
+        // full shutdown sequence.
+        const w = new Worker("data:text/javascript," + encodeURIComponent("Bun.SQL; postMessage('loaded');"));
+        const loaded = new Promise((resolve, reject) => {
+          w.onmessage = resolve;
+          w.onerror = reject;
+        });
+        const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
+        await loaded;
+        await closed;
+        console.log("worker closed");
+      `,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("worker closed\n");
+  expect(exitCode).toBe(0);
+});
+
+// Terminating a worker with an in-flight dns.resolve* query tears down the
+// per-VM c-ares channel during shutdown: the EDESTRUCTION callbacks must drop
+// their promise Strongs against a live JSC heap, and the resolver's timeout
+// timer must be unlinked from the per-thread timer heap before its memory
+// frees (WTFTimer::update still walks that heap during teardown).
+test("worker terminated with an in-flight DNS query shuts down cleanly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const code = \`
+          const dns = require("node:dns");
+          dns.setServers(["192.0.2.1"]); // TEST-NET blackhole: the query stays in flight
+          dns.promises.resolve4("inflight.example").catch(() => {});
+          postMessage("inflight");
+          setInterval(() => {}, 1000); // keep the worker alive until terminate()
+        \`;
+        const w = new Worker("data:text/javascript," + encodeURIComponent(code));
+        await new Promise((res, rej) => { w.onmessage = res; w.onerror = rej; });
+        await w.terminate();
+        console.log("terminated ok");
+      `,
+    ],
+    env: { ...bunEnv, Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("terminated ok\n");
+  expect(exitCode).toBe(0);
+});
+
+// Main-thread variant of the same teardown ordering: with
+// BUN_DESTRUCT_VM_ON_EXIT=1 (set by ASAN CI lanes), global_exit derefs the
+// JSC VM in Zig__GlobalObject__destructOnExit before destroy() drops
+// RuntimeState, hitting the identical freed-HandleSet release.
+test("main thread that loaded Bun.SQL destructs on exit without touching freed JSC handles", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `Bun.SQL; console.log("loaded");`],
+    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", Malloc: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("loaded\n");
+  expect(exitCode).toBe(0);
+});
+
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and
 // EventListenerMap::releaseAssertOrSetThreadUID tripped because the listener

@@ -1250,6 +1250,17 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Release RuntimeState's JSC GC handles (SQL context Strongs,
+            // per-VM DNS data) while the HandleSet is still alive —
+            // `destroy()` in step 5 drops RuntimeState after teardownJSCVM
+            // freed it, and a `Strong` dropped then would unlink a HandleNode
+            // from freed memory. Runs after `close_all_socket_groups` so SQL
+            // on_close callbacks can still dispatch through the contexts.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `vm_ptr` unpublished above (sole owner);
+                // `runtime_state` still installed; JSC teardown is step 3.
+                unsafe { (hooks.release_runtime_state_js_handles)(vm_ptr) };
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

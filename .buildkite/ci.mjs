@@ -1381,7 +1381,16 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
     imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
     // DEBUG BRANCH ONLY: darwin-aarch64 pipeline running a single test file.
-    buildPlatforms: Array.from(buildPlatformsMap.values()).filter(p => p.os === "darwin" && p.arch === "aarch64"),
+    // The two linux-aarch64 entries are kept because the darwin cross-build
+    // runs on their host images (amazonlinux-with-docker for cpp/link,
+    // alpine-musl for rust), and image steps are only generated from
+    // non-crossCompile linux platforms.
+    buildPlatforms: Array.from(buildPlatformsMap.values()).filter(
+      p =>
+        p.arch === "aarch64" &&
+        p.abi !== "android" &&
+        (p.os === "darwin" || (p.os === "linux" && (p.distro === "amazonlinux" || p.abi === "musl"))),
+    ),
     testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "darwin" && p.arch === "aarch64"),
     testFiles: ["test/js/node/test/parallel/test-http2-debug-pipe.js"],
   };

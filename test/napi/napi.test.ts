@@ -1,11 +1,24 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isCI,
+  isMacOS,
+  isMusl,
+  isWindows,
+  nodeExeMatchingAbi,
+  tempDirWithFiles,
+} from "harness";
 import { join } from "path";
 
-describe.concurrent("napi", () => {
-  beforeAll(() => {
+describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
+  beforeAll(async () => {
+    // Resolve (and possibly download) the ABI-matching node here, under the
+    // generous hook timeout, instead of inside the first test that needs it.
+    await nodeExeMatchingAbi();
     // build gyp
     console.time("Building node-gyp");
     const install = spawnSync({
@@ -53,7 +66,7 @@ describe.concurrent("napi", () => {
         });
         expect(build.success).toBeTrue();
 
-        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
             cmd: [exec, join(dir, "main.js"), "self"],
             env: bunEnv,
@@ -134,7 +147,7 @@ describe.concurrent("napi", () => {
 
         expect(build.logs).toBeEmpty();
 
-        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), "node"]) {
+        for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
             cmd: [exec, join(dir, "main.js"), "self"],
             env: bunEnv,
@@ -779,6 +792,9 @@ async function checkSameOutput(test: string, args: any[] | string, envArgs: Reco
 
 async function runOn(executable: string, test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
   const env = { ...bunEnv, ...envArgs };
+  // "node" means a Node whose addon ABI matches the headers the fixture was
+  // compiled against (the system node may lag the version Bun reports).
+  if (executable === "node") executable = await nodeExeMatchingAbi();
   const exec = spawn({
     cmd: [
       executable,
@@ -808,6 +824,7 @@ async function runOn(executable: string, test: string, args: any[] | string, env
 async function checkBothFail(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
   const [node, bun] = await Promise.all(
     ["node", bunExe()].map(async executable => {
+      if (executable === "node") executable = await nodeExeMatchingAbi();
       const { BUN_INSPECT_CONNECT_TO: _, ...rest } = bunEnv;
       const env = { ...rest, BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1", ...envArgs };
       const exec = spawn({
@@ -832,7 +849,7 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
   expect(!!node.signalCode).toEqual(!!bun.signalCode);
 }
 
-describe("cleanup hooks", () => {
+describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
   describe("execution order", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)

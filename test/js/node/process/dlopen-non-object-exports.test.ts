@@ -1,12 +1,12 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // This test verifies that Bun properly handles non-object exports when loading native modules
 // Previously, this would cause a segfault when exports was null, undefined, or a primitive
 
-describe("process.dlopen with non-object exports", () => {
+describe.skipIf(!canBuildNodeAddons())("process.dlopen with non-object exports", () => {
   let addonPath: string;
 
   beforeAll(() => {

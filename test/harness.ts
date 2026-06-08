@@ -126,6 +126,138 @@ export function nodeExe(): string | null {
   return which("node") || null;
 }
 
+let abiMatchingNode: Promise<string> | undefined;
+
+/**
+ * Path to a Node.js executable whose native-addon ABI (NODE_MODULE_VERSION,
+ * `process.versions.modules`) matches the Node version Bun reports. Addons
+ * that node-gyp compiles against Bun's reported headers can only load in such
+ * a Node. When the system Node's ABI differs (e.g. a machine whose installed
+ * Node lags the version Bun reports), the matching official build is
+ * downloaded once into a per-version directory under the OS temp dir and
+ * reused.
+ */
+export function nodeExeMatchingAbi(): Promise<string> {
+  return (abiMatchingNode ??= findOrDownloadAbiMatchingNode());
+}
+
+async function findOrDownloadAbiMatchingNode(): Promise<string> {
+  const system = nodeExe();
+  if (system) {
+    const probe = Bun.spawnSync({
+      cmd: [system, "-p", "process.versions.modules"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    if (probe.exitCode === 0 && probe.stdout.toString().trim() === process.versions.modules) {
+      return system;
+    }
+  }
+
+  const version = process.versions.node;
+  const name = `node-v${version}-${isWindows ? "win" : process.platform}-${process.arch}`;
+  const baseDir = join(os.tmpdir(), "bun-test-node");
+  const dir = join(baseDir, name);
+  const exe = isWindows ? join(dir, "node.exe") : join(dir, "bin", "node");
+  if (fs.existsSync(exe)) {
+    return exe;
+  }
+
+  const archiveExt = isWindows ? "zip" : "tar.gz";
+  const url = `https://nodejs.org/dist/v${version}/${name}.${archiveExt}`;
+  console.warn(`System node does not match ABI ${process.versions.modules}, downloading ${url}`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download ${url}: ${response.status} ${response.statusText}`);
+  }
+  // Download and extract under unique names, then atomically rename into
+  // place so concurrent test files (or a previous interrupted run) can't
+  // observe a half-extracted directory.
+  const stagingDir = join(os.tmpdir(), "bun-test-node", `staging-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(stagingDir, { recursive: true });
+  try {
+    const archive = join(stagingDir, `${name}.${archiveExt}`);
+    await write(archive, response);
+    // Verify against the official checksum manifest before executing anything
+    // from the archive.
+    const shasumsUrl = `https://nodejs.org/dist/v${version}/SHASUMS256.txt`;
+    const shasumsResponse = await fetch(shasumsUrl);
+    if (!shasumsResponse.ok) {
+      throw new Error(`Failed to download ${shasumsUrl}: ${shasumsResponse.status} ${shasumsResponse.statusText}`);
+    }
+    const shasums = await shasumsResponse.text();
+    const expectedHash = shasums
+      .split("\n")
+      .find(line => line.endsWith(`  ${name}.${archiveExt}`))
+      ?.split(" ")[0];
+    if (!expectedHash) {
+      throw new Error(`No checksum for ${name}.${archiveExt} in ${shasumsUrl}`);
+    }
+    const actualHash = new Bun.CryptoHasher("sha256").update(await Bun.file(archive).arrayBuffer()).digest("hex");
+    if (actualHash !== expectedHash) {
+      throw new Error(`SHA-256 mismatch for ${url}: expected ${expectedHash}, got ${actualHash}`);
+    }
+    // bsdtar (shipped with Windows 10+) extracts zip archives too.
+    const tar = Bun.spawnSync({
+      cmd: ["tar", "-xf", archive, "-C", stagingDir],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    if (tar.exitCode !== 0) {
+      throw new Error(`Failed to extract ${archive}: ${tar.stderr.toString()}`);
+    }
+    try {
+      fs.renameSync(join(stagingDir, name), dir);
+    } catch (error) {
+      // A concurrent download may have won the rename; that copy is as good.
+      if (!fs.existsSync(exe)) throw error;
+    }
+  } finally {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  }
+  return exe;
+}
+
+let canBuildNodeAddonsCached: boolean | undefined;
+
+/**
+ * Whether the system C++ toolchain can compile native addons against the
+ * Node headers Bun reports. Node >= 26 headers unconditionally include
+ * C++20's `<source_location>`, which older Apple Xcode/CLT libc++ versions
+ * do not ship — real Node 26 has the same minimum-toolchain requirement, so
+ * addon-building tests should skip (not fail) on such machines.
+ */
+export function canBuildNodeAddons(): boolean {
+  if (canBuildNodeAddonsCached === undefined) {
+    if (!isMacOS) {
+      // Linux and Windows CI toolchains are provisioned by the bootstrap
+      // scripts in lockstep with the reported Node version; only macOS test
+      // boxes have independently-managed Xcode installs.
+      canBuildNodeAddonsCached = true;
+    } else {
+      const dir = fs.mkdtempSync(join(os.tmpdir(), "bun-addon-toolchain-probe-"));
+      try {
+        const probeFile = join(dir, "probe.cpp");
+        fs.writeFileSync(probeFile, "#include <source_location>\nint main() { return 0; }\n");
+        const probe = Bun.spawnSync({
+          cmd: ["c++", "-std=gnu++20", "-fsyntax-only", probeFile],
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        canBuildNodeAddonsCached = probe.exitCode === 0;
+      } catch {
+        canBuildNodeAddonsCached = false;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  return canBuildNodeAddonsCached;
+}
+
 export function shellExe(): string {
   return isWindows ? "pwsh" : "bash";
 }

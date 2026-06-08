@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { jscDescribe } from "bun:jsc";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  canBuildNodeAddons,
+  isASAN,
+  isBroken,
+  isMusl,
+  isWindows,
+  nodeExeMatchingAbi,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -111,7 +122,7 @@ async function build(
   console.log(err);
 }
 
-describe.todoIf(isBroken && isMusl)("node:v8", () => {
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () => {
   beforeAll(async () => {
     // set up clean directories for our 4 builds
     directories.bunRelease = tmpdirSync();
@@ -128,7 +139,11 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
     await build(srcDir, directories.node, Runtime.node, BuildMode.release);
     await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
-  });
+
+    // Resolve (and possibly download) the ABI-matching node here, under the
+    // generous hook timeout, instead of inside the first test that needs it.
+    await nodeExeMatchingAbi();
+  }, 300_000);
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {
@@ -383,7 +398,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
       : buildMode == BuildMode.debug
         ? directories.bunDebug
         : directories.bunRelease;
-  const exe = runtime == Runtime.node ? (nodeExe() ?? "node") : bunExe();
+  const exe = runtime == Runtime.node ? await nodeExeMatchingAbi() : bunExe();
 
   const cmd = [
     exe,
@@ -412,7 +427,7 @@ async function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, j
   return out.trim();
 }
 
-describe.todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
+describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("String::Utf8Length bounds", () => {
   it(
     "reports sizes beyond INT32_MAX without wrapping",
     async () => {

@@ -1,13 +1,13 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 // This test verifies that Bun can load the same native module multiple times
 // Previously, the second load would fail with "symbol 'napi_register_module_v1' not found"
 // because static constructors only run once, so the module registration wasn't replayed
 
-describe("process.dlopen duplicate loads", () => {
+describe.skipIf(!canBuildNodeAddons())("process.dlopen duplicate loads", () => {
   let addonPath: string;
 
   beforeAll(() => {

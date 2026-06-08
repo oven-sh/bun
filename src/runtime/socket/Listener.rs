@@ -286,9 +286,9 @@ impl Listener {
                     }
                 }
 
-                // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
-                // transfers to the C++ wrapper.
-                let this_value = js_Listener::to_js(this, global);
+                // SAFETY: `this` is the unique heap allocation from above, not
+                // yet wrapped; ownership transfers to the C++ wrapper.
+                let this_value = unsafe { js_Listener::to_js(this, global) };
                 this_ref.strong_self.with_mut(|s| s.set(global, this_value));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 return Ok(this_value);
@@ -513,10 +513,10 @@ impl Listener {
         }
 
         let this = scopeguard::ScopeGuard::into_inner(cleanup); // ownership transfers to JS wrapper
-        // SAFETY: `global` is live; ownership of `this` (heap-allocated above)
-        // transfers to the C++ wrapper (freed via `ListenerClass__finalize` →
-        // `Listener::finalize` → `deinit`).
-        let this_value = js_Listener::to_js(this, global);
+        // SAFETY: `this` is the unique heap allocation from above, not yet
+        // wrapped; ownership transfers to the C++ wrapper (freed via
+        // `ListenerClass__finalize` → `Listener::finalize` → `deinit`).
+        let this_value = unsafe { js_Listener::to_js(this, global) };
         this_ref.strong_self.with_mut(|s| s.set(global, this_value));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 

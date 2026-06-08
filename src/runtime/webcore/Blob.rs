@@ -3740,10 +3740,13 @@ impl BlobExt for Blob {
         if self.is_s3() {
             // SAFETY: `self` is a heap-allocated *mut Blob (see `Blob::new`); the
             // C++ side wraps it in a JSS3File without taking a second ref.
-            return crate::webcore::s3_file::to_js_unchecked(global_object, this);
+            return unsafe { crate::webcore::s3_file::to_js_unchecked(global_object, this) };
         }
 
-        js::to_js_unchecked(global_object, this)
+        // SAFETY: same as the S3 branch — `self` is the heap allocation from
+        // `Blob::new` (caller contract); the wrapper adopts it, released via
+        // `finalize`.
+        unsafe { js::to_js_unchecked(global_object, this) }
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and

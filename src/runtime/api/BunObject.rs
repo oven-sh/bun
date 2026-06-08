@@ -1641,7 +1641,9 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            let obj = <$ServerType>::ptr_to_js(server, global_object);
+            // SAFETY: `server` is the unique heap allocation from `init`
+            // above, not yet wrapped; ownership transfers to the JS wrapper.
+            let obj = unsafe { <$ServerType>::ptr_to_js(server, global_object) };
             if route_list_object != JSValue::ZERO {
                 // NOTE: `ServerType.js.routeListSetCached` (codegen
                 // `.classes.ts`) — routed through the typed helper in
@@ -1957,7 +1959,9 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         }
     };
 
-    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+    // SAFETY: `valkey` is the fresh heap allocation from
+    // `create_no_js_no_pubsub`, not yet wrapped; the JS wrapper adopts it.
+    let as_js = unsafe { JSValkeyClient::ptr_to_js(valkey, global_this) };
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.

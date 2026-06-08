@@ -658,7 +658,10 @@ impl JSMySQLConnection {
         this.connection_mut().status = my_sql_connection::Status::Connecting;
         this.reset_connection_timeout();
         this.poll_ref.with_mut(|p| p.r#ref(vm.vm_ctx()));
-        let js_value = js::to_js(ptr, global_object);
+        // SAFETY: `ptr` is the freshly-boxed allocation from above (the error
+        // paths that release it return early); the JS wrapper adopts it and
+        // its finalizer releases it exactly once.
+        let js_value = unsafe { js::to_js(ptr, global_object) };
         js_value.ensure_still_alive();
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));

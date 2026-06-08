@@ -62,8 +62,10 @@ pub use js::{from_js, from_js_direct, to_js};
 
 impl jsc::JsClass for PostgresSQLConnection {
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
-        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
+        // SAFETY: the payload is boxed right here, so it is the unique
+        // construct-path allocation; ownership transfers to the JSC wrapper's
+        // m_ctx and is freed via `finalize`.
+        unsafe { js::to_js(bun_core::heap::into_raw(Box::new(self)), global) }
     }
     fn from_js(value: JSValue) -> Option<*mut Self> {
         js::from_js(value)
@@ -1319,7 +1321,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.update_has_pending_activity();
     this.reset_connection_timeout();
     this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
-    let js_value = js::to_js(ptr, global_object);
+    // SAFETY: `ptr` is the unique `heap::into_raw` allocation from above (the
+    // error paths that free it return early); ownership transfers to the JS
+    // wrapper, released via `finalize`.
+    let js_value = unsafe { js::to_js(ptr, global_object) };
     js_value.ensure_still_alive();
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);

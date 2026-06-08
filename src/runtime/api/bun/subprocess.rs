@@ -191,17 +191,17 @@ const _: () = {
         /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
         /// entrypoint that avoids re-boxing.
         ///
+        /// # Safety
         /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
         /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
-        /// the (already safe) generated `js_Subprocess::to_js`, which
-        /// encapsulates the FFI `__create` call internally.
+        /// side (released via `SubprocessClass__finalize`).
         #[inline]
-        pub fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
+        pub unsafe fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
             // The codegen wrapper is monomorphized at `'static`; the lifetime
             // parameter is purely a borrow-checker artifact (C++ stores the
             // pointer as opaque `m_ctx`), so erase it via `cast`.
-            js::to_js(ptr.cast(), global)
+            // SAFETY: ownership precondition forwarded to the caller.
+            unsafe { js::to_js(ptr.cast(), global) }
         }
     }
 
@@ -608,7 +608,13 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter)]
     pub fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
         if let Some(terminal) = this.terminal.get() {
-            return crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this);
+            // SAFETY: `terminal` is the live allocation this subprocess holds
+            // a +1 ref on (released in `Subprocess::finalize`). The getter is
+            // `cache: true` and the spawn path pre-fills the cached slot with
+            // the wrapper created by `init_terminal`, so at most one wrapper
+            // adopts the terminal's JS-side ref (released via its finalize →
+            // `deref_`).
+            return unsafe { crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this) };
         }
         JSValue::UNDEFINED
     }

@@ -25,7 +25,11 @@ declare_scope!(ResumableSink, visible);
 /// Each monomorphization implements this trait by delegating to the matching
 /// `bun_jsc::generated::JS*` module — see [`impl_resumable_sink_js!`] below.
 pub trait ResumableSinkJs {
-    fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue;
+    /// # Safety
+    /// `this` must be the live heap-allocated sink carrying the ref the JS
+    /// wrapper adopts (released via the class finalizer); it must not already
+    /// be owned by another wrapper.
+    unsafe fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut ()>;
     fn from_js_direct(value: JSValue) -> Option<*mut ()>;
     fn oncancel_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
@@ -241,7 +245,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             }
         }
         // lets go JS side route
-        let self_ = Js::to_js(this.cast(), global_this);
+        // SAFETY: `this` is the live sink allocated by `init_exact_refs`
+        // (`heap::into_raw`), not yet owned by a wrapper; the wrapper adopts
+        // the JS-side ref, released via `finalize` → `deref_`.
+        let self_ = unsafe { Js::to_js(this.cast(), global_this) };
         self_.ensure_still_alive();
         let js_stream = stream.to_js();
         js_stream.ensure_still_alive();
@@ -593,8 +600,10 @@ macro_rules! impl_resumable_sink_js {
         pub enum $name {}
         impl ResumableSinkJs for $name {
             #[inline]
-            fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue {
-                bun_jsc::generated::$name::to_js(this, global)
+            unsafe fn to_js(this: *mut (), global: &JSGlobalObject) -> JSValue {
+                // SAFETY: ownership precondition forwarded to the caller
+                // (`ResumableSinkJs::to_js` contract).
+                unsafe { bun_jsc::generated::$name::to_js(this, global) }
             }
             #[inline]
             fn from_js(value: JSValue) -> Option<*mut ()> {

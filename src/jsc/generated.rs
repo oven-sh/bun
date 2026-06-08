@@ -923,11 +923,15 @@ macro_rules! impl_js_class_via_generated {
             #[inline]
             fn to_js(self, g: &$crate::JSGlobalObject) -> $crate::JSValue {
                 use $gen as __g;
-                // Ownership of the boxed payload transfers to the C++ wrapper
-                // (freed via `${T}Class__finalize`). `.cast()` erases any
-                // payload-type / lifetime mismatch between `Self` and the
-                // accessor module's monomorphized pointee.
-                __g::to_js($crate::heap::into_raw(::std::boxed::Box::new(self)).cast(), g)
+                // `.cast()` erases any payload-type / lifetime mismatch
+                // between `Self` and the accessor module's monomorphized
+                // pointee.
+                // SAFETY: the payload is boxed right here, so the pointer is
+                // the unique construct-path allocation; ownership transfers to
+                // the C++ wrapper (freed exactly once via `${T}Class__finalize`).
+                unsafe {
+                    __g::to_js($crate::heap::into_raw(::std::boxed::Box::new(self)).cast(), g)
+                }
             }
             $(
                 #[inline]
@@ -1005,9 +1009,10 @@ macro_rules! js_class_module {
             // to a non-null `*mut`). `__from_js*` only type-check the encoded
             // value and return the stored `m_ctx` pointer (or null) — the C++
             // side never dereferences `Payload`, so there is no Rust-side
-            // precondition. `__dangerously_set_ptr` keeps `unsafe`
-            // because it installs `ptr` into a GC cell whose finalizer will
-            // later free it (deferred deref → ownership precondition).
+            // precondition. `__create` and `__dangerously_set_ptr` keep
+            // `unsafe` because they install `ptr` into a GC cell whose
+            // finalizer will later free it (deferred deref → ownership
+            // precondition).
             $crate::jsc_abi_extern! {
                 #[allow(improper_ctypes)]
                 {
@@ -1016,7 +1021,7 @@ macro_rules! js_class_module {
                     #[link_name = concat!($TypeName, "__fromJSDirect")]
                     safe fn __from_js_direct(value: JSValue) -> *mut Payload;
                     #[link_name = concat!($TypeName, "__create")]
-                    safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
+                    fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
                     safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
                     #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
@@ -1055,17 +1060,29 @@ macro_rules! js_class_module {
             /// Create a new JS wrapper instance owning `ptr`. The C++ side
             /// allocates the JSCell with the cached structure and stores `ptr`
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
+            ///
+            /// # Safety
+            /// `ptr` must be the unique, live pointer produced by this class's
+            /// construct-path heap allocation (the one its finalizer frees,
+            /// e.g. `Box::into_raw`/`heap::into_raw`). The GC finalizer
+            /// consumes it exactly once, so the caller must not free it,
+            /// reuse it, or install it in a second wrapper after this call.
             #[inline]
-            pub fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
-                __create(global.as_ptr(), ptr)
+            pub unsafe fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
+                // SAFETY: ownership precondition forwarded to the caller.
+                unsafe { __create(global.as_ptr(), ptr) }
             }
 
             /// Alias for [`to_js`] with `(global, ptr)` argument
             /// order, so `Response::to_js` / `Request::to_js` call sites
             /// resolve without reordering.
+            ///
+            /// # Safety
+            /// Same ownership-transfer contract as [`to_js`].
             #[inline]
-            pub fn to_js_unchecked(global: &JSGlobalObject, ptr: *mut Payload) -> JSValue {
-                to_js(ptr, global)
+            pub unsafe fn to_js_unchecked(global: &JSGlobalObject, ptr: *mut Payload) -> JSValue {
+                // SAFETY: ownership precondition forwarded to the caller.
+                unsafe { to_js(ptr, global) }
             }
 
             /// Lazily fetch the constructor `JSFunction` from `globalObject`.

@@ -230,3 +230,32 @@ test("node:net reconnect after connectError does not accumulate wrappers", async
   expect(exitCode).toBe(0);
   void stderr;
 }, 30_000);
+
+// https://github.com/oven-sh/bun/issues/31975
+test("Listener wrappers are adopted and finalized exactly once across GC", async () => {
+  // `Bun.listen` wires the native Listener into its JS wrapper through the
+  // codegen `Listener__create` adoption path: the wrapper's finalizer frees
+  // the native allocation exactly once. Round-trip a batch of listeners
+  // through create → use → stop → GC and assert the wrapper count returns to
+  // baseline, locking both directions (adopted: the wrapper works; finalized
+  // exactly once: no accumulation, and a double-free would crash under ASAN).
+  Bun.gc(true);
+  const baseline = heapStats().objectTypeCounts.Listener || 0;
+
+  for (let i = 0; i < 16; i++) {
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    // Exercise the wrapper → native backref (`Listener__fromJS`) before
+    // dropping it, so the adoption is observed and not optimized away.
+    expect(listener.port).toBeGreaterThan(0);
+    expect(listener.hostname).toBe("127.0.0.1");
+    listener.stop(true);
+  }
+
+  // Conservative stack scanning can pin a stray wrapper; allow small slack.
+  const count = await gcUntilCountAtMost("Listener", baseline + 2);
+  expect(count).toBeLessThanOrEqual(baseline + 2);
+});

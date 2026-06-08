@@ -3097,10 +3097,12 @@ function generateRust(
 
   // `safe fn` (Rust 2024) inside `jsc_abi_extern! {}`: the C++ side
   // (ZigGeneratedClasses.cpp) tolerates every well-typed input — \`fromJS\`
-  // returns null on type mismatch, \`create\` allocates from a live global,
-  // \`SetCachedValue\` is a WriteBarrier store. Declaring them \`safe\` moves
-  // the audit obligation to this generator (one place) instead of an
-  // \`unsafe {}\` per call site (~800 in the emitted file).
+  // returns null on type mismatch, \`SetCachedValue\` is a WriteBarrier
+  // store. Declaring them \`safe\` moves the audit obligation to this
+  // generator (one place) instead of an \`unsafe {}\` per call site (~800 in
+  // the emitted file). \`create\` is the exception: it installs \`ptr\` into a
+  // GC cell whose finalizer later frees it (deferred deref → ownership
+  // precondition), so the import and the \`to_js\` wrapper are \`unsafe\`.
   //
   // Calling convention: every C++ definition uses `extern JSC_CALLCONV` =
   // `extern "C" SYSV_ABI` on Windows, so import them via `jsc_abi_extern!`
@@ -3111,7 +3113,7 @@ function generateRust(
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
         safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
         safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;
-        safe fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
+        fn ${symbolName(typeName, "create")}(global: *mut JSGlobalObject, ptr: *mut ${typeName}) -> JSValue;
         safe fn ${symbolName(typeName, "dangerouslySetPtr")}(value: JSValue, ptr: *mut ${typeName}) -> bool;
 ${cachedExterns}
     }
@@ -3131,8 +3133,16 @@ ${cachedExterns}
     ${
       !overridesToJS
         ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
-    #[inline] pub fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
-        ${symbolName(typeName, "create")}(global.as_mut_ptr(), this)
+    ///
+    /// # Safety
+    /// \`this\` must be the unique, live pointer produced by this class's
+    /// construct-path heap allocation (the one \`${typeName}Class__finalize\`
+    /// frees, e.g. \`Box::into_raw\`/\`heap::into_raw\`). The GC finalizer
+    /// consumes it exactly once, so the caller must not free it, reuse it,
+    /// or install it in a second wrapper after this call.
+    #[inline] pub unsafe fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: ownership precondition forwarded to the caller.
+        unsafe { ${symbolName(typeName, "create")}(global.as_mut_ptr(), this) }
     }`
         : ""
     }

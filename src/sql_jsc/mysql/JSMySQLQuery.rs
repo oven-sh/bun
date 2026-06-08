@@ -152,7 +152,9 @@ impl JSMySQLQuery {
         // so a shared `ParentRef` deref is sufficient even for the writes below.
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));
 
-        let this_value = js::to_js(this_ptr, global_this);
+        // SAFETY: `this_ptr` is the unique `heap::into_raw` allocation from
+        // above; the JS wrapper adopts it (freed via `finalize`).
+        let this_value = unsafe { js::to_js(this_ptr, global_this) };
         this_value.ensure_still_alive();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 

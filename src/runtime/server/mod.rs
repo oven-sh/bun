@@ -12,21 +12,28 @@ use core::sync::atomic::Ordering;
 /// `(SSL, DEBUG)` monomorphization. Routes through the
 /// `crate::generated_classes::js_*Server::to_js` wrappers (which own the
 /// canonical extern decl) instead of redeclaring the symbols here.
-pub(crate) fn server_js_create(
+///
+/// # Safety
+/// `ptr` must be the unique heap allocation of the `NewServer<SSL,DEBUG>`
+/// matching `(ssl, debug)`, not yet owned by any JS wrapper; ownership
+/// transfers to the C++ wrapper (freed via its `finalize`).
+pub(crate) unsafe fn server_js_create(
     ptr: *mut c_void,
     global: &jsc::JSGlobalObject,
     ssl: bool,
     debug: bool,
 ) -> jsc::JSValue {
     use crate::generated_classes as gc;
-    // `ptr` is a fresh `NewServer<SSL,DEBUG>` heap allocation; the C++
-    // wrapper takes ownership. Cast through the concrete monomorphization
-    // each codegen module is typed against.
-    match (ssl, debug) {
-        (false, false) => gc::js_HTTPServer::to_js(ptr.cast(), global),
-        (true, false) => gc::js_HTTPSServer::to_js(ptr.cast(), global),
-        (false, true) => gc::js_DebugHTTPServer::to_js(ptr.cast(), global),
-        (true, true) => gc::js_DebugHTTPSServer::to_js(ptr.cast(), global),
+    // Cast through the concrete monomorphization each codegen module is
+    // typed against.
+    // SAFETY: ownership precondition forwarded to the caller.
+    unsafe {
+        match (ssl, debug) {
+            (false, false) => gc::js_HTTPServer::to_js(ptr.cast(), global),
+            (true, false) => gc::js_HTTPSServer::to_js(ptr.cast(), global),
+            (false, true) => gc::js_DebugHTTPServer::to_js(ptr.cast(), global),
+            (true, true) => gc::js_DebugHTTPSServer::to_js(ptr.cast(), global),
+        }
     }
 }
 
@@ -1442,8 +1449,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Wrap an already-heap-allocated server pointer in its JS object.
     /// Ownership transfers to the C++ wrapper (freed via `finalize`).
-    pub fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
-        server_js_create(this.cast(), global, SSL, DEBUG)
+    ///
+    /// # Safety
+    /// `this` must be the unique heap allocation produced by [`Self::init`],
+    /// not yet owned by any JS wrapper; the wrapper's finalizer releases it.
+    pub unsafe fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
+        // SAFETY: ownership precondition forwarded to the caller.
+        unsafe { server_js_create(this.cast(), global, SSL, DEBUG) }
     }
 
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);

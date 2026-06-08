@@ -423,8 +423,9 @@ impl PostgresSQLQuery {
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
-        // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps it in the JSCell.
-        let this_value = js::to_js(ptr, global_this);
+        // SAFETY: ptr was just allocated and is the m_ctx payload; toJS wraps
+        // it in the JSCell, which owns it from here (freed via `finalize`).
+        let this_value = unsafe { js::to_js(ptr, global_this) };
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.

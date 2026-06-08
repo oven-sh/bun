@@ -285,6 +285,9 @@ impl ByteStream {
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
+            // `chunk` borrows `stream`; precompute so the borrow ends here and
+            // `stream` can be moved below (`append` re-slices internally).
+            let has_remaining = chunk.len() > to_copy_len && !chunk.is_empty();
             self.pending_buffer.set(Self::empty_pending_buffer());
 
             let is_really_done =
@@ -294,9 +297,9 @@ impl ByteStream {
                 self.done.set(true);
 
                 if to_copy_len == 0 {
-                    if let streams::Result::Err(err) = &stream {
-                        self.pending
-                            .with_mut(|p| p.result = streams::Result::Err(err.clone()));
+                    if matches!(stream, streams::Result::Err(_)) {
+                        let err = core::mem::replace(&mut stream, streams::Result::Done);
+                        self.pending.with_mut(|p| p.result = err);
                     } else {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
@@ -319,10 +322,7 @@ impl ByteStream {
                 });
             }
 
-            let remaining = &chunk[to_copy_len..];
-            if !remaining.is_empty() && !chunk.is_empty() {
-                // `chunk` borrows `stream`; passing both requires re-slicing inside
-                // `append`.
+            if has_remaining {
                 self.append(stream, to_copy_len)
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
             }

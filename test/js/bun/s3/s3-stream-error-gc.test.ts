@@ -13,10 +13,12 @@ test("S3 stream error parked before consumption survives GC", async () => {
     Bun.gc(true);
     const decoys = [];
     for (let i = 0; i < 100; i++) decoys.push(new TypeError("decoy " + i));
-    const err = await stream.text().then(
-      () => null,
-      e => e,
-    );
+    let err = null;
+    try {
+      await stream.text();
+    } catch (e) {
+      err = e;
+    }
     if (err === null) throw new Error("expected rejection");
     if (String(err.message).includes("decoy")) throw new Error("rejected with a recycled object: " + err);
     console.log(err.code);
@@ -46,6 +48,15 @@ test("S3 stream error parked before consumption survives GC", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"ERR_S3_MISSING_CREDENTIALS"`);
-  expect(exitCode).toBe(0);
+  expect({
+    stdout: normalizeBunSnapshot(stdout),
+    stderr: normalizeBunSnapshot(stderr),
+    exitCode,
+  }).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": "ERR_S3_MISSING_CREDENTIALS",
+    }
+  `);
 });

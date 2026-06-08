@@ -336,7 +336,9 @@ impl StreamResult {
     }
 }
 
-#[derive(Clone)]
+// Deliberately not Clone: the `JSValue` variant owns a gcProtect (see
+// `StreamError::strong`), so a bitwise copy would let two copies race a
+// single protect count.
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),

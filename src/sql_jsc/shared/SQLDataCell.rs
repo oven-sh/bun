@@ -2,8 +2,9 @@ use core::ptr;
 use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
+use bun_collections::StringHashMap;
 use bun_core::wtf::WTFStringImpl;
-use bun_sql::shared::Data;
+use bun_sql::shared::{ColumnIdentifier, Data};
 
 // Note: This entire type is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
@@ -379,6 +380,55 @@ bitflags::bitflags! {
         const HAS_DUPLICATE_COLUMNS = 1 << 2;
         // remaining 29 bits: padding
     }
+}
+
+/// Rewrites repeated column identifiers to [`ColumnIdentifier::Duplicate`] and
+/// accumulates the column-set [`Flags`]. Callers pass the columns in reverse
+/// order so the LAST occurrence of a repeated name/index keeps its identifier.
+pub fn dedupe_columns<'a>(
+    columns: impl ExactSizeIterator<Item = &'a mut ColumnIdentifier>,
+) -> Flags {
+    let mut seen_numbers: Vec<u32> = Vec::new();
+    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
+    // dedup set.
+    let mut seen_fields: StringHashMap<()> = StringHashMap::default();
+    seen_fields.reserve(columns.len());
+
+    let mut flags = Flags::default();
+    for name_or_index in columns {
+        match &*name_or_index {
+            ColumnIdentifier::Name(name) => {
+                // reshaped for borrowck — compute `found_existing` before
+                // mutating `*name_or_index`.
+                let found_existing = seen_fields
+                    .get_or_put(name.slice())
+                    .expect("OOM")
+                    .found_existing;
+                if found_existing {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+                }
+
+                flags.insert(Flags::HAS_NAMED_COLUMNS);
+            }
+            ColumnIdentifier::Index(index) => {
+                let index = *index;
+                if seen_numbers.contains(&index) {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+                } else {
+                    seen_numbers.push(index);
+                }
+
+                flags.insert(Flags::HAS_INDEXED_COLUMNS);
+            }
+            ColumnIdentifier::Duplicate => {
+                flags.insert(Flags::HAS_DUPLICATE_COLUMNS);
+            }
+        }
+    }
+
+    flags
 }
 
 // Declared inline rather than in a dedicated `*_sys` crate: this is the only

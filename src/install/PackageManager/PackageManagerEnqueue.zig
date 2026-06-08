@@ -454,8 +454,16 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
     if (dependency.behavior.isOptionalPeer()) return;
 
     var name = dependency.realname();
+    // For git/github/tarball dependencies, `realname()` returns the `package_name` field
+    // which is only populated after tarball extraction. If the tarball hasn't been extracted
+    // yet (or we're processing a transitive dependency whose `package_name` was never set),
+    // fall back to the dependency's own name and name_hash to ensure correct lockfile lookups.
     var name_hash = switch (dependency.version.tag) {
-        .dist_tag, .git, .github, .npm, .tarball, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
+        .git, .github, .tarball => if (name.isEmpty()) blk: {
+            name = dependency.name;
+            break :blk dependency.name_hash;
+        } else String.Builder.stringHash(this.lockfile.str(&name)),
+        .dist_tag, .npm, .workspace => String.Builder.stringHash(this.lockfile.str(&name)),
         else => dependency.name_hash,
     };
 

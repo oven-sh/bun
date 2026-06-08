@@ -233,7 +233,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         global_this,
         // SAFETY: `response` is a freshly allocated heap `Response`; ownership
         // transfers to JSC.
-        Response::make_maybe_pooled(global_this, response),
+        unsafe { Response::make_maybe_pooled(global_this, response) },
     )
 }
 
@@ -1555,7 +1555,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             global_this,
             // SAFETY: `response` is a freshly allocated heap `Response`; ownership
             // transfers to JSC.
-            Response::make_maybe_pooled(global_this, response),
+            unsafe { Response::make_maybe_pooled(global_this, response) },
         ));
     }
 
@@ -2100,8 +2100,9 @@ impl<'a> S3StreamWrapper<'a> {
                 ));
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
                 // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = unsafe {
+                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response))
+                };
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
@@ -2123,8 +2124,9 @@ impl<'a> S3StreamWrapper<'a> {
 
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
                 // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = unsafe {
+                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response))
+                };
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }

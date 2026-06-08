@@ -814,3 +814,46 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     await c.expectMessage("got: ALPHA BETA");
   },
 });
+
+devTest("bundle failure surfaced through the Response.render rewrite promise", {
+  // https://github.com/oven-sh/bun/issues/31985
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function (req, meta) {
+        throw Response.render("/broken");
+      }
+    `,
+    "routes/broken.ts": `
+      import { x } from "./does-not-exist";
+      export default function () {
+        return new Response(x);
+      }
+    `,
+    "routes/gc.ts": `
+      export default function () {
+        Bun.gc(true);
+        return new Response("gc-ok");
+      }
+    `,
+  },
+  async test(dev) {
+    // The rewrite target fails to bundle; the dev server rejects the internal
+    // bundleNewRoute promise with an error-page Response and the request
+    // resolves as a 500.
+    expect((await dev.fetch("/")).status).toBe(500);
+    // Force a GC so the error-page Response wrapper from the rejected promise
+    // is finalized; the server must survive and keep serving.
+    {
+      const response = await dev.fetch("/gc");
+      expect(await response.text()).toBe("gc-ok");
+      expect(response.status).toBe(200);
+    }
+    expect((await dev.fetch("/")).status).toBe(500);
+    {
+      const response = await dev.fetch("/gc");
+      expect(await response.text()).toBe("gc-ok");
+      expect(response.status).toBe(200);
+    }
+  },
+});

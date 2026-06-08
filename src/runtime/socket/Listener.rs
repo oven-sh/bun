@@ -574,7 +574,13 @@ impl Listener {
         s.ref_();
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.get().global_object;
-            NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
+            // SAFETY: `s` wraps `this_socket`, the fresh heap allocation from
+            // `NewSocket::new` above; no wrapper exists yet.
+            NewSocket::<SSL>::data_set_cached(
+                unsafe { s.get_this_value(&global) },
+                &global,
+                default_data,
+            );
         }
         this_socket
     }
@@ -619,7 +625,13 @@ impl Listener {
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.get().global_object;
-            NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
+            // SAFETY: `s` wraps `this_socket`, the fresh heap allocation from
+            // `NewSocket::new` above; no wrapper exists yet.
+            NewSocket::<SSL>::data_set_cached(
+                unsafe { s.get_this_value(&global) },
+                &global,
+                default_data,
+            );
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
             // SAFETY: ext storage is at least pointer-sized; we stash *mut NewSocket<SSL>
@@ -1166,10 +1178,14 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: tls is a valid heap pointer
+                    // SAFETY: `tls` is the construct-path heap allocation —
+                    // either the reused `prev_ptr` or fresh from
+                    // `TLSSocket::new` above.
                     let tls_ref = unsafe { &*tls };
                     TLSSocket::data_set_cached(
-                        tls_ref.get_this_value(global),
+                        // SAFETY: see above; the memo in `get_this_value`
+                        // covers the reused-wrapper case.
+                        unsafe { tls_ref.get_this_value(global) },
                         global,
                         default_data,
                     );
@@ -1262,11 +1278,15 @@ impl Listener {
                             twin: JsCell::new(None),
                         })
                     };
-                    // SAFETY: tcp is a valid heap pointer
+                    // SAFETY: `tcp` is the construct-path heap allocation —
+                    // either the reused `prev_ptr` or fresh from
+                    // `TCPSocket::new` above.
                     let tcp_ref = unsafe { &*tcp };
                     tcp_ref.ref_();
                     TCPSocket::data_set_cached(
-                        tcp_ref.get_this_value(global),
+                        // SAFETY: see above; the memo in `get_this_value`
+                        // covers the reused-wrapper case.
+                        unsafe { tcp_ref.get_this_value(global) },
                         global,
                         default_data,
                     );
@@ -1535,10 +1555,17 @@ fn connect_finish<const IS_SSL: bool>(
     };
     // Ownership moved into `socket`; disarm the guard.
     // (owned_ssl_ctx consumed above)
-    // SAFETY: socket is a valid heap pointer
+    // SAFETY: `socket` is the construct-path heap allocation — either the
+    // reused `prev_ptr` or fresh from `NewSocket::new` above.
     let socket_ref = unsafe { &*socket };
     socket_ref.ref_();
-    NewSocket::<IS_SSL>::data_set_cached(socket_ref.get_this_value(global), global, default_data);
+    NewSocket::<IS_SSL>::data_set_cached(
+        // SAFETY: see above; the memo in `get_this_value` covers the
+        // reused-wrapper case.
+        unsafe { socket_ref.get_this_value(global) },
+        global,
+        default_data,
+    );
     // On the reuse-prev path, `prev.this_value` was downgraded to Weak by the
     // previous close's `mark_inactive()`. `get_this_value()` returns the
     // existing wrapper (the Weak `try_get()` succeeds while the JS side still
@@ -1935,8 +1962,9 @@ pub(crate) extern "C" fn us_dispatch_server_name(
             if tls_ptr.is_null() {
                 JSValue::UNDEFINED
             } else {
-                // SAFETY: ext slot holds a live TLSSocket; single-threaded dispatch.
-                unsafe { &*tls_ptr }.get_this_value(&global)
+                // SAFETY: ext slot holds the live construct-path TLSSocket
+                // allocation; single-threaded dispatch.
+                unsafe { (*tls_ptr).get_this_value(&global) }
             }
         } else {
             JSValue::UNDEFINED

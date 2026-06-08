@@ -428,7 +428,14 @@ impl Response {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation
+    /// (`heap::into_raw(Box::new(..))`) and must not already have a JS
+    /// wrapper: the wrapper returned here adopts the pointer as its `m_ctx`
+    /// and releases the allocation's initial ref at GC finalize
+    /// ([`Self::finalize`] → [`Self::unref`]).
+    pub unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
@@ -806,19 +813,18 @@ impl Response {
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
-        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
-        let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
+        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`, not yet
+        // adopted by any wrapper.
+        let js_wrapper = unsafe { Response::make_maybe_pooled(global_this, cloned) };
         this.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
     /// # Safety
-    /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
-    /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
-    /// JS wrapper.
-    // Safety contract is documented above; callers pass freshly-boxed pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+    /// `ptr` must be the construct-path heap allocation (e.g. freshly boxed
+    /// via [`Response::clone`]) with no existing JS wrapper; ownership of the
+    /// +1 ref transfers to the returned JS wrapper.
+    pub unsafe fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }

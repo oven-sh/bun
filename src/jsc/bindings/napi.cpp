@@ -1093,8 +1093,9 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    // getString() on a value we've already verified to be a string does
-    // not throw, so we do not need a throw scope here.
+    // getString() on a verified string only throws on rope-resolution OOM,
+    // which we intentionally ignore here so a pre-existing VM exception
+    // doesn't make napi_create_error fail (#30286, #22259).
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
     auto wtf_message = js_message.getString(globalObject);
 

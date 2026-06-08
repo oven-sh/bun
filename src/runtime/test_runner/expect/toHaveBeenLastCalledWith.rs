@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::DiffFormatter;
+use super::mock;
 use super::{Expect, get_signature};
 
 pub(crate) fn to_have_been_last_called_with(
@@ -15,7 +15,7 @@ pub(crate) fn to_have_been_last_called_with(
         frame.this(),
         "toHaveBeenLastCalledWith",
         "<green>...expected<r>",
-        super::mock::MockKind::CallsWithSig,
+        mock::MockKind::CallsWithSig,
     )?;
 
     let total_calls: u32 = calls.get_length(global)? as u32;
@@ -34,17 +34,7 @@ pub(crate) fn to_have_been_last_called_with(
             )));
         }
 
-        if last_call_value.get_length(global)? != arguments.len() as u64 {
-            pass = false;
-        } else {
-            let mut itr = last_call_value.array_iterator(global)?;
-            while let Some(call_arg) = itr.next()? {
-                if !call_arg.jest_deep_equals(arguments[itr.i as usize - 1], global)? {
-                    pass = false;
-                    break;
-                }
-            }
-        }
+        pass = mock::call_args_equal(global, last_call_value, arguments)?;
     }
 
     if pass != this.flags.get().not() {
@@ -52,42 +42,20 @@ pub(crate) fn to_have_been_last_called_with(
     }
 
     // handle failure
-    let mut formatter = super::make_formatter(global);
-
     let expected_args_js_array = JSValue::create_array_from_slice(global, arguments)?;
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nExpected last call not to be with: <green>{}<r>\nBut it was.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
+        return mock::throw_not_failure(
+            &this, global, "toHaveBeenLastCalledWith", "<green>...expected<r>",
+            format_args!("Expected last call not to be with"), expected_args_js_array, "\nBut it was.",
         );
     }
     let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
 
     if total_calls == 0 {
-        return this.throw(
-            global,
-            signature,
-            format_args!(
-                "\n\nExpected: <green>{}<r>\nBut it was not called.",
-                expected_args_js_array.to_fmt(&mut formatter),
-            ),
-        );
+        return mock::throw_not_called(&this, global, signature, expected_args_js_array);
     }
 
-    let diff_format = DiffFormatter {
-        expected: Some(expected_args_js_array),
-        received: Some(last_call_value),
-        expected_string: None,
-        received_string: None,
-        global_this: Some(global),
-        not: false,
-    };
-    this.throw(global, signature, format_args!("\n\n{}\n", diff_format))
+    mock::throw_diff(&this, global, signature, format_args!(""), expected_args_js_array, last_call_value)
 }

@@ -33,62 +33,10 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut source_maps: usize = 0;
     let mut assets: usize = 0;
 
-    // Exhaustiveness check:
-    // destructuring without `..` fails to compile when a DevServer field is
-    // added, removed, or renamed, forcing the accounting below to be updated.
-    // All bindings are `_` so nothing is moved or borrowed past this block.
-    {
-        let DevServer {
-            magic: _,
-            root: _,
-            inspector_server_id: _,
-            configuration_hash_key: _,
-            vm: _,
-            server: _,
-            router: _,
-            route_bundles: _,
-            graph_safety_lock: _,
-            client_graph: _,
-            server_graph: _,
-            barrel_files_with_deferrals: _,
-            barrel_needed_exports: _,
-            incremental_result: _,
-            route_lookup: _,
-            html_router: _,
-            assets: _,
-            source_maps: _,
-            bundling_failures: _,
-            frontend_only: _,
-            has_tailwind_plugin_hack: _,
-            server_fetch_function_callback: _,
-            server_register_update_callback: _,
-            bun_watcher: _,
-            directory_watchers: _,
-            watcher_atomics: _,
-            testing_batch_events: _,
-            generation: _,
-            bundles_since_last_error: _,
-            framework: _,
-            bundler_framework_views: _,
-            bundler_options: _,
-            server_transpiler: _,
-            client_transpiler: _,
-            ssr_transpiler: _,
-            log: _,
-            plugin_state: _,
-            current_bundle: _,
-            next_bundle: _,
-            deferred_request_pool: _,
-            active_websocket_connections: _,
-            dump_dir: _,
-            emit_incremental_visualizer_events: _,
-            emit_memory_visualizer_events: _,
-            memory_visualizer_timer: _,
-            has_pre_crash_handler: _,
-            assume_perfect_incremental_bundling: _,
-            broadcast_console_log_from_browser_to_server: _,
-        } = dev;
-    }
+    // Exhaustiveness check (see `destructure_dev_server_fields!`): fails to
+    // compile when a DevServer field is added, removed, or renamed, forcing
+    // the accounting below to be updated.
+    crate::bake::dev_server_body::destructure_dev_server_fields!(dev);
 
     // does not contain pointers
     //   .assume_perfect_incremental_bundling

@@ -97,6 +97,35 @@ impl Drop for PinnedView {
     }
 }
 
+/// Validate the input argument and pin its backing buffer (if any). The
+/// caller derives the byte slice via [`input_slice`] so the borrow of
+/// `buffer`/`pinned` stays local to the caller's frame.
+fn prepare_input(
+    global_this: &JSGlobalObject,
+    input_value: JSValue,
+) -> JsResult<(StringOrBuffer, Option<PinnedView>)> {
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    }
+
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
+    };
+
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    Ok((buffer, pinned))
+}
+
+#[inline]
+fn input_slice<'a>(buffer: &'a StringOrBuffer, pinned: &'a Option<PinnedView>) -> &'a [u8] {
+    match pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    }
+}
+
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global_this,
@@ -137,21 +166,8 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(
 pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let (buffer, pinned) = prepare_input(global_this, input_value)?;
+    let input = input_slice(&buffer, &pinned);
 
     let mut theme = md::AnsiTheme {
         colors: true,
@@ -208,21 +224,8 @@ pub(crate) fn render_to_html(
 ) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let (buffer, pinned) = prepare_input(global_this, input_value)?;
+    let input = input_slice(&buffer, &pinned);
 
     let options = parse_options(global_this, opts_value)?;
 
@@ -311,21 +314,8 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let (buffer, pinned) = prepare_input(global_this, input_value)?;
+    let input = input_slice(&buffer, &pinned);
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -344,9 +334,8 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     })?;
 
     // Run parser with the JS callback renderer
-    if let Err(err) = md::render_with_renderer(input, options, js_renderer.renderer()) {
-        return Err(parser_err_to_js(global_this, err, input.len()));
-    }
+    md::render_with_renderer(input, options, js_renderer.renderer())
+        .map_err(|err| parser_err_to_js(global_this, err, input.len()))?;
 
     // Return accumulated result
     let result = js_renderer.get_result();
@@ -407,21 +396,8 @@ fn render_ast(
 ) -> JsResult<JSValue> {
     let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
 
-    if input_value.is_empty_or_undefined_or_null() {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    }
-
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
-    };
-
-    let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let (buffer, pinned) = prepare_input(global_this, input_value)?;
+    let input = input_slice(&buffer, &pinned);
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -444,9 +420,8 @@ fn render_ast(
         JSValue::UNDEFINED
     })?;
 
-    if let Err(err) = md::render_with_renderer(input, options, renderer.renderer()) {
-        return Err(parser_err_to_js(global_this, err, input.len()));
-    }
+    md::render_with_renderer(input, options, renderer.renderer())
+        .map_err(|err| parser_err_to_js(global_this, err, input.len()))?;
 
     Ok(renderer.get_result())
 }

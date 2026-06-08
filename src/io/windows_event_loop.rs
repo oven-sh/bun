@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use core::ptr;
 
 use bun_sys::Fd;
@@ -40,29 +39,11 @@ pub struct FilePoll {
 }
 
 impl FilePoll {
-    #[inline]
-    pub fn is_active(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
-    #[inline]
-    pub fn is_watching(&self) -> bool {
-        !self.flags.contains(Flags::NeedsRearm)
-            && (self.flags.contains(Flags::PollReadable)
-                || self.flags.contains(Flags::PollWritable)
-                || self.flags.contains(Flags::PollProcess))
-    }
+    posix::impl_file_poll_flag_methods!();
 
     #[inline]
     pub fn is_keeping_process_alive(&self) -> bool {
         !self.flags.contains(Flags::Closed) && self.is_active()
-    }
-
-    pub fn is_registered(&self) -> bool {
-        self.flags.contains(Flags::PollWritable)
-            || self.flags.contains(Flags::PollReadable)
-            || self.flags.contains(Flags::PollProcess)
-            || self.flags.contains(Flags::PollMachport)
     }
 
     /// Make calling ref() on this poll into a no-op.
@@ -100,11 +81,6 @@ impl FilePoll {
     // teardown returns the slot to the pool via `Store::put`.
     pub fn deinit(&mut self) {
         self.deinit_with_vm(js_vm_ctx());
-    }
-
-    #[inline]
-    pub fn file_descriptor(&self) -> Fd {
-        self.fd
     }
 
     pub fn deinit_force_unregister(&mut self) {
@@ -148,34 +124,6 @@ impl FilePoll {
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
         vm.file_polls_mut().put(this, vm, was_ever_registered);
-    }
-
-    pub fn is_readable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Readable);
-        self.flags.remove(Flags::Readable);
-        readable
-    }
-
-    pub fn is_hup(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Hup);
-        self.flags.remove(Flags::Hup);
-        readable
-    }
-
-    pub fn is_eof(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Eof);
-        self.flags.remove(Flags::Eof);
-        readable
-    }
-
-    pub fn clear_event(&mut self, flag: Flags) {
-        self.flags.remove(flag);
-    }
-
-    pub fn is_writable(&mut self) -> bool {
-        let readable = self.flags.contains(Flags::Writable);
-        self.flags.remove(Flags::Writable);
-        readable
     }
 
     pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
@@ -233,11 +181,6 @@ impl FilePoll {
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
-    #[inline]
-    pub fn can_unref(&self) -> bool {
-        self.flags.contains(Flags::HasIncrementedPollCount)
-    }
-
     pub fn on_ended(&mut self, event_loop_ctx: EventLoopCtx) {
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.insert(Flags::Closed);
@@ -267,104 +210,9 @@ impl FilePoll {
     }
 }
 
-type FilePollHiveArray = bun_collections::hive_array::Fallback<FilePoll, 128>;
+pub type Store = posix::PollStore<FilePoll>;
 
-pub struct Store {
-    hive: FilePollHiveArray,
-    pending_free_head: *mut FilePoll,
-    pending_free_tail: *mut FilePoll,
-}
-
-impl Store {
-    pub fn init() -> Store {
-        Store {
-            hive: FilePollHiveArray::init(),
-            pending_free_head: ptr::null_mut(),
-            pending_free_tail: ptr::null_mut(),
-        }
-    }
-
-    #[inline]
-    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
-        self.hive.get_init(value)
-    }
-
-    pub fn process_deferred_frees(&mut self) {
-        let mut next = self.pending_free_head;
-        while !next.is_null() {
-            let current = next;
-            // SAFETY: intrusive deferred-free list; nodes are valid HiveArray slots
-            // until put(). Walk via raw-pointer reads/writes only — materializing a
-            // `&mut FilePoll` here would alias the `&mut self.hive` borrow taken by
-            // `put()` below (the slot may live inside the inline hive buffer).
-            unsafe {
-                next = (*current).next_to_free;
-                (*current).next_to_free = ptr::null_mut();
-                // FilePoll has no drop glue; `put` is a no-op drop + recycle.
-                self.hive.put(current);
-            }
-        }
-        self.pending_free_head = ptr::null_mut();
-        self.pending_free_tail = ptr::null_mut();
-    }
-
-    /// `poll` is a live, fully-initialized slot in `self.hive`. Touched only
-    /// through raw pointer ops to avoid forming a `&mut FilePoll` that would
-    /// alias `&mut self` (the hive buffer is inline storage).
-    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
-        let poll = poll.as_ptr();
-        if !ever_registered {
-            // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
-            // drop glue, so `put` is a no-op drop + recycle.
-            unsafe { self.hive.put(poll) };
-            return;
-        }
-
-        // SAFETY: `poll` is a valid HiveArray slot pointer. It may live inside
-        // `self.hive.buffer`, so we access it via raw pointer only (no `&mut FilePoll`
-        // materialized) to avoid aliasing `&mut self`.
-        debug_assert!(unsafe { (*poll).next_to_free }.is_null());
-
-        let tail = self.pending_free_tail;
-        if !tail.is_null() {
-            debug_assert!(!self.pending_free_head.is_null());
-            // SAFETY: `tail` is a valid slot in the intrusive deferred-free list;
-            // raw-ptr access avoids a second `&mut FilePoll` overlapping `poll`/`self`.
-            debug_assert!(unsafe { (*tail).next_to_free }.is_null());
-            unsafe { (*tail).next_to_free = poll };
-        }
-
-        if self.pending_free_head.is_null() {
-            self.pending_free_head = poll;
-            debug_assert!(self.pending_free_tail.is_null());
-        }
-
-        // SAFETY: see above — short-lived field borrow through raw `poll`, no overlap held.
-        unsafe { (*poll).flags.insert(Flags::IgnoreUpdates) };
-        self.pending_free_tail = poll;
-
-        let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
-        debug_assert!(
-            vm.after_event_loop_callback().is_none()
-                || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
-        );
-        vm.set_after_event_loop_callback(
-            Some(callback),
-            core::ptr::NonNull::new(core::ptr::from_mut::<Store>(self).cast::<c_void>()),
-        );
-    }
-
-    // Safe fn item: module-private thunk, only coerced to the C-ABI
-    // `OpaqueCallback` fn-pointer type — never callable by name outside
-    // `Store`. Body wraps its raw-ptr op explicitly.
-    extern "C" fn process_deferred_frees_thunk(ctx: *mut c_void) {
-        // SAFETY: `ctx` was set to `self as *mut Store` in `put` above. The thunk fires
-        // from the event loop's after-tick hook with no other `&mut Store` borrow live,
-        // so this is the unique accessor (safe-single-owner).
-        let this = unsafe { bun_ptr::callback_ctx::<Store>(ctx) };
-        this.process_deferred_frees();
-    }
-}
+posix::impl_poll_slot!(FilePoll);
 
 pub struct Waker {
     // `BackRef<WindowsLoop>`: `WindowsLoop::get()` hands out the shared

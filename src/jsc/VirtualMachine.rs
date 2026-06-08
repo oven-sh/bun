@@ -1578,11 +1578,14 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
-            // Release RuntimeState's JSC GC handles (SQL context Strongs,
-            // per-VM DNS data) while the HandleSet is still alive —
-            // `destroy()` below drops RuntimeState after the VM deref inside
-            // `destructOnExit`, and a `Strong` dropped then would unlink a
-            // HandleNode from freed memory.
+            // Release RareData's and RuntimeState's JSC GC handles (the
+            // default S3 client Strong, SQL context Strongs, per-VM DNS data)
+            // while the HandleSet is still alive — `destroy()` below drops
+            // both after the VM deref inside `destructOnExit`, and a `Strong`
+            // dropped then would unlink a HandleNode from freed memory.
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.s3_default_client.deinit();
+            }
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: live per-thread VM on the JS thread; JSC teardown
                 // is `destructOnExit` below.

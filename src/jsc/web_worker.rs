@@ -1250,12 +1250,16 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
-            // Release RuntimeState's JSC GC handles (SQL context Strongs,
-            // per-VM DNS data) while the HandleSet is still alive —
-            // `destroy()` in step 5 drops RuntimeState after teardownJSCVM
-            // freed it, and a `Strong` dropped then would unlink a HandleNode
-            // from freed memory. Runs after `close_all_socket_groups` so SQL
-            // on_close callbacks can still dispatch through the contexts.
+            // Release RareData's and RuntimeState's JSC GC handles (the
+            // default S3 client Strong, SQL context Strongs, per-VM DNS data)
+            // while the HandleSet is still alive — `destroy()` in step 5
+            // drops both after teardownJSCVM freed it, and a `Strong` dropped
+            // then would unlink a HandleNode from freed memory. Runs after
+            // `close_all_socket_groups` so SQL on_close callbacks can still
+            // dispatch through the contexts.
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.s3_default_client.deinit();
+            }
             if let Some(hooks) = runtime_hooks() {
                 // SAFETY: `vm_ptr` unpublished above (sole owner);
                 // `runtime_state` still installed; JSC teardown is step 3.

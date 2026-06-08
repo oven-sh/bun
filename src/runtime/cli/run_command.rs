@@ -661,16 +661,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Ok(Some(info)) => Some(info),
             };
         // Fallback root DirInfo for callers that ignore the return value
-        // (filter_run.rs, pack_command.rs both discard it). Tries home dir
-        // first (always readable), then "/" (standard Linux) as fallback.
-        // OHOS SELinux blocks "/" so the home-dir path covers that.
+        // (filter_run.rs, pack_command.rs both discard it). Tries "/"
+        // (standard Linux) or on OHOS "/data/local/tmp" which is always
+        // readable even when "/" is blocked by SELinux.
         let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
             .resolver
-            .read_dir_info_ignore_error(
-                bun_core::env_var::HOME::get().unwrap_or(b"/root"),
-            )
+            .read_dir_info_ignore_error(b"/data/local/tmp")
             .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
-            .expect("read_dir_info_ignore_error failed for both $HOME and /");
+            .expect("read_dir_info_ignore_error failed for /data/local/tmp and /");
 
         this_transpiler.resolver.store_fd = false;
 

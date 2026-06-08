@@ -243,7 +243,7 @@ test("Listener wrappers are adopted and finalized exactly once across GC", async
   const baseline = heapStats().objectTypeCounts.Listener || 0;
 
   for (let i = 0; i < 16; i++) {
-    const listener = Bun.listen({
+    using listener = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: { data() {} },
@@ -252,7 +252,6 @@ test("Listener wrappers are adopted and finalized exactly once across GC", async
     // dropping it, so the adoption is observed and not optimized away.
     expect(listener.port).toBeGreaterThan(0);
     expect(listener.hostname).toBe("127.0.0.1");
-    listener.stop(true);
   }
 
   // Conservative stack scanning can pin a stray wrapper; allow small slack.

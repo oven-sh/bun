@@ -1062,11 +1062,13 @@ macro_rules! js_class_module {
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
             ///
             /// # Safety
-            /// `ptr` must be the unique, live pointer produced by this class's
-            /// construct-path heap allocation (the one its finalizer frees,
-            /// e.g. `Box::into_raw`/`heap::into_raw`). The GC finalizer
-            /// consumes it exactly once, so the caller must not free it,
-            /// reuse it, or install it in a second wrapper after this call.
+            /// `ptr` must point to this class's live construct-path heap
+            /// allocation and carry the ownership that its finalizer releases
+            /// exactly once at GC: the unique `Box::into_raw`/`heap::into_raw`
+            /// pointer for Box-backed classes, or a +1 ref for
+            /// intrusively-refcounted ones. The caller must not release that
+            /// ownership itself or install it in a second wrapper after this
+            /// call.
             #[inline]
             pub unsafe fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
                 // SAFETY: ownership precondition forwarded to the caller.

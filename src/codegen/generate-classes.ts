@@ -3135,11 +3135,12 @@ ${cachedExterns}
         ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
     ///
     /// # Safety
-    /// \`this\` must be the unique, live pointer produced by this class's
-    /// construct-path heap allocation (the one \`${typeName}Class__finalize\`
-    /// frees, e.g. \`Box::into_raw\`/\`heap::into_raw\`). The GC finalizer
-    /// consumes it exactly once, so the caller must not free it, reuse it,
-    /// or install it in a second wrapper after this call.
+    /// \`this\` must point to this class's live construct-path heap
+    /// allocation and carry the ownership that \`${typeName}Class__finalize\`
+    /// releases exactly once at GC: the unique \`Box::into_raw\`/
+    /// \`heap::into_raw\` pointer for Box-backed classes, or a +1 ref for
+    /// intrusively-refcounted ones. The caller must not release that
+    /// ownership itself or install it in a second wrapper after this call.
     #[inline] pub unsafe fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
         // SAFETY: ownership precondition forwarded to the caller.
         unsafe { ${symbolName(typeName, "create")}(global.as_mut_ptr(), this) }

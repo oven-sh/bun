@@ -3132,7 +3132,13 @@ ${cachedExterns}
     }
     ${
       !overridesToJS
-        ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
+        ? `${
+            // The adoption precondition depends on the class's lifecycle:
+            // with a `finalize` hook the wrapper releases `m_ctx` at GC;
+            // without one the wrapper's destructor is empty and never
+            // releases it (see the C++ destructor emission above).
+            finalize
+              ? `/// Transfer ownership of \`this\` to a freshly-allocated JS wrapper.
     ///
     /// # Safety
     /// \`this\` must point to this class's live construct-path heap
@@ -3140,7 +3146,15 @@ ${cachedExterns}
     /// releases exactly once at GC: the unique \`Box::into_raw\`/
     /// \`heap::into_raw\` pointer for Box-backed classes, or a +1 ref for
     /// intrusively-refcounted ones. The caller must not release that
-    /// ownership itself or install it in a second wrapper after this call.
+    /// ownership itself or install it in a second wrapper after this call.`
+              : `/// Install \`this\` as the payload of a freshly-allocated JS wrapper.
+    ///
+    /// # Safety
+    /// This class declares no \`finalize\` hook, so the wrapper never
+    /// releases \`this\`: it must point to a live allocation that outlives
+    /// every JS wrapper created from it, and it must not be freed while any
+    /// wrapper can still reach it.`
+          }
     #[inline] pub unsafe fn to_js(this: *mut ${typeName}, global: &JSGlobalObject) -> JSValue {
         // SAFETY: ownership precondition forwarded to the caller.
         unsafe { ${symbolName(typeName, "create")}(global.as_mut_ptr(), this) }

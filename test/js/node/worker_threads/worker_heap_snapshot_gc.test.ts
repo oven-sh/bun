@@ -29,6 +29,13 @@ test.skipIf(isWindows || isIntelMacOS)(
     const iters = isDebug ? "5" : slow ? "100" : "300";
     const fixture = join(import.meta.dir, "heap-snapshot-gc-race-fixture.js");
 
+    // The stress is probabilistic — more attempts only buy more chances to
+    // hit the (now fixed) race. Stop early when the next attempt could blow
+    // the runner's budget instead of timing out: the slowest release lane
+    // (alpine x64) runs ~9s per 300-snapshot attempt, so 15 attempts
+    // overshoot 120s while most lanes finish all 15 well inside it.
+    const deadline = Date.now() + (slow ? 40_000 : 90_000);
+
     for (let i = 0; i < attempts; i++) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), fixture],
@@ -45,6 +52,7 @@ test.skipIf(isWindows || isIntelMacOS)(
         exitCode: 0,
         signalCode: null,
       });
+      if (Date.now() > deadline) break;
     }
   },
   isDebug || isASAN ? 60_000 : 120_000,

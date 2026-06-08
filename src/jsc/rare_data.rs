@@ -1036,9 +1036,9 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
+        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

@@ -15,9 +15,7 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 // `unsafe fn`, so the pairing invariant is acknowledged at every call site.
 
 const root = path.resolve(import.meta.dir, "..", "..");
-const rustSources = globAllSources()
-  .rust.filter(p => p.endsWith(".rs"))
-  .sort();
+const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
 
 // Read and preprocess each file once; both tests scan the cache.
 const sources = new Map<string, string>();

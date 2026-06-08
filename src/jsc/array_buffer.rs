@@ -546,14 +546,16 @@ impl ArrayBuffer {
 
     /// Hand this descriptor's bytes to JSC with a caller-supplied finalizer:
     /// `callback(self.ptr, deallocator)` runs on the JS thread when the
-    /// returned object is collected.
+    /// returned object is collected (never, if `callback` is `None`).
     ///
     /// # Safety
     ///
     /// `self.ptr` must be the live backing allocation of `self.byte_len`
-    /// bytes and stay valid (including for writes) until `callback` runs;
-    /// `callback`/`deallocator` must be a pair sound to invoke exactly once
-    /// with `(self.ptr, deallocator)` at GC time.
+    /// bytes and stay valid (including for writes) for the returned object's
+    /// entire lifetime: until `callback` runs, or indefinitely when
+    /// `callback` is `None`. `callback`, if `Some`, must be sound to invoke
+    /// exactly once with `(self.ptr, deallocator)` at GC time, and
+    /// `deallocator` must remain valid until then.
     pub unsafe fn to_js_with_context(
         self,
         ctx: &JSGlobalObject,

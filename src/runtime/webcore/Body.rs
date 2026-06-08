@@ -628,7 +628,7 @@ impl ValueError {
     ) -> streams::result::StreamError {
         match self {
             ValueError::AbortReason(reason) => streams::result::StreamError::AbortReason(*reason),
-            _ => streams::result::StreamError::JSValue(self.to_js(global_object)),
+            _ => streams::result::StreamError::strong(self.to_js(global_object)),
         }
     }
 

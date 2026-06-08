@@ -352,6 +352,15 @@ pub enum WasStrong {
 }
 
 impl StreamError {
+    /// Wraps an error value as `JSValue`, taking a gcProtect on it so it stays
+    /// alive while parked in `Pending.result` across event-loop turns. Every
+    /// consumer unprotects exactly once, either after `to_js_weak` reports
+    /// `WasStrong::Strong` or via `StreamResult::release`.
+    pub fn strong(value: JSValue) -> Self {
+        value.protect();
+        StreamError::JSValue(value)
+    }
+
     pub fn to_js_weak(&self, global_object: &JSGlobalObject) -> (JSValue, WasStrong) {
         match self {
             StreamError::Error(err) => (err.to_js(global_object), WasStrong::Weak),
@@ -2466,8 +2475,13 @@ impl BufferAction {
         global: &JSGlobalObject,
         err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
+        let (js_err, was_strong) = err.to_js_weak(global);
+        js_err.ensure_still_alive();
+        if was_strong == WasStrong::Strong {
+            js_err.unprotect();
+        }
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-        JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))
+        JSPromise::opaque_mut(self.swap()).reject(global, Ok(js_err))
     }
 
     pub fn resolve(

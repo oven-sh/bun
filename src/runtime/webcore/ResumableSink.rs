@@ -198,8 +198,14 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 if byte_stream.has_received_last_chunk.get() {
                     this_ref.status = Status::Done;
                     let err: Option<JSValue> = 'brk_err: {
-                        let pending = &byte_stream.pending.get().result;
-                        if let StreamResult::Err(e) = pending {
+                        if matches!(byte_stream.pending.get().result, StreamResult::Err(_)) {
+                            // Take ownership of the parked error so a later
+                            // `release()` (finalize/cancel) can't unprotect it twice.
+                            let StreamResult::Err(e) = byte_stream.pending.with_mut(|p| {
+                                core::mem::replace(&mut p.result, StreamResult::Done)
+                            }) else {
+                                unreachable!()
+                            };
                             let (js_err, was_strong) = e.to_js_weak(global_this);
                             js_err.ensure_still_alive();
                             if was_strong == crate::webcore::streams::WasStrong::Strong {

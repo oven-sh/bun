@@ -3598,7 +3598,7 @@ where
                     js_err.ensure_still_alive();
                     // TODO: properly propagate exception upwards
                     let _ = bytes.on_data(WebCore::streams::Result::Err(
-                        WebCore::streams::StreamError::JSValue(js_err),
+                        WebCore::streams::StreamError::strong(js_err),
                     ));
                     err.reset();
                 }

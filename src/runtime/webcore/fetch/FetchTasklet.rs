@@ -667,7 +667,7 @@ impl FetchTasklet {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
-                    bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
+                    bytes.on_data(StreamResult::Err(StreamError::strong(js_err)))?;
                 }
             }
             if let Some(sink) = self.sink_mut() {

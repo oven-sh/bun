@@ -158,15 +158,15 @@ impl ByteStream {
         });
     }
 
-    pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
+    pub(crate) fn on_data(&self, mut stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
         bun_jsc::mark_binding!();
         if self.done.get() {
-            // The owned `Vec<u8>`/`Vec`
-            // payload drops implicitly at the `return` below — no explicit `drop` needed.
             self.has_received_last_chunk.set(stream.is_done());
 
             bun_output::scoped_log!(ByteStream, "ByteStream.onData already done... do nothing");
 
+            // Frees owned payloads and drops the gcProtect of an `Err` JSValue.
+            stream.release();
             return Ok(());
         }
 
@@ -364,8 +364,10 @@ impl ByteStream {
                     self.buffer.set(buf);
                 }
                 streams::Result::Err(err) => {
-                    self.pending
-                        .with_mut(|p| p.result = streams::Result::Err(err));
+                    self.pending.with_mut(|p| {
+                        p.result.release();
+                        p.result = streams::Result::Err(err);
+                    });
                 }
                 streams::Result::Done => {}
                 _ => unreachable!(),
@@ -387,8 +389,10 @@ impl ByteStream {
                 if self.buffer_action.get().is_some() {
                     panic!("Expected buffer action to be null");
                 }
-                self.pending
-                    .with_mut(|p| p.result = streams::Result::Err(err));
+                self.pending.with_mut(|p| {
+                    p.result.release();
+                    p.result = streams::Result::Err(err);
+                });
             }
             streams::Result::Done => {}
             // We don't support the rest of these yet
@@ -531,6 +535,13 @@ impl ByteStream {
             } else {
                 self.pending.with_mut(|p| p.run());
             }
+        } else {
+            // A done stream can still hold a parked error no consumer took
+            // (e.g. cancelled after the error arrived); drop its gcProtect.
+            self.pending.with_mut(|p| {
+                p.result.release();
+                p.result = streams::Result::Done;
+            });
         }
         if let Some(action) = self.buffer_action.replace(None) {
             // JSPromiseStrong implements Drop, so dropping the enum releases
@@ -578,7 +589,11 @@ impl ByteStream {
 
         if let streams::Result::Err(err) = &self.pending.get().result {
             let (err_js, _) = err.to_js_weak(global_this);
-            self.pending.with_mut(|p| p.result.release());
+            err_js.ensure_still_alive();
+            self.pending.with_mut(|p| {
+                p.result.release();
+                p.result = streams::Result::Done;
+            });
             self.done.set(true);
             self.buffer.with_mut(|b| {
                 b.clear();

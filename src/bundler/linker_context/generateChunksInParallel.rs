@@ -30,11 +30,11 @@ use crate::linker_context::prepare_css_asts_for_chunk::{
     PrepareCssAstTask, prepare_css_asts_for_chunk,
 };
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
-use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
+use crate::linker_context::write_output_files_to_disk::{
+    BYTECODE_EXTENSION, append_linked_sourcemap_url, generate_chunk_bytecode,
+    standalone_placeholder_output_file, write_output_files_to_disk,
+};
 use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
-
-/// Bytecode output file extension (also defined in `writeOutputFilesToDisk.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
 
 bun_core::declare_scope!(PartRanges, hidden);
 
@@ -822,28 +822,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     None
                 };
 
-                let _ = output_files.insert_for_chunk(options::OutputFile::init(
-                    options::OutputFileInit {
-                        data: options::OutputFileData::Buffer {
-                            data: Box::default(),
-                        },
-                        hash: None,
-                        loader: chunks[chunk_index_in_chunks_list].content.loader(),
-                        input_path: Box::default(),
-                        display_size: 0,
-                        output_kind: options::OutputKind::Chunk,
-                        input_loader: Loader::Js,
-                        output_path: Box::default(),
-                        is_executable: false,
-                        source_map_index,
-                        bytecode_index: None,
-                        module_info_index: None,
-                        side: Some(options::Side::Client),
-                        entry_point_index: None,
-                        referenced_css_chunks: Box::default(),
-                        bake_extra: BakeExtra::default(),
-                        ..Default::default()
+                let _ = output_files.insert_for_chunk(standalone_placeholder_output_file(
+                    chunks[chunk_index_in_chunks_list].content.loader(),
+                    options::OutputFileData::Buffer {
+                        data: Box::default(),
                     },
+                    source_map_index,
                 ));
                 continue;
             }
@@ -932,26 +916,11 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_final_rel_path.extend_from_slice(b".map");
 
                     if tag == SourceMapOption::Linked {
-                        let [a, b]: [&[u8]; 2] = if public_path.len() > 0 {
-                            cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
-                        } else {
-                            [b"", path::basename(&source_map_final_rel_path)]
-                        };
-
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len = code_result.buffer.len()
-                            + source_map_start.len()
-                            + a.len()
-                            + b.len()
-                            + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                        buf.extend_from_slice(&code_result.buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
-
-                        code_result.buffer = buf.into_boxed_slice();
+                        append_linked_sourcemap_url(
+                            &mut code_result.buffer,
+                            public_path,
+                            &source_map_final_rel_path,
+                        );
                     }
 
                     sourcemap_output_file =
@@ -1024,7 +993,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     if matches!(chunk.content, crate::chunk::Content::Javascript(_))
                         && loader.is_javascript_like()
                     {
-                        let mut fdpath = bun_paths::PathBuffer::uninit();
                         // For --compile builds, the bytecode URL must match the module name
                         // that will be used at runtime. The module name is:
                         //   public_path + final_rel_path (e.g., "/$bunfs/root/app.js")
@@ -1048,33 +1016,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 BYTECODE_EXTENSION
                             ))
                         };
-                        source_provider_url.ref_();
-                        // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop`
-                        // releases the ref bumped above on every exit path (incl. `break 'brk`).
-                        let mut source_provider_url =
-                            bun_core::OwnedString::new(source_provider_url);
-
-                        if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                        if let Some((bytecode, source_provider_url)) = generate_chunk_bytecode(
                             c.options.output_format,
                             &code_result.buffer,
-                            &mut source_provider_url,
+                            source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();
-                            debug!(
-                                "Bytecode cache generated {}: {}",
-                                bstr::BStr::new(source_provider_url_str.slice()),
-                                bun_core::fmt::size(
-                                    bytecode.len(),
-                                    bun_core::fmt::SizeFormatterOptions {
-                                        space_between_number_and_unit: true
-                                    }
-                                )
-                            );
-                            fdpath[..chunk.final_rel_path.len()]
-                                .copy_from_slice(&chunk.final_rel_path);
-                            fdpath[chunk.final_rel_path.len()..][..BYTECODE_EXTENSION.len()]
-                                .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
-
                             let mut input_path_buf: Vec<u8> = Vec::new();
                             input_path_buf.extend_from_slice(&chunk.final_rel_path);
                             input_path_buf.extend_from_slice(BYTECODE_EXTENSION.as_bytes());

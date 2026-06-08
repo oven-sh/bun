@@ -24,16 +24,9 @@ use bun_core::strings::CodepointIterator;
 use bun_options_types::bundle_enums as bundle_opts;
 use bun_sys::Fd;
 
-/// Local stand-in for `bun_core::strings::Encoding` that derives `ConstParamTy` so it can
-/// be used as a const-generic parameter (`const ENCODING: Encoding`). The variant set is
-/// identical; convert at the boundary if a `strings::Encoding` is ever needed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Encoding {
-    Ascii,
-    Utf8,
-    Latin1,
-    Utf16,
-}
+/// Const-generic-capable encoding enum; canonical impl lives in
+/// `bun_core::printer` next to the escaping loop.
+pub use bun_core::printer::Encoding;
 
 /// Byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
 /// Re-exported from `bun_io` (canonical in `bun_core::io`); any `bun_io::Write`
@@ -777,37 +770,12 @@ pub mod analyze_transpiled_module {
 /// link-interface); the printer just holds the raw pointer.
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
-use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
-use bun_core::printer::{
-    FIRST_ASCII, FIRST_HIGH_SURROGATE, LAST_ASCII, LAST_LOW_SURROGATE, bmp_escape,
-    surrogate_pair_escape,
-};
+use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
 
 /// For support JavaScriptCore
 const ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING: bool = true;
 
-// Callers widen to i32 at the boundary.
-// PERF: `ascii_only` is a *runtime* arg so the large
-// callers (`write_pre_quoted_string_inner`, `estimate_length_for_utf8`) collapse to a
-// single monomorphization instead of one per (ascii_only × quote_char × …) combo —
-// see the comment on `write_pre_quoted_string`.
-#[inline]
-pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
-    if c <= LAST_ASCII as i32 {
-        c >= FIRST_ASCII as i32
-            && c != i32::from(b'\\')
-            && c != i32::from(b'"')
-            && c != i32::from(b'\'')
-            && c != i32::from(b'`')
-            && c != i32::from(b'$')
-    } else {
-        !ascii_only
-            && c != 0xFEFF
-            && c != 0x2028
-            && c != 0x2029
-            && (c < FIRST_HIGH_SURROGATE as i32 || c > LAST_LOW_SURROGATE as i32)
-    }
-}
+pub use bun_core::printer::can_print_without_escape;
 
 const INDENTATION_SPACE_BUF: [u8; 128] = [b' '; 128];
 const INDENTATION_TAB_BUF: [u8; 128] = [b'\t'; 128];
@@ -965,229 +933,12 @@ pub fn write_pre_quoted_string<
 where
     W: Write + ?Sized,
 {
-    write_pre_quoted_string_inner::<W, ENCODING>(text_in, writer, QUOTE_CHAR, ASCII_ONLY, JSON)
+    Ok(write_pre_quoted_string_inner::<W, ENCODING>(
+        text_in, writer, QUOTE_CHAR, ASCII_ONLY, JSON,
+    )?)
 }
 
-/// `quote_char` / `ascii_only` / `json` are runtime args (were `const`): the
-/// branches on them are cheap and well-predicted, and collapsing the
-/// monomorphizations keeps the hot transpile pages dense (see the facade above).
-/// `ENCODING` stays `const` — it changes the code-unit indexing structure of the
-/// loop, so a per-encoding copy is genuinely different code.
-#[inline(never)]
-pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
-    text_in: &[u8],
-    writer: &mut W,
-    quote_char: u8,
-    ascii_only: bool,
-    json: bool,
-) -> crate::Result<()>
-where
-    W: Write + ?Sized,
-{
-    debug_assert!(
-        !(json && quote_char != b'"'),
-        "for json, quote_char must be '\"'"
-    );
-
-    // this is a large hot-path function; logic is ported 1:1 but the
-    // utf16 path needs &[u16] handling.
-    let text = text_in;
-    let mut i: usize = 0;
-    let n: usize = match ENCODING {
-        Encoding::Utf16 => text.len() / 2,
-        _ => text.len(),
-    };
-
-    macro_rules! code_unit_at {
-        ($idx:expr) => {
-            match ENCODING {
-                Encoding::Utf16 => {
-                    let lo = text[$idx * 2];
-                    let hi = text[$idx * 2 + 1];
-                    u16::from_le_bytes([lo, hi]) as i32
-                }
-                _ => text[$idx] as i32,
-            }
-        };
-    }
-
-    while i < n {
-        let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
-            Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
-        };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
-        let c: i32 = match ENCODING {
-            Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
-            }
-            Encoding::Ascii => {
-                debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
-            }
-            Encoding::Latin1 => text[i] as i32,
-            Encoding::Utf16 => {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
-            }
-        };
-
-        if can_print_without_escape(c, ascii_only) {
-            match ENCODING {
-                Encoding::Ascii | Encoding::Utf8 => {
-                    let remain = &text[i + clamped_width..];
-                    if let Some(j) =
-                        strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
-                    {
-                        let j = j as usize;
-                        writer.write_all(&text[i..i + clamped_width + j])?;
-                        i += clamped_width + j;
-                    } else {
-                        writer.write_all(&text[i..])?;
-                        break;
-                    }
-                }
-                Encoding::Latin1 | Encoding::Utf16 => {
-                    let mut codepoint_bytes = [0u8; 4];
-                    let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
-                    writer.write_all(&codepoint_bytes[..codepoint_len])?;
-                    i += clamped_width;
-                }
-            }
-            continue;
-        }
-        match c {
-            0x07 => {
-                writer.write_all(b"\\x07")?;
-                i += 1;
-            }
-            0x08 => {
-                writer.write_all(b"\\b")?;
-                i += 1;
-            }
-            0x0C => {
-                writer.write_all(b"\\f")?;
-                i += 1;
-            }
-            0x0A => {
-                if quote_char == b'`' {
-                    writer.write_all(b"\n")?;
-                } else {
-                    writer.write_all(b"\\n")?;
-                }
-                i += 1;
-            }
-            0x0D => {
-                writer.write_all(b"\\r")?;
-                i += 1;
-            }
-            // \v
-            0x0B => {
-                writer.write_all(b"\\v")?;
-                i += 1;
-            }
-            // "\\"
-            0x5C => {
-                writer.write_all(b"\\\\")?;
-                i += 1;
-            }
-            0x22 => {
-                if quote_char == b'"' {
-                    writer.write_all(b"\\\"")?;
-                } else {
-                    writer.write_all(b"\"")?;
-                }
-                i += 1;
-            }
-            0x27 => {
-                if quote_char == b'\'' {
-                    writer.write_all(b"\\'")?;
-                } else {
-                    writer.write_all(b"'")?;
-                }
-                i += 1;
-            }
-            0x60 => {
-                if quote_char == b'`' {
-                    writer.write_all(b"\\`")?;
-                } else {
-                    writer.write_all(b"`")?;
-                }
-                i += 1;
-            }
-            0x24 => {
-                if quote_char == b'`' {
-                    let next = if i + clamped_width < n {
-                        Some(code_unit_at!(i + clamped_width))
-                    } else {
-                        None
-                    };
-                    if next == Some(b'{' as i32) {
-                        writer.write_all(b"\\$")?;
-                    } else {
-                        writer.write_all(b"$")?;
-                    }
-                } else {
-                    writer.write_all(b"$")?;
-                }
-                i += 1;
-            }
-            0x09 => {
-                if quote_char == b'`' {
-                    writer.write_all(b"\t")?;
-                } else {
-                    writer.write_all(b"\\t")?;
-                }
-                i += 1;
-            }
-            _ => {
-                i += width as usize;
-
-                if c <= 0xFF && !json {
-                    let h = hex2_upper(c as u8);
-                    writer.write_all(&[b'\\', b'x', h[0], h[1]])?;
-                } else if c <= 0xFFFF {
-                    writer.write_all(&bmp_escape(c as u32))?;
-                } else {
-                    writer.write_all(&surrogate_pair_escape(c as u32))?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn quote_for_json(
-    text: &[u8],
-    bytes: &mut MutableString,
-    ascii_only: bool,
-) -> crate::Result<()> {
-    // `ascii_only` is threaded at runtime so
-    // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
-    //
-    // Heuristic reservation (~12.5% slack) instead of `estimate_length_for_utf8`,
-    // which would do a full SIMD scan + per-escape rune decode over `text` just
-    // to size the buffer — the same work `write_pre_quoted_string_inner` repeats
-    // immediately below. Tab-indented JS (e.g. three.js) has ~9.4% of bytes
-    // needing 2-byte escapes (tabs + newlines + quotes/backslashes), so 6.25%
-    // slack would under-shoot and force a 2x doubling memcpy of the whole
-    // source. The writer still grows on demand if this under-shoots.
-    bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
-    bytes.append_char(b'"')?;
-    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
-    bytes.append_char(b'"').expect("unreachable");
-    Ok(())
-}
+pub use bun_core::printer::{quote_for_json, write_pre_quoted_string_inner};
 
 pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     input: &[u8],

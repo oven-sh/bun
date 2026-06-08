@@ -171,8 +171,11 @@ enum Key {
     AltLeft,
     AltRight,
 
-    // Regular printable character
+    // Regular printable ASCII character
     Char(u8),
+
+    // A full multi-byte UTF-8 sequence (len bytes of the array are valid)
+    Text([u8; 4], usize),
 
     // Unknown/unhandled
     Unknown,
@@ -415,16 +418,42 @@ impl LineEditor {
         Ok(())
     }
 
+    /// Byte offset of the start of the codepoint ending just before `pos`.
+    /// Walks back over UTF-8 continuation bytes (0x80..=0xBF).
+    fn prev_boundary(&self, pos: usize) -> usize {
+        let mut i = pos;
+        while i > 0 {
+            i -= 1;
+            if self.buffer[i] & 0xC0 != 0x80 {
+                break;
+            }
+        }
+        i
+    }
+
+    /// Byte offset of the start of the codepoint after the one beginning at
+    /// `pos`. Advances by the lead byte's UTF-8 sequence length, clamped to the
+    /// buffer so a truncated/invalid sequence still makes progress.
+    fn next_boundary(&self, pos: usize) -> usize {
+        if pos >= self.buffer.len() {
+            return self.buffer.len();
+        }
+        let step = (strings::wtf8_byte_sequence_length(self.buffer[pos]) as usize).max(1);
+        (pos + step).min(self.buffer.len())
+    }
+
     pub(crate) fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.buffer.remove(self.cursor);
+            let end = self.next_boundary(self.cursor);
+            self.buffer.drain(self.cursor..end);
         }
     }
 
     pub(crate) fn backspace(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
-            self.buffer.remove(self.cursor);
+            let start = self.prev_boundary(self.cursor);
+            self.buffer.drain(start..self.cursor);
+            self.cursor = start;
         }
     }
 
@@ -461,13 +490,13 @@ impl LineEditor {
 
     pub(crate) fn move_left(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
+            self.cursor = self.prev_boundary(self.cursor);
         }
     }
 
     pub(crate) fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.cursor += 1;
+            self.cursor = self.next_boundary(self.cursor);
         }
     }
 
@@ -498,12 +527,26 @@ impl LineEditor {
     }
 
     pub(crate) fn swap(&mut self) {
-        if self.cursor > 0 && self.cursor < self.buffer.len() {
-            self.buffer.swap(self.cursor - 1, self.cursor);
-            self.cursor += 1;
-        } else if self.cursor > 1 && self.cursor == self.buffer.len() {
-            self.buffer.swap(self.cursor - 2, self.cursor - 1);
-        }
+        // Transpose two whole codepoints (not bytes), so multi-byte UTF-8 is
+        // not split. Mid-line swaps the codepoint before the cursor with the
+        // one at it and advances past both; at end-of-line it transposes the
+        // last two codepoints.
+        let (left_start, mid, right_end) = if self.cursor > 0 && self.cursor < self.buffer.len() {
+            let mid = self.cursor;
+            (self.prev_boundary(mid), mid, self.next_boundary(mid))
+        } else if self.cursor == self.buffer.len() {
+            let mid = self.prev_boundary(self.cursor);
+            if mid == 0 {
+                return; // fewer than two codepoints
+            }
+            (self.prev_boundary(mid), mid, self.cursor)
+        } else {
+            return;
+        };
+        // Rotate the two adjacent codepoint ranges [left_start, mid) and
+        // [mid, right_end): moving the left range to the end swaps them.
+        self.buffer[left_start..right_end].rotate_left(mid - left_start);
+        self.cursor = right_end;
     }
 
     pub(crate) fn get_line(&self) -> &[u8] {
@@ -1143,6 +1186,37 @@ impl<'a> Repl<'a> {
             return Some(Key::Escape);
         }
 
+        // Multi-byte UTF-8: assemble the whole sequence so it is inserted as
+        // one unit. A lone/invalid lead byte yields a length of 0; fall back to
+        // reading it as a single raw byte so it is still dropped (not split).
+        let seq_len = strings::utf8_byte_sequence_length(byte) as usize;
+        if seq_len > 1 {
+            let mut bytes = [0u8; 4];
+            bytes[0] = byte;
+            for slot in bytes.iter_mut().take(seq_len).skip(1) {
+                let Some(cont) = self.read_byte() else {
+                    // Stream ended mid-sequence; drop the truncated bytes.
+                    return Some(Key::Unknown);
+                };
+                // A byte that is not a continuation byte (0x80..=0xBF) means the
+                // sequence is malformed; drop the lead bytes but push this one
+                // back so the next read_key sees it (it starts a new keystroke).
+                if cont & 0xC0 != 0x80 {
+                    self.stdin_buf_start -= 1;
+                    return Some(Key::Unknown);
+                }
+                *slot = cont;
+            }
+            // Reject overlong encodings, surrogates, and values above U+10FFFF,
+            // which pass the continuation-byte shape check but are not valid
+            // UTF-8. Keeping the buffer valid avoids feeding bad bytes to the
+            // highlighter and parser.
+            if !strings::is_valid_utf8(&bytes[..seq_len]) {
+                return Some(Key::Unknown);
+            }
+            return Some(Key::Text(bytes, seq_len));
+        }
+
         Some(Key::from_byte(byte))
     }
 
@@ -1195,8 +1269,12 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Position cursor
-        let cursor_pos = prompt_len + self.line_editor.cursor;
+        // Position cursor. The cursor is a byte offset, but the terminal column
+        // is the display width of the text before it, so multi-byte UTF-8 and
+        // wide (e.g. CJK) characters advance the column correctly.
+        let cursor_col =
+            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
+        let cursor_pos = prompt_len + cursor_col;
         if cursor_pos < self.terminal_width as usize {
             self.write(b"\r");
             if cursor_pos > 0 {
@@ -2026,6 +2104,10 @@ impl<'a> Repl<'a> {
                 }
                 Key::Char(c) => {
                     let _ = self.line_editor.insert(c);
+                    self.refresh_line();
+                }
+                Key::Text(bytes, len) => {
+                    let _ = self.line_editor.insert_slice(&bytes[..len]);
                     self.refresh_line();
                 }
                 _ => {}

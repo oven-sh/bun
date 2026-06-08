@@ -5671,9 +5671,13 @@ pub mod bv2_impl {
                 // `graph.ast.items(.import_records)[importer_source_index]` when
                 // they complete. Without this, the graph entry stays at
                 // JSAst.empty and the deferred plugin callback index-out-of-
-                // bounds crashes in BundleV2.onResolve / runResolver. The linker
-                // never runs because `transpiler.log.errors > 0` aborts the
-                // build before link time, so saving the AST is safe.
+                // bounds crashes in BundleV2.onResolve / runResolver. In a
+                // non-dev build the linker never runs after this error
+                // (`transpiler.log.errors > 0` aborts before link time). The
+                // dev server does link with failed files, but it filters them
+                // out by their empty `parts` list and never reads a failed
+                // file's import_records, so saving them is safe — unlike the
+                // `css` slot below.
                 let result_heap = *result.ast.import_records.allocator();
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
                     core::mem::replace(
@@ -5681,9 +5685,19 @@ pub mod bv2_impl {
                         bun_alloc::ArenaVec::new_in(result_heap),
                     );
 
-                // Move the CSS stylesheet onto the graph row so teardown can find
-                // and drop it — the `Success` arm that would normally do this is skipped.
-                this.graph.ast.items_css_mut()[source_index.0 as usize] = result.ast.css.take();
+                // Drop the parsed stylesheet now — the `Success` arm that would
+                // normally move it onto the graph row is skipped. It must not be
+                // parked on the graph row either: the dev server proceeds with
+                // failed files and treats a populated `css` slot as a
+                // successfully parsed CSS file (CSS entry point discovery and
+                // import ordering in `finish_from_bake_dev_server`), so a parked
+                // stylesheet would produce a CSS chunk for a failed file while
+                // `graph.css_file_count` stays 0.
+                if let Some(css_ref) = result.ast.css.take() {
+                    // SAFETY: live arena pointer, uniquely owned here (the graph
+                    // row for this file stays `None`); dropped exactly once.
+                    unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
+                }
 
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,

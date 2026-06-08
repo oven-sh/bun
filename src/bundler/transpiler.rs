@@ -404,9 +404,12 @@ impl<'a> Transpiler<'a> {
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
-    /// Returns the resolver's auto-install package-manager handle.
+    /// Returns the resolver's auto-install package-manager handle. Errs when
+    /// the one-time init fails (e.g. unreadable top-level directory).
     #[inline]
-    pub fn get_package_manager(&mut self) -> *mut dyn bun_resolver::install_types::AutoInstaller {
+    pub fn get_package_manager(
+        &mut self,
+    ) -> Result<*mut dyn bun_resolver::install_types::AutoInstaller, bun_core::Error> {
         self.resolver.get_package_manager()
     }
 

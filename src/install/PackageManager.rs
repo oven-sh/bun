@@ -2302,11 +2302,25 @@ pub(crate) fn init_with_runtime(
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
-) -> *mut PackageManager {
-    bun_core::run_once! {{
-        init_with_runtime_once(log, bun_install, cli, env);
-    }}
-    get()
+) -> Result<*mut PackageManager, bun_core::Error> {
+    // NB: not `bun_core::run_once!` — the body is fallible (reading the root
+    // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
+    // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
+    // null on failure, so later callers have to see the error instead of a
+    // null singleton.
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    // `0` = initialized without error; `bun_core::Error` is a `NonZeroU16`, so
+    // every real code round-trips exactly through `as_u16`/`from_raw`.
+    static INIT_ERROR: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(0);
+    ONCE.call_once(|| {
+        if let Err(err) = init_with_runtime_once(log, bun_install, cli, env) {
+            INIT_ERROR.store(err.as_u16(), core::sync::atomic::Ordering::Release);
+        }
+    });
+    match INIT_ERROR.load(core::sync::atomic::Ordering::Acquire) {
+        0 => Ok(get()),
+        code => Err(bun_core::Error::from_raw(code)),
+    }
 }
 
 pub(crate) fn init_with_runtime_once(
@@ -2314,10 +2328,23 @@ pub(crate) fn init_with_runtime_once(
     bun_install: Option<&Api::BunInstall>,
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
-) {
+) -> Result<(), bun_core::Error> {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         PackageManager::set_verbose_install(true);
     }
+
+    // Read the root directory BEFORE allocating the singleton. This is
+    // user-reachable failure (the cwd may have been deleted out from under the
+    // process, or be unreadable: ENOENT/EACCES/ENOTDIR), and bailing out here
+    // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
+    // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
+    let fs_instance = FileSystem::instance();
+    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
+        // and runtime init runs once on the main thread before any other access.
+        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
+        fs::EntriesOption::Err(e) => return Err(e.canonical_error),
+    };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();
@@ -2330,38 +2357,6 @@ pub(crate) fn init_with_runtime_once(
     // initialized it.
     let manager_ptr: *mut PackageManager =
         holder::RAW_PTR.load(core::sync::atomic::Ordering::Acquire);
-    // Returns the resolver's BSSMap-owned
-    // `*EntriesOption` slot. On error, `Output::err` then panic:
-    // this is the runtime auto-install path
-    // where the resolver already opened `top_level_dir`, so failure is a
-    // programmer-error / fs-disappeared edge.
-    let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance
-        .read_directory(fs_instance.top_level_dir(), 0, true)
-        .map(|r| &mut *r)
-    {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        Ok(fs::EntriesOption::Entries(e)) => unsafe {
-            &mut *std::ptr::from_mut::<fs::DirEntry>(*e)
-        },
-        Ok(fs::EntriesOption::Err(e)) => {
-            Output::err(
-                e.canonical_error,
-                "failed to read root directory: '{s}'",
-                (bstr::BStr::new(fs_instance.top_level_dir()),),
-            );
-            panic!("Failed to initialize package manager");
-        }
-        Err(err) => {
-            Output::err(
-                err,
-                "failed to read root directory: '{s}'",
-                (bstr::BStr::new(fs_instance.top_level_dir()),),
-            );
-            panic!("Failed to initialize package manager");
-        }
-    };
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
@@ -2514,4 +2509,6 @@ pub(crate) fn init_with_runtime_once(
     } else {
         manager.lockfile.init_empty();
     }
+
+    Ok(())
 }

@@ -1621,7 +1621,7 @@ const ARES_ESERVICE: c_int = 25;
 pub(crate) const ARES_ENOSERVER: c_int = 26;
 
 #[repr(i32)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr, strum::FromRepr)]
 pub enum Error {
     ENODATA = ARES_ENODATA,
     EFORMERR = ARES_EFORMERR,
@@ -1845,10 +1845,10 @@ impl Error {
             (1..=ARES_ENOSERVER as u32).contains(&n),
             "c-ares status {rc} out of range",
         );
-        // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
-        // contiguous discriminants `1..=ARES_ENOSERVER + 1`, so every value in
-        // the asserted range is a valid discriminant.
-        Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
+        // Every value in the asserted range is a declared discriminant, so the
+        // checked `from_repr` (strum::FromRepr) always returns `Some` here and
+        // never yields `EAI_AGAIN`, which lies outside the range.
+        Error::from_repr(n as i32)
     }
 }
 

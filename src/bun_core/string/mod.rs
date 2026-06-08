@@ -1521,14 +1521,14 @@ impl ZigString {
         // `ZigString.assertGlobal` — debug probe that the buffer really came
         // from mimalloc (skipped under ASAN, where the default allocator is
         // libc's).
-        if bun_alloc::USE_MIMALLOC {
+        if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && len != 0 {
             // SAFETY: both probes accept arbitrary pointer values.
-            debug_assert!(
-                len == 0
-                    || unsafe {
-                        bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast())
-                            || bun_alloc::mimalloc::mi_check_owned(ptr.cast())
-                    },
+            let owned = unsafe {
+                bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast())
+                    || bun_alloc::mimalloc::mi_check_owned(ptr.cast())
+            };
+            assert!(
+                owned,
                 "ZigString::from16: buffer was not allocated by the default allocator"
             );
         }

@@ -10,6 +10,21 @@ const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
 
+// Env for the freed-JSC-handle regression tests below. Malloc=1 routes
+// WebKit's fastMalloc through the system allocator (bmalloc DebugHeap) so
+// ASAN builds poison freed HandleSet/HandleBlock memory and report the
+// use-after-free deterministically; with libpas the freed pages stay mapped
+// and the bug only crashes when the pool reuses them. That same routing
+// exposes every deliberately-unreclaimed exit-time WebKit allocation to
+// LeakSanitizer, whose sweep (enabled by ASAN CI lanes via detect_leaks=1)
+// then takes minutes — disable it in the child; the use-after-free detection
+// these tests exist for is AddressSanitizer proper and unaffected.
+const debugHeapEnv = {
+  ...bunEnv,
+  Malloc: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
+
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
 // parent keep-alive was taken unconditionally in `create()`. `.unref()` after
@@ -89,11 +104,6 @@ test(
 // freed memory (segfault in Bun__StrongRef__delete →
 // JSC::HandleSet::deallocate → WTF::SentinelLinkedList::remove during
 // WebWorker::shutdown).
-//
-// Malloc=1 makes WebKit's fastMalloc use the system allocator (bmalloc
-// DebugHeap) so ASAN builds poison the freed HandleSet/HandleBlock memory
-// and report the use-after-free deterministically; with libpas the freed
-// pages stay mapped and the bug only crashes when the pool reuses them.
 test("worker that loaded Bun.SQL and Bun.s3 exits without touching freed JSC handles", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -116,7 +126,7 @@ test("worker that loaded Bun.SQL and Bun.s3 exits without touching freed JSC han
         console.log("worker closed");
       `,
     ],
-    env: { ...bunEnv, Malloc: "1" },
+    env: debugHeapEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -151,7 +161,7 @@ test("worker terminated with an in-flight DNS query shuts down cleanly", async (
         console.log("terminated ok");
       `,
     ],
-    env: { ...bunEnv, Malloc: "1" },
+    env: debugHeapEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -169,7 +179,7 @@ test("worker terminated with an in-flight DNS query shuts down cleanly", async (
 test("main thread that loaded Bun.SQL and Bun.s3 destructs on exit without touching freed JSC handles", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `Bun.SQL; Bun.s3; console.log("loaded");`],
-    env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", Malloc: "1" },
+    env: { ...debugHeapEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });

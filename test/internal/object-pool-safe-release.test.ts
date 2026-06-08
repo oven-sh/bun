@@ -12,10 +12,11 @@
 // defect one layer down: a safe `pub fn` whose correctness depended on an
 // unchecked "points into a live pool node" contract.
 //
-// Both functions had zero callers, so the fix deletes them. The remaining
-// ways to hand a value back to an `ObjectPool` are `PoolGuard`'s `Drop` and
-// the by-value `push(T)`; the node-based `release` stays, but only as an
-// `unsafe fn` with a documented contract.
+// Both functions had zero callers, so the fix deletes them (along with the
+// whole `http::zlib` module). The remaining ways to hand a value back to an
+// `ObjectPool` are `PoolGuard`'s `Drop` and the by-value `push(T)`; the
+// node-based `release` stays, but only as an `unsafe fn` with a documented
+// contract.
 //
 // The misuse is only expressible from Rust (nothing reachable from JS calls
 // these functions), so there is no runtime reproduction to test. This file
@@ -23,19 +24,19 @@
 // `test/internal/` placement as `ban-words.test.ts`.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 
 // Whitespace-tolerant: only the presence/absence of the signatures matters,
 // not formatting.
-function normalizedSource(absolute: string): string {
-  return readFileSync(absolute, "utf8").replace(/\s+/g, " ");
+function normalizedSource(relative: string): string {
+  return readFileSync(join(repoRoot, relative), "utf8").replace(/\s+/g, " ");
 }
 
 test("ObjectPool has no safe release-by-reference API (#31974)", () => {
-  const pool = normalizedSource(join(repoRoot, "src/collections/pool.rs"));
+  const pool = normalizedSource("src/collections/pool.rs");
 
   // Recovering a Node<T> from a caller-supplied &mut T cannot be a safe fn:
   // nothing checks that the reference actually points into a pool node.
@@ -48,13 +49,16 @@ test("ObjectPool has no safe release-by-reference API (#31974)", () => {
   expect(pool).not.toMatch(/\bpub\s+fn\s+release\b/);
 });
 
-test("http zlib buffer pool with a safe put(&mut MutableString) stays deleted (#31974)", () => {
-  const zlib = join(repoRoot, "src/http/zlib.rs");
-  if (!existsSync(zlib)) {
-    // Deleted — the fixed state. (The module had zero callers.)
-    return;
-  }
-  // If a pooled-buffer module comes back, its release path must not be a safe
-  // fn that adopts an arbitrary `&mut MutableString` as a pool entry.
-  expect(normalizedSource(zlib)).not.toMatch(/\bpub\s+fn\s+put\s*\(\s*\w+\s*:\s*&\s*mut\s+MutableString\b/);
+test("bun_http does not declare the zlib buffer-pool module (#31974)", () => {
+  // The module's release path (`put`) safely adopted arbitrary
+  // `&mut MutableString` values as pool entries; it had zero callers and was
+  // deleted. Asserted via the module declaration in lib.rs rather than the
+  // existence of src/http/zlib.rs: a file on disk that no `mod` declaration
+  // references is not part of the crate (and stash/checkout round-trips can
+  // leave stray copies of deleted files in the working tree). If the module
+  // is ever reintroduced, its release path must take ownership (PoolGuard or
+  // by-value) instead of adopting a caller-supplied reference — then update
+  // this lint.
+  const lib = normalizedSource("src/http/lib.rs");
+  expect(lib).not.toMatch(/\bmod\s+zlib\b/);
 });

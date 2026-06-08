@@ -376,11 +376,11 @@ impl S3Client {
         );
         // `to_js` runs `calculateEstimatedByteSize()`
         // before wrapping the heap Blob in a JSS3File so JSC sees the correct
-        // GC pressure. Route through `BlobExt::to_js` (the `&mut self` method
-        // that owns the heap pointer), same as `S3File::construct_internal_js`.
-        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`;
-        // `to_js` hands ownership of that pointer to the C++ wrapper.
-        Ok(unsafe { &mut *blob }.to_js(global))
+        // GC pressure. Route through `BlobExt::to_js` (the `&self` method
+        // that takes the heap pointer), same as `S3File::construct_internal_js`.
+        // SAFETY: `blob` is a freshly leaked `*mut Blob` from `Blob::new`
+        // with no wrapper yet; `to_js` hands ownership to the C++ wrapper.
+        Ok(unsafe { (*blob).to_js(global) })
     }
 
     #[bun_jsc::host_fn(method)]

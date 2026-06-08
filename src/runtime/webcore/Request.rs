@@ -506,7 +506,14 @@ impl Request {
         <Self as BodyMixin>::detach_readable_stream(self, global_object)
     }
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation
+    /// (`heap::into_raw(Box::new(..))`) and must not already have a JS
+    /// wrapper: the wrapper returned here adopts the pointer as its `m_ctx`
+    /// and the GC finalizer reclaims it (`RequestClass__finalize` →
+    /// `Box::from_raw`).
+    pub unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
         // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
@@ -527,24 +534,32 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void* m_ctx` (module-private —
-    // sole caller forwards `from_ref(self)`). Matches the `*__createObject`
-    // precedent.
-    safe fn Bun__JSRequest__createForBake(
+    // `request_ptr` is stored opaquely as `void* m_ctx` and the wrapper's GC
+    // finalizer reclaims it (`JSBunRequest` subclasses the codegen
+    // `JSRequest`), so this is adoption surface: callers must own the heap
+    // allocation (module-private — sole caller is `to_js_for_bake`).
+    fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
         request_ptr: *mut Request,
     ) -> JSValue;
 }
 
 impl Request {
-    pub fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    /// # Safety
+    ///
+    /// Same contract as [`Request::to_js`]: `self` must be the construct-path
+    /// heap allocation with no existing JS wrapper; the `JSBunRequest` wrapper
+    /// adopts the pointer and the GC finalizer reclaims it.
+    pub unsafe fn to_js_for_bake(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_object, || {
             // C++ stores `self` as opaque `void* m_ctx`; see `to_js` note.
-            Bun__JSRequest__createForBake(
-                global_object,
-                std::ptr::from_ref::<Request>(self).cast_mut(),
-            )
+            // SAFETY: forwarded caller contract (see `# Safety` above).
+            unsafe {
+                Bun__JSRequest__createForBake(
+                    global_object,
+                    std::ptr::from_ref::<Request>(self).cast_mut(),
+                )
+            }
         })
     }
 }

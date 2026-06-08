@@ -3160,12 +3160,18 @@ where
 
         Some(PreparedRequestFor {
             js_request: match create_js_request {
-                CreateJsRequest::Yes => request_object.to_js(&self.global()),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(&self.global()) {
-                    Ok(v) => v,
-                    Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                    Err(_) => return None,
-                },
+                // SAFETY: `request_object` is the fresh heap allocation leaked
+                // from `Request::new` above (no wrapper yet); the ctx only
+                // keeps a WeakPtr alias.
+                CreateJsRequest::Yes => unsafe { request_object.to_js(&self.global()) },
+                CreateJsRequest::Bake => {
+                    // SAFETY: same provenance as the `Yes` arm above.
+                    match unsafe { request_object.to_js_for_bake(&self.global()) } {
+                        Ok(v) => v,
+                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(_) => return None,
+                    }
+                }
                 CreateJsRequest::No => JSValue::ZERO,
             },
             request_object,
@@ -3328,7 +3334,13 @@ where
 
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
-        let args = [request_object.to_js(&global), this.js_value_assert_alive()];
+        let args = [
+            // SAFETY: `request_object` is the fresh heap allocation leaked
+            // from `Request::new` above (no wrapper yet); the ctx only keeps
+            // a WeakPtr alias.
+            unsafe { request_object.to_js(&global) },
+            this.js_value_assert_alive(),
+        ];
         let request_value = args[0];
         request_value.ensure_still_alive();
 

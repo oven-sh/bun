@@ -1680,7 +1680,7 @@ impl FetchTasklet {
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
-        let response_js = Response::make_maybe_pooled(&global_this, response);
+        let response_js = unsafe { Response::make_maybe_pooled(&global_this, response) };
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,

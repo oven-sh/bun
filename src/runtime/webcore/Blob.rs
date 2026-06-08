@@ -382,7 +382,15 @@ pub trait BlobExt {
         Self: Sized;
     fn calculate_estimated_byte_size(&self);
     fn estimated_size(&self) -> usize;
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`Blob::new`], which
+    /// sets the initial ref owed to the wrapper) and must not already have a
+    /// JS wrapper: the wrapper returned here adopts the pointer as its `m_ctx`
+    /// and releases that ref at GC finalize ([`Blob::finalize`] →
+    /// `Blob__deref`). Stack blobs (`is_heap_allocated() == false`) must never
+    /// reach this.
+    unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue;
     fn find_or_create_file_from_path(
         path_or_fd: &mut PathOrFileDescriptor,
         global_this: &JSGlobalObject,
@@ -3729,8 +3737,8 @@ impl BlobExt for Blob {
         self.reported_estimated_size.get()
     }
 
-    fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // if cfg!(debug_assertions) { debug_assert!(self.is_heap_allocated()); }
+    unsafe fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.is_heap_allocated());
         self.calculate_estimated_byte_size();
 
         // R-2: `&self` receiver, but the FFI shims take `*mut Blob` (the
@@ -6565,7 +6573,7 @@ impl Any {
                 // pointer into a JS wrapper which takes ownership.
                 unsafe { (*result).global_this.set(global_this) };
                 // SAFETY: same fresh `result` allocation; ownership transfers to the JS wrapper.
-                Ok(BlobExt::to_js(unsafe { &*result }, global_this))
+                Ok(unsafe { BlobExt::to_js(&*result, global_this) })
             }
             streams::BufferActionTag::ArrayBuffer => {
                 if matches!(self, Any::Blob(_)) {

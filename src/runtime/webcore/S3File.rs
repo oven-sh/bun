@@ -895,11 +895,11 @@ pub(crate) fn construct_internal_js(
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let blob = construct_s3_file_internal(global, path, options)?;
-    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
-    // Call the `BlobExt::to_js` `&mut self` method (not the by-value
-    // `JsClass::to_js`), which hands the existing heap pointer to the C++
-    // wrapper.
-    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
+    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`
+    // with no wrapper yet. Call the `BlobExt::to_js` `&self` method (not the
+    // by-value `JsClass::to_js`), which hands the existing heap pointer to
+    // the C++ wrapper.
+    Ok(unsafe { BlobExt::to_js(&*blob, global) })
 }
 
 pub fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {

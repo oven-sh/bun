@@ -340,7 +340,9 @@ impl ReadableStream {
                     ..Default::default()
                 });
                 reader.context.setup(blob, recommended_chunk_size);
-                reader.to_readable_stream(global_this)
+                // SAFETY: `reader` is the fresh heap allocation from
+                // `NewSource::new_mut` above; no wrapper exists yet.
+                unsafe { reader.to_readable_stream(global_this) }
             }
             webcore::blob::store::Data::File(_) => {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
@@ -360,7 +362,9 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                reader.to_readable_stream(global_this)
+                // SAFETY: `reader` is the fresh heap allocation from
+                // `NewSource::new_mut` above; no wrapper exists yet.
+                unsafe { reader.to_readable_stream(global_this) }
             }
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
@@ -414,7 +418,9 @@ impl ReadableStream {
                     },
                     ..Default::default()
                 });
-                reader.to_readable_stream(global_this)
+                // SAFETY: `reader` is the fresh heap allocation from
+                // `NewSource::new_mut` above; no wrapper exists yet.
+                unsafe { reader.to_readable_stream(global_this) }
             }
             _ => Err(global_this.throw(format_args!("Expected FileBlob"))),
         }
@@ -441,7 +447,9 @@ impl ReadableStream {
             .reader()
             .from(buffered_reader, ctx_ptr.cast::<c_void>());
 
-        source.to_readable_stream(global_this)
+        // SAFETY: `source` is the fresh heap allocation from
+        // `NewSource::new_mut` above; no wrapper exists yet.
+        unsafe { source.to_readable_stream(global_this) }
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -696,7 +704,13 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
 // The `.classes.ts` → `.rs` generator (when re-run with Rust output) is expected
 // to emit those `const JS_*` bindings directly.
 pub(crate) trait NewSourceCodegen {
-    fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`NewSource::new`] /
+    /// [`NewSource::new_mut`]) and must not already have a JS wrapper: the
+    /// wrapper returned here adopts the pointer as its `m_ctx` and the GC
+    /// finalizer drives [`NewSource::decrement_count`] → `heap::take`.
+    unsafe fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue;
     fn pending_promise_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_drain_callback_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
     fn on_drain_callback_get_cached(this: JSValue) -> Option<JSValue>;
@@ -744,10 +758,10 @@ macro_rules! source_context_codegen {
 }
 
 impl<C: SourceContext> NewSourceCodegen for NewSource<C> {
-    fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        // `self` is a heap-allocated `NewSource<C>` produced by [`NewSource::new`]
-        // (`heap::alloc`); ownership transfers to the JS wrapper as `m_ctx`. C++ side
-        // stores it as `void*` and the GC finalizer drives `decrement_count` → `deinit`.
+    unsafe fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        // Ownership transfers to the JS wrapper as `m_ctx` (caller contract —
+        // see the trait's `# Safety`). C++ side stores it as `void*` and the
+        // GC finalizer drives `decrement_count` → `deinit`.
         C::js_create(
             std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             global_this,
@@ -932,11 +946,19 @@ impl<C: SourceContext> NewSource<C> {
         self.context.drain_internal_buffer()
     }
 
-    pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    /// # Safety
+    ///
+    /// `self` must be the construct-path heap allocation ([`Self::new`] /
+    /// [`Self::new_mut`]): when no wrapper exists yet (`this_jsvalue` is
+    /// zero), this hands the pointer to [`NewSourceCodegen::to_js`], whose
+    /// wrapper adopts it (see that method's `# Safety`).
+    pub unsafe fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let out_value = if self.this_jsvalue != JSValue::ZERO {
             self.this_jsvalue
         } else {
-            <Self as NewSourceCodegen>::to_js(self, global_this)
+            // SAFETY: forwarded caller contract (see `# Safety` above);
+            // `this_jsvalue == ZERO` means no wrapper has adopted `self` yet.
+            unsafe { <Self as NewSourceCodegen>::to_js(self, global_this) }
         };
         out_value.ensure_still_alive();
         self.this_jsvalue = out_value;

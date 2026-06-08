@@ -662,24 +662,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
         // Fallback root DirInfo for callers that ignore the return value
         // (filter_run.rs, pack_command.rs both discard it). Uses $HOME
-        // (always readable on OHOS; "/" is blocked by SELinux).
-        let home_str = std::env::var("HOME").unwrap_or_default();
-        let root_dir_info_fallback: bun_resolver::DirInfoRef = if !home_str.is_empty() {
-            this_transpiler
-                .resolver
-                .read_dir_info_ignore_error(home_str.as_bytes())
-                .unwrap_or_else(|| {
-                    this_transpiler
-                        .resolver
-                        .read_dir_info_ignore_error(b"/")
-                        .expect("neither $HOME nor / is readable")
-                })
-        } else {
-            this_transpiler
-                .resolver
-                .read_dir_info_ignore_error(b"/")
-                .expect("neither $HOME nor / is readable")
-        };
+        // which is always readable; "/" may be blocked by SELinux (OHOS).
+        // Returns an error only when neither path is readable.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
+            .resolver
+            .read_dir_info_ignore_error(if home.is_empty() { b"/" } else { home.as_bytes() })
+            .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
+            .ok_or(bun_core::err!("InstallFailed"))?;
 
         this_transpiler.resolver.store_fd = false;
 

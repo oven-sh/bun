@@ -880,6 +880,12 @@ function getTartPilotStep(options, buildId, arch) {
     cancel_on_build_failing: isMergeQueue(),
     parallelism: 2,
     timeout_in_minutes: 75,
+    env: {
+      // Per-step guest image selection: the host hook boots this Tart image for
+      // the job (defaults to the sequoia base when unset). Set to the macOS 26
+      // image to measure the 26 guest under solo load.
+      TART_BASE_IMAGE: "bun-ci-base-26",
+    },
     command: `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }

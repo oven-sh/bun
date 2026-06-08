@@ -25,8 +25,81 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+/// Bytecode output file extension (also used by `generateChunksInParallel.rs`).
+pub(crate) const BYTECODE_EXTENSION: &str = ".jsc";
+
+/// Append `//# sourceMappingURL=<path>\n` to a chunk's code buffer for
+/// `sourcemap: "linked"`, rebuilding the buffer at exact capacity.
+pub(crate) fn append_linked_sourcemap_url(
+    buffer: &mut Box<[u8]>,
+    public_path: &[u8],
+    source_map_final_rel_path: &[u8],
+) {
+    let [a, b]: [&[u8]; 2] = if !public_path.is_empty() {
+        cheap_prefix_normalizer(public_path, source_map_final_rel_path)
+    } else {
+        [b"", paths::basename(source_map_final_rel_path)]
+    };
+
+    let source_map_start = b"//# sourceMappingURL=";
+    let total_len = buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
+    let mut buf: Vec<u8> = Vec::with_capacity(total_len);
+    buf.extend_from_slice(buffer);
+    buf.extend_from_slice(source_map_start);
+    buf.extend_from_slice(a);
+    buf.extend_from_slice(b);
+    buf.push(b'\n');
+    *buffer = buf.into_boxed_slice();
+}
+
+/// Generate the JSC bytecode cache for a chunk's code. Takes ownership of the
+/// freshly created `source_provider_url` and returns it (still alive) next to
+/// the bytecode so callers can read its UTF-8 form for the output path.
+pub(crate) fn generate_chunk_bytecode(
+    format: options::Format,
+    code: &[u8],
+    source_provider_url: BunString,
+) -> Option<(Box<[u8]>, bun_core::OwnedString)> {
+    source_provider_url.ref_();
+    // RAII: `defer source_provider_url.deref()` — `OwnedString::Drop` releases
+    // the ref bumped above on every exit path.
+    let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
+    let bytecode = crate::bundle_v2::dispatch::generate_cached_bytecode(
+        format,
+        code,
+        &mut source_provider_url,
+    )?;
+    debug!(
+        "Bytecode cache generated {}: {}",
+        bstr::BStr::new(source_provider_url.to_utf8().slice()),
+        bun_core::fmt::size(
+            bytecode.len(),
+            bun_core::fmt::SizeFormatterOptions {
+                space_between_number_and_unit: true,
+            }
+        ),
+    );
+    Some((bytecode, source_provider_url))
+}
+
+/// Placeholder output file inserted for non-HTML chunks in standalone mode to
+/// keep chunk indices aligned. `source_map_index` links the chunk to its
+/// separately emitted `.map` output file, if any.
+pub(crate) fn standalone_placeholder_output_file(
+    loader: Loader,
+    data: OutputFileData,
+    source_map_index: Option<u32>,
+) -> OutputFile {
+    OutputFile::init(OutputFileInit {
+        data,
+        loader,
+        input_loader: Loader::Js,
+        output_kind: options::OutputKind::Chunk,
+        side: Some(options::Side::Client),
+        source_map_index,
+        ..Default::default()
+    })
+}
 
 pub fn write_output_files_to_disk(
     c: &mut LinkerContext,
@@ -171,26 +244,11 @@ pub fn write_output_files_to_disk(
                 None
             };
 
-            let _ = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
-                data: OutputFileData::Saved(0),
-                hash: None,
-                loader: chunk.content.loader(),
-                input_path: Box::default(),
-                display_size: 0,
-                output_kind: options::OutputKind::Chunk,
-                input_loader: Loader::Js,
-                output_path: Box::default(),
-                is_executable: false,
+            let _ = output_files.insert_for_chunk(standalone_placeholder_output_file(
+                chunk.content.loader(),
+                OutputFileData::Saved(0),
                 source_map_index,
-                bytecode_index: None,
-                module_info_index: None,
-                side: Some(options::Side::Client),
-                entry_point_index: None,
-                referenced_css_chunks: Box::default(),
-                size: None,
-                source_index: IndexOptional::NONE,
-                bake_extra: BakeExtra::default(),
-            }));
+            ));
             continue;
         }
 
@@ -303,25 +361,11 @@ pub fn write_output_files_to_disk(
                 let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
 
                 if tag == SourceMapOption::Linked {
-                    let [a, b] = if !public_path.is_empty() {
-                        cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
-                    } else {
-                        [b"" as &[u8], paths::basename(&source_map_final_rel_path)]
-                    };
-
-                    let source_map_start = b"//# sourceMappingURL=";
-                    let total_len = code_result.buffer.len()
-                        + source_map_start.len()
-                        + a.len()
-                        + b.len()
-                        + b"\n".len();
-                    let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                    buf.extend_from_slice(&code_result.buffer);
-                    buf.extend_from_slice(source_map_start);
-                    buf.extend_from_slice(a);
-                    buf.extend_from_slice(b);
-                    buf.push(b'\n');
-                    code_result.buffer = buf.into_boxed_slice();
+                    append_linked_sourcemap_url(
+                        &mut code_result.buffer,
+                        public_path,
+                        &source_map_final_rel_path,
+                    );
                 }
 
                 match bun_sys::File::write_file(
@@ -405,26 +449,13 @@ pub fn write_output_files_to_disk(
                         bstr::BStr::new(&chunk.final_rel_path),
                         BYTECODE_EXTENSION,
                     ));
-                    source_provider_url.ref_();
-                    // `defer source_provider_url.deref()` handled by Drop on OwnedString.
-                    let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
-                    if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                    if let Some((bytecode, source_provider_url)) = generate_chunk_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
-                        &mut source_provider_url,
+                        source_provider_url,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
-                        debug!(
-                            "Bytecode cache generated {}: {}",
-                            bstr::BStr::new(source_provider_url_str.slice()),
-                            bun_core::fmt::size(
-                                bytecode.len(),
-                                bun_core::fmt::SizeFormatterOptions {
-                                    space_between_number_and_unit: true,
-                                }
-                            ),
-                        );
                         let frp: &[u8] = &chunk.final_rel_path;
                         fdpath[..frp.len()].copy_from_slice(frp);
                         fdpath[frp.len()..frp.len() + BYTECODE_EXTENSION.len()]

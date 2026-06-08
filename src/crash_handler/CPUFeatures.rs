@@ -1,7 +1,6 @@
 // (no c types needed; kept for FFI clarity)
 use core::fmt;
 
-// TODO(port): move to crash_handler_sys
 unsafe extern "C" {
     safe fn bun_cpu_features() -> u8;
 }
@@ -11,11 +10,8 @@ pub(crate) struct CPUFeatures {
     pub flags: Flags,
 }
 
-// Zig: `packed struct(u8)` per-arch. All semantic fields are `bool`; the trailing
-// `padding: uN = 0` is unused bits. bitflags! models this directly (unknown bits
-// = padding). Bit order matches Zig packed-struct LSB-first layout.
-// PORT NOTE: guide says "bitflags! if every field is bool" — padding is uN, but
-// it is pure padding, so bitflags is the correct shape here.
+// Per-arch packed `u8`. All semantic fields are single bits; bitflags! models
+// this directly (unknown bits = padding). Bit order is LSB-first.
 
 #[cfg(target_arch = "x86_64")]
 bitflags::bitflags! {
@@ -51,8 +47,7 @@ bitflags::bitflags! {
 #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 compile_error!("CPUFeatures: unsupported target architecture");
 
-// Zig `inline for (@typeInfo(Flags).@"struct".fields)` — comptime reflection over
-// field names, skipping "none" and "padding". Expanded to a const table per arch.
+// Per-arch const table of flag names, skipping "none" and padding bits.
 #[cfg(target_arch = "x86_64")]
 const NAMED_FLAGS: &[(&str, Flags)] = &[
     ("sse42", Flags::SSE42),
@@ -108,8 +103,6 @@ impl CPUFeatures {
 
         #[cfg(target_arch = "x86_64")]
         {
-            // Zig: bun.analytics.Features.no_avx / no_avx2 are global mutable
-            // counters (`+= usize`). Rust port stores them as `AtomicUsize`.
             use core::sync::atomic::Ordering;
             bun_analytics::features::no_avx
                 .fetch_add(usize::from(!flags.contains(Flags::AVX)), Ordering::Relaxed);
@@ -120,5 +113,3 @@ impl CPUFeatures {
         CPUFeatures { flags }
     }
 }
-
-// ported from: src/crash_handler/CPUFeatures.zig

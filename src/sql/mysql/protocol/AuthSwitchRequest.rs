@@ -7,7 +7,7 @@ pub struct AuthSwitchRequest {
     pub header: u8,
     pub plugin_name: Data,
     pub plugin_data: Data,
-    // TODO(port): Zig u24 — no native Rust u24; using u32 (value always fits in 24 bits)
+    /// Wire format is a 3-byte int; the value always fits in 24 bits.
     pub packet_size: u32,
 }
 
@@ -22,11 +22,9 @@ impl Default for AuthSwitchRequest {
     }
 }
 
-// NOTE: Zig `deinit` only called `plugin_name.deinit()` / `plugin_data.deinit()`.
-// `Data` owns its own cleanup via `Drop`, so no explicit `impl Drop` is needed here.
+// NOTE: `Data` owns its own cleanup via `Drop`, so no explicit `impl Drop` is needed here.
 
 impl AuthSwitchRequest {
-    // TODO(port): narrow error set (Zig: error.InvalidAuthSwitchRequest + reader errors)
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -53,7 +51,6 @@ impl AuthSwitchRequest {
     }
 }
 
-// Zig: `pub const decode = decoderWrap(AuthSwitchRequest, decodeInternal).decode;`
 impl AuthSwitchRequest {
     pub fn decode<Context: ReaderContext>(
         &mut self,
@@ -62,5 +59,3 @@ impl AuthSwitchRequest {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/AuthSwitchRequest.zig

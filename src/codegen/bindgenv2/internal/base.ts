@@ -27,7 +27,7 @@ export abstract class Type {
     return this.bindgenType + ".ZigType";
   }
 
-  /** This must be overridden if bindgen.zig defines a custom `OptionalZigType`. */
+  /** This must be overridden if a custom `OptionalZigType` is defined. */
   optionalZigType(style?: CodeStyle): string {
     return `?${this.zigType(style)}`;
   }

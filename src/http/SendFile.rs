@@ -22,21 +22,18 @@ impl SendFile {
         url.is_http() && url.href.len() > 0
     }
 
-    // PORT NOTE: reshaped — Zig took `NewHTTPContext(false).HTTPSocket` and only ever
-    // called `socket.fd()` on it. `NewHTTPContext` is part of the still-gated
-    // mutually-recursive cluster, so accept the resolved fd directly. Callers pass
+    // Takes the resolved fd directly rather than the socket; callers pass
     // `socket.fd()`.
     pub fn write(&mut self, socket_fd: Fd) -> Status {
-        // Zig u63 max == i64::MAX. Clamp `remain` so the signed sendfile count cannot overflow.
+        // Clamp `remain` so the signed sendfile count cannot overflow.
         let adjusted_count_temporary: u64 = (self.remain as u64).min(i64::MAX as u64);
-        // TODO we should not need this int cast; improve the return type of `@min`
-        let adjusted_count: u64 = adjusted_count_temporary; // was @intCast to u63
+        let adjusted_count: u64 = adjusted_count_temporary;
 
         // Android: same kernel `sendfile(2)` ABI, dispatched via `bun_sys::linux`'s
         // raw-syscall thunk (no libc difference matters here).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = adjusted_count; // unused on Linux path (matches Zig)
+            let _ = adjusted_count; // unused on Linux path
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
@@ -69,8 +66,8 @@ impl SendFile {
 
         #[cfg(target_os = "freebsd")]
         {
-            let mut sbytes: i64 = 0; // std.posix.off_t
-            // Same-width signedness flip (Zig `@bitCast`); `as` is a bit-reinterpret here.
+            let mut sbytes: i64 = 0; // C off_t
+            // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
             // FreeBSD: sendfile(fd, s, offset, nbytes, hdtr, *sbytes, flags)
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
@@ -102,8 +99,8 @@ impl SendFile {
             not(target_os = "freebsd")
         ))]
         {
-            let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // std.posix.off_t
-            // Zig: `@as(i64, @bitCast(self.offset))` — same-width `as` is the bitcast.
+            let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // C off_t
+            // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
             // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
             let errcode = bun_sys::get_errno(unsafe {
@@ -142,5 +139,3 @@ pub enum Status {
     Err(bun_core::Error),
     Again,
 }
-
-// ported from: src/http/SendFile.zig

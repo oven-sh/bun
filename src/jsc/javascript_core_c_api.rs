@@ -12,13 +12,12 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle backing every `*Ref` typedef in the JavaScriptCore C API.
-    /// In Zig this is a single `opaque {}` aliased under many names; we mirror that.
+    /// A single opaque type aliased under many names.
     pub struct Generic;
 }
 
 impl Generic {
     pub fn value(&self) -> JSValue {
-        // Zig: @enumFromInt(@as(JSValue.backing_int, @bitCast(@intFromPtr(this))))
         // The JSC C API hands out JSValueRef as the cell pointer itself; reinterpreting the
         // pointer bits as an encoded JSValue is exactly what JSC::JSValue(JSCell*) does.
         JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
@@ -32,7 +31,6 @@ pub(crate) type OpaqueJSValue = Generic;
 pub type JSValueRef = *mut OpaqueJSValue;
 pub type JSObjectRef = *mut OpaqueJSValue;
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSGarbageCollect(ctx: *mut JSGlobalObject);
 }
@@ -51,8 +49,9 @@ pub enum JSType {
 }
 
 /// From JSValueRef.h:81
-// TODO(port): Zig enum is non-exhaustive (`_`); only ever passed *to* C in this file so a
-// #[repr(u32)] enum is sound here. If a future extern returns this, switch to a newtype.
+// This enum is only ever passed *to* C in this file, so an exhaustive
+// #[repr(u32)] enum is sound here. If a future extern ever *returns* this
+// type, switch to a newtype over u32.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JSTypedArrayType {
@@ -71,7 +70,6 @@ pub enum JSTypedArrayType {
     kJSTypedArrayTypeBigUint64Array,
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSValueGetType(ctx: *mut JSGlobalObject, value: JSValueRef) -> JSType;
     pub fn JSValueMakeNull(ctx: *mut JSGlobalObject) -> JSValueRef;
@@ -105,7 +103,6 @@ pub enum JSClassAttributes {
 
 pub type ExceptionRef = *mut JSValueRef;
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSObjectGetPrototype(ctx: *mut JSGlobalObject, object: JSObjectRef) -> JSValueRef;
     pub fn JSObjectGetPropertyAtIndex(
@@ -145,7 +142,6 @@ unsafe extern "C" {
     ) -> JSObjectRef;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSObjectMakeTypedArray(
         ctx: *mut JSGlobalObject,
@@ -204,7 +200,6 @@ unsafe extern "C" {
     ) -> usize;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     /// This is a workaround for not receiving a JSException* object
     /// This function lets us use the C API but returns a plain old JSValue
@@ -228,5 +223,3 @@ unsafe extern "C" {
 
     pub fn JSObjectGetProxyTarget(object: JSObjectRef) -> JSObjectRef;
 }
-
-// ported from: src/jsc/javascript_core_c_api.zig

@@ -1,6 +1,6 @@
 use super::helpers;
 use super::parser::{Error as ParserError, Parser};
-use super::types::{self, BlockType, JsResult, OFF, TextType, VerbatimLine};
+use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
 
 impl Parser<'_> {
     pub fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
@@ -157,11 +157,9 @@ impl Parser<'_> {
                                 && ci + 1 < cell_content.len()
                                 && cell_content[ci + 1] == b'|'
                             {
-                                // PERF(port): was appendAssumeCapacity
                                 buf.push(b'|');
                                 ci += 2;
                             } else {
-                                // PERF(port): was appendAssumeCapacity
                                 buf.push(cell_content[ci]);
                                 ci += 1;
                             }
@@ -170,15 +168,9 @@ impl Parser<'_> {
                     } else {
                         cell_content
                     };
-                    self.process_inline_content(
-                        unescaped,
-                        vline.beg + OFF::try_from(cell_beg).expect("int cast"),
-                    )?;
+                    self.process_inline_content(unescaped)?;
                 } else {
-                    self.process_inline_content(
-                        cell_content,
-                        vline.beg + OFF::try_from(cell_beg).expect("int cast"),
-                    )?;
+                    self.process_inline_content(cell_content)?;
                 }
             }
             self.leave_block(cell_type, 0)?;
@@ -210,5 +202,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/render_blocks.zig

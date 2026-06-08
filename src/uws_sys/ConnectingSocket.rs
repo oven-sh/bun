@@ -14,7 +14,7 @@ impl ConnectingSocket {
     }
 
     /// Returns the owning `SocketGroup`. Raw pointer because the group is
-    /// shared by every socket it owns (Zig `*SocketGroup` freely aliases);
+    /// shared by every socket it owns;
     /// materializing `&mut SocketGroup` here would alias with other sockets'
     /// borrows of the same group.
     pub fn group(&mut self) -> *mut SocketGroup {
@@ -29,8 +29,8 @@ impl ConnectingSocket {
     }
 
     /// Returns the owning `Loop`. Raw pointer because the loop is a shared
-    /// singleton referenced by every group/socket/timer (Zig `*Loop` freely
-    /// aliases); materializing `&mut Loop` here would be aliased UB.
+    /// singleton referenced by every group/socket/timer;
+    /// materializing `&mut Loop` here would be aliased UB.
     pub fn r#loop(&mut self) -> *mut Loop {
         us_connecting_socket_get_loop(self)
     }
@@ -98,5 +98,3 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
     pub(crate) safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }
-
-// ported from: src/uws_sys/ConnectingSocket.zig

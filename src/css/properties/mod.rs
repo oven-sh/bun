@@ -1,6 +1,4 @@
 //! CSS property definitions.
-//!
-//! Ported from `src/css/properties/properties.zig`.
 
 #![warn(unused_must_use)]
 
@@ -14,22 +12,8 @@
 // `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
 // `Property` payloads that name `css_values::*` resolve directly.
 
-/// Declares a property-handler ZST with the `handle_property` / `finalize`
-/// surface that `DeclarationHandler` (declaration.rs) composes over. The
-/// real handler bodies live in the gated leaf .rs files; until those
-/// un-gate, these no-op stubs keep `DeclarationHandler` compiling against
-/// the now-real `Property` enum.
-///
-/// PORT NOTE: Zig handlers are plain structs with `handleProperty(*Self,
-/// *const Property, *DeclarationList, *PropertyHandlerContext) bool` +
-/// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
-/// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
-/// behind anonymous lifetimes since the stub bodies touch neither.
-
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
-// Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
-// Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
-// (src/css/css_parser.zig:502 / :532).
+// Shared by `border.rs` and `margin_padding.rs`.
 //
 // `impl_rect_shorthand!` / `impl_size_shorthand!` stamp out the inherent
 // `parse`/`to_css` pair (and the `generic::{Parse,ToCss}` forwarders) for a
@@ -95,8 +79,7 @@ macro_rules! define_rect_shorthand {
         }
 
         impl $name {
-            // TODO(port): bring this back
-            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
+            // `PROPERTY_FIELD_MAP` records the shorthand field→property map.
 
             pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
                 ("top", $crate::properties::PropertyIdTag::$top_id),
@@ -108,7 +91,7 @@ macro_rules! define_rect_shorthand {
         impl $crate::properties::margin_padding::RectShorthand for $name {
             type Value = $inner;
         }
-        // Zig `css.DefineRectShorthand(@This(), V)` — parse/to_css via `Rect<V>`.
+        // parse/to_css via `Rect<V>`.
         impl_rect_shorthand!($name, $inner);
     };
 }
@@ -140,7 +123,6 @@ macro_rules! impl_size_shorthand {
 }
 
 // ─── Submodule declarations ────────────────────────────────────────────────
-// (Zig: `pub const X = @import("./X.zig");`)
 //
 pub mod align;
 // `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
@@ -174,7 +156,7 @@ pub mod font;
 pub mod grid;
 // `list`: un-gated — real ListStyleType / CounterStyle / Symbols / Symbol
 // live in `list.rs`. PredefinedCounterStyle / SymbolsType / ListStylePosition /
-// ListStyle / MarkerSide are uninhabited (Zig source is `@compileError`).
+// ListStyle / MarkerSide are uninhabited.
 pub mod list;
 pub mod margin_padding;
 pub mod masking;
@@ -215,8 +197,7 @@ pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
-// Zig: `css.DefineEnumProperty(@This())` provides eql/hash/parse/toCss/deepClone via
-// comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
+// The `DefineEnumProperty` derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum CSSWideKeyword {
@@ -413,12 +394,3 @@ mod generic_registrations {
     }
 }
 pub(crate) use generic_registrations::GenericBorderImpl;
-
-// ─── Dead code (not ported) ────────────────────────────────────────────────
-// The original Zig file contains ~1800 lines of commented-out code (lines 60–1876)
-// implementing the old `DefineProperties(...)` comptime-reflection approach that
-// predates `properties_generated.zig`. It is dead reference material and is
-// intentionally omitted here. See `src/css/properties/properties.zig` for the
-// historical block; the live definitions come from `properties_generated`.
-
-// ported from: src/css/properties/properties.zig

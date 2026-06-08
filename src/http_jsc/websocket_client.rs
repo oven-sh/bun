@@ -1773,7 +1773,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
+            match WebSocketDeflate::init(*params) {
                 Ok(deflate) => ws_ref.deflate = Some(deflate),
                 Err(_) => ws_ref.deflate = None,
             }
@@ -1887,8 +1887,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // that handle_close() releases). It is released in clear_data() when
         // proxy_tunnel is detached. The ws.ref() below adds the C++ ref
         // paired with m_connectedWebSocket.
-        // outlives this call.
-        let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),
             tcp: Socket::<SSL>::detached(), // No direct socket - using tunnel
@@ -1929,7 +1927,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws_ref = unsafe { &mut *ws };
 
         if let Some(params) = deflate_params {
-            match WebSocketDeflate::init(*params, vm.rare_data()) {
+            match WebSocketDeflate::init(*params) {
                 Ok(deflate) => ws_ref.deflate = Some(deflate),
                 Err(_) => ws_ref.deflate = None,
             }

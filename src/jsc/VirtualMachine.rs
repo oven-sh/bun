@@ -4779,13 +4779,13 @@ impl VirtualMachine {
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
-            // `getErrorsProperty` is `getDirect` (own data prop, nothrow): it
-            // returns empty when the own `errors` property is missing
-            // (deleted, redefined as an accessor, or never installed) and
-            // whatever the user stored otherwise. Iterating anything but the
-            // spec-created shape (an array) is unsafe — an empty value
-            // decodes as a null cell — so tampered values fall through to the
-            // plain error-printing path below.
+            // `getErrorsProperty` is `getDirect` (own slot, nothrow): it
+            // returns empty when the own `errors` property is absent (deleted
+            // or never installed), the raw GetterSetter cell when redefined
+            // as an accessor, and whatever the user stored otherwise.
+            // Iterating anything but the spec-created shape (an array) is
+            // unsafe (an empty value decodes as a null cell), so tampered
+            // values fall through to the plain error-printing path below.
             let errors = value.get_errors_property(global_ref);
             if errors.is_array() {
                 // Note: `JSValue::for_each` takes a C-ABI fn

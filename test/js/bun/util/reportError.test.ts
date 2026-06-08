@@ -151,11 +151,7 @@ test.each(tamperedAggregateErrors)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The user's real error is printed (to stderr, like every uncaught error)
     // instead of being replaced by a crash.
@@ -174,11 +170,7 @@ test("uncaught AggregateError with intact `errors` still prints each sub-error",
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toContain("inner_a");
   expect(stderr).toContain("inner_b");

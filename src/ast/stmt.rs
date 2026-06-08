@@ -14,24 +14,26 @@ pub struct Stmt {
 pub type Batcher = NewBatcher<Stmt>;
 
 impl Stmt {
-    /// Zig: `Stmt.Data.Store.reset()`. Associated wrapper so downstream crates
-    /// can call `crate::Stmt::data_store_reset()` without naming the
-    /// thread-local Store module path.
+    /// Associated wrapper so downstream crates can call
+    /// `crate::Stmt::data_store_reset()` without naming the thread-local
+    /// Store module path.
     #[inline]
     pub fn data_store_reset() {
         data::Store::reset();
     }
 
-    /// Zig: `Stmt.Data.Store.create()`.
+    /// Initializes the thread-local statement-data `Store` for the current
+    /// thread; counterpart of `data_store_reset()`.
     #[inline]
     pub fn data_store_create() {
         data::Store::create();
     }
 
-    /// Zig: `Stmt.Data.Store.assert()` — debug-only re-entrancy guard.
+    /// Debug-only "Store must be init'd" guard. The re-entrancy `Disabler`
+    /// check lives in `Store::append`.
     #[inline]
     pub fn data_store_assert() {
-        crate::DebugOnlyDisabler::<Stmt>::assert();
+        data::Store::assert();
     }
 
     pub fn assign(a: Expr, b: Expr) -> Stmt {
@@ -82,8 +84,8 @@ impl Stmt {
 }
 
 impl Default for Stmt {
-    /// Zig: `nullStmtData = Stmt.Data{ .s_empty = s_missing }` (P.zig) — used to
-    /// zero-init `loop_body` and bulk-fill stmt slices before population.
+    /// Used to zero-init `loop_body` and bulk-fill stmt slices before
+    /// population.
     #[inline]
     fn default() -> Self {
         Stmt {
@@ -95,25 +97,20 @@ impl Default for Stmt {
 
 const NONE: S::Empty = S::Empty {};
 
-// PORT NOTE: Zig `pub var icount: usize = 0;` is a plain mutable global (not
-// threadlocal), never read. Debug-only here so release doesn't pay a contended
-// `lock xadd` per Stmt across the bundler worker pool.
+// Debug-only so release doesn't pay a contended `lock xadd` per Stmt across
+// the bundler worker pool.
 #[cfg(debug_assertions)]
 pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// Trait absorbing the Zig `switch (comptime StatementType)` tables in
-/// `init` / `alloc` / `allocate`. Each `S::*` payload type implements this to
-/// map itself onto the corresponding `Data` variant.
-///
-/// The Zig used three near-identical 32-arm comptime switches; in Rust the
-/// dispatch is the trait impl and the arm list is the `impl_statement_data!`
-/// invocation below — diff that list against the Zig switch.
+/// Each `S::*` payload type implements this to map itself onto the
+/// corresponding `Data` variant; the arm list is the `impl_statement_data!`
+/// invocation below.
 pub trait StatementData: Sized {
-    /// Wrap an already-allocated payload (Zig `Stmt.init` / `comptime_init`).
+    /// Wrap an already-allocated payload.
     fn wrap_ref(ptr: StoreRef<Self>) -> Data;
-    /// Store-append `self` and wrap (Zig `Stmt.alloc` / `comptime_alloc`).
+    /// Store-append `self` and wrap.
     fn store_alloc(self) -> Data;
-    /// Arena-allocate `self` and wrap (Zig `Stmt.allocate` / `allocateData`).
+    /// Arena-allocate `self` and wrap.
     fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data;
 }
 
@@ -128,8 +125,6 @@ impl Stmt {
         }
     }
 
-    // Zig `comptime_alloc` — folded into `StatementData::store_alloc`; kept as a
-    // private helper for diff parity.
     #[inline]
     fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
         Stmt {
@@ -138,23 +133,16 @@ impl Stmt {
         }
     }
 
-    // Zig `allocateData` — folded into `StatementData::arena_alloc`.
     fn allocate_data<T: StatementData>(
         bump: &bun_alloc::Arena,
         orig_data: T,
         loc: crate::Loc,
     ) -> Stmt {
-        // `arena.create(@TypeOf(origData)) catch unreachable; value.* = origData;`
-        // → bump.alloc(orig_data), performed inside arena_alloc.
         Stmt {
             loc,
             data: orig_data.arena_alloc(bump),
         }
     }
-
-    // Zig `comptime_init` — `@unionInit(Data, tag_name, origData)`. In Rust the
-    // variant constructor IS the union-init; this helper collapses to identity
-    // and is absorbed by `StatementData::wrap_ref`.
 
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
@@ -194,7 +182,7 @@ impl Stmt {
     }
 }
 
-// ─── StatementData impls (mirrors the 32-arm comptime switches) ────────────
+// ─── StatementData impls ───────────────────────────────────────────────────
 
 macro_rules! impl_statement_data {
     // Pointer-payload variants: stored via Store / arena.
@@ -210,7 +198,10 @@ macro_rules! impl_statement_data {
                 }
                 #[inline]
                 fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
-                    // TODO(port): StoreRef vs &'bump — unify the arena ref type.
+                    // `StoreRef::from_bump` is the settled crate-wide arena-ref
+                    // convention (see its docs in nodes.rs); expr.rs
+                    // `arena_alloc` does the same. No separate `&'bump` ref
+                    // type is planned.
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
             }
@@ -359,7 +350,7 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// Zig: `if (@sizeOf(Stmt) > 24) @compileLog(...)` (Stmt.zig:295). Every payload
+// Every payload
 // variant is either a `StoreRef<T>` (`#[repr(transparent)] NonNull<T>`, 8 bytes,
 // niche-carrying) or a ZST, so the union is one pointer word and the repr(Rust)
 // discriminant packs alongside it for `Data` = 16. `Stmt` = `Data` (16, align 8)
@@ -383,9 +374,9 @@ const _: () = assert!(
 );
 const _: () = assert!(core::mem::size_of::<StoreRef<S::SExpr>>() == core::mem::size_of::<usize>());
 
-/// Zig: `std.meta.eql(p.loop_body, stmt.data)` (visitStmt.zig) — tag compare,
-/// then payload compare. Payloads here are arena pointers (`StoreRef<T>`) or
-/// ZSTs, so this is tag + pointer-identity, never a deep structural compare.
+/// Tag compare, then payload compare. Payloads here are arena pointers
+/// (`StoreRef<T>`) or ZSTs, so this is tag + pointer-identity, never a deep
+/// structural compare.
 impl PartialEq for Data {
     fn eq(&self, other: &Self) -> bool {
         use Data::*;
@@ -429,10 +420,9 @@ impl PartialEq for Data {
 }
 impl Eq for Data {}
 
-// Zig field-style union accessors (`data.s_function`, `data.s_local`, …).
-// visitStmt and the printer port from Zig's `data.s_local.*` etc., which are
-// unchecked union field reads. Rust callers `.unwrap()` (or pattern-match) —
-// the `Option` is the cheapest sound encoding of Zig's UB-on-mismatch.
+// Field-style union accessors (`data.s_function()`, `data.s_local()`, …).
+// Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest
+// sound encoding of a tag mismatch.
 // Mirrors `expr::Data::e_*()`. Returns `Option<StoreRef<T>>` (Copy) for
 // pointer-payload variants and `Option<T>` by value for inline ZST variants.
 impl Data {
@@ -949,7 +939,7 @@ impl Data {
 }
 
 // `new_store!` emits `pub mod stmt_store { pub struct Store; ... }` with
-// `init/append/reset/destroy`. Type list mirrors Zig's `Data.Store = NewStore(&.{...}, 128)`.
+// `init/append/reset/destroy`.
 crate::new_store!(
     stmt_store,
     [
@@ -991,11 +981,6 @@ pub mod data {
     crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
 }
 
-// Zig `pub fn StoredData(tag: Tag) type` — returns the payload type for a tag,
-// dereferencing pointer variants. Rust has no type-returning fns.
-// TODO(port): callers should use the `StatementData` trait or a per-variant
-// associated type; revisit once call sites are known.
-
 impl Stmt {
     pub fn cares_about_scope(&self) -> bool {
         match &self.data {
@@ -1024,5 +1009,3 @@ impl Stmt {
         }
     }
 }
-
-// ported from: src/js_parser/ast/Stmt.zig

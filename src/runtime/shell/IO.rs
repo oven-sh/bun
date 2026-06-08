@@ -1,7 +1,6 @@
 //! Carries stdin/stdout/stderr for a state node.
 //!
-//! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
-//! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
+//! `IO` is a plain `Clone` value; `IOReader`/`IOWriter` are `Arc`-refcounted.
 
 use bun_collections::VecExt;
 use core::fmt;
@@ -30,14 +29,14 @@ impl fmt::Display for IO {
 }
 
 impl IO {
-    /// Zig `copy` = `ref()` + struct copy. With `Arc` fields, `Clone`
-    /// increments refcounts and copies the struct in one step.
+    /// With `Arc` fields, `Clone` increments refcounts and copies the struct
+    /// in one step.
     #[inline]
     pub fn copy(&self) -> IO {
         self.clone()
     }
 
-    /// Spec: IO.zig `memoryCost` — sum of stdin/stdout/stderr.
+    /// Sum of stdin/stdout/stderr.
     pub fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<IO>();
         size += self.stdin.memory_cost();
@@ -46,7 +45,7 @@ impl IO {
         size
     }
 
-    /// Spec: IO.zig `to_subproc_stdio`. Maps the state-node IO triple onto
+    /// Maps the state-node IO triple onto
     /// `subproc::Stdio` for [`ShellSubprocess::spawn_async`], and stashes the
     /// owning `IOWriter` Arcs on `shellio` so [`PipeReader`]'s captured-writer
     /// path can tee subprocess output back into the JS-side buffers.
@@ -126,7 +125,6 @@ impl fmt::Display for OutKind {
 }
 
 impl InKind {
-    /// Spec: IO.zig `InKind.memoryCost`.
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             InKind::Fd(r) => r.memory_cost(),
@@ -134,7 +132,6 @@ impl InKind {
         }
     }
 
-    /// Spec: IO.zig `InKind.to_subproc_stdio`.
     pub(crate) fn to_subproc_stdio(&self) -> Stdio {
         match self {
             InKind::Fd(r) => Stdio::Fd(r.fd()),
@@ -144,7 +141,6 @@ impl InKind {
 }
 
 impl OutFd {
-    /// Spec: IO.zig `OutKind.Fd.memoryCost`.
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost = self.writer.memory_cost();
         if let Some(captured) = self.captured {
@@ -157,7 +153,6 @@ impl OutFd {
 }
 
 impl OutKind {
-    /// Spec: IO.zig `OutKind.memoryCost`.
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             OutKind::Fd(fd) => fd.memory_cost(),
@@ -175,23 +170,19 @@ impl OutKind {
         }
     }
 
-    /// Spec: IO.zig `OutKind.to_subproc_stdio`. Retains the `IOWriter` Arc on
+    /// Retains the `IOWriter` Arc on
     /// `shellio` so the subprocess's `PipeReader::captured_writer` can drain
     /// captured bytes into it after the spawn returns.
     pub(crate) fn to_subproc_stdio(&self, shellio: &mut Option<std::sync::Arc<IOWriter>>) -> Stdio {
         match self {
             OutKind::Fd(val) => {
-                // Spec: `shellio.* = val.writer.dupeRef()`.
                 *shellio = Some(std::sync::Arc::clone(&val.writer));
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {
-                    // Spec (IO.zig:178) reads `val.writer.fd.get()` — an
-                    // optional that becomes empty once the fd has been handed
-                    // off to libuv. `IOWriter::fd()` (IOWriter.rs) encodes
-                    // that same state by returning `Fd::INVALID` after
-                    // hand-off, so the sentinel compare here is the port of
-                    // the optional unwrap, not a fresh invariant.
+                    // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
+                    // once the fd has been handed off to libuv, so the
+                    // sentinel compare here checks for that hand-off state.
                     let fd = val.writer.fd();
                     if fd != bun_sys::Fd::INVALID {
                         Stdio::Fd(fd)
@@ -208,5 +199,3 @@ impl OutKind {
         }
     }
 }
-
-// ported from: src/shell/IO.zig

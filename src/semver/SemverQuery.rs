@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::range::{Comparator, Op as RangeOp};
 use crate::{Range, SlicedString, Version, version};
 
-// Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
+// Re-export sub-namespace so
 // `crate::query::token::Wildcard` resolves for sibling modules.
 pub mod token {
     pub use super::{Token, TokenTag, Wildcard};
@@ -173,8 +173,8 @@ pub struct List {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `List` (see `and_range`); it never aliases data owned by another
-// thread. Zig models this as a plain `*Query` and freely sends `Group`/`List`
-// across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
+// thread, so the whole structure moves between threads as a unit (the lockfile
+// thread pool relies on this). Auto-`!Send` from `NonNull` is overly
 // conservative here.
 unsafe impl Send for List {}
 // SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
@@ -356,8 +356,8 @@ pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer (Zig: `input: string = ""`).
-    /// Stored as a raw fat pointer per PORTING.md §`[]const u8` struct-field
+    /// Borrowed view into the caller's source buffer.
+    /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
     /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
     /// `json_stringify`; caller must keep the source buffer alive for that call.
@@ -368,10 +368,10 @@ pub struct Group {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer (PORTING.md §`[]const u8` struct-field) and is
+// the caller's source buffer and is
 // only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread. Zig models both as plain
-// pointers and freely sends `Group` across the lockfile/resolver thread pool;
+// pointer aliases data owned by another thread, so the whole structure moves
+// between threads as a unit (the lockfile/resolver thread pool relies on this);
 // auto-`!Send` from `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
 // SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
@@ -442,24 +442,20 @@ impl Group {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
         let temp = {
             use std::io::Write as _;
             let mut v: Vec<u8> = Vec::new();
             // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (Zig
-            // stored a bare `[]const u8` with the same contract).
+            // caller must keep alive for the lifetime of this Group (see the
+            // `input` field doc).
             let input = unsafe { &*self.input };
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
-        // TODO(port): writes raw bytes; should JSON-escape.
-        writer.write_str("\"")?;
-        write!(writer, "{}", bstr::BStr::new(&temp))?;
-        writer.write_str("\"")
+        bun_core::fmt::encode_json_string(writer, &temp)
     }
 
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
     // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
@@ -506,7 +502,6 @@ impl Group {
             && self.head.head.range.left.op == RangeOp::Eql
     }
 
-    /// Zig name: `@"is *"`
     pub fn is_star(&self) -> bool {
         let left = &self.head.head.range.left;
         self.head.head.range.right.op == RangeOp::Unset
@@ -1120,5 +1115,3 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
     Ok(list)
 }
-
-// ported from: src/semver/SemverQuery.zig

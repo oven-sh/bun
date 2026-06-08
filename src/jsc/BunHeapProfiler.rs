@@ -6,9 +6,8 @@ use bun_sys::{self as sys, E, Fd, FdDirExt};
 use crate::VM;
 
 pub struct HeapProfilerConfig {
-    // PORT NOTE: Zig held borrowed `[]const u8` for the process lifetime; the
-    // config originates from CLI args and lives until exit, so `&'static [u8]`
-    // matches the ownership exactly.
+    // The config originates from CLI args and lives until process exit, so
+    // `&'static [u8]` matches the ownership exactly.
     pub name: &'static [u8],
     pub dir: &'static [u8],
     pub text_format: bool,
@@ -36,8 +35,8 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
         return Ok(());
     }
 
+    // Freed by Drop on ZigStringSlice.
     let profile_slice = profile_string.to_utf8();
-    // `defer profile_slice.deinit()` — handled by Drop on ZigStringSlice.
 
     // Determine the output path using AutoAbsPath
     let mut path_buf = AutoAbsPath::init_top_level_dir();
@@ -55,8 +54,8 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     );
 
     // Write the profile to disk using bun.sys.File.writeFile
-    // PORT NOTE: reshaped for borrowck — `slice_z()` borrows `path_buf` mutably,
-    // so we re-derive it at each call site instead of holding a single binding.
+    // `slice_z()` borrows `path_buf` mutably, so we re-derive it at each call
+    // site instead of holding a single binding.
     #[cfg(windows)]
     let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
     #[cfg(not(windows))]
@@ -136,7 +135,7 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
 
     let extension: &str = if text_format { "md" } else { "heapsnapshot" };
 
-    // std.fmt.bufPrint → write into the fixed buffer, return the written slice
+    // Write into the fixed buffer, then return the written slice
     use std::io::Write;
     let buf_slice = buf.as_mut_slice();
     let total = buf_slice.len();
@@ -149,8 +148,5 @@ fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<
     .map_err(|_| err!(NoSpaceLeft))?;
     let remaining = cursor.len();
     let written = total - remaining;
-    // PORT NOTE: reshaped for borrowck — recompute slice from buf after dropping cursor borrow.
     Ok(&buf.as_slice()[..written])
 }
-
-// ported from: src/jsc/BunHeapProfiler.zig

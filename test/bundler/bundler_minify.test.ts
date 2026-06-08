@@ -212,6 +212,39 @@ describe("bundler", () => {
       expect([...code.matchAll(/var /g)]).toHaveLength(1);
     },
   });
+  itBundled("minify/UnusedCommaAndStrictEqChains", {
+    // Exercises the reusable binary-comma simplification stack, including
+    // recursive re-entry while an outer frame's stack slice is still live.
+    files: {
+      "/entry.js": /* js */ `
+        function eff(n) { console.log(n); return n; }
+        // Deep left-nested comma chain.
+        (${new Array(60)
+          .fill(null)
+          .map((_, i) => `eff(${i + 1})`)
+          .join(", ")});
+        // Comma chain whose right operands are themselves comma chains.
+        (eff(61), (eff(62), (eff(63), eff(64)), eff(65)), eff(66));
+        // Unused strict-eq/ne: pure comparison dropped, operand side effects kept.
+        (eff(67) === (eff(68), eff(69)), eff(70));
+        ((eff(71), eff(72)) !== eff(73), (eff(74), eff(75)) === eff(76));
+        console.log("done");
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout:
+        new Array(76)
+          .fill(null)
+          .map((_, i) => String(i + 1))
+          .join("\n") + "\ndone",
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("===");
+      expect(code).not.toContain("!==");
+    },
+  });
   itBundled("minify/Infinity", {
     files: {
       "/entry.js": /* js */ `

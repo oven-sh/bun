@@ -4,5 +4,3 @@
 // `crate::versioned_url::*` paths keep resolving.
 
 pub use bun_install_types::resolver_hooks::{OldV2VersionedURL, VersionedURL, VersionedURLType};
-
-// ported from: src/install/versioned_url.zig

@@ -379,7 +379,7 @@ function emitThunk(e: Export): string {
   const loc = `${path.relative(repoRoot, e.file)}:${e.line}`;
   // `JsResult<JSValue>` impls need `to_js_host_call` (exception-scope assert +
   // panic barrier + Err→empty mapping). Plain-`JSValue` impls are bare
-  // `callconv(jsc.conv)` bodies in the .zig spec — wrap them and you trip
+  // host-call-ABI bodies (no exception-scope wrapper) — wrap them and you trip
   // `assert_exception_presence_matches(false)` whenever the body legitimately
   // leaves an exception pending while returning non-empty (e.g.
   // `Bun__drainMicrotasksFromJS`). Match `#[bun_jsc::host_call]`: deref + call,

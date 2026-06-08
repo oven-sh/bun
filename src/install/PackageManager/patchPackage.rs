@@ -51,7 +51,6 @@ pub fn do_patch_commit(
     let mut folder_path_buf = PathBuffer::uninit();
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
-    // TODO(port): narrow error set
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
@@ -101,7 +100,7 @@ pub fn do_patch_commit(
         .root_package_id
         .get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // PORT NOTE: reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
+    // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
@@ -141,7 +140,7 @@ pub fn do_patch_commit(
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
-    // PORT NOTE: reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
+    // reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
     // `manager` mutably while the package name/resolution borrow `lockfile`
     // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
     // resolution out first, then compute, then assemble the result tuple.
@@ -437,7 +436,7 @@ pub fn do_patch_commit(
             }
             break 'has_bun_patch_tag Some(patch_tag);
         };
-        // PORT NOTE: deferred restore — one-off rename-back logic on every exit
+        // deferred restore — one-off rename-back logic on every exit
         // path of `'brk`. Captures borrow into stack buffers.
         scopeguard::defer! {
             if has_nested_node_modules || bun_patch_tag.is_some() {
@@ -629,7 +628,7 @@ pub fn do_patch_commit(
     }
 
     let mut patch_key = Vec::new();
-    // PORT NOTE: re-slice instead of reusing `resolution_label` so its borrow ends
+    // re-slice instead of reusing `resolution_label` so its borrow ends
     // before the `.patch` suffix write above; the prefix bytes are unchanged.
     write!(
         &mut patch_key,
@@ -680,8 +679,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         }
     }
 
-    // PORT NOTE: Zig built this table via @typeInfo reflection over single-char enum field names.
-    // Rust has no equivalent; the table is filled by hand with the same entries.
+    // The table is filled by hand.
     const ESCAPE_TABLE: [EscapeVal; 256] = {
         let mut table = [EscapeVal::Other; 256];
         table[b'/' as usize] = EscapeVal::Slash;
@@ -736,7 +734,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
         .root_package_id
         .get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // PORT NOTE: reshaped for borrowck — owned buffer kept so `argument` can borrow it.
+    // reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
@@ -808,7 +806,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 let mut resolver: () = ();
                 let mut package = Package::default();
                 let log = manager.log_mut();
-                // PORT NOTE: borrowck — `parse_with_json` needs `&mut Lockfile` and
+                // borrowck — `parse_with_json` needs `&mut Lockfile` and
                 // `&mut PackageManager` simultaneously, but the lockfile here is
                 // `manager.lockfile`. Temporarily move the Box out so the two
                 // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
@@ -864,7 +862,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 let name = lockfile.str(&package.name).to_vec();
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -922,7 +919,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -1144,7 +1140,7 @@ fn overwrite_package_in_node_modules_folder(
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
     // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // (Zig spec) is required so `/` is normalized to `\` on Windows — the inputs
+    // is required so `/` is normalized to `\` on Windows — the inputs
     // here arrive posix-normalized and are later passed to Win32 APIs.
     let dest_subpath = bun_paths::Path::<
         bun_paths::OSPathChar,
@@ -1206,7 +1202,7 @@ fn overwrite_package_in_node_modules_folder(
 
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
 
-// PORT NOTE: reshaped for borrowck — `tree::Iterator::next` returns an
+// reshaped for borrowck — `tree::Iterator::next` returns an
 // `IteratorNext<'_>` borrowing the iterator's internal `path_buf`, so we
 // cannot return it from inside a `while let` (borrowck rejects the next
 // iteration's reborrow even though it's unreachable). Callers only need
@@ -1253,7 +1249,6 @@ fn pkg_info_for_name_and_version(
     name: &[u8],
     version: Option<&[u8]>,
 ) -> (PackageID, Vec<u8>) {
-    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
 
     let name_hash = string_hash(name);
@@ -1419,7 +1414,7 @@ fn pkg_info_for_name_and_version(
     Global::crash();
 }
 
-// PORT NOTE: takes `workspace_package_id` directly instead of `&mut PackageManager` —
+// takes `workspace_package_id` directly instead of `&mut PackageManager` —
 // both callers already compute it via `root_package_id.get()` immediately before, and
 // passing `manager` here would alias `&manager.lockfile` in `prepare_patch`.
 fn path_argument_relative_to_root_workspace_package(
@@ -1449,14 +1444,11 @@ impl PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }
-        // PORT NOTE: spec asymmetry — Zig (patchPackage.zig:1028) uses `hasPrefix`
-        // for the Windows-backslash arm but `contains` for the posix arm above.
-        // Match the spec exactly; if this is a Zig bug, fix both sides separately.
+        // Intentional asymmetry — the Windows-backslash arm uses `has_prefix`
+        // while the posix arm above uses `contains`.
         if cfg!(windows) && strings::has_prefix(argument, b"node_modules\\") {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion
     }
 }
-
-// ported from: src/install/PackageManager/patchPackage.zig

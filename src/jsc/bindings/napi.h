@@ -565,6 +565,9 @@ private:
                 async.function(async.handle, async.data);
                 delete async.handle;
             }
+            // Same invariant as the finalizer loop in cleanup(): a hook
+            // that leaked an exception must not poison the next hook.
+            clearExceptionsBetweenFinalizers();
         }
     }
 };

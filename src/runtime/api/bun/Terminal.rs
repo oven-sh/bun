@@ -540,8 +540,8 @@ impl Terminal {
         // SAFETY: `parent_ptr` is the terminal heap allocation created above;
         // the wrapper adopts the +1 taken by `RefCount::init()` (released in
         // `finalize`), and no other wrapper owns it yet on this path.
-        let this_value = existing_js_value
-            .unwrap_or_else(|| unsafe { js::to_js(parent_ptr, global_object) });
+        let this_value =
+            existing_js_value.unwrap_or_else(|| unsafe { js::to_js(parent_ptr, global_object) });
 
         // Store the this_value (JSValue wrapper) - start with strong ref since we're actively reading.
         // The JS-side ref is the one taken by RefCount.init() above; released in finalize().

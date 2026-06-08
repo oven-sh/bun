@@ -1838,40 +1838,30 @@ pub fn to_executable(
         // Close the file handle before moving (Windows requires this)
         fd.close();
 
-        use bun_sys::windows::{self, Win32ErrorExt as _};
-        // Move the file using MoveFileExW
+        use bun_sys::windows;
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
         // provenance covers the trailing NUL at index `len` that the W-suffix
         // API will read.
-        if unsafe {
-            windows::kernel32::MoveFileExW(
+        if let Err(err) = unsafe {
+            windows::move_file_ex_w(
                 temp_buf_u16.as_ptr(),
                 dest_buf_u16.as_ptr(),
                 windows::MOVEFILE_COPY_ALLOWED
                     | windows::MOVEFILE_REPLACE_EXISTING
                     | windows::MOVEFILE_WRITE_THROUGH,
             )
-        } == windows::FALSE
-        {
-            let werr = windows::Win32Error::get();
-            if let Some(sys_err) = werr.to_system_errno() {
-                if sys_err == bun_sys::SystemErrno::EISDIR {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "{} is a directory. Please choose a different --outfile or delete the directory",
-                        bstr::BStr::new(outfile)
-                    )));
-                } else {
-                    return Ok(CompileResult::fail_fmt(format_args!(
-                        "failed to move executable to {}: {}",
-                        bstr::BStr::new(dest_path),
-                        <&'static str>::from(sys_err)
-                    )));
-                }
+        } {
+            if err.get_errno() == bun_sys::E::EISDIR {
+                return Ok(CompileResult::fail_fmt(format_args!(
+                    "{} is a directory. Please choose a different --outfile or delete the directory",
+                    bstr::BStr::new(outfile)
+                )));
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to move executable to {}",
-                    bstr::BStr::new(dest_path)
+                    "failed to move executable to {}: {}",
+                    bstr::BStr::new(dest_path),
+                    bstr::BStr::new(err.name())
                 )));
             }
         }

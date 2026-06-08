@@ -20,6 +20,7 @@ describe("issue #3192", () => {
         name: "package-b",
         version: "1.0.0",
       }),
+      "yarn.lock": "stale lockfile contents",
     });
 
     await using proc = Bun.spawn({

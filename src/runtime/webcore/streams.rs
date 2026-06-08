@@ -2002,6 +2002,56 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
 crate::impl_sink_handler!([const SSL: bool, const HTTP3: bool] HTTPServerWritable<SSL, HTTP3>);
 
+/// Emits the standard `JsSinkType` forwarders (`memory_cost`, `write_bytes`,
+/// `write_utf16`, `write_latin1`, `end`, `flush`, `flush_from_js`, `start`)
+/// inside an `impl JsSinkType for T` block. `Self::name` prefers the inherent
+/// item over the trait item being defined, so the forward never recurses
+/// (same rule as `impl_sink_handler!`). The genuinely divergent items
+/// (`finalize`, `construct`, `end_from_js`, `signal`, `done`, the `HAS_*`
+/// consts) stay hand-written per type.
+#[macro_export]
+macro_rules! impl_js_sink_forwarders {
+    () => {
+        fn memory_cost(&self) -> usize {
+            Self::memory_cost(self)
+        }
+        fn write_bytes(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write(self, data)
+        }
+        fn write_utf16(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(self, data)
+        }
+        fn write_latin1(
+            &mut self,
+            data: &$crate::webcore::streams::Result,
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_latin1(self, data)
+        }
+        fn end(&mut self, err: ::core::option::Option<::bun_sys::Error>) -> ::bun_sys::Result<()> {
+            Self::end(self, err)
+        }
+        fn flush(&mut self) -> ::bun_sys::Result<()> {
+            Self::flush(self)
+        }
+        fn flush_from_js(
+            &mut self,
+            global: &::bun_jsc::JSGlobalObject,
+            wait: bool,
+        ) -> ::bun_sys::Result<::bun_jsc::JSValue> {
+            Self::flush_from_js(self, global, wait)
+        }
+        fn start(&mut self, config: $crate::webcore::streams::Start) -> ::bun_sys::Result<()> {
+            Self::start(self, &config)
+        }
+    };
+}
+
 // `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
 // start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
 // the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
@@ -2020,35 +2070,13 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
         StartTag::HTTPResponseSink
     });
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
+    crate::impl_js_sink_forwarders!();
+
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)
@@ -2378,35 +2406,13 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
+    crate::impl_js_sink_forwarders!();
+
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        Self::end(self, err)
-    }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)

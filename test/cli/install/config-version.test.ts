@@ -189,7 +189,7 @@ describe("configVersion", () => {
         "configVersion": 0,
         "workspaces": {
           "": {
-            "name": "new-proj",
+            "name": "root-1",
             "dependencies": {
               "pkg1": "workspace:*",
             },

@@ -538,6 +538,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 removed_trusted_dependencies: TrustedDependenciesSet = .{},
 
                 patched_dependencies_changed: bool = false,
+                root_name_changed: bool = false,
 
                 pub inline fn sum(this: *Summary, that: Summary) void {
                     this.add += that.add;
@@ -549,7 +550,8 @@ pub fn Package(comptime SemverIntType: type) type {
                     return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or this.catalogs_changed or
                         this.added_trusted_dependencies.count() > 0 or
                         this.removed_trusted_dependencies.count() > 0 or
-                        this.patched_dependencies_changed;
+                        this.patched_dependencies_changed or
+                        this.root_name_changed;
                 }
             };
 
@@ -935,6 +937,15 @@ pub fn Package(comptime SemverIntType: type) type {
                             // We found a changed life-cycle script
                             summary.update += 1;
                         }
+                    }
+                }
+
+                if (is_root) {
+                    if (from.name_hash != to.name_hash or
+                        (from.name_hash == 0 and to.name_hash == 0 and
+                            !from.name.eql(to.name, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)))
+                    {
+                        summary.root_name_changed = true;
                     }
                 }
 

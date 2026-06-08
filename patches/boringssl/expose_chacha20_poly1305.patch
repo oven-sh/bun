@@ -1,0 +1,358 @@
+--- a/crypto/cipher/get_cipher.cc
++++ b/crypto/cipher/get_cipher.cc
+@@ -56,6 +56,7 @@ static const struct {
+     {NID_rc2_40_cbc, "rc2-40-cbc", EVP_rc2_40_cbc},
+     {NID_rc2_cbc, "rc2-cbc", EVP_rc2_cbc},
+     {NID_rc4, "rc4", EVP_rc4},
++    {NID_chacha20_poly1305, "chacha20-poly1305", EVP_chacha20_poly1305},
+ };
+
+ const EVP_CIPHER *EVP_get_cipherbynid(int nid) {
+--- a/decrepit/evp/evp_do_all.cc
++++ b/decrepit/evp/evp_do_all.cc
+@@ -36,6 +36,7 @@ void EVP_CIPHER_do_all_sorted(void (*callback)(const EVP_CIPHER *cipher,
+   callback(EVP_aes_256_gcm(), "aes-256-gcm", NULL, arg);
+   callback(EVP_bf_cbc(), "bf-cbc", NULL, arg);
+   callback(EVP_bf_cfb(), "bf-cfb", NULL, arg);
++  callback(EVP_chacha20_poly1305(), "chacha20-poly1305", NULL, arg);
+   callback(EVP_bf_ecb(), "bf-ecb", NULL, arg);
+   callback(EVP_des_cbc(), "des-cbc", NULL, arg);
+   callback(EVP_des_ecb(), "des-ecb", NULL, arg);
+--- a/gen/sources.cmake
++++ b/gen/sources.cmake
+@@ -334,6 +334,7 @@ set(CRYPTO_SOURCES
+   crypto/cipher/e_aeseax.cc
+   crypto/cipher/e_aesgcmsiv.cc
+   crypto/cipher/e_chacha20poly1305.cc
++  crypto/cipher/e_chacha20poly1305_cipher.cc
+   crypto/cipher/e_des.cc
+   crypto/cipher/e_null.cc
+   crypto/cipher/e_rc2.cc
+--- a/include/openssl/cipher.h
++++ b/include/openssl/cipher.h
+@@ -33,5 +33,8 @@
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_rc4(void);
+ 
++// EVP_chacha20_poly1305 returns the ChaCha20-Poly1305 AEAD as an EVP_CIPHER.
++OPENSSL_EXPORT const EVP_CIPHER *EVP_chacha20_poly1305(void);
++
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_des_cbc(void);
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_des_ecb(void);
+ OPENSSL_EXPORT const EVP_CIPHER *EVP_des_ede(void);
+--- a/crypto/cipher/e_chacha20poly1305_cipher.cc	2026-01-05 15:16:47
++++ b/crypto/cipher/e_chacha20poly1305_cipher.cc	2026-01-05 14:35:33
+@@ -0,0 +1,314 @@
++// Copyright 2025 Bun
++// Based on OpenSSL's e_chacha20_poly1305.c
++// Licensed under the Apache License, Version 2.0
++
++#include <openssl/chacha.h>
++#include <openssl/cipher.h>
++#include <openssl/err.h>
++#include <openssl/mem.h>
++#include <openssl/nid.h>
++#include <openssl/poly1305.h>
++
++#include <string.h>
++
++#include "../fipsmodule/cipher/internal.h"
++#include "../internal.h"
++
++#define CHACHA20_POLY1305_IVLEN 12
++#define CHACHA20_POLY1305_KEYLEN 32
++#define CHACHA20_POLY1305_TAGLEN 16
++
++typedef struct {
++  uint8_t key[CHACHA20_POLY1305_KEYLEN];
++  uint8_t nonce[CHACHA20_POLY1305_IVLEN];
++  uint8_t tag[CHACHA20_POLY1305_TAGLEN];
++  poly1305_state poly_state;
++  uint8_t poly_key[32];
++  uint8_t keystream[64];  // Buffer for current block's keystream
++  size_t keystream_used;  // Bytes used from current keystream block
++  uint32_t counter;       // Current block counter (starts at 1 for message)
++  size_t aad_len;
++  size_t text_len;
++  int key_set;
++  int iv_set;
++  int tag_set;
++  int tag_len;
++  int poly_initialized;
++  int aad_finished;
++} EVP_CHACHA20_POLY1305_CTX;
++
++static void poly1305_update_length(poly1305_state *poly1305, size_t data_len) {
++  uint8_t length_bytes[8];
++  for (unsigned i = 0; i < sizeof(length_bytes); i++) {
++    length_bytes[i] = data_len;
++    data_len >>= 8;
++  }
++  CRYPTO_poly1305_update(poly1305, length_bytes, sizeof(length_bytes));
++}
++
++static void chacha20_poly1305_init_poly(EVP_CHACHA20_POLY1305_CTX *cctx) {
++  if (cctx->poly_initialized) {
++    return;
++  }
++  OPENSSL_memset(cctx->poly_key, 0, sizeof(cctx->poly_key));
++  CRYPTO_chacha_20(cctx->poly_key, cctx->poly_key, sizeof(cctx->poly_key),
++                   cctx->key, cctx->nonce, 0);
++  CRYPTO_poly1305_init(&cctx->poly_state, cctx->poly_key);
++  cctx->poly_initialized = 1;
++}
++
++static int chacha20_poly1305_init_key(EVP_CIPHER_CTX *ctx, const uint8_t *key,
++                                       const uint8_t *iv, int enc) {
++  EVP_CHACHA20_POLY1305_CTX *cctx =
++      reinterpret_cast<EVP_CHACHA20_POLY1305_CTX *>(ctx->cipher_data);
++
++  if (!iv && !key) {
++    return 1;
++  }
++
++  if (key) {
++    OPENSSL_memcpy(cctx->key, key, CHACHA20_POLY1305_KEYLEN);
++    cctx->key_set = 1;
++  }
++
++  if (iv) {
++    OPENSSL_memcpy(cctx->nonce, iv, CHACHA20_POLY1305_IVLEN);
++    cctx->iv_set = 1;
++  }
++
++  cctx->aad_len = 0;
++  cctx->text_len = 0;
++  cctx->tag_set = 0;
++  cctx->poly_initialized = 0;
++  cctx->aad_finished = 0;
++  cctx->keystream_used = 64;  // Force generation of new keystream on first use
++  cctx->counter = 1;          // Counter 0 is used for poly key
++
++  return 1;
++}
++
++static void chacha20_poly1305_cleanup(EVP_CIPHER_CTX *ctx) {
++  EVP_CHACHA20_POLY1305_CTX *cctx =
++      reinterpret_cast<EVP_CHACHA20_POLY1305_CTX *>(ctx->cipher_data);
++  OPENSSL_cleanse(cctx, sizeof(*cctx));
++}
++
++static int chacha20_poly1305_cipher(EVP_CIPHER_CTX *ctx, uint8_t *out,
++                                     const uint8_t *in, size_t len) {
++  EVP_CHACHA20_POLY1305_CTX *cctx =
++      reinterpret_cast<EVP_CHACHA20_POLY1305_CTX *>(ctx->cipher_data);
++  static const uint8_t padding[16] = {0};
++
++  if (!cctx->key_set) {
++    return -1;
++  }
++
++  if (out == NULL && in != NULL) {
++    if (!cctx->iv_set) {
++      return -1;
++    }
++    chacha20_poly1305_init_poly(cctx);
++    CRYPTO_poly1305_update(&cctx->poly_state, in, len);
++    cctx->aad_len += len;
++    return (int)len;
++  }
++
++  if (in == NULL && len == 0) {
++    if (!cctx->iv_set) {
++      return -1;
++    }
++    chacha20_poly1305_init_poly(cctx);
++    if (!cctx->aad_finished && cctx->aad_len % 16 != 0) {
++      CRYPTO_poly1305_update(&cctx->poly_state, padding,
++                             16 - (cctx->aad_len % 16));
++    }
++    cctx->aad_finished = 1;
++    if (cctx->text_len % 16 != 0) {
++      CRYPTO_poly1305_update(&cctx->poly_state, padding,
++                             16 - (cctx->text_len % 16));
++    }
++    poly1305_update_length(&cctx->poly_state, cctx->aad_len);
++    poly1305_update_length(&cctx->poly_state, cctx->text_len);
++    CRYPTO_poly1305_finish(&cctx->poly_state, cctx->tag);
++    if (!ctx->encrypt) {
++      if (!cctx->tag_set) {
++        return -1;
++      }
++      if (CRYPTO_memcmp(cctx->tag, ctx->buf, cctx->tag_len) != 0) {
++        return -1;
++      }
++    }
++    return 0;
++  }
++
++  if (!cctx->iv_set) {
++    return -1;
++  }
++  chacha20_poly1305_init_poly(cctx);
++  if (!cctx->aad_finished) {
++    if (cctx->aad_len % 16 != 0) {
++      CRYPTO_poly1305_update(&cctx->poly_state, padding,
++                             16 - (cctx->aad_len % 16));
++    }
++    cctx->aad_finished = 1;
++  }
++
++  // Process data with proper streaming support
++  const uint8_t *inp = in;
++  uint8_t *outp = out;
++  size_t remaining = len;
++
++  // Step 1: Use any remaining keystream from the buffer
++  while (remaining > 0 && cctx->keystream_used < 64) {
++    uint8_t ks_byte = cctx->keystream[cctx->keystream_used];
++    if (ctx->encrypt) {
++      *outp = *inp ^ ks_byte;
++      CRYPTO_poly1305_update(&cctx->poly_state, outp, 1);
++    } else {
++      CRYPTO_poly1305_update(&cctx->poly_state, inp, 1);
++      *outp = *inp ^ ks_byte;
++    }
++    outp++;
++    inp++;
++    cctx->keystream_used++;
++    remaining--;
++  }
++
++  // Step 2: Process full 64-byte blocks directly
++  size_t full_blocks = remaining / 64;
++  if (full_blocks > 0) {
++    size_t full_bytes = full_blocks * 64;
++    if (ctx->encrypt) {
++      CRYPTO_chacha_20(outp, inp, full_bytes, cctx->key, cctx->nonce, cctx->counter);
++      CRYPTO_poly1305_update(&cctx->poly_state, outp, full_bytes);
++    } else {
++      CRYPTO_poly1305_update(&cctx->poly_state, inp, full_bytes);
++      CRYPTO_chacha_20(outp, inp, full_bytes, cctx->key, cctx->nonce, cctx->counter);
++    }
++    cctx->counter += full_blocks;
++    outp += full_bytes;
++    inp += full_bytes;
++    remaining -= full_bytes;
++  }
++
++  // Step 3: Handle final partial block
++  if (remaining > 0) {
++    // Generate new keystream block
++    OPENSSL_memset(cctx->keystream, 0, 64);
++    CRYPTO_chacha_20(cctx->keystream, cctx->keystream, 64, cctx->key,
++                     cctx->nonce, cctx->counter);
++    cctx->counter++;
++    cctx->keystream_used = 0;
++
++    // XOR remaining bytes
++    while (remaining > 0) {
++      uint8_t ks_byte = cctx->keystream[cctx->keystream_used];
++      if (ctx->encrypt) {
++        *outp = *inp ^ ks_byte;
++        CRYPTO_poly1305_update(&cctx->poly_state, outp, 1);
++      } else {
++        CRYPTO_poly1305_update(&cctx->poly_state, inp, 1);
++        *outp = *inp ^ ks_byte;
++      }
++      outp++;
++      inp++;
++      cctx->keystream_used++;
++      remaining--;
++    }
++  }
++
++  cctx->text_len += len;
++  return (int)len;
++}
++
++static int chacha20_poly1305_ctrl(EVP_CIPHER_CTX *ctx, int type, int arg,
++                                   void *ptr) {
++  EVP_CHACHA20_POLY1305_CTX *cctx =
++      reinterpret_cast<EVP_CHACHA20_POLY1305_CTX *>(ctx->cipher_data);
++
++  switch (type) {
++    case EVP_CTRL_INIT:
++      cctx->key_set = 0;
++      cctx->iv_set = 0;
++      cctx->tag_set = 0;
++      cctx->tag_len = CHACHA20_POLY1305_TAGLEN;
++      cctx->aad_len = 0;
++      cctx->text_len = 0;
++      cctx->poly_initialized = 0;
++      cctx->aad_finished = 0;
++      cctx->keystream_used = 64;  // Force generation of new keystream
++      cctx->counter = 1;          // Counter 0 is for poly key
++      return 1;
++
++    case EVP_CTRL_AEAD_SET_IVLEN:
++      if (arg <= 0 || arg > CHACHA20_POLY1305_IVLEN) {
++        return 0;
++      }
++      return 1;
++
++    case EVP_CTRL_GET_IVLEN:
++      *(int *)ptr = CHACHA20_POLY1305_IVLEN;
++      return 1;
++
++    case EVP_CTRL_AEAD_SET_TAG:
++      if (arg <= 0 || arg > CHACHA20_POLY1305_TAGLEN) {
++        return 0;
++      }
++      if (ptr == nullptr) {
++        // Just setting tag length (used during init)
++        cctx->tag_len = arg;
++        return 1;
++      }
++      // Setting actual tag data (for decryption verification)
++      if (ctx->encrypt) {
++        return 0;
++      }
++      OPENSSL_memcpy(ctx->buf, ptr, arg);
++      cctx->tag_len = arg;
++      cctx->tag_set = 1;
++      return 1;
++
++    case EVP_CTRL_AEAD_GET_TAG:
++      if (arg <= 0 || arg > CHACHA20_POLY1305_TAGLEN) {
++        return 0;
++      }
++      if (!ctx->encrypt) {
++        return 0;
++      }
++      OPENSSL_memcpy(ptr, cctx->tag, arg);
++      return 1;
++
++    case EVP_CTRL_COPY: {
++      EVP_CIPHER_CTX *out_ctx = reinterpret_cast<EVP_CIPHER_CTX *>(ptr);
++      EVP_CHACHA20_POLY1305_CTX *out_cctx =
++          reinterpret_cast<EVP_CHACHA20_POLY1305_CTX *>(out_ctx->cipher_data);
++      if (cctx && out_cctx) {
++        OPENSSL_memcpy(out_cctx, cctx, sizeof(*cctx));
++      }
++      return 1;
++    }
++
++    default:
++      return -1;
++  }
++}
++
++static const EVP_CIPHER chacha20_poly1305_cipher_obj = {
++    /*nid=*/NID_chacha20_poly1305,
++    /*block_size=*/1,
++    /*key_len=*/CHACHA20_POLY1305_KEYLEN,
++    /*iv_len=*/CHACHA20_POLY1305_IVLEN,
++    /*ctx_size=*/sizeof(EVP_CHACHA20_POLY1305_CTX),
++    /*flags=*/EVP_CIPH_STREAM_CIPHER | EVP_CIPH_CUSTOM_IV |
++              EVP_CIPH_FLAG_CUSTOM_CIPHER | EVP_CIPH_ALWAYS_CALL_INIT |
++              EVP_CIPH_CTRL_INIT | EVP_CIPH_FLAG_AEAD_CIPHER |
++              EVP_CIPH_CUSTOM_COPY,
++    /*init=*/chacha20_poly1305_init_key,
++    /*cipher=*/chacha20_poly1305_cipher,
++    /*cleanup=*/chacha20_poly1305_cleanup,
++    /*ctrl=*/chacha20_poly1305_ctrl,
++};
++
++const EVP_CIPHER *EVP_chacha20_poly1305(void) {
++  return &chacha20_poly1305_cipher_obj;
++}

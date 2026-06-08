@@ -102,7 +102,7 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
 ///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
+/// Both `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
 /// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
 /// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
 /// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
@@ -162,15 +162,18 @@ pub(crate) mod compile {
 
 // Note: each command-shape generator is a `macro_rules!` that emits a
 // `#[bun_jsc::host_fn(method)]` inside the `impl JSValkeyClient` block:
-// cmd_noargs! (), cmd_key! (key: RedisKey),
-// cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
-// cmd_key_value! (key: RedisKey, value: RedisValue),
-// cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
-// cmd_strings_varargs! (...strings: string[]),
-// cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
+//
+// - cmd! extracts one positional argument per name, in order:
+//   cmd!(f, name, "CMD", state)                  ()
+//   cmd!(f, name, "CMD", "key", state)           (key: RedisKey)
+//   cmd!(f, name, "CMD", "key", "value", state)  (key: RedisKey, value: RedisValue)
+// - cmd_varargs! forwards every provided argument: `skip_null` silently drops
+//   undefined/null arguments, `strict` throws on them, and `required "arg"`
+//   additionally throws when the first argument is missing (implies
+//   skip_null).
 
-macro_rules! cmd_noargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+macro_rules! cmd {
+    ($fn_name:ident, $name:literal, $command:literal, $($argname:literal,)* $state:ident $(,)?) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -180,12 +183,29 @@ macro_rules! cmd_noargs {
             compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
                 this, $name,
             )?;
+
+            #[allow(unused_mut)]
+            let mut arg_index = 0;
+            let args = [$(
+                {
+                    let Some(arg) = from_js(global, frame.argument(arg_index))? else {
+                        return Err(global.throw_invalid_argument_type(
+                            bname($name),
+                            $argname,
+                            "string or buffer",
+                        ));
+                    };
+                    arg_index += 1;
+                    arg
+                },
+            )*];
+            let _ = arg_index;
             send_cmd(
                 this,
                 global,
                 frame.this(),
                 $command.as_bytes(),
-                CommandArgs::Args(&[]),
+                CommandArgs::Args(&args),
                 CommandMeta::default(),
                 concat!("Failed to send ", $command),
             )
@@ -193,40 +213,17 @@ macro_rules! cmd_noargs {
     };
 }
 
-macro_rules! cmd_key {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+macro_rules! cmd_varargs {
+    ($fn_name:ident, $name:literal, $command:literal, required $arg0_name:literal, $state:ident $(,)?) => {
+        cmd_varargs!(@impl $fn_name, $name, $command, true, $state, $arg0_name);
     };
-}
-
-macro_rules! cmd_key_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
+    ($fn_name:ident, $name:literal, $command:literal, skip_null, $state:ident $(,)?) => {
+        cmd_varargs!(@impl $fn_name, $name, $command, true, $state);
+    };
+    ($fn_name:ident, $name:literal, $command:literal, strict, $state:ident $(,)?) => {
+        cmd_varargs!(@impl $fn_name, $name, $command, false, $state);
+    };
+    (@impl $fn_name:ident, $name:literal, $command:literal, $skip_null:literal, $state:ident $(, $arg0_name:literal)?) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -237,179 +234,20 @@ macro_rules! cmd_key_varargs {
                 this, $name,
             )?;
 
-            if frame.argument(0).is_undefined_or_null() {
-                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
-            }
+            $(
+                if frame.argument(0).is_undefined_or_null() {
+                    return Err(global.throw_missing_arguments_value(&[$arg0_name]));
+                }
+            )?
 
             let arguments = frame.arguments();
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
             for arg in arguments {
-                if arg.is_undefined_or_null() {
-                    continue;
-                }
-
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_key_value {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key, value]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_key_value_value2 {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value2) = from_js(global, frame.argument(2))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg2_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key, value, value2]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_strings_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
-    };
-}
-
-macro_rules! cmd_key_value_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                if arg.is_undefined_or_null() {
-                    continue;
+                if $skip_null {
+                    if arg.is_undefined_or_null() {
+                        continue;
+                    }
                 }
 
                 let Some(another) = from_js(global, *arg)? else {
@@ -1118,27 +956,45 @@ impl JSValkeyClient {
         Self::hset_impl(this, global, frame, b"HMSET")
     }
 
-    cmd_key_varargs!(hdel, b"hdel", "HDEL", "key", NotSubscriber);
-    cmd_key_varargs!(
+    cmd_varargs!(hdel, b"hdel", "HDEL", required "key", NotSubscriber);
+    cmd_varargs!(
         hrandfield,
         b"hrandfield",
         "HRANDFIELD",
-        "key",
+        required "key",
         NotSubscriber
     );
-    cmd_key_varargs!(hscan, b"hscan", "HSCAN", "key", NotSubscriber);
-    cmd_strings_varargs!(hgetdel, b"hgetdel", "HGETDEL", NotSubscriber);
-    cmd_strings_varargs!(hgetex, b"hgetex", "HGETEX", NotSubscriber);
-    cmd_strings_varargs!(hsetex, b"hsetex", "HSETEX", NotSubscriber);
-    cmd_strings_varargs!(hexpire, b"hexpire", "HEXPIRE", NotSubscriber);
-    cmd_strings_varargs!(hexpireat, b"hexpireat", "HEXPIREAT", NotSubscriber);
-    cmd_strings_varargs!(hexpiretime, b"hexpiretime", "HEXPIRETIME", NotSubscriber);
-    cmd_strings_varargs!(hpersist, b"hpersist", "HPERSIST", NotSubscriber);
-    cmd_strings_varargs!(hpexpire, b"hpexpire", "HPEXPIRE", NotSubscriber);
-    cmd_strings_varargs!(hpexpireat, b"hpexpireat", "HPEXPIREAT", NotSubscriber);
-    cmd_strings_varargs!(hpexpiretime, b"hpexpiretime", "HPEXPIRETIME", NotSubscriber);
-    cmd_strings_varargs!(hpttl, b"hpttl", "HPTTL", NotSubscriber);
-    cmd_strings_varargs!(httl, b"httl", "HTTL", NotSubscriber);
+    cmd_varargs!(hscan, b"hscan", "HSCAN", required "key", NotSubscriber);
+    cmd_varargs!(hgetdel, b"hgetdel", "HGETDEL", strict, NotSubscriber);
+    cmd_varargs!(hgetex, b"hgetex", "HGETEX", strict, NotSubscriber);
+    cmd_varargs!(hsetex, b"hsetex", "HSETEX", strict, NotSubscriber);
+    cmd_varargs!(hexpire, b"hexpire", "HEXPIRE", strict, NotSubscriber);
+    cmd_varargs!(hexpireat, b"hexpireat", "HEXPIREAT", strict, NotSubscriber);
+    cmd_varargs!(
+        hexpiretime,
+        b"hexpiretime",
+        "HEXPIRETIME",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(hpersist, b"hpersist", "HPERSIST", strict, NotSubscriber);
+    cmd_varargs!(hpexpire, b"hpexpire", "HPEXPIRE", strict, NotSubscriber);
+    cmd_varargs!(
+        hpexpireat,
+        b"hpexpireat",
+        "HPEXPIREAT",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(
+        hpexpiretime,
+        b"hpexpiretime",
+        "HPEXPIRETIME",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(hpttl, b"hpttl", "HPTTL", strict, NotSubscriber);
+    cmd_varargs!(httl, b"httl", "HTTL", strict, NotSubscriber);
 
     #[bun_jsc::host_fn(method)]
     pub fn hsetnx(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -1217,12 +1073,12 @@ impl JSValkeyClient {
         )
     }
 
-    cmd_key!(bitcount, b"bitcount", "BITCOUNT", "key", NotSubscriber);
-    cmd_strings_varargs!(blmove, b"blmove", "BLMOVE", NotSubscriber);
-    cmd_strings_varargs!(blmpop, b"blmpop", "BLMPOP", NotSubscriber);
-    cmd_strings_varargs!(blpop, b"blpop", "BLPOP", NotSubscriber);
-    cmd_strings_varargs!(brpop, b"brpop", "BRPOP", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd!(bitcount, b"bitcount", "BITCOUNT", "key", NotSubscriber);
+    cmd_varargs!(blmove, b"blmove", "BLMOVE", strict, NotSubscriber);
+    cmd_varargs!(blmpop, b"blmpop", "BLMPOP", strict, NotSubscriber);
+    cmd_varargs!(blpop, b"blpop", "BLPOP", strict, NotSubscriber);
+    cmd_varargs!(brpop, b"brpop", "BRPOP", strict, NotSubscriber);
+    cmd!(
         brpoplpush,
         b"brpoplpush",
         "BRPOPLPUSH",
@@ -1231,8 +1087,8 @@ impl JSValkeyClient {
         "timeout",
         NotSubscriber
     );
-    cmd_key_value!(getbit, b"getbit", "GETBIT", "key", "offset", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd!(getbit, b"getbit", "GETBIT", "key", "offset", NotSubscriber);
+    cmd!(
         setbit,
         b"setbit",
         "SETBIT",
@@ -1241,7 +1097,7 @@ impl JSValkeyClient {
         "value",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         getrange,
         b"getrange",
         "GETRANGE",
@@ -1250,7 +1106,7 @@ impl JSValkeyClient {
         "end",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         setrange,
         b"setrange",
         "SETRANGE",
@@ -1259,8 +1115,8 @@ impl JSValkeyClient {
         "value",
         NotSubscriber
     );
-    cmd_key!(dump, b"dump", "DUMP", "key", NotSubscriber);
-    cmd_key_value!(
+    cmd!(dump, b"dump", "DUMP", "key", NotSubscriber);
+    cmd!(
         expireat,
         b"expireat",
         "EXPIREAT",
@@ -1268,28 +1124,28 @@ impl JSValkeyClient {
         "timestamp",
         NotSubscriber
     );
-    cmd_key!(
+    cmd!(
         expiretime,
         b"expiretime",
         "EXPIRETIME",
         "key",
         NotSubscriber
     );
-    cmd_key!(getdel, b"getdel", "GETDEL", "key", NotSubscriber);
-    cmd_strings_varargs!(getex, b"getex", "GETEX", NotSubscriber);
-    cmd_key!(hgetall, b"hgetall", "HGETALL", "key", NotSubscriber);
-    cmd_key!(hkeys, b"hkeys", "HKEYS", "key", NotSubscriber);
-    cmd_key!(hlen, b"hlen", "HLEN", "key", NotSubscriber);
-    cmd_key!(hvals, b"hvals", "HVALS", "key", NotSubscriber);
-    cmd_key!(keys, b"keys", "KEYS", "key", NotSubscriber);
-    cmd_key_value!(lindex, b"lindex", "LINDEX", "key", "index", NotSubscriber);
-    cmd_strings_varargs!(linsert, b"linsert", "LINSERT", NotSubscriber);
-    cmd_key!(llen, b"llen", "LLEN", "key", NotSubscriber);
-    cmd_strings_varargs!(lmove, b"lmove", "LMOVE", NotSubscriber);
-    cmd_strings_varargs!(lmpop, b"lmpop", "LMPOP", NotSubscriber);
-    cmd_key_varargs!(lpop, b"lpop", "LPOP", "key", NotSubscriber);
-    cmd_strings_varargs!(lpos, b"lpos", "LPOS", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd!(getdel, b"getdel", "GETDEL", "key", NotSubscriber);
+    cmd_varargs!(getex, b"getex", "GETEX", strict, NotSubscriber);
+    cmd!(hgetall, b"hgetall", "HGETALL", "key", NotSubscriber);
+    cmd!(hkeys, b"hkeys", "HKEYS", "key", NotSubscriber);
+    cmd!(hlen, b"hlen", "HLEN", "key", NotSubscriber);
+    cmd!(hvals, b"hvals", "HVALS", "key", NotSubscriber);
+    cmd!(keys, b"keys", "KEYS", "key", NotSubscriber);
+    cmd!(lindex, b"lindex", "LINDEX", "key", "index", NotSubscriber);
+    cmd_varargs!(linsert, b"linsert", "LINSERT", strict, NotSubscriber);
+    cmd!(llen, b"llen", "LLEN", "key", NotSubscriber);
+    cmd_varargs!(lmove, b"lmove", "LMOVE", strict, NotSubscriber);
+    cmd_varargs!(lmpop, b"lmpop", "LMPOP", strict, NotSubscriber);
+    cmd_varargs!(lpop, b"lpop", "LPOP", required "key", NotSubscriber);
+    cmd_varargs!(lpos, b"lpos", "LPOS", strict, NotSubscriber);
+    cmd!(
         lrange,
         b"lrange",
         "LRANGE",
@@ -1298,7 +1154,7 @@ impl JSValkeyClient {
         "stop",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         lrem,
         b"lrem",
         "LREM",
@@ -1307,7 +1163,7 @@ impl JSValkeyClient {
         "element",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         lset,
         b"lset",
         "LSET",
@@ -1316,7 +1172,7 @@ impl JSValkeyClient {
         "element",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         ltrim,
         b"ltrim",
         "LTRIM",
@@ -1325,8 +1181,8 @@ impl JSValkeyClient {
         "stop",
         NotSubscriber
     );
-    cmd_key!(persist, b"persist", "PERSIST", "key", NotSubscriber);
-    cmd_key_value!(
+    cmd!(persist, b"persist", "PERSIST", "key", NotSubscriber);
+    cmd!(
         pexpire,
         b"pexpire",
         "PEXPIRE",
@@ -1334,7 +1190,7 @@ impl JSValkeyClient {
         "milliseconds",
         NotSubscriber
     );
-    cmd_key_value!(
+    cmd!(
         pexpireat,
         b"pexpireat",
         "PEXPIREAT",
@@ -1342,17 +1198,17 @@ impl JSValkeyClient {
         "milliseconds-timestamp",
         NotSubscriber
     );
-    cmd_key!(
+    cmd!(
         pexpiretime,
         b"pexpiretime",
         "PEXPIRETIME",
         "key",
         NotSubscriber
     );
-    cmd_key!(pttl, b"pttl", "PTTL", "key", NotSubscriber);
-    cmd_noargs!(randomkey, b"randomkey", "RANDOMKEY", NotSubscriber);
-    cmd_key_varargs!(rpop, b"rpop", "RPOP", "key", NotSubscriber);
-    cmd_key_value!(
+    cmd!(pttl, b"pttl", "PTTL", "key", NotSubscriber);
+    cmd!(randomkey, b"randomkey", "RANDOMKEY", NotSubscriber);
+    cmd_varargs!(rpop, b"rpop", "RPOP", required "key", NotSubscriber);
+    cmd!(
         rpoplpush,
         b"rpoplpush",
         "RPOPLPUSH",
@@ -1360,21 +1216,51 @@ impl JSValkeyClient {
         "destination",
         NotSubscriber
     );
-    cmd_strings_varargs!(scan, b"scan", "SCAN", NotSubscriber);
-    cmd_key!(scard, b"scard", "SCARD", "key", NotSubscriber);
-    cmd_strings_varargs!(sdiff, b"sdiff", "SDIFF", NotSubscriber);
-    cmd_strings_varargs!(sdiffstore, b"sdiffstore", "SDIFFSTORE", NotSubscriber);
-    cmd_strings_varargs!(sinter, b"sinter", "SINTER", NotSubscriber);
-    cmd_strings_varargs!(sintercard, b"sintercard", "SINTERCARD", NotSubscriber);
-    cmd_strings_varargs!(sinterstore, b"sinterstore", "SINTERSTORE", NotSubscriber);
-    cmd_strings_varargs!(smismember, b"smismember", "SMISMEMBER", NotSubscriber);
-    cmd_strings_varargs!(sscan, b"sscan", "SSCAN", NotSubscriber);
-    cmd_key!(strlen, b"strlen", "STRLEN", "key", NotSubscriber);
-    cmd_strings_varargs!(sunion, b"sunion", "SUNION", NotSubscriber);
-    cmd_strings_varargs!(sunionstore, b"sunionstore", "SUNIONSTORE", NotSubscriber);
-    cmd_key!(r#type, b"type", "TYPE", "key", NotSubscriber);
-    cmd_key!(zcard, b"zcard", "ZCARD", "key", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd_varargs!(scan, b"scan", "SCAN", strict, NotSubscriber);
+    cmd!(scard, b"scard", "SCARD", "key", NotSubscriber);
+    cmd_varargs!(sdiff, b"sdiff", "SDIFF", strict, NotSubscriber);
+    cmd_varargs!(
+        sdiffstore,
+        b"sdiffstore",
+        "SDIFFSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(sinter, b"sinter", "SINTER", strict, NotSubscriber);
+    cmd_varargs!(
+        sintercard,
+        b"sintercard",
+        "SINTERCARD",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(
+        sinterstore,
+        b"sinterstore",
+        "SINTERSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(
+        smismember,
+        b"smismember",
+        "SMISMEMBER",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(sscan, b"sscan", "SSCAN", strict, NotSubscriber);
+    cmd!(strlen, b"strlen", "STRLEN", "key", NotSubscriber);
+    cmd_varargs!(sunion, b"sunion", "SUNION", strict, NotSubscriber);
+    cmd_varargs!(
+        sunionstore,
+        b"sunionstore",
+        "SUNIONSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd!(r#type, b"type", "TYPE", "key", NotSubscriber);
+    cmd!(zcard, b"zcard", "ZCARD", "key", NotSubscriber);
+    cmd!(
         zcount,
         b"zcount",
         "ZCOUNT",
@@ -1383,7 +1269,7 @@ impl JSValkeyClient {
         "max",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         zlexcount,
         b"zlexcount",
         "ZLEXCOUNT",
@@ -1392,47 +1278,49 @@ impl JSValkeyClient {
         "max",
         NotSubscriber
     );
-    cmd_key_varargs!(zpopmax, b"zpopmax", "ZPOPMAX", "key", NotSubscriber);
-    cmd_key_varargs!(zpopmin, b"zpopmin", "ZPOPMIN", "key", NotSubscriber);
-    cmd_key_varargs!(
+    cmd_varargs!(zpopmax, b"zpopmax", "ZPOPMAX", required "key", NotSubscriber);
+    cmd_varargs!(zpopmin, b"zpopmin", "ZPOPMIN", required "key", NotSubscriber);
+    cmd_varargs!(
         zrandmember,
         b"zrandmember",
         "ZRANDMEMBER",
-        "key",
+        required "key",
         NotSubscriber
     );
-    cmd_strings_varargs!(zrange, b"zrange", "ZRANGE", NotSubscriber);
-    cmd_strings_varargs!(zrevrange, b"zrevrange", "ZREVRANGE", NotSubscriber);
-    cmd_strings_varargs!(
+    cmd_varargs!(zrange, b"zrange", "ZRANGE", strict, NotSubscriber);
+    cmd_varargs!(zrevrange, b"zrevrange", "ZREVRANGE", strict, NotSubscriber);
+    cmd_varargs!(
         zrangebyscore,
         b"zrangebyscore",
         "ZRANGEBYSCORE",
+        strict,
         NotSubscriber
     );
-    cmd_strings_varargs!(
+    cmd_varargs!(
         zrevrangebyscore,
         b"zrevrangebyscore",
         "ZREVRANGEBYSCORE",
+        strict,
         NotSubscriber
     );
-    cmd_key_varargs!(
+    cmd_varargs!(
         zrangebylex,
         b"zrangebylex",
         "ZRANGEBYLEX",
-        "key",
+        required "key",
         NotSubscriber
     );
-    cmd_key_varargs!(
+    cmd_varargs!(
         zrevrangebylex,
         b"zrevrangebylex",
         "ZREVRANGEBYLEX",
-        "key",
+        required "key",
         NotSubscriber
     );
-    cmd_key_value!(append, b"append", "APPEND", "key", "value", NotSubscriber);
-    cmd_key_value!(getset, b"getset", "GETSET", "key", "value", NotSubscriber);
-    cmd_key_value!(hget, b"hget", "HGET", "key", "field", NotSubscriber);
-    cmd_key_value!(
+    cmd!(append, b"append", "APPEND", "key", "value", NotSubscriber);
+    cmd!(getset, b"getset", "GETSET", "key", "value", NotSubscriber);
+    cmd!(hget, b"hget", "HGET", "key", "field", NotSubscriber);
+    cmd!(
         incrby,
         b"incrby",
         "INCRBY",
@@ -1440,7 +1328,7 @@ impl JSValkeyClient {
         "increment",
         NotSubscriber
     );
-    cmd_key_value!(
+    cmd!(
         incrbyfloat,
         b"incrbyfloat",
         "INCRBYFLOAT",
@@ -1448,7 +1336,7 @@ impl JSValkeyClient {
         "increment",
         NotSubscriber
     );
-    cmd_key_value!(
+    cmd!(
         decrby,
         b"decrby",
         "DECRBY",
@@ -1456,13 +1344,13 @@ impl JSValkeyClient {
         "decrement",
         NotSubscriber
     );
-    cmd_key_value_varargs!(lpush, b"lpush", "LPUSH", NotSubscriber);
-    cmd_key_value_varargs!(lpushx, b"lpushx", "LPUSHX", NotSubscriber);
-    cmd_key_value!(pfadd, b"pfadd", "PFADD", "key", "value", NotSubscriber);
-    cmd_key_value_varargs!(rpush, b"rpush", "RPUSH", NotSubscriber);
-    cmd_key_value_varargs!(rpushx, b"rpushx", "RPUSHX", NotSubscriber);
-    cmd_key_value!(setnx, b"setnx", "SETNX", "key", "value", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd_varargs!(lpush, b"lpush", "LPUSH", skip_null, NotSubscriber);
+    cmd_varargs!(lpushx, b"lpushx", "LPUSHX", skip_null, NotSubscriber);
+    cmd!(pfadd, b"pfadd", "PFADD", "key", "value", NotSubscriber);
+    cmd_varargs!(rpush, b"rpush", "RPUSH", skip_null, NotSubscriber);
+    cmd_varargs!(rpushx, b"rpushx", "RPUSHX", skip_null, NotSubscriber);
+    cmd!(setnx, b"setnx", "SETNX", "key", "value", NotSubscriber);
+    cmd!(
         setex,
         b"setex",
         "SETEX",
@@ -1471,7 +1359,7 @@ impl JSValkeyClient {
         "value",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         psetex,
         b"psetex",
         "PSETEX",
@@ -1480,8 +1368,8 @@ impl JSValkeyClient {
         "value",
         NotSubscriber
     );
-    cmd_key_value!(zscore, b"zscore", "ZSCORE", "key", "value", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd!(zscore, b"zscore", "ZSCORE", "key", "value", NotSubscriber);
+    cmd!(
         zincrby,
         b"zincrby",
         "ZINCRBY",
@@ -1490,27 +1378,51 @@ impl JSValkeyClient {
         "member",
         NotSubscriber
     );
-    cmd_key_value_varargs!(zmscore, b"zmscore", "ZMSCORE", NotSubscriber);
-    cmd_strings_varargs!(zadd, b"zadd", "ZADD", NotSubscriber);
-    cmd_strings_varargs!(zscan, b"zscan", "ZSCAN", NotSubscriber);
-    cmd_strings_varargs!(zdiff, b"zdiff", "ZDIFF", NotSubscriber);
-    cmd_strings_varargs!(zdiffstore, b"zdiffstore", "ZDIFFSTORE", NotSubscriber);
-    cmd_strings_varargs!(zinter, b"zinter", "ZINTER", NotSubscriber);
-    cmd_strings_varargs!(zintercard, b"zintercard", "ZINTERCARD", NotSubscriber);
-    cmd_strings_varargs!(zinterstore, b"zinterstore", "ZINTERSTORE", NotSubscriber);
-    cmd_strings_varargs!(zunion, b"zunion", "ZUNION", NotSubscriber);
-    cmd_strings_varargs!(zunionstore, b"zunionstore", "ZUNIONSTORE", NotSubscriber);
-    cmd_strings_varargs!(zmpop, b"zmpop", "ZMPOP", NotSubscriber);
-    cmd_strings_varargs!(bzmpop, b"bzmpop", "BZMPOP", NotSubscriber);
-    cmd_strings_varargs!(bzpopmin, b"bzpopmin", "BZPOPMIN", NotSubscriber);
-    cmd_strings_varargs!(bzpopmax, b"bzpopmax", "BZPOPMAX", NotSubscriber);
-    cmd_key_varargs!(del, b"del", "DEL", "key", NotSubscriber);
-    cmd_key_varargs!(mget, b"mget", "MGET", "key", NotSubscriber);
-    cmd_strings_varargs!(mset, b"mset", "MSET", NotSubscriber);
-    cmd_strings_varargs!(msetnx, b"msetnx", "MSETNX", NotSubscriber);
-    cmd_strings_varargs!(script, b"script", "SCRIPT", NotSubscriber);
-    cmd_strings_varargs!(select, b"select", "SELECT", NotSubscriber);
-    cmd_key_value!(
+    cmd_varargs!(zmscore, b"zmscore", "ZMSCORE", skip_null, NotSubscriber);
+    cmd_varargs!(zadd, b"zadd", "ZADD", strict, NotSubscriber);
+    cmd_varargs!(zscan, b"zscan", "ZSCAN", strict, NotSubscriber);
+    cmd_varargs!(zdiff, b"zdiff", "ZDIFF", strict, NotSubscriber);
+    cmd_varargs!(
+        zdiffstore,
+        b"zdiffstore",
+        "ZDIFFSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(zinter, b"zinter", "ZINTER", strict, NotSubscriber);
+    cmd_varargs!(
+        zintercard,
+        b"zintercard",
+        "ZINTERCARD",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(
+        zinterstore,
+        b"zinterstore",
+        "ZINTERSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(zunion, b"zunion", "ZUNION", strict, NotSubscriber);
+    cmd_varargs!(
+        zunionstore,
+        b"zunionstore",
+        "ZUNIONSTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(zmpop, b"zmpop", "ZMPOP", strict, NotSubscriber);
+    cmd_varargs!(bzmpop, b"bzmpop", "BZMPOP", strict, NotSubscriber);
+    cmd_varargs!(bzpopmin, b"bzpopmin", "BZPOPMIN", strict, NotSubscriber);
+    cmd_varargs!(bzpopmax, b"bzpopmax", "BZPOPMAX", strict, NotSubscriber);
+    cmd_varargs!(del, b"del", "DEL", required "key", NotSubscriber);
+    cmd_varargs!(mget, b"mget", "MGET", required "key", NotSubscriber);
+    cmd_varargs!(mset, b"mset", "MSET", strict, NotSubscriber);
+    cmd_varargs!(msetnx, b"msetnx", "MSETNX", strict, NotSubscriber);
+    cmd_varargs!(script, b"script", "SCRIPT", strict, NotSubscriber);
+    cmd_varargs!(select, b"select", "SELECT", strict, NotSubscriber);
+    cmd!(
         spublish,
         b"spublish",
         "SPUBLISH",
@@ -1547,7 +1459,7 @@ impl JSValkeyClient {
         )
     }
 
-    cmd_key_value_value2!(
+    cmd!(
         substr,
         b"substr",
         "SUBSTR",
@@ -1556,7 +1468,7 @@ impl JSValkeyClient {
         "end",
         NotSubscriber
     );
-    cmd_key_value!(
+    cmd!(
         hstrlen,
         b"hstrlen",
         "HSTRLEN",
@@ -1564,10 +1476,16 @@ impl JSValkeyClient {
         "field",
         NotSubscriber
     );
-    cmd_key_varargs!(zrank, b"zrank", "ZRANK", "key", NotSubscriber);
-    cmd_strings_varargs!(zrangestore, b"zrangestore", "ZRANGESTORE", NotSubscriber);
-    cmd_key_varargs!(zrem, b"zrem", "ZREM", "key", NotSubscriber);
-    cmd_key_value_value2!(
+    cmd_varargs!(zrank, b"zrank", "ZRANK", required "key", NotSubscriber);
+    cmd_varargs!(
+        zrangestore,
+        b"zrangestore",
+        "ZRANGESTORE",
+        strict,
+        NotSubscriber
+    );
+    cmd_varargs!(zrem, b"zrem", "ZREM", required "key", NotSubscriber);
+    cmd!(
         zremrangebylex,
         b"zremrangebylex",
         "ZREMRANGEBYLEX",
@@ -1576,7 +1494,7 @@ impl JSValkeyClient {
         "max",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         zremrangebyrank,
         b"zremrangebyrank",
         "ZREMRANGEBYRANK",
@@ -1585,7 +1503,7 @@ impl JSValkeyClient {
         "stop",
         NotSubscriber
     );
-    cmd_key_value_value2!(
+    cmd!(
         zremrangebyscore,
         b"zremrangebyscore",
         "ZREMRANGEBYSCORE",
@@ -1594,15 +1512,27 @@ impl JSValkeyClient {
         "max",
         NotSubscriber
     );
-    cmd_key_varargs!(zrevrank, b"zrevrank", "ZREVRANK", "key", NotSubscriber);
-    cmd_strings_varargs!(psubscribe, b"psubscribe", "PSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(punsubscribe, b"punsubscribe", "PUNSUBSCRIBE", DontCare);
-    cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
-    cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
-    cmd_key_varargs!(unlink, b"unlink", "UNLINK", "key", NotSubscriber);
-    cmd_key_varargs!(touch, b"touch", "TOUCH", "key", NotSubscriber);
-    cmd_key_value!(rename, b"rename", "RENAME", "key", "newkey", NotSubscriber);
-    cmd_key_value!(
+    cmd_varargs!(
+        zrevrank,
+        b"zrevrank",
+        "ZREVRANK",
+        required "key",
+        NotSubscriber
+    );
+    cmd_varargs!(psubscribe, b"psubscribe", "PSUBSCRIBE", strict, DontCare);
+    cmd_varargs!(
+        punsubscribe,
+        b"punsubscribe",
+        "PUNSUBSCRIBE",
+        strict,
+        DontCare
+    );
+    cmd_varargs!(pubsub, b"pubsub", "PUBSUB", strict, DontCare);
+    cmd_varargs!(copy, b"copy", "COPY", strict, NotSubscriber);
+    cmd_varargs!(unlink, b"unlink", "UNLINK", required "key", NotSubscriber);
+    cmd_varargs!(touch, b"touch", "TOUCH", required "key", NotSubscriber);
+    cmd!(rename, b"rename", "RENAME", "key", "newkey", NotSubscriber);
+    cmd!(
         renamenx,
         b"renamenx",
         "RENAMENX",

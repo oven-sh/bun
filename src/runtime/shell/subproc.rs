@@ -1025,10 +1025,10 @@ impl Writable {
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
         // non-Copy payloads.
         let mut stdio = stdio;
-        #[cfg(windows)]
-        {
-            match &mut stdio {
-                Stdio::Pipe | Stdio::ReadableStream(_) => {
+        match &mut stdio {
+            Stdio::Pipe | Stdio::ReadableStream(_) => {
+                #[cfg(windows)]
+                {
                     if let StdioResult::Buffer(buf) = result {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
@@ -1057,93 +1057,39 @@ impl Writable {
                         // owned ref; `adopt` takes it over.
                         return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
                     }
-                    return Ok(Writable::Inherit);
+                    Ok(Writable::Inherit)
                 }
-
-                Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
-                    let old =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                    // prevents its Drop from running, so this is the sole move.
-                    let blob = match &*old {
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
-                    )));
-                }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                    )));
-                }
-                Stdio::Fd(fd) => {
-                    return Ok(Writable::Fd(*fd));
-                }
-                Stdio::Dup2(dup2) => {
-                    return Ok(Writable::Fd(dup2.to.to_fd()));
-                }
-                Stdio::Inherit => {
-                    return Ok(Writable::Inherit);
-                }
-                Stdio::Memfd(_) | Stdio::Path(_) | Stdio::Ignore => {
-                    return Ok(Writable::Ignore);
-                }
-                Stdio::Ipc | Stdio::Capture(_) => {
-                    return Ok(Writable::Ignore);
+                #[cfg(not(windows))]
+                {
+                    // The shell never uses this
+                    panic!("Unimplemented stdin pipe/readable_stream");
                 }
             }
-        }
-        #[cfg(not(windows))]
-        {
-            match &mut stdio {
-                Stdio::Dup2(_) => {
+            Stdio::Blob(_) | Stdio::ArrayBuffer(_) => Ok(Writable::Buffer(
+                JscSubprocess::writable::buffered_stdin_writer(
+                    &mut stdio, event_loop, subprocess, result,
+                ),
+            )),
+            Stdio::Dup2(dup2) => {
+                #[cfg(windows)]
+                {
+                    Ok(Writable::Fd(dup2.to.to_fd()))
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = dup2;
                     // The shell never uses this
                     panic!("Unimplemented stdin dup2");
                 }
-                Stdio::Pipe => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin pipe");
+            }
+            Stdio::Memfd(memfd) => {
+                #[cfg(windows)]
+                {
+                    let _ = memfd;
+                    Ok(Writable::Ignore)
                 }
-
-                Stdio::Blob(_) => {
-                    // E0509: `Stdio` impls `Drop`, so the payload cannot be
-                    // destructure-moved out. Take ownership via ManuallyDrop +
-                    // ptr::read; the wrapper suppresses the Stdio destructor so
-                    // the blob is moved exactly once.
-                    let old =
-                        core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
-                    let blob = match &*old {
-                        // SAFETY: `old` is Blob (matched above) and ManuallyDrop
-                        // prevents its Drop from running, so this is the sole move.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
-                    )))
-                }
-                Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
-                    result,
-                    JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                ))),
-                Stdio::Memfd(memfd) => {
+                #[cfg(not(windows))]
+                {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
                     // Ownership of the fd transfers to `Writable::Memfd`.
@@ -1155,15 +1101,20 @@ impl Writable {
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Ok(Writable::Memfd(fd))
                 }
-                Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
-                Stdio::Inherit => Ok(Writable::Inherit),
-                Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
-                Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
-                Stdio::ReadableStream(_) => {
-                    // The shell never uses this
-                    panic!("Unimplemented stdin readable_stream");
+            }
+            Stdio::Fd(fd) => {
+                #[cfg(windows)]
+                {
+                    Ok(Writable::Fd(*fd))
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = fd;
+                    Ok(Writable::Fd(result.unwrap()))
                 }
             }
+            Stdio::Inherit => Ok(Writable::Inherit),
+            Stdio::Path(_) | Stdio::Ignore | Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
         }
     }
 
@@ -1288,52 +1239,32 @@ impl Readable {
         // Note: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
         let mut stdio = stdio;
-        #[cfg(windows)]
-        {
-            return match &mut stdio {
-                Stdio::Inherit => Readable::Inherit,
-                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(fd) => Readable::Fd(*fd),
-                // blobs are immutable, so we should only ever get the case
-                // where the user passed in a Blob with an fd
-                Stdio::Blob(_) => Readable::Ignore,
-                Stdio::Memfd(_) => Readable::Ignore,
-                Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
-                )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the
-                    // safe route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
+        match &mut stdio {
+            Stdio::Inherit => Readable::Inherit,
+            Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
+            Stdio::Path(_) => Readable::Ignore,
+            Stdio::Fd(fd) => {
+                #[cfg(windows)]
+                {
+                    Readable::Fd(*fd)
                 }
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
-                )),
-                Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
-            };
-        }
-
-        #[cfg(not(windows))]
-        {
-            match &mut stdio {
-                Stdio::Inherit => Readable::Inherit,
-                Stdio::Ipc | Stdio::Dup2(_) | Stdio::Ignore => Readable::Ignore,
-                Stdio::Path(_) => Readable::Ignore,
-                Stdio::Fd(_) => Readable::Fd(result.unwrap()),
-                // blobs are immutable, so we should only ever get the case
-                // where the user passed in a Blob with an fd
-                Stdio::Blob(_) => Readable::Ignore,
-                Stdio::Memfd(memfd) => {
+                #[cfg(not(windows))]
+                {
+                    let _ = fd;
+                    Readable::Fd(result.unwrap())
+                }
+            }
+            // blobs are immutable, so we should only ever get the case
+            // where the user passed in a Blob with an fd
+            Stdio::Blob(_) => Readable::Ignore,
+            Stdio::Memfd(memfd) => {
+                #[cfg(windows)]
+                {
+                    let _ = memfd;
+                    Readable::Ignore
+                }
+                #[cfg(not(windows))]
+                {
                     let fd = *memfd;
                     // Ownership of the fd transfers to `Readable::Memfd`. Swap in
                     // `Ignore` and suppress the old value's destructor so
@@ -1342,28 +1273,28 @@ impl Readable {
                         core::mem::ManuallyDrop::new(core::mem::replace(&mut stdio, Stdio::Ignore));
                     Readable::Memfd(fd)
                 }
-                Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
-                )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the safe
-                    // route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
-                }
-                Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
-                )),
-                Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
             }
+            Stdio::Pipe => Readable::Pipe(PipeReader::create(
+                event_loop, process, result, None, out_type, interp,
+            )),
+            Stdio::ArrayBuffer(array_buffer) => {
+                let mut pipe =
+                    PipeReader::create(event_loop, process, result, None, out_type, interp);
+                // The Arc was just created by `PipeReader::create` and is
+                // uniquely held (strong=1, weak=0) — `get_mut` is the safe
+                // route to set `buffered_output` before it's shared.
+                Arc::get_mut(&mut pipe)
+                    .expect("fresh PipeReader Arc")
+                    .buffered_output = BufferedOutput::ArrayBuffer {
+                    buf: core::mem::take(array_buffer),
+                    i: 0,
+                };
+                Readable::Pipe(pipe)
+            }
+            Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
+                event_loop, process, result, shellio, out_type, interp,
+            )),
+            Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
         }
     }
 

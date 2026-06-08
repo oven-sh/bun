@@ -701,10 +701,8 @@ impl<'a> TablePrinter<'a> {
         let mut value_formatter = self.value_formatter.shallow_clone();
 
         let tag = formatter::Tag::get(value, self.global_object)?;
-        value_formatter.quote_strings = !(matches!(
-            tag.tag,
-            TagPayload::String | TagPayload::StringPossiblyFormatted
-        ));
+        value_formatter.quote_strings =
+            !(matches!(tag.tag, Tag::String | Tag::StringPossiblyFormatted));
         let _ = value_formatter.format::<false>(tag, &mut counter, value, self.global_object);
         // VisibleCharacterCounter write cannot fail.
         let _ = bun_io::Write::flush(&mut counter);
@@ -882,10 +880,8 @@ impl<'a> TablePrinter<'a> {
                 let tag = formatter::Tag::get(value, self.global_object)?;
                 let mut value_formatter = self.value_formatter.shallow_clone();
 
-                value_formatter.quote_strings = !(matches!(
-                    tag.tag,
-                    TagPayload::String | TagPayload::StringPossiblyFormatted
-                ));
+                value_formatter.quote_strings =
+                    !(matches!(tag.tag, Tag::String | Tag::StringPossiblyFormatted));
 
                 // Release pooled visit map after formatting.
                 // `shallow_clone()` guarantees the source's `map_node` is
@@ -1485,7 +1481,7 @@ pub fn format2(
             return Ok(());
         }
 
-        if matches!(tag.tag, TagPayload::String) {
+        if matches!(tag.tag, Tag::String) {
             if options.enable_colors {
                 if level == MessageLevel::Error {
                     let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
@@ -1561,8 +1557,8 @@ pub fn format2(
             any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
-                tag.tag = TagPayload::StringPossiblyFormatted;
+            if matches!(tag.tag, Tag::String) && !fmt.remaining().is_empty() {
+                tag.tag = Tag::StringPossiblyFormatted;
             }
 
             fmt.format::<true>(tag, writer, this_value, global)?;
@@ -1583,8 +1579,8 @@ pub fn format2(
             }
             any = true;
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
-                tag.tag = TagPayload::StringPossiblyFormatted;
+            if matches!(tag.tag, Tag::String) && !fmt.remaining().is_empty() {
+                tag.tag = Tag::StringPossiblyFormatted;
             }
 
             fmt.format::<false>(tag, writer, this_value, global)?;
@@ -1613,7 +1609,7 @@ pub struct CustomFormattedObject {
 // Formatter
 // ───────────────────────────────────────────────────────────────────────────
 
-pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
+pub use formatter::{Formatter, Tag, TagOptions, TagResult, visited};
 
 pub mod formatter {
     use super::*;
@@ -2055,156 +2051,20 @@ pub mod formatter {
         }
     }
 
-    /// Only `CustomFormattedObject` carries a payload.
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum TagPayload {
-        StringPossiblyFormatted,
-        String,
-        Undefined,
-        Double,
-        Integer,
-        Null,
-        Boolean,
-        Array,
-        Object,
-        Function,
-        Class,
-        Error,
-        TypedArray,
-        Map,
-        MapIterator,
-        SetIterator,
-        Set,
-        BigInt,
-        Symbol,
-        CustomFormattedObject(CustomFormattedObject),
-        GlobalObject,
-        Private,
-        Promise,
-        JSON,
-        ToJSON,
-        NativeCode,
-        JSX,
-        Event,
-        GetterSetter,
-        CustomGetterSetter,
-        Proxy,
-        RevokedProxy,
-    }
-
-    impl TagPayload {
-        /// The constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
-        #[inline]
-        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
-            Tag::get(value, global_this)
-        }
-        /// Delegates to `Tag::get_advanced`.
-        #[inline]
-        pub fn get_advanced(
-            value: JSValue,
-            global_this: &JSGlobalObject,
-            opts: TagOptions,
-        ) -> JsResult<TagResult> {
-            Tag::get_advanced(value, global_this, opts)
-        }
-        pub fn is_primitive(self) -> bool {
-            self.tag().is_primitive()
-        }
-        pub fn tag(self) -> Tag {
-            match self {
-                TagPayload::StringPossiblyFormatted => Tag::StringPossiblyFormatted,
-                TagPayload::String => Tag::String,
-                TagPayload::Undefined => Tag::Undefined,
-                TagPayload::Double => Tag::Double,
-                TagPayload::Integer => Tag::Integer,
-                TagPayload::Null => Tag::Null,
-                TagPayload::Boolean => Tag::Boolean,
-                TagPayload::Array => Tag::Array,
-                TagPayload::Object => Tag::Object,
-                TagPayload::Function => Tag::Function,
-                TagPayload::Class => Tag::Class,
-                TagPayload::Error => Tag::Error,
-                TagPayload::TypedArray => Tag::TypedArray,
-                TagPayload::Map => Tag::Map,
-                TagPayload::MapIterator => Tag::MapIterator,
-                TagPayload::SetIterator => Tag::SetIterator,
-                TagPayload::Set => Tag::Set,
-                TagPayload::BigInt => Tag::BigInt,
-                TagPayload::Symbol => Tag::Symbol,
-                TagPayload::CustomFormattedObject(_) => Tag::CustomFormattedObject,
-                TagPayload::GlobalObject => Tag::GlobalObject,
-                TagPayload::Private => Tag::Private,
-                TagPayload::Promise => Tag::Promise,
-                TagPayload::JSON => Tag::JSON,
-                TagPayload::ToJSON => Tag::ToJSON,
-                TagPayload::NativeCode => Tag::NativeCode,
-                TagPayload::JSX => Tag::JSX,
-                TagPayload::Event => Tag::Event,
-                TagPayload::GetterSetter => Tag::GetterSetter,
-                TagPayload::CustomGetterSetter => Tag::CustomGetterSetter,
-                TagPayload::Proxy => Tag::Proxy,
-                TagPayload::RevokedProxy => Tag::RevokedProxy,
-            }
-        }
-    }
-
-    /// Reverse of [`TagPayload::tag`]. The `CustomFormattedObject` arm gets a
-    /// default (zero) payload — used by the `ConsoleFormatter` trait bridge in
-    /// `lib.rs`, which never passes that tag (write_format hooks pick concrete
-    /// tags like `Double` / `Boolean` / `Object` / `Private`).
-    impl From<Tag> for TagPayload {
-        fn from(t: Tag) -> Self {
-            match t {
-                Tag::StringPossiblyFormatted => TagPayload::StringPossiblyFormatted,
-                Tag::String => TagPayload::String,
-                Tag::Undefined => TagPayload::Undefined,
-                Tag::Double => TagPayload::Double,
-                Tag::Integer => TagPayload::Integer,
-                Tag::Null => TagPayload::Null,
-                Tag::Boolean => TagPayload::Boolean,
-                Tag::Array => TagPayload::Array,
-                Tag::Object => TagPayload::Object,
-                Tag::Function => TagPayload::Function,
-                Tag::Class => TagPayload::Class,
-                Tag::Error => TagPayload::Error,
-                Tag::TypedArray => TagPayload::TypedArray,
-                Tag::Map => TagPayload::Map,
-                Tag::MapIterator => TagPayload::MapIterator,
-                Tag::SetIterator => TagPayload::SetIterator,
-                Tag::Set => TagPayload::Set,
-                Tag::BigInt => TagPayload::BigInt,
-                Tag::Symbol => TagPayload::Symbol,
-                Tag::CustomFormattedObject => {
-                    TagPayload::CustomFormattedObject(CustomFormattedObject::default())
-                }
-                Tag::GlobalObject => TagPayload::GlobalObject,
-                Tag::Private => TagPayload::Private,
-                Tag::Promise => TagPayload::Promise,
-                Tag::JSON => TagPayload::JSON,
-                Tag::ToJSON => TagPayload::ToJSON,
-                Tag::NativeCode => TagPayload::NativeCode,
-                Tag::JSX => TagPayload::JSX,
-                Tag::Event => TagPayload::Event,
-                Tag::GetterSetter => TagPayload::GetterSetter,
-                Tag::CustomGetterSetter => TagPayload::CustomGetterSetter,
-                Tag::Proxy => TagPayload::Proxy,
-                Tag::RevokedProxy => TagPayload::RevokedProxy,
-            }
-        }
-    }
-
     #[derive(Copy, Clone)]
     pub struct TagResult {
-        pub tag: TagPayload,
+        pub tag: Tag,
         pub cell: jsc::JSType,
+        /// Set only when `tag` is [`Tag::CustomFormattedObject`].
+        pub custom: Option<CustomFormattedObject>,
     }
 
     impl Default for TagResult {
         fn default() -> Self {
             Self {
-                tag: TagPayload::Undefined,
+                tag: Tag::Undefined,
                 cell: jsc::JSType::Cell,
+                custom: None,
             }
         }
     }
@@ -2231,37 +2091,37 @@ pub mod formatter {
         ) -> JsResult<TagResult> {
             if value.is_empty() || value == JSValue::UNDEFINED {
                 return Ok(TagResult {
-                    tag: TagPayload::Undefined,
+                    tag: Tag::Undefined,
                     ..Default::default()
                 });
             }
             if value == JSValue::NULL {
                 return Ok(TagResult {
-                    tag: TagPayload::Null,
+                    tag: Tag::Null,
                     ..Default::default()
                 });
             }
 
             if value.is_int32() {
                 return Ok(TagResult {
-                    tag: TagPayload::Integer,
+                    tag: Tag::Integer,
                     ..Default::default()
                 });
             } else if value.is_number() {
                 return Ok(TagResult {
-                    tag: TagPayload::Double,
+                    tag: Tag::Double,
                     ..Default::default()
                 });
             } else if value.is_boolean() {
                 return Ok(TagResult {
-                    tag: TagPayload::Boolean,
+                    tag: Tag::Boolean,
                     ..Default::default()
                 });
             }
 
             if !value.is_cell() {
                 return Ok(TagResult {
-                    tag: TagPayload::NativeCode,
+                    tag: Tag::NativeCode,
                     ..Default::default()
                 });
             }
@@ -2270,15 +2130,17 @@ pub mod formatter {
 
             if js_type.is_hidden() {
                 return Ok(TagResult {
-                    tag: TagPayload::NativeCode,
+                    tag: Tag::NativeCode,
                     cell: js_type,
+                    custom: None,
                 });
             }
 
             if js_type == jsc::JSType::Cell {
                 return Ok(TagResult {
-                    tag: TagPayload::NativeCode,
+                    tag: Tag::NativeCode,
                     cell: js_type,
+                    custom: None,
                 });
             }
 
@@ -2290,17 +2152,18 @@ pub mod formatter {
                 match value.fast_get(global_this, jsc::BuiltinName::InspectCustom) {
                     Err(_) => {
                         return Ok(TagResult {
-                            tag: TagPayload::RevokedProxy,
+                            tag: Tag::RevokedProxy,
                             ..Default::default()
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
                         return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                            tag: Tag::CustomFormattedObject,
+                            cell: js_type,
+                            custom: Some(CustomFormattedObject {
                                 function: callback_value,
                                 this: value,
                             }),
-                            cell: js_type,
                         });
                     }
                     _ => {}
@@ -2309,8 +2172,9 @@ pub mod formatter {
 
             if js_type == jsc::JSType::DOMWrapper {
                 return Ok(TagResult {
-                    tag: TagPayload::Private,
+                    tag: Tag::Private,
                     cell: js_type,
+                    custom: None,
                 });
             }
 
@@ -2321,8 +2185,9 @@ pub mod formatter {
             {
                 if value.is_class(global_this) {
                     return Ok(TagResult {
-                        tag: TagPayload::Class,
+                        tag: Tag::Class,
                         cell: js_type,
+                        custom: None,
                     });
                 }
 
@@ -2334,11 +2199,12 @@ pub mod formatter {
                 // handle the prefix in the .Object formatter.
                 return Ok(TagResult {
                     tag: if js_type == jsc::JSType::InternalFunction {
-                        TagPayload::Object
+                        Tag::Object
                     } else {
-                        TagPayload::Function
+                        Tag::Function
                     },
                     cell: js_type,
+                    custom: None,
                 });
             }
 
@@ -2353,8 +2219,9 @@ pub mod formatter {
                     return Tag::get(target, global_this);
                 }
                 return Ok(TagResult {
-                    tag: TagPayload::GlobalObject,
+                    tag: Tag::GlobalObject,
                     cell: js_type,
+                    custom: None,
                 });
             }
 
@@ -2379,8 +2246,9 @@ pub mod formatter {
                         global_this,
                     )? {
                         return Ok(TagResult {
-                            tag: TagPayload::JSX,
+                            tag: Tag::JSX,
                             cell: js_type,
+                            custom: None,
                         });
                     }
                 }
@@ -2388,24 +2256,24 @@ pub mod formatter {
 
             use jsc::JSType as T;
             let tag = match js_type {
-                T::ErrorInstance => TagPayload::Error,
-                T::NumberObject => TagPayload::Double,
+                T::ErrorInstance => Tag::Error,
+                T::NumberObject => Tag::Double,
                 T::DerivedArray
                 | T::Array
                 | T::DirectArguments
                 | T::ScopedArguments
-                | T::ClonedArguments => TagPayload::Array,
-                T::DerivedStringObject | T::String | T::StringObject => TagPayload::String,
-                T::RegExpObject => TagPayload::String,
-                T::Symbol => TagPayload::Symbol,
-                T::BooleanObject => TagPayload::Boolean,
-                T::JSFunction => TagPayload::Function,
-                T::WeakMap | T::Map => TagPayload::Map,
-                T::MapIterator => TagPayload::MapIterator,
-                T::SetIterator => TagPayload::SetIterator,
-                T::WeakSet | T::Set => TagPayload::Set,
-                T::JSDate => TagPayload::JSON,
-                T::JSPromise => TagPayload::Promise,
+                | T::ClonedArguments => Tag::Array,
+                T::DerivedStringObject | T::String | T::StringObject => Tag::String,
+                T::RegExpObject => Tag::String,
+                T::Symbol => Tag::Symbol,
+                T::BooleanObject => Tag::Boolean,
+                T::JSFunction => Tag::Function,
+                T::WeakMap | T::Map => Tag::Map,
+                T::MapIterator => Tag::MapIterator,
+                T::SetIterator => Tag::SetIterator,
+                T::WeakSet | T::Set => Tag::Set,
+                T::JSDate => Tag::JSON,
+                T::JSPromise => Tag::Promise,
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
@@ -2414,43 +2282,31 @@ pub mod formatter {
                 | T::IteratorHelper
                 | T::Object
                 | T::FinalObject
-                | T::ModuleNamespaceObject => TagPayload::Object,
+                | T::ModuleNamespaceObject => Tag::Object,
 
                 T::ProxyObject => {
                     let handler = value.get_proxy_internal_field(jsc::ProxyField::Handler);
                     if handler.is_empty() || handler.is_undefined_or_null() {
                         return Ok(TagResult {
-                            tag: TagPayload::RevokedProxy,
+                            tag: Tag::RevokedProxy,
                             cell: js_type,
+                            custom: None,
                         });
                     }
-                    TagPayload::Proxy
+                    Tag::Proxy
                 }
 
                 T::GlobalObject => {
                     if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                        TagPayload::Object
+                        Tag::Object
                     } else {
-                        TagPayload::GlobalObject
+                        Tag::GlobalObject
                     }
                 }
 
-                T::ArrayBuffer
-                | T::Int8Array
-                | T::Uint8Array
-                | T::Uint8ClampedArray
-                | T::Int16Array
-                | T::Uint16Array
-                | T::Int32Array
-                | T::Uint32Array
-                | T::Float16Array
-                | T::Float32Array
-                | T::Float64Array
-                | T::BigInt64Array
-                | T::BigUint64Array
-                | T::DataView => TagPayload::TypedArray,
+                t if t.is_array_buffer_like() => Tag::TypedArray,
 
-                T::HeapBigInt => TagPayload::BigInt,
+                T::HeapBigInt => Tag::BigInt,
 
                 // None of these should ever exist here
                 // But we're going to check anyway
@@ -2473,18 +2329,22 @@ pub mod formatter {
                 | T::LexicalEnvironment
                 | T::ModuleEnvironment
                 | T::StrictEvalActivation
-                | T::WithScope => TagPayload::NativeCode,
+                | T::WithScope => Tag::NativeCode,
 
-                T::Event => TagPayload::Event,
+                T::Event => Tag::Event,
 
-                T::GetterSetter => TagPayload::GetterSetter,
-                T::CustomGetterSetter => TagPayload::CustomGetterSetter,
+                T::GetterSetter => Tag::GetterSetter,
+                T::CustomGetterSetter => Tag::CustomGetterSetter,
 
-                T::JSAsJSONType => TagPayload::ToJSON,
+                T::JSAsJSONType => Tag::ToJSON,
 
-                _ => TagPayload::JSON,
+                _ => Tag::JSON,
             };
-            Ok(TagResult { tag, cell: js_type })
+            Ok(TagResult {
+                tag,
+                cell: js_type,
+                custom: None,
+            })
         }
     }
 
@@ -2507,11 +2367,7 @@ pub mod formatter {
             slice_: &[u8],
             global: &'a JSGlobalObject,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let mut slice = slice_;
             let mut i: u32 = 0;
             let mut len: u32 = slice.len() as u32;
@@ -2588,11 +2444,8 @@ pub mod formatter {
                                     next_value,
                                     next_value.js_type(),
                                 )?;
-                                writer = WrappedWriter {
-                                    ctx: writer_,
-                                    failed: false,
-                                    estimated_line_length: &mut self.estimated_line_length,
-                                };
+                                writer =
+                                    WrappedWriter::new(writer_, &mut self.estimated_line_length);
                             }
                             PercentTag::I => {
                                 // 1. If Type(current) is Symbol, let converted be NaN
@@ -2740,11 +2593,8 @@ pub mod formatter {
                                     next_value,
                                     global,
                                 )?;
-                                writer = WrappedWriter {
-                                    ctx: writer_,
-                                    failed: false,
-                                    estimated_line_length: &mut self.estimated_line_length,
-                                };
+                                writer =
+                                    WrappedWriter::new(writer_, &mut self.estimated_line_length);
                             }
 
                             PercentTag::C => {
@@ -2788,6 +2638,14 @@ pub mod formatter {
 
     impl<'w> WrappedWriter<'w> {
         pub const IS_WRAPPED_WRITER: bool = true;
+
+        pub fn new(ctx: &'w mut dyn bun_io::Write, estimated_line_length: &'w mut usize) -> Self {
+            Self {
+                ctx,
+                failed: false,
+                estimated_line_length,
+            }
+        }
 
         /// Mirror of `Formatter::add_for_new_line` routed through the borrowed
         /// `estimated_line_length` so callers don't need a second `&mut self`
@@ -3141,11 +2999,8 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             if value.is_cell() && !value.js_type().is_function() {
-                let mut writer = WrappedWriter {
-                    ctx: self.writer,
-                    failed: false,
-                    estimated_line_length: &mut self.formatter.estimated_line_length,
-                };
+                let mut writer =
+                    WrappedWriter::new(self.writer, &mut self.formatter.estimated_line_length);
 
                 if let Some(name_str) = get_object_name(global_this, value)? {
                     writer.print(format_args!("{name_str} "));
@@ -3301,11 +3156,8 @@ pub mod formatter {
                 }
             }
 
-            let mut writer = WrappedWriter {
-                ctx: &mut *ctx.writer,
-                failed: false,
-                estimated_line_length: &mut ctx.formatter.estimated_line_length,
-            };
+            let mut writer =
+                WrappedWriter::new(&mut *ctx.writer, &mut ctx.formatter.estimated_line_length);
             if ctx.i > 0 {
                 writer.print_comma::<C>();
             }
@@ -3592,11 +3444,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             writer.add_for_new_line(9);
             writer.print(format_args!(
                 "{}undefined{}",
@@ -3611,11 +3459,7 @@ pub mod formatter {
 
         #[inline(never)]
         fn print_null<const C: bool>(&mut self, writer_: &mut dyn bun_io::Write) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             writer.add_for_new_line(4);
             writer.print(format_args!(
                 "{}null{}",
@@ -3634,11 +3478,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             if let Some(class_name) = value.get_class_info_name() {
                 writer.add_for_new_line("[native code: ]".len() + class_name.len());
                 writer.write_all(b"[native code: ");
@@ -3659,11 +3499,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             const FMT: &str = "[Global Object]";
             writer.add_for_new_line(FMT.len());
             writer.write_all(pfmt!(concat!("<cyan>", "[Global Object]", "<r>"), C).as_bytes());
@@ -3678,11 +3514,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             writer.add_for_new_line("<Revoked Proxy>".len());
             writer.print(format_args!(
                 "{}<Revoked Proxy>{}",
@@ -3737,11 +3569,7 @@ pub mod formatter {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
             let str = OwnedString::new(BunString::from_js(value, self.global_this)?);
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             writer.add_for_new_line(str.length());
 
             if self.quote_strings && js_type != jsc::JSType::RegExpObject {
@@ -3791,11 +3619,7 @@ pub mod formatter {
                         self.failed = true;
                     }
                     self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
                 } else {
                     JSPrinter::write_json_string(
                         str.latin1(),
@@ -3849,11 +3673,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let int = value.coerce_to_int64(self.global_this)?;
             writer.add_for_new_line(bun_core::fmt::digit_count(int));
             writer.print(format_args!(
@@ -3874,11 +3694,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let zstr = value.get_zig_string(self.global_this)?;
             let out_str = zstr.slice();
             writer.add_for_new_line(out_str.len());
@@ -3900,16 +3716,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             if value.is_cell() {
                 let mut number_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut number_name)?;
@@ -3923,10 +3730,10 @@ pub mod formatter {
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
-                        pf!("<r><yellow>"),
+                        pfmt!("<r><yellow>", C),
                         number_name,
                         number_value,
-                        pf!("<r>")
+                        pfmt!("<r>", C)
                     ));
                     if writer.failed {
                         self.failed = true;
@@ -3937,10 +3744,10 @@ pub mod formatter {
                 writer.add_for_new_line(number_name.len + number_value.len + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
-                    pf!("<r><yellow>"),
+                    pfmt!("<r><yellow>", C),
                     number_name,
                     number_value,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
                 if writer.failed {
                     self.failed = true;
@@ -3952,26 +3759,34 @@ pub mod formatter {
 
             if num.is_infinite() && num > 0.0 {
                 writer.add_for_new_line("Infinity".len());
-                writer.print(format_args!("{}Infinity{}", pf!("<r><yellow>"), pf!("<r>")));
+                writer.print(format_args!(
+                    "{}Infinity{}",
+                    pfmt!("<r><yellow>", C),
+                    pfmt!("<r>", C)
+                ));
             } else if num.is_infinite() && num < 0.0 {
                 writer.add_for_new_line("-Infinity".len());
                 writer.print(format_args!(
                     "{}-Infinity{}",
-                    pf!("<r><yellow>"),
-                    pf!("<r>")
+                    pfmt!("<r><yellow>", C),
+                    pfmt!("<r>", C)
                 ));
             } else if num.is_nan() {
                 writer.add_for_new_line("NaN".len());
-                writer.print(format_args!("{}NaN{}", pf!("<r><yellow>"), pf!("<r>")));
+                writer.print(format_args!(
+                    "{}NaN{}",
+                    pfmt!("<r><yellow>", C),
+                    pfmt!("<r>", C)
+                ));
             } else {
                 let mut buf = [0u8; 124];
                 let formatted = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
                 writer.add_for_new_line(formatted.len());
                 writer.print(format_args!(
                     "{}{}{}",
-                    pf!("<r><yellow>"),
+                    pfmt!("<r><yellow>", C),
                     bstr::BStr::new(formatted),
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
             }
             if writer.failed {
@@ -4024,11 +3839,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let description = value.get_description(self.global_this);
             writer.add_for_new_line("Symbol".len());
 
@@ -4091,16 +3902,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             // Prefer the constructor's own `.name` property over
             // `getClassName` / `calculatedClassName`. For DOM / WebCore
             // InternalFunction constructors like `ReadableStreamBYOBReader`,
@@ -4130,31 +3932,31 @@ pub mod formatter {
                 if printable_proto.is_empty() {
                     writer.print(format_args!(
                         "{}[class (anonymous)]{}",
-                        pf!("<cyan>"),
-                        pf!("<r>")
+                        pfmt!("<cyan>", C),
+                        pfmt!("<r>", C)
                     ));
                 } else {
                     writer.print(format_args!(
                         "{}[class (anonymous) extends {}]{}",
-                        pf!("<cyan>"),
+                        pfmt!("<cyan>", C),
                         printable_proto,
-                        pf!("<r>")
+                        pfmt!("<r>", C)
                     ));
                 }
             } else if printable_proto.is_empty() {
                 writer.print(format_args!(
                     "{}[class {}]{}",
-                    pf!("<cyan>"),
+                    pfmt!("<cyan>", C),
                     printable,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
             } else {
                 writer.print(format_args!(
                     "{}[class {} extends {}]{}",
-                    pf!("<cyan>"),
+                    pfmt!("<cyan>", C),
                     printable,
                     printable_proto,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
             }
             if writer.failed {
@@ -4169,16 +3971,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let printable = OwnedString::new(value.get_name(self.global_this)?);
 
             let proto = value.get_prototype(self.global_this);
@@ -4187,29 +3980,33 @@ pub mod formatter {
 
             if printable.is_empty() || func_name.eql(&printable) {
                 if func_name.is_empty() {
-                    writer.print(format_args!("{}[Function]{}", pf!("<cyan>"), pf!("<r>")));
+                    writer.print(format_args!(
+                        "{}[Function]{}",
+                        pfmt!("<cyan>", C),
+                        pfmt!("<r>", C)
+                    ));
                 } else {
                     writer.print(format_args!(
                         "{}[{}]{}",
-                        pf!("<cyan>"),
+                        pfmt!("<cyan>", C),
                         func_name,
-                        pf!("<r>")
+                        pfmt!("<r>", C)
                     ));
                 }
             } else if func_name.is_empty() {
                 writer.print(format_args!(
                     "{}[Function: {}]{}",
-                    pf!("<cyan>"),
+                    pfmt!("<cyan>", C),
                     printable,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
             } else {
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
-                    pf!("<cyan>"),
+                    pfmt!("<cyan>", C),
                     func_name,
                     printable,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
             }
             if writer.failed {
@@ -4224,11 +4021,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (tag only produced for cells).
             let cell = jsc::JSCell::opaque_ref(value.to_cell().expect("GetterSetter is a cell"));
@@ -4270,11 +4063,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
                 writer.write_all(b"\n");
                 writer.write_indent(self.indent);
@@ -4307,16 +4096,7 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             if value.is_cell() {
                 let mut bool_name = ZigString::EMPTY;
                 value.get_class_name(self.global_this, &mut bool_name)?;
@@ -4328,10 +4108,10 @@ pub mod formatter {
                         .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
-                        pf!("<r><yellow>"),
+                        pfmt!("<r><yellow>", C),
                         bool_name,
                         bool_value,
-                        pf!("<r>")
+                        pfmt!("<r>", C)
                     ));
                     if writer.failed {
                         self.failed = true;
@@ -4341,9 +4121,9 @@ pub mod formatter {
                 writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
-                    pf!("<r><yellow>"),
+                    pfmt!("<r><yellow>", C),
                     bool_value,
-                    pf!("<r>")
+                    pfmt!("<r>", C)
                 ));
                 if writer.failed {
                     self.failed = true;
@@ -4352,10 +4132,10 @@ pub mod formatter {
             }
             if value.to_boolean() {
                 writer.add_for_new_line(4);
-                writer.write_all(pf!("<r><yellow>true<r>").as_bytes());
+                writer.write_all(pfmt!("<r><yellow>true<r>", C).as_bytes());
             } else {
                 writer.add_for_new_line(5);
-                writer.write_all(pf!("<r><yellow>false<r>").as_bytes());
+                writer.write_all(pfmt!("<r><yellow>false<r>", C).as_bytes());
             }
             if writer.failed {
                 self.failed = true;
@@ -4397,11 +4177,7 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let mut str = OwnedString::new(BunString::empty());
 
             value.json_stringify(self.global_this, self.indent, &mut str)?;
@@ -4455,16 +4231,7 @@ pub mod formatter {
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
             let tag_opts = self.tag_opts();
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
             let len = value.get_length(self.global_this)?;
 
@@ -4518,11 +4285,7 @@ pub mod formatter {
                     }
 
                     self.format::<C>(tag, writer_, element, self.global_this)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
                     if tag.cell.is_string_like() && C {
                         writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -4550,9 +4313,9 @@ pub mod formatter {
                             "... N more items".len(),
                             format_args!(
                                 "{}... {} more items{}",
-                                pf!("<r><d>"),
+                                pfmt!("<r><d>", C),
                                 len - u64::from(i),
-                                pf!("<r>")
+                                pfmt!("<r>", C)
                             ),
                         );
                         break;
@@ -4577,7 +4340,7 @@ pub mod formatter {
                         if empty_count == 1 {
                             writer.pretty::<C>(
                                 "empty item".len(),
-                                format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
+                                format_args!("{}empty item{}", pfmt!("<r><d>", C), pfmt!("<r>", C)),
                             );
                         } else {
                             writer.add_for_new_line(bun_core::fmt::digit_count(empty_count));
@@ -4585,9 +4348,9 @@ pub mod formatter {
                                 " x empty items".len(),
                                 format_args!(
                                     "{}{} x empty items{}",
-                                    pf!("<r><d>"),
+                                    pfmt!("<r><d>", C),
                                     empty_count,
-                                    pf!("<r>")
+                                    pfmt!("<r>", C)
                                 ),
                             );
                         }
@@ -4608,11 +4371,7 @@ pub mod formatter {
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
                     self.format::<C>(tag, writer_, element, self.global_this)?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
                     if tag.cell.is_string_like() && C {
                         writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -4639,7 +4398,7 @@ pub mod formatter {
                     if empty_count == 1 {
                         writer.pretty::<C>(
                             "empty item".len(),
-                            format_args!("{}empty item{}", pf!("<r><d>"), pf!("<r>")),
+                            format_args!("{}empty item{}", pfmt!("<r><d>", C), pfmt!("<r>", C)),
                         );
                     } else {
                         writer.add_for_new_line(bun_core::fmt::digit_count(empty_count));
@@ -4647,9 +4406,9 @@ pub mod formatter {
                             " x empty items".len(),
                             format_args!(
                                 "{}{} x empty items{}",
-                                pf!("<r><d>"),
+                                pfmt!("<r><d>", C),
                                 empty_count,
-                                pf!("<r>")
+                                pfmt!("<r>", C)
                             ),
                         );
                     }
@@ -4679,11 +4438,7 @@ pub mod formatter {
                     if self.failed {
                         return Ok(());
                     }
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
                 }
             }
 
@@ -5008,12 +4763,6 @@ pub mod formatter {
             value: JSValue,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
-
             let event_type_value: JSValue = 'brk: {
                 let Some(value_) = value.get(self.global_this, "type")? else {
                     break 'brk JSValue::UNDEFINED;
@@ -5052,9 +4801,9 @@ pub mod formatter {
             let _ = writeln!(
                 writer_,
                 "{}{}{} {{",
-                pf!("<r><cyan>"),
+                pfmt!("<r><cyan>", C),
                 event_tag_name,
-                pf!("<r>")
+                pfmt!("<r>", C)
             );
             {
                 self.indent += 1;
@@ -5070,23 +4819,23 @@ pub mod formatter {
                     let _ = write!(
                         writer_,
                         "{}type: {}\"{}\"{}{},{} ",
-                        pf!("<r>"),
-                        pf!("<green>"),
+                        pfmt!("<r>", C),
+                        pfmt!("<green>", C),
                         bstr::BStr::new(event_type.label()),
-                        pf!("<r>"),
-                        pf!("<d>"),
-                        pf!("<r>")
+                        pfmt!("<r>", C),
+                        pfmt!("<d>", C),
+                        pfmt!("<r>", C)
                     );
                 } else {
                     let _ = writeln!(
                         writer_,
                         "{}type: {}\"{}\"{}{},{}",
-                        pf!("<r>"),
-                        pf!("<green>"),
+                        pfmt!("<r>", C),
+                        pfmt!("<green>", C),
                         bstr::BStr::new(event_type.label()),
-                        pf!("<r>"),
-                        pf!("<d>"),
-                        pf!("<r>")
+                        pfmt!("<r>", C),
+                        pfmt!("<d>", C),
+                        pfmt!("<r>", C)
                     );
                 }
 
@@ -5100,9 +4849,9 @@ pub mod formatter {
                         let _ = write!(
                             writer_,
                             "{}message{}:{} ",
-                            pf!("<r><blue>"),
-                            pf!("<d>"),
-                            pf!("<r>")
+                            pfmt!("<r><blue>", C),
+                            pfmt!("<d>", C),
+                            pfmt!("<r>", C)
                         );
                         let tag =
                             Tag::get_advanced(message_value, self.global_this, self.tag_opts())?;
@@ -5125,9 +4874,9 @@ pub mod formatter {
                         let _ = write!(
                             writer_,
                             "{}data{}:{} ",
-                            pf!("<r><blue>"),
-                            pf!("<d>"),
-                            pf!("<r>")
+                            pfmt!("<r><blue>", C),
+                            pfmt!("<d>", C),
+                            pfmt!("<r>", C)
                         );
                         let data: JSValue = value
                             .fast_get(self.global_this, jsc::BuiltinName::Data)?
@@ -5152,9 +4901,9 @@ pub mod formatter {
                             let _ = write!(
                                 writer_,
                                 "{}error{}:{} ",
-                                pf!("<r><blue>"),
-                                pf!("<d>"),
-                                pf!("<r>")
+                                pfmt!("<r><blue>", C),
+                                pfmt!("<d>", C),
+                                pfmt!("<r>", C)
                             );
                             let tag =
                                 Tag::get_advanced(error_value, self.global_this, self.tag_opts())?;
@@ -5188,22 +4937,13 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
             // Cache once: `disable_inspect_custom` does not change inside this
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
             let tag_opts = self.tag_opts();
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
-            writer.write_all(pf!("<r>").as_bytes());
+            writer.write_all(pfmt!("<r>", C).as_bytes());
             writer.write_all(b"<");
 
             // Both arms of the `type` if/else below assign these, so deferred
@@ -5241,13 +4981,13 @@ pub mod formatter {
             }
 
             if !is_tag_kind_primitive {
-                writer.write_all(pf!("<cyan>").as_bytes());
+                writer.write_all(pfmt!("<cyan>", C).as_bytes());
             } else {
-                writer.write_all(pf!("<green>").as_bytes());
+                writer.write_all(pfmt!("<green>", C).as_bytes());
             }
             writer.write_all(tag_name_slice.slice());
             if C {
-                writer.write_all(pf!("<r>").as_bytes());
+                writer.write_all(pfmt!("<r>", C).as_bytes());
             }
 
             if let Some(key_value) = value.get(self.global_this, "key")? {
@@ -5271,11 +5011,7 @@ pub mod formatter {
                         key_value,
                         self.global_this,
                     )?;
-                    writer = WrappedWriter {
-                        ctx: writer_,
-                        failed: false,
-                        estimated_line_length: &mut self.estimated_line_length,
-                    };
+                    writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
                     needs_space = true;
                 }
@@ -5331,10 +5067,10 @@ pub mod formatter {
 
                             writer.print(format_args!(
                                 "{}{}{}={}",
-                                pf!("<r><blue>"),
+                                pfmt!("<r><blue>", C),
                                 prop.trunc(128),
-                                pf!("<d>"),
-                                pf!("<r>")
+                                pfmt!("<d>", C),
+                                pfmt!("<r>", C)
                             ));
 
                             if tag.cell.is_string_like() && C {
@@ -5345,11 +5081,7 @@ pub mod formatter {
                                 self.failed = true;
                             }
                             self.format::<C>(tag, writer_, property_value, self.global_this)?;
-                            writer = WrappedWriter {
-                                ctx: writer_,
-                                failed: false,
-                                estimated_line_length: &mut self.estimated_line_length,
-                            };
+                            writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
 
                             if tag.cell.is_string_like() && C {
                                 writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -5380,12 +5112,11 @@ pub mod formatter {
                     if let Some(children) = children_prop {
                         let tag = Tag::get(children, self.global_this)?;
 
-                        let print_children =
-                            matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
+                        let print_children = matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
 
                         if print_children && !self.single_line {
                             'print_children: {
-                                match tag.tag.tag() {
+                                match tag.tag {
                                     Tag::String => {
                                         let children_string =
                                             children.get_zig_string(self.global_this)?;
@@ -5426,12 +5157,10 @@ pub mod formatter {
                                                 children,
                                                 self.global_this,
                                             )?;
-                                            writer = WrappedWriter {
-                                                ctx: writer_,
-                                                failed: false,
-                                                estimated_line_length: &mut self
-                                                    .estimated_line_length,
-                                            };
+                                            writer = WrappedWriter::new(
+                                                writer_,
+                                                &mut self.estimated_line_length,
+                                            );
                                         }
                                         writer.write_all(b"\n");
                                         write_indent_n(self.indent, writer.ctx)
@@ -5474,12 +5203,10 @@ pub mod formatter {
                                                     child,
                                                     self.global_this,
                                                 )?;
-                                                writer = WrappedWriter {
-                                                    ctx: writer_,
-                                                    failed: false,
-                                                    estimated_line_length: &mut self
-                                                        .estimated_line_length,
-                                                };
+                                                writer = WrappedWriter::new(
+                                                    writer_,
+                                                    &mut self.estimated_line_length,
+                                                );
                                                 if (j as u64) + 1 < length {
                                                     writer.write_all(b"\n");
                                                     write_indent_n(self.indent, writer.ctx)
@@ -5497,13 +5224,13 @@ pub mod formatter {
 
                                 writer.write_all(b"</");
                                 if !is_tag_kind_primitive {
-                                    writer.write_all(pf!("<r><cyan>").as_bytes());
+                                    writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
                                 } else {
-                                    writer.write_all(pf!("<r><green>").as_bytes());
+                                    writer.write_all(pfmt!("<r><green>", C).as_bytes());
                                 }
                                 writer.write_all(tag_name_slice.slice());
                                 if C {
-                                    writer.write_all(pf!("<r>").as_bytes());
+                                    writer.write_all(pfmt!("<r>", C).as_bytes());
                                 }
                                 writer.write_all(b">");
                             }
@@ -5611,11 +5338,6 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
-            macro_rules! pf {
-                ($s:literal) => {
-                    pfmt!($s, C)
-                };
-            }
             if self.single_line {
                 let _ = writer_.write_all(b" ");
             } else if self.always_newline_scope || self.good_time_for_a_new_line() {
@@ -5631,9 +5353,9 @@ pub mod formatter {
             let _ = write!(
                 writer_,
                 "{}[{} ...]{}",
-                pf!("<r><cyan>"),
+                pfmt!("<r><cyan>", C),
                 display_name,
-                pf!("<r>")
+                pfmt!("<r>", C)
             );
             Ok(())
         }
@@ -5683,11 +5405,7 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let mut writer = WrappedWriter {
-                ctx: writer_,
-                failed: false,
-                estimated_line_length: &mut self.estimated_line_length,
-            };
+            let mut writer = WrappedWriter::new(writer_, &mut self.estimated_line_length);
             let array_buffer = value.as_array_buffer(self.global_this).unwrap();
             let slice = array_buffer.byte_slice();
 
@@ -5826,10 +5544,10 @@ pub mod formatter {
             let _restore = defer_restore!(self.global_this, prev_global_this);
             self.global_this = global_this;
 
-            if let TagPayload::CustomFormattedObject(obj) = result.tag {
+            if let Some(obj) = result.custom {
                 self.custom_formatted_object = obj;
             }
-            self.print_as::<ENABLE_ANSI_COLORS>(result.tag.tag(), writer, value, result.cell)
+            self.print_as::<ENABLE_ANSI_COLORS>(result.tag, writer, value, result.cell)
         }
     }
 

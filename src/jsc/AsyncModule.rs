@@ -751,6 +751,116 @@ impl AsyncModule {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    /// Shared builder for the package resolve/download error objects: creates
+    /// the error instance from `msg` and sets the `url` (when present),
+    /// `name`, and `pkg` properties.
+    fn package_error_instance(
+        global_this: &JSGlobalObject,
+        msg: &[u8],
+        name: &[u8],
+        url: &[u8],
+        pkg: &[u8],
+    ) -> JSValue {
+        let error_instance = ZigString::from_bytes(msg)
+            .with_encoding()
+            .to_error_instance(global_this);
+        if !url.is_empty() {
+            error_instance.put(
+                global_this,
+                b"url",
+                ZigString::from_bytes(url)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+        }
+        error_instance.put(
+            global_this,
+            b"name",
+            ZigString::from_bytes(name)
+                .with_encoding()
+                .to_js(global_this),
+        );
+        error_instance.put(
+            global_this,
+            b"pkg",
+            ZigString::from_bytes(pkg)
+                .with_encoding()
+                .to_js(global_this),
+        );
+        error_instance
+    }
+
+    fn put_referrer(global_this: &JSGlobalObject, error_instance: JSValue, referrer: &[u8]) {
+        if !referrer.is_empty() && referrer != b"undefined" {
+            error_instance.put(
+                global_this,
+                b"referrer",
+                ZigString::from_bytes(referrer)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+        }
+    }
+
+    /// Sets `sourceURL`/`line`/`lineText`/`column` from the import record's
+    /// source location.
+    fn put_import_location(
+        &self,
+        global_this: &JSGlobalObject,
+        error_instance: JSValue,
+        import_record_id: u32,
+    ) {
+        let location = bun_ast::range_data(
+            Some(&self.parse_result.source),
+            self.parse_result.ast.import_records[import_record_id as usize].range,
+            b"",
+        )
+        .location
+        .unwrap();
+        error_instance.put(
+            global_this,
+            b"sourceURL",
+            ZigString::from_bytes(self.parse_result.source.path.text)
+                .with_encoding()
+                .to_js(global_this),
+        );
+        error_instance.put(
+            global_this,
+            b"line",
+            JSValue::js_number(location.line as f64),
+        );
+        if let Some(line_text) = location.line_text.as_deref() {
+            error_instance.put(
+                global_this,
+                b"lineText",
+                ZigString::from_bytes(line_text)
+                    .with_encoding()
+                    .to_js(global_this),
+            );
+        }
+        error_instance.put(
+            global_this,
+            b"column",
+            JSValue::js_number(location.column as f64),
+        );
+    }
+
+    /// Rejects the module's promise with `error_instance` and drops the event
+    /// loop keepalive. The caller (`Queue::retain_mut`) returns `false` and
+    /// Vec drops the element, running Drop.
+    fn reject_with(&mut self, global_this: &JSGlobalObject, error_instance: JSValue) {
+        let promise_value = self.promise.swap();
+        let promise = promise_value.as_internal_promise().unwrap();
+        promise_value.ensure_still_alive();
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
+        ));
+        // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
+        // the centralised non-null deref proof.
+        let _ =
+            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+    }
+
     // write! into Vec<u8>
     // is infallible here; `.ok()` collapses the `fmt::Result`, so this never
     // actually returns Err — the wide Result is kept for call-site uniformity.
@@ -870,32 +980,8 @@ impl AsyncModule {
             b"PackageResolveError"
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
-            error_instance.put(
-                global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
+        let error_instance =
+            Self::package_error_instance(global_this, &msg, name, result.url, result.name);
         error_instance.put(
             global_this,
             b"specifier",
@@ -903,63 +989,11 @@ impl AsyncModule {
                 .with_encoding()
                 .to_js(global_this),
         );
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
-            error_instance.put(
-                global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
-        let referrer = self.referrer();
-        if !referrer.is_empty() && referrer != b"undefined" {
-            error_instance.put(
-                global_this,
-                b"referrer",
-                ZigString::from_bytes(referrer)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
+        self.put_import_location(global_this, error_instance, import_record_id);
+        Self::put_referrer(global_this, error_instance, self.referrer());
 
-        let promise_value = self.promise.swap();
-        let promise = promise_value.as_internal_promise().unwrap();
-        promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
-        // The caller (Queue::retain_mut) returns `false` and Vec drops the
-        // element, running Drop.
-        // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
-        // the centralised non-null deref proof.
-        let _ =
-            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        self.reject_with(global_this, error_instance);
         Ok(())
     }
 
@@ -1085,50 +1119,12 @@ impl AsyncModule {
             b"TarballDownloadError"
         };
 
-        let error_instance = ZigString::from_bytes(&msg)
-            .with_encoding()
-            .to_error_instance(global_this);
-        if !result.url.is_empty() {
-            error_instance.put(
-                global_this,
-                b"url",
-                ZigString::from_bytes(result.url)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
-        error_instance.put(
-            global_this,
-            b"name",
-            ZigString::from_bytes(name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"pkg",
-            ZigString::from_bytes(result.name)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        let specifier = self.specifier();
-        if !specifier.is_empty() && specifier != b"undefined" {
-            error_instance.put(
-                global_this,
-                b"referrer",
-                ZigString::from_bytes(specifier)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
-
-        let location = bun_ast::range_data(
-            Some(&self.parse_result.source),
-            self.parse_result.ast.import_records[import_record_id as usize].range,
-            b"",
-        )
-        .location
-        .unwrap();
+        let error_instance =
+            Self::package_error_instance(global_this, &msg, name, result.url, result.name);
+        Self::put_referrer(global_this, error_instance, self.specifier());
+        // `sourceURL` et al. follow `specifier` here (the resolve-error path
+        // puts `specifier` first), so the helper runs after this put; the
+        // location computation itself is pure.
         error_instance.put(
             global_this,
             b"specifier",
@@ -1140,45 +1136,10 @@ impl AsyncModule {
             .with_encoding()
             .to_js(global_this),
         );
-        error_instance.put(
-            global_this,
-            b"sourceURL",
-            ZigString::from_bytes(self.parse_result.source.path.text)
-                .with_encoding()
-                .to_js(global_this),
-        );
-        error_instance.put(
-            global_this,
-            b"line",
-            JSValue::js_number(location.line as f64),
-        );
-        if let Some(line_text) = location.line_text.as_deref() {
-            error_instance.put(
-                global_this,
-                b"lineText",
-                ZigString::from_bytes(line_text)
-                    .with_encoding()
-                    .to_js(global_this),
-            );
-        }
-        error_instance.put(
-            global_this,
-            b"column",
-            JSValue::js_number(location.column as f64),
-        );
+        self.put_import_location(global_this, error_instance, import_record_id);
 
-        let promise_value = self.promise.swap();
-        let promise = promise_value.as_internal_promise().unwrap();
-        promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
-        // Caller drops via retain_mut → false.
-        // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
-        // the centralised non-null deref proof.
-        let _ =
-            JSInternalPromise::opaque_mut(promise).reject_as_handled(global_this, error_instance);
+        self.reject_with(global_this, error_instance);
         Ok(())
     }
 

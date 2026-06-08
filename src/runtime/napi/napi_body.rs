@@ -641,6 +641,78 @@ pub(super) extern "C" fn napi_create_int64(
     env.ok()
 }
 
+/// Code-unit type accepted by the `napi_create_string_*` entry points; selects
+/// how a `NAPI_AUTO_LENGTH` (NUL-terminated) input is measured.
+trait NapiStringUnit: Copy {
+    /// # Safety
+    /// `ptr` must be non-null and point to a NUL-terminated sequence.
+    unsafe fn cstr_units<'a>(ptr: *const Self) -> &'a [Self];
+}
+
+impl NapiStringUnit for u8 {
+    #[inline(always)]
+    unsafe fn cstr_units<'a>(ptr: *const u8) -> &'a [u8] {
+        // SAFETY: forwarded caller contract.
+        unsafe { bun_core::ffi::cstr(ptr.cast::<c_char>()) }.to_bytes()
+    }
+}
+
+impl NapiStringUnit for u16 {
+    #[inline(always)]
+    unsafe fn cstr_units<'a>(ptr: *const u16) -> &'a [u16] {
+        // SAFETY: forwarded caller contract. Scans to the NUL u16 terminator.
+        unsafe { bun_core::ffi::wstr_units(ptr) }
+    }
+}
+
+/// Shared argument-validation prologue for the `napi_create_string_*` entry
+/// points: extracts the source code units, or `Err(())` when the arguments
+/// are invalid (caller returns `env.invalid_arg()`).
+///
+/// # Safety
+/// When `str_` is non-null, the NAPI caller contract must hold: if `length ==
+/// NAPI_AUTO_LENGTH`, `str_` points to a NUL-terminated sequence; otherwise
+/// `[str_, str_ + length)` must be readable. The returned borrow has an
+/// unconstrained lifetime and must not outlive the caller's buffer.
+#[inline(always)]
+unsafe fn napi_string_slice<'a, T: NapiStringUnit>(
+    str_: *const T,
+    length: usize,
+) -> Result<&'a [T], ()> {
+    if !str_.is_null() {
+        if NAPI_AUTO_LENGTH == length {
+            // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
+            Ok(unsafe { T::cstr_units(str_) })
+        } else if length > i32::MAX as usize {
+            Err(())
+        } else {
+            // SAFETY: caller guarantees [ptr, ptr+length) is valid.
+            Ok(unsafe { bun_core::ffi::slice(str_, length) })
+        }
+    } else if length == 0 {
+        Ok(&[])
+    } else {
+        Err(())
+    }
+}
+
+/// Writes a converted string's `to_js` result through the out-param, mapping
+/// conversion failure to `generic_failure`.
+#[inline(always)]
+fn set_string_result(
+    env: &NapiEnv,
+    result: &mut napi_value,
+    js: jsc::JsResult<JSValue>,
+) -> napi_status {
+    match js {
+        Ok(v) => {
+            result.set(env, v);
+            env.ok()
+        }
+        Err(_) => NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn napi_create_string_latin1(
     env_: napi_env,
@@ -651,24 +723,11 @@ pub(super) extern "C" fn napi_create_string_latin1(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
 
-    let slice: &[u8] = 'brk: {
-        if !str_.is_null() {
-            if NAPI_AUTO_LENGTH == length {
-                // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
-            } else if length > i32::MAX as usize {
-                return env.invalid_arg();
-            } else {
-                // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
-            }
-        }
-
-        if length == 0 {
-            break 'brk &[];
-        } else {
-            return env.invalid_arg();
-        }
+    // SAFETY: NAPI caller contract — `str_` is NUL-terminated when `length ==
+    // NAPI_AUTO_LENGTH`, otherwise `[str_, str_ + length)` is readable; the
+    // slice is consumed before this call returns.
+    let Ok(slice) = (unsafe { napi_string_slice(str_, length) }) else {
+        return env.invalid_arg();
     };
 
     bun_output::scoped_log!(
@@ -678,24 +737,14 @@ pub(super) extern "C" fn napi_create_string_latin1(
     );
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
-        return env.ok();
+        return set_string_result(env, result, bun_core::String::empty().to_js(env.to_js()));
     }
 
     let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
     // `string` derefs on Drop.
     bytes.copy_from_slice(slice);
 
-    let js = match string.to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-    };
-    result.set(env, js);
-    env.ok()
+    set_string_result(env, result, string.to_js(env.to_js()))
 }
 
 #[unsafe(no_mangle)]
@@ -708,24 +757,11 @@ pub(super) extern "C" fn napi_create_string_utf8(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
 
-    let slice: &[u8] = 'brk: {
-        if !str_.is_null() {
-            if NAPI_AUTO_LENGTH == length {
-                // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                break 'brk unsafe { bun_core::ffi::cstr(str_.cast::<c_char>()) }.to_bytes();
-            } else if length > i32::MAX as usize {
-                return env.invalid_arg();
-            } else {
-                // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
-            }
-        }
-
-        if length == 0 {
-            break 'brk &[];
-        } else {
-            return env.invalid_arg();
-        }
+    // SAFETY: NAPI caller contract — `str_` is NUL-terminated when `length ==
+    // NAPI_AUTO_LENGTH`, otherwise `[str_, str_ + length)` is readable; the
+    // slice is consumed before this call returns.
+    let Ok(slice) = (unsafe { napi_string_slice(str_, length) }) else {
+        return env.invalid_arg();
     };
 
     bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
@@ -749,25 +785,11 @@ pub(super) extern "C" fn napi_create_string_utf16(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
 
-    let slice: &[u16] = 'brk: {
-        if !str_.is_null() {
-            if NAPI_AUTO_LENGTH == length {
-                // SAFETY: caller guarantees ptr is NUL-terminated when length == NAPI_AUTO_LENGTH.
-                // Scan to the NUL u16 terminator.
-                break 'brk unsafe { bun_core::ffi::wstr_units(str_) };
-            } else if length > i32::MAX as usize {
-                return env.invalid_arg();
-            } else {
-                // SAFETY: caller guarantees [ptr, ptr+length) is valid.
-                break 'brk unsafe { bun_core::ffi::slice(str_, length) };
-            }
-        }
-
-        if length == 0 {
-            break 'brk &[];
-        } else {
-            return env.invalid_arg();
-        }
+    // SAFETY: NAPI caller contract — `str_` is NUL-terminated when `length ==
+    // NAPI_AUTO_LENGTH`, otherwise `[str_, str_ + length)` is readable; the
+    // slice is consumed before this call returns.
+    let Ok(slice) = (unsafe { napi_string_slice(str_, length) }) else {
+        return env.invalid_arg();
     };
 
     if cfg!(debug_assertions) {
@@ -780,23 +802,13 @@ pub(super) extern "C" fn napi_create_string_utf16(
     }
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
-        return env.ok();
+        return set_string_result(env, result, bun_core::String::empty().to_js(env.to_js()));
     }
 
     let (mut string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
     chars.copy_from_slice(slice);
 
-    let js = match string.transfer_to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-    };
-    result.set(env, js);
-    env.ok()
+    set_string_result(env, result, string.transfer_to_js(env.to_js()))
 }
 
 // Implemented in C++ (napi.cpp); declared extern here for Rust-side callers.

@@ -157,7 +157,9 @@ async function findOrDownloadAbiMatchingNode(): Promise<string> {
 
   const version = process.versions.node;
   const name = `node-v${version}-${isWindows ? "win" : process.platform}-${process.arch}`;
-  const baseDir = join(os.tmpdir(), "bun-test-node");
+  // Cache under the home directory: the machines that need the download (the
+  // persistent macOS fleet) then pay for it once ever, not once per boot.
+  const baseDir = join(os.homedir() || os.tmpdir(), ".cache", "bun-test-node");
   const dir = join(baseDir, name);
   const exe = isWindows ? join(dir, "node.exe") : join(dir, "bin", "node");
   if (fs.existsSync(exe)) {
@@ -167,27 +169,37 @@ async function findOrDownloadAbiMatchingNode(): Promise<string> {
   const archiveExt = isWindows ? "zip" : "tar.gz";
   const url = `https://nodejs.org/dist/v${version}/${name}.${archiveExt}`;
   console.warn(`System node does not match ABI ${process.versions.modules}, downloading ${url}`);
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${url}: ${response.status} ${response.statusText}`);
-  }
   // Download and extract under unique names, then atomically rename into
   // place so concurrent test files (or a previous interrupted run) can't
   // observe a half-extracted directory.
-  const stagingDir = join(os.tmpdir(), "bun-test-node", `staging-${process.pid}-${Date.now()}`);
+  const stagingDir = join(baseDir, `staging-${process.pid}-${Date.now()}`);
   fs.mkdirSync(stagingDir, { recursive: true });
   try {
     const archive = join(stagingDir, `${name}.${archiveExt}`);
-    await write(archive, response);
+    // Download with curl (ships on every CI platform, including Windows
+    // System32) rather than streaming through the runtime under test, and
+    // bound it so a stalled transfer fails instead of eating the hook
+    // timeout of whichever test file got here first.
+    const curl = (...args: string[]) =>
+      Bun.spawnSync({
+        cmd: ["curl", "-fsSL", "--retry", "3", "--max-time", "180", ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const download = curl("-o", archive, url);
+    if (download.exitCode !== 0) {
+      throw new Error(`Failed to download ${url}: ${download.stderr.toString()}`);
+    }
     // Verify against the official checksum manifest before executing anything
     // from the archive.
     const shasumsUrl = `https://nodejs.org/dist/v${version}/SHASUMS256.txt`;
-    const shasumsResponse = await fetch(shasumsUrl);
-    if (!shasumsResponse.ok) {
-      throw new Error(`Failed to download ${shasumsUrl}: ${shasumsResponse.status} ${shasumsResponse.statusText}`);
+    const shasumsResult = curl(shasumsUrl);
+    if (shasumsResult.exitCode !== 0) {
+      throw new Error(`Failed to download ${shasumsUrl}: ${shasumsResult.stderr.toString()}`);
     }
-    const shasums = await shasumsResponse.text();
-    const expectedHash = shasums
+    const expectedHash = shasumsResult.stdout
+      .toString()
       .split("\n")
       .find(line => line.endsWith(`  ${name}.${archiveExt}`))
       ?.split(" ")[0];

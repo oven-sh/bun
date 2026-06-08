@@ -143,7 +143,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     // Resolve (and possibly download) the ABI-matching node here, under the
     // generous hook timeout, instead of inside the first test that needs it.
     await nodeExeMatchingAbi();
-  }, 300_000);
+  }, 600_000);
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {

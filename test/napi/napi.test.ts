@@ -34,9 +34,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       process.exit(1);
     }
     console.timeEnd("Building node-gyp");
-    // node-gyp rebuild can take a while under a debug/ASAN binary; default
-    // 5s hook timeout kills the install subprocess mid-build.
-  }, 120_000);
+    // node-gyp rebuild can take a while under a debug/ASAN binary (and the
+    // hook may first download an ABI-matching node); default 5s hook timeout
+    // kills the install subprocess mid-build.
+  }, 300_000);
 
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {

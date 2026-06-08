@@ -435,10 +435,15 @@ impl Response {
         // R-2: cast through `*const` then `.cast_mut()` so the payload pointer
         // (which the C++ side stores into `m_ctx`) is derived from `&self`
         // without forging a `&mut`.
-        let js_value = js::to_js(
-            core::ptr::from_ref::<Self>(self).cast_mut().cast::<()>(),
-            global_object,
-        );
+        // SAFETY: `self` is the heap allocation from `Response::new` (caller
+        // contract), not yet wrapped; the wrapper adopts it, released via
+        // `ResponseClass__finalize`.
+        let js_value = unsafe {
+            js::to_js(
+                core::ptr::from_ref::<Self>(self).cast_mut().cast::<()>(),
+                global_object,
+            )
+        };
         self.js_ref.set(JsRef::init_weak(js_value));
 
         self.check_body_stream_ref(global_object);

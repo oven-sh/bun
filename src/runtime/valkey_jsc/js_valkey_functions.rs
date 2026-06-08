@@ -1906,7 +1906,9 @@ impl JSValkeyClient {
         // JSValkeyClient (heap::alloc); valid for the rest of this scope.
         let new_client: &JSValkeyClient = unsafe { &*new_client_ptr };
 
-        let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
+        // SAFETY: `new_client_ptr` is that fresh allocation, not yet wrapped;
+        // ownership transfers to the JS wrapper.
+        let new_client_js = unsafe { JSValkeyClient::ptr_to_js(new_client_ptr, global) };
         new_client.this_value.set(JsRef::init_weak(new_client_js));
         new_client
             ._subscription_ctx

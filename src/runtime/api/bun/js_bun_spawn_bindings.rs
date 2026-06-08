@@ -74,16 +74,19 @@ fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -
 /// field-assignment paths share one pointer type with `existing_terminal`.
 pub(crate) struct TerminalCreateResult {
     /// BACKREF — the `IntrusiveRc<Terminal>` pointer leaked via `into_raw()`
-    /// when this struct was populated; the +1 ref is held until
-    /// `Subprocess::finalize` (or the spawn-error scopeguard's
-    /// `abandon_from_spawn`) releases it, so the pointee outlives this struct.
+    /// when this struct was populated. That ref aliases the Terminal JS
+    /// wrapper's +1 (released via its finalize → `deref_`), so this is a
+    /// non-owning borrow: the pointee is kept live by `js_value` (and, once
+    /// spawn succeeds, by the Subprocess wrapper's cached `terminal` slot);
+    /// the spawn-error scopeguard's `abandon_from_spawn` covers the error
+    /// path.
     pub terminal: bun_ptr::BackRef<Terminal>,
     pub js_value: JSValue,
 }
 
 impl TerminalCreateResult {
-    /// Shared borrow of the held `Terminal` (BackRef invariant: +1-ref'd
-    /// IntrusiveRc, live while this struct is held).
+    /// Shared borrow of the held `Terminal` (BackRef invariant: the Terminal
+    /// JS wrapper's ref keeps the pointee live while this struct is held).
     #[inline]
     pub(crate) fn term(&self) -> &Terminal {
         self.terminal.get()

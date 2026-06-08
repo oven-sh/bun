@@ -843,15 +843,22 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
-/// `eventLoop().autoTick()`. Needs
-/// `timer::All` for the poll-timeout calculation, hence dispatched here.
+/// `eventLoop().autoTick()` (`ACTIVE = false`) and `eventLoop().autoTickActive()`
+/// (`ACTIVE = true`). Needs `timer::All` for the poll-timeout calculation,
+/// hence dispatched here.
+///
+/// The active variant skips `runImminentGCTimer` and the
+/// `handleRejectedPromises` tails; it is used by `bun_main` / `on_before_exit`
+/// drain loops where blocking when the loop is idle would hang shutdown.
+/// `ACTIVE` is const-generic so both variants monomorphize with no runtime
+/// branch on this hot path.
 ///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
-unsafe fn auto_tick(vm: *mut VirtualMachine) {
+unsafe fn auto_tick<const ACTIVE: bool>(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -901,8 +908,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 .update_date_header_timer_if_necessary(&*loop_, vm)
         };
     }
-    // SAFETY: `el` is the live per-thread event loop.
-    unsafe { (*el).run_imminent_gc_timer() };
+    if !ACTIVE {
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).run_imminent_gc_timer() };
+    }
 
     // ── poll the I/O loop with the next-timer deadline ──────────────────
     if state.is_null() {
@@ -915,8 +924,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
+        if !ACTIVE {
+            // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+            unsafe { (*(*vm).global).handle_rejected_promises() };
+        }
         return;
     }
 
@@ -991,115 +1002,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    unsafe { (*(*vm).global).handle_rejected_promises() };
-}
-
-/// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
-/// `on_before_exit` drain loops where blocking when the loop is idle would
-/// hang shutdown.
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
-    // Note: reshaped for borrowck — see `auto_tick` above.
-    // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
-    // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
-    let loop_ = unsafe { (*el).usockets_loop() };
-
-    // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-    unsafe { (*el).tick_immediate_tasks(vm) };
-    #[cfg(windows)]
-    if !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
+    if !ACTIVE {
+        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+        unsafe { (*(*vm).global).handle_rejected_promises() };
     }
-
-    #[cfg(unix)]
-    {
-        // SAFETY: per fn contract. `swap(0)` so a concurrent
-        // `increment_pending_unref_counter()` (cross-thread, see
-        // `KeepAlive::unref_on_next_tick_concurrently`) can't be lost between
-        // the read and the reset.
-        let pending_unref = unsafe { &*vm }
-            .pending_unref_counter
-            .swap(0, core::sync::atomic::Ordering::Relaxed);
-        if pending_unref > 0 {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).unref_count(pending_unref) };
-        }
-    }
-
-    let state = runtime_state();
-    if !state.is_null() {
-        // SAFETY: see the matching call in `auto_tick` above.
-        unsafe {
-            (*state)
-                .timer
-                .update_date_header_timer_if_necessary(&*loop_, vm)
-        };
-    }
-
-    if state.is_null() {
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        unsafe { (*loop_).tick_without_idle() };
-        // SAFETY: per fn contract.
-        unsafe { (*vm).on_after_event_loop() };
-        return;
-    }
-
-    {
-        // SAFETY: `el` is the live per-thread event loop.
-        let has_pending_immediate = !unsafe { &*el }.immediate_tasks.is_empty();
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        let quic_next_tick_us = unsafe {
-            let ild = &(*loop_).internal_loop_data;
-            if ild.quic_head.is_null() {
-                None
-            } else {
-                Some(ild.quic_next_tick_us)
-            }
-        };
-        let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
-        // SAFETY: `loop_` is the live per-thread uws loop.
-        if unsafe { (*loop_).is_active() } {
-            // SAFETY: `el` is the live per-thread event loop.
-            unsafe { (*el).process_gc_timer() };
-            // SAFETY: `state` is the live per-thread `RuntimeState`; see
-            // Note on `auto_tick` re: aliased-&mut across `fire()`.
-            let have_timeout = unsafe {
-                timer::All::get_timeout(
-                    &mut (*state).timer,
-                    &mut timespec,
-                    has_pending_immediate,
-                    quic_next_tick_us,
-                    vm.cast(),
-                )
-            };
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
-            };
-        } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
-        // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
-    }
-    #[cfg(not(unix))]
-    let _ = state;
-
-    // SAFETY: per fn contract.
-    unsafe { (*vm).on_after_event_loop() };
 }
 
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
@@ -1391,8 +1297,8 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     generate_entry_point,
     load_preloads,
     ensure_debugger,
-    auto_tick,
-    auto_tick_active,
+    auto_tick: auto_tick::<false>,
+    auto_tick_active: auto_tick::<true>,
     print_exception,
     timer_insert,
     timer_remove,

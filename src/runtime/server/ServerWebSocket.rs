@@ -221,11 +221,9 @@ impl ServerWebSocket {
     // guard on `compress` even when compress is args[2] (long-standing
     // user-visible behavior; do not "fix").
     //
-    // A unified `publish_prologue` covering the full callframe header was
-    // considered and rejected: publishText omits the empty-topic check and
-    // reuses "publish" in its min-args message (both user-visible), so a single
-    // prologue would either change user-visible errors or carry per-caller
-    // bool flags — net more code than three small orthogonal helpers.
+    // `publish_prologue` parameterizes the two per-method divergences:
+    // publishText omits the empty-topic check and reuses "publish" in its
+    // min-args message and debug logs (both user-visible; do not "fix").
     // ──────────────────────────────────────────────────────────────────────
 
     /// `(app, ssl, publish_to_self)` from the handler, or `None` when the
@@ -262,6 +260,60 @@ impl ServerWebSocket {
             );
         }
         Ok(args_len > 1 && compress_value.to_boolean())
+    }
+
+    /// Shared prologue for `publish`/`publishText`/`publishBinary`: min-arity
+    /// check, closed-server check, topic validation, and compress parsing.
+    /// `Ok(None)` means the server is closed (caller returns `0`).
+    ///
+    /// `fn_name` is the method name used in error messages; `log_name` is the
+    /// name used in debug logs and the min-args message (`publishText` reports
+    /// "publish" there) and `require_non_empty_topic` is `false` only for
+    /// `publishText` — both long-standing user-visible behavior; do not "fix".
+    #[inline]
+    fn publish_prologue(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        fn_name: &'static str,
+        log_name: &'static str,
+        require_non_empty_topic: bool,
+    ) -> JsResult<Option<(*mut c_void, bool, bool, ZigStringSlice, JSValue, bool)>> {
+        let args = callframe.arguments_old::<4>();
+        if args.len < 1 {
+            bun_output::scoped_log!(WebSocketServer, "{}()", log_name);
+            return Err(global_this.throw(format_args!("{log_name} requires at least 1 argument")));
+        }
+
+        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            return Ok(None);
+        };
+
+        let topic_value = args.ptr[0];
+        let message_value = args.ptr[1];
+        let compress_value = args.ptr[2];
+
+        if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
+            bun_output::scoped_log!(WebSocketServer, "{}() topic invalid", log_name);
+            return Err(global_this.throw(format_args!("{fn_name} requires a topic string")));
+        }
+
+        let topic_slice = topic_value.to_slice(global_this)?;
+        if require_non_empty_topic && topic_slice.slice().is_empty() {
+            return Err(global_this.throw(format_args!("{fn_name} requires a non-empty topic")));
+        }
+
+        let compress = Self::parse_compress_arg(global_this, fn_name, compress_value, args.len)?;
+
+        Ok(Some((
+            app,
+            ssl,
+            publish_to_self,
+            topic_slice,
+            message_value,
+            compress,
+        )))
     }
 
     /// Route a publish through either the per-socket uWS handle (when
@@ -764,32 +816,11 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-        if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publish()");
-            return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
-        }
-
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+        let Some((app, ssl, publish_to_self, topic_slice, message_value, compress)) =
+            self.publish_prologue(global_this, callframe, "publish", "publish", true)?
+        else {
             return Ok(JSValue::js_number(0.0));
         };
-
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
-
-        if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
-            return Err(global_this.throw(format_args!("publish requires a topic string")));
-        }
-
-        let topic_slice = topic_value.to_slice(global_this)?;
-        if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
-        }
-
-        let compress = Self::parse_compress_arg(global_this, "publish", compress_value, args.len)?;
 
         if message_value.is_empty_or_undefined_or_null() {
             return Err(global_this.throw(format_args!("publish requires a non-empty message")));
@@ -833,31 +864,11 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-
-        if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publish()");
-            return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
-        }
-
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+        let Some((app, ssl, publish_to_self, topic_slice, message_value, compress)) =
+            self.publish_prologue(global_this, callframe, "publishText", "publish", false)?
+        else {
             return Ok(JSValue::js_number(0.0));
         };
-
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
-
-        if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
-            return Err(global_this.throw(format_args!("publishText requires a topic string")));
-        }
-
-        let topic_slice = topic_value.to_slice(global_this)?;
-
-        let compress =
-            Self::parse_compress_arg(global_this, "publishText", compress_value, args.len)?;
 
         if message_value.is_empty_or_undefined_or_null() || !message_value.is_string() {
             return Err(global_this.throw(format_args!("publishText requires a non-empty message")));
@@ -886,35 +897,17 @@ impl ServerWebSocket {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<4>();
-
-        if args.len < 1 {
-            bun_output::scoped_log!(WebSocketServer, "publishBinary()");
-            return Err(
-                global_this.throw(format_args!("publishBinary requires at least 1 argument"))
-            );
-        }
-
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+        let Some((app, ssl, publish_to_self, topic_slice, message_value, compress)) = self
+            .publish_prologue(
+                global_this,
+                callframe,
+                "publishBinary",
+                "publishBinary",
+                true,
+            )?
+        else {
             return Ok(JSValue::js_number(0.0));
         };
-        let topic_value = args.ptr[0];
-        let message_value = args.ptr[1];
-        let compress_value = args.ptr[2];
-
-        if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
-            bun_output::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
-            return Err(global_this.throw(format_args!("publishBinary requires a topic string")));
-        }
-
-        let topic_slice = topic_value.to_slice(global_this)?;
-        if topic_slice.slice().is_empty() {
-            return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
-        }
-
-        let compress =
-            Self::parse_compress_arg(global_this, "publishBinary", compress_value, args.len)?;
 
         if message_value.is_empty_or_undefined_or_null() {
             return Err(

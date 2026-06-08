@@ -4,7 +4,7 @@
 
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_collections::VecExt;
-use bun_core::{StackCheck, String as BunString, strings};
+use bun_core::{StackCheck, String as BunString};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
@@ -143,20 +143,11 @@ pub(crate) fn object_to_js(
     Ok(obj)
 }
 
-/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
-/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
-/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+/// Serialize UTF-8 bytes to a JS string. `createUTF8ForJS` allocates the final
+/// WTF string in one pass (Latin-1 for pure-ASCII, UTF-16 with U+FFFD
+/// replacement of invalid sequences otherwise).
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
-    if let Some(utf16) = utf16 {
-        let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-        chars.copy_from_slice(&utf16);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-    } else {
-        let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
-        chars.copy_from_slice(bytes);
-        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-    }
+    bun_string_jsc::create_utf8_for_js(global, bytes).map_err(js_err)
 }
 
 /// `E.String` → JS string conversion.

@@ -393,8 +393,9 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
         // the const-generic `print_as::<{ Tag::… }, …>` arms.
         let mut sink = bun_io::FmtAdapter::new(writer);
         let result = self::console_object::formatter::TagResult {
-            tag: tag.into(),
+            tag,
             cell,
+            custom: None,
         };
         let global = self.global_this;
         self.format::<ENABLE_ANSI_COLORS>(result, &mut sink, value, global)
@@ -987,7 +988,7 @@ mod __macro_smoke {
 pub use self::cached_bytecode::CachedBytecode;
 pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
-pub use self::url::URL;
+pub use self::url::{URL, UrlJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
@@ -1480,8 +1481,8 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
     }
 }
 
-// `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
-// dedicated port file); the lib.rs copies were duplicate definitions.
+// `URL` is a re-export of `bun_url::whatwg::URL`; the JS-value entry points
+// (`UrlJsc::from_js` / `UrlJsc::href_from_js`) live in `URL.rs`.
 
 // JSString (real module in JSString.rs).
 #[path = "JSString.rs"]

@@ -573,7 +573,6 @@ pub mod expect {
         "toMatchSnapshot.rs"                    => to_match_snapshot,
         "toSatisfy.rs"                          => to_satisfy,
         "toStartWith.rs"                        => to_start_with,
-        "toStrictEqual.rs"                      => to_strict_equal,
         "toThrow.rs"                            => to_throw,
         "toThrowErrorMatchingInlineSnapshot.rs" => to_throw_error_matching_inline_snapshot,
         "toThrowErrorMatchingSnapshot.rs"       => to_throw_error_matching_snapshot,

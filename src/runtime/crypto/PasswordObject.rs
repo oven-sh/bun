@@ -819,6 +819,40 @@ pub(crate) fn js_password_object_hash_sync(
 
 // ─── verify host functions ────────────────────────────────────────────────
 
+/// Parse the optional third `verify(password, hash, algorithm)` argument.
+fn parse_verify_algorithm(
+    global_object: &JSGlobalObject,
+    arguments: &[JSValue],
+) -> JsResult<Option<Algorithm>> {
+    let Some(&arg) = arguments.get(2) else {
+        return Ok(None);
+    };
+
+    if arg.is_empty_or_undefined_or_null() {
+        return Ok(None);
+    }
+
+    if !arg.is_string() {
+        return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
+    }
+
+    let algorithm_string = arg.get_zig_string(global_object)?;
+
+    match algorithm_from_zig_string(&algorithm_string) {
+        Some(a) => Ok(Some(a)),
+        None => {
+            if !global_object.has_exception() {
+                return Err(global_object.throw_invalid_argument_type(
+                    "verify",
+                    "algorithm",
+                    UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
+                ));
+            }
+            Err(JsError::Thrown)
+        }
+    }
+}
+
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
 pub(crate) fn js_password_object_verify(
@@ -832,29 +866,7 @@ pub(crate) fn js_password_object_verify(
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
-
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Err(JsError::Thrown);
-            }
-        };
-    }
+    let algorithm = parse_verify_algorithm(global_object, arguments)?;
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
     //
@@ -913,29 +925,7 @@ pub(crate) fn js_password_object_verify_sync(
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
-    let mut algorithm: Option<Algorithm> = None;
-
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
-            return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
-        }
-
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
-
-        algorithm = match algorithm_from_zig_string(&algorithm_string) {
-            Some(a) => Some(a),
-            None => {
-                if !global_object.has_exception() {
-                    return Err(global_object.throw_invalid_argument_type(
-                        "verify",
-                        "algorithm",
-                        UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
-        };
-    }
+    let algorithm = parse_verify_algorithm(global_object, arguments)?;
 
     let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
         return Err(global_object.throw_invalid_argument_type(

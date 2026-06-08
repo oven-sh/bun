@@ -17,6 +17,37 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
+/// Build the `Writable::Buffer` writer for a `Stdio::Blob` /
+/// `Stdio::ArrayBuffer` stdin, leaving `Stdio::Ignore` behind. Shared by the
+/// `Bun.spawn` and shell `Writable::init` (both platform arms of each).
+pub(crate) fn buffered_stdin_writer<P: super::static_pipe_writer::StaticPipeWriterProcess>(
+    stdio: &mut Stdio,
+    event_loop: bun_event_loop::EventLoopHandle,
+    process: *mut P,
+    result: StdioResult,
+) -> RefPtr<super::NewStaticPipeWriter<P>> {
+    let source = match stdio {
+        Stdio::Blob(_) => {
+            // `Stdio` has a Drop impl (it would `blob.detach()`), so the
+            // payload cannot be destructure-moved out (E0509); take ownership
+            // via ManuallyDrop + ptr::read so the blob is moved exactly once.
+            let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+            let blob = match &*owned {
+                // SAFETY: `owned` is ManuallyDrop and discarded after this
+                // read; the Blob payload is moved out exactly once.
+                Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                _ => unreachable!(),
+            };
+            super::source_from_blob(blob)
+        }
+        Stdio::ArrayBuffer(array_buffer) => {
+            super::source_from_array_buffer(core::mem::take(array_buffer))
+        }
+        _ => unreachable!("caller matched Blob/ArrayBuffer"),
+    };
+    super::NewStaticPipeWriter::create(event_loop, process, result, source)
+}
+
 pub enum Writable<'a> {
     // `FileSink` is intrusive-refcounted (manual ref/deref): keep a raw
     // NonNull and call `FileSink::deref` explicitly.
@@ -247,29 +278,12 @@ impl<'a> Writable<'a> {
                     return Ok(Writable::Inherit);
                 }
 
-                Stdio::Blob(_) => {
-                    // See the unix arm below: Stdio has Drop, so move the
-                    // payload out via ManuallyDrop + ptr::read.
-                    let owned =
-                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                    let blob = match &*owned {
-                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                Stdio::Blob(_) | Stdio::ArrayBuffer(_) => {
+                    return Ok(Writable::Buffer(buffered_stdin_writer(
+                        stdio,
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::source_from_blob(blob),
-                    )));
-                }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -351,29 +365,11 @@ impl<'a> Writable<'a> {
                 Ok(Writable::Pipe(pipe_nn))
             }
 
-            Stdio::Blob(_) => {
-                // `Stdio` has a Drop impl (would `blob.detach()`), so we can't
-                // move the payload out by match — take ownership via
-                // ManuallyDrop + ptr::read to transfer without detaching.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let blob = match &*owned {
-                    // SAFETY: `owned` is ManuallyDrop and discarded after this
-                    // read; the Blob payload is moved out exactly once.
-                    Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                    _ => unreachable!(),
-                };
-                Ok(Writable::Buffer(StaticPipeWriter::create(
-                    evtloop,
-                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                    result,
-                    super::source_from_blob(blob),
-                )))
-            }
-            Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
+            Stdio::Blob(_) | Stdio::ArrayBuffer(_) => Ok(Writable::Buffer(buffered_stdin_writer(
+                stdio,
                 evtloop,
                 std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                 result,
-                super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so

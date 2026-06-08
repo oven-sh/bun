@@ -990,7 +990,8 @@ impl MarkedArrayBuffer {
     /// Take ownership of a default-allocator `Box<[u8]>` and wrap it as an
     /// owning `MarkedArrayBuffer`. The buffer is freed exactly once: either by
     /// [`MarkedArrayBuffer::destroy`] or by the deallocator installed when the
-    /// buffer is handed to JSC (`to_js` / `to_node_buffer`).
+    /// buffer is handed to JSC (`to_js` / `to_node_buffer` — the handoff
+    /// clears `owns_buffer`, so a later `destroy()` is a no-op).
     pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
@@ -1032,7 +1033,11 @@ impl MarkedArrayBuffer {
         }
     }
 
-    pub fn to_node_buffer(&self, global: &JSGlobalObject) -> JSValue {
+    pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JSValue {
+        // `create_buffer` installs `MarkedArrayBuffer_deallocator` over
+        // non-empty bytes, making JSC the owner; clear `owns_buffer` so a
+        // later `destroy()` cannot free the allocation a second time.
+        self.owns_buffer = false;
         // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
         // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
         // copy the descriptor and project a mutable slice.
@@ -1040,10 +1045,16 @@ impl MarkedArrayBuffer {
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if !self.buffer.value.is_empty_or_undefined_or_null() {
             return Ok(self.buffer.value);
         }
+        // Both paths below hand the bytes to JSC (the non-empty one installs
+        // `MarkedArrayBuffer_deallocator`, making JSC the owner). Clear
+        // `owns_buffer` before the fallible FFI call so a later `destroy()`
+        // cannot double-free: if the call throws, the bytes may leak, which
+        // is the safe direction.
+        self.owns_buffer = false;
         if self.buffer.byte_len == 0 {
             // SAFETY: null `ptr` with `len == 0` and no deallocator — every
             // obligation of the callee's contract holds trivially.

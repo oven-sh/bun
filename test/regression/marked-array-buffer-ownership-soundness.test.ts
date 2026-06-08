@@ -55,14 +55,18 @@ test.skipIf(!cargo || !hasCodegen)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const out = stdout + stderr;
 
+    // A dep change anywhere in bun_jsc's graph invalidates the fixture's
+    // committed lockfile; surface the regeneration command instead of an
+    // opaque assertion diff.
+    if (out.includes("--locked was passed")) {
+      throw new Error(`fixture Cargo.lock is stale; run:\n  (cd ${fixtureDir} && cargo update)\n\n${out}`);
+    }
+
     // The unsound pattern must fail to resolve. Check the content first,
-    // exit code last — a missing-text failure is a more useful signal than
-    // "cargo returned 0".
-    expect({
-      rejectsFromBytes: out.includes("E0599") && out.includes("from_bytes"),
-    }).toEqual({
-      rejectsFromBytes: true,
-    });
+    // exit code last — a missing-text failure (which prints cargo's output)
+    // is a more useful signal than "cargo returned 0".
+    expect(out).toContain("E0599");
+    expect(out).toContain("from_bytes");
     expect(exitCode).toBe(101); // cargo check exits 101 on compile errors
   },
 );

@@ -4716,14 +4716,14 @@ pub mod ret {
                     // items dropped here (auto free)
                     Ok(array)
                 }
-                Readdir::Buffers(items) => {
+                Readdir::Buffers(mut items) => {
                     // `JSValue.fromAny(_, []Buffer, _)` — generic-slice arm:
                     // build an empty array, push `item.toJS(globalObject)` for
                     // each. Ownership of every `Buffer`'s bytes transfers to
                     // JSC via `MarkedArrayBuffer::to_js`; the boxed slice
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_js(global_object)?;
                         if res == JSValue::ZERO {
                             return Ok(JSValue::ZERO);

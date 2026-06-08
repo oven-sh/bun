@@ -5,13 +5,11 @@ use bun_core::{Global, Output, err};
 use bun_paths::{AbsPath, PathBuffer, platform, resolve_path};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt};
 
-use bun_install::Features;
 use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
-use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
     self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
-    global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
+    global_link_dir_path, options::LogLevel,
 };
 
 use crate::command::ContextData;
@@ -50,66 +48,11 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     if manager.options.positionals.len() == 1 {
         // bun unlink
 
-        let mut lockfile = Lockfile::default();
-        let mut package = Package::default();
-
         // Step 1. parse the nearest package.json file
-        {
-            let package_json_source = match bun_ast::to_source(
-                manager.original_package_json_path.as_zstr(),
-                Default::default(),
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    Output::err_generic(
-                        "failed to read \"{}\" for unlinking: {}",
-                        (
-                            BStr::new(manager.original_package_json_path.as_bytes()),
-                            BStr::new(e.name()),
-                        ),
-                    );
-                    Global::crash();
-                }
-            };
-            lockfile.init_empty();
+        let (lockfile, package) = super::link_command::load_package_for_link(manager, "unlinking")?;
 
-            let mut resolver: () = ();
-            // `log_mut()` returns a borrow decoupled from `&self`; disjoint
-            // storage from `&mut PackageManager` (owned by the CLI `Context`).
-            let log = manager.log_mut();
-            package.parse::<()>(
-                &mut lockfile,
-                manager,
-                log,
-                &package_json_source,
-                &mut resolver,
-                Features::FOLDER,
-            )?;
-            let name = lockfile.str(&package.name);
-            if name.is_empty() {
-                if manager.options.log_level != LogLevel::Silent {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
-                        BStr::new(package_json_source.path.text),
-                    );
-                }
-                Global::crash();
-            } else if !strings::is_npm_package_name(name) {
-                if manager.options.log_level != LogLevel::Silent {
-                    bun_core::pretty_errorln!(
-                        "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
-                        BStr::new(name),
-                        BStr::new(package_json_source.path.text),
-                    );
-                }
-                Global::crash();
-            }
-        }
-
-        // Reshaped for borrowck — `name` borrows `lockfile`; re-derive
-        // it after the parse block so its lifetime is decoupled from
-        // `package_json_source` (dropped above) while remaining a slice into
-        // `lockfile.buffers.string_bytes`.
+        // `name` is a slice into `lockfile.buffers.string_bytes`, decoupled
+        // from the helper-local package.json source.
         let name = lockfile.str(&package.name);
 
         match sys::lstat(resolve_path::join_abs_string_z::<platform::Auto>(
@@ -135,36 +78,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         }
 
         // Step 2. Setup the global directory
-        let node_modules: Dir = 'brk: {
-            bin::Linker::ensure_umask();
-            let explicit_global_dir: &[u8] = match &ctx.install {
-                Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
-                None => b"",
-            };
-            manager.global_dir = Some(Dir::from_fd(package_manager_options::open_global_dir(
-                explicit_global_dir,
-            )?));
-
-            setup_global_dir(manager, &&mut *ctx)?;
-
-            match manager
-                .global_dir
-                .as_ref()
-                .unwrap()
-                .make_open_path(b"node_modules", Default::default())
-            {
-                Ok(d) => break 'brk d,
-                Err(e) => {
-                    if manager.options.log_level != LogLevel::Silent {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
-                            e.name(),
-                        );
-                    }
-                    Global::crash();
-                }
-            }
-        };
+        let node_modules: Dir = super::link_command::open_global_node_modules(manager, &mut *ctx)?;
 
         // Step 3b. Link any global bins
         if package.bin.tag != stub_bin::Tag::None {

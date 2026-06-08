@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use bun_collections::{StringArrayHashMap, VecExt};
@@ -13,6 +13,9 @@ use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::Command;
+use crate::cli::run_processes_shared::{
+    AbortHandler, SHOULD_ABORT, aggregate_exit_code, buffered_stdio, watch_or_reap,
+};
 use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
 
@@ -21,8 +24,7 @@ use crate::run_command::RunCommand;
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
-    event_loop_handle_to_ctx,
+    self as spawn, Process, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
@@ -247,16 +249,7 @@ impl<'a> ProcessHandle<'a> {
             )
         });
 
-        match process.watch_or_reap() {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
-                }
-            }
-        }
+        watch_or_reap(process);
 
         Ok(())
     }
@@ -509,84 +502,11 @@ impl<'a> State<'a> {
     }
 
     pub(crate) fn finalize(&self) -> u8 {
-        for handle in self.handles.iter() {
-            if let Some(proc) = &handle.process {
-                match &proc.status {
-                    Status::Exited(exited) => {
-                        if exited.code != 0 {
-                            return exited.code;
-                        }
-                    }
-                    Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
-                    }
-                    _ => return 1,
-                }
-            }
-        }
-        0
-    }
-}
-
-struct AbortHandler;
-
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-
-impl AbortHandler {
-    #[cfg(unix)]
-    extern "C" fn posix_signal_handler(
-        _sig: i32,
-        _info: *const bun_sys::posix::siginfo_t,
-        _: *const c_void,
-    ) {
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
-    }
-
-    #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(
-        dw_ctrl_type: bun_sys::windows::DWORD,
-    ) -> bun_sys::windows::BOOL {
-        if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
-            SHOULD_ABORT.store(true, Ordering::SeqCst);
-            return bun_sys::windows::TRUE;
-        }
-        bun_sys::windows::FALSE
-    }
-
-    pub(crate) fn install() {
-        #[cfg(unix)]
-        {
-            // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
-            // via zeroed() (POD C struct) and populate sa_sigaction/sa_mask/sa_flags.
-            // SAFETY: all-zero is a valid `libc::sigaction`; sigemptyset/sigaction are
-            // FFI calls with no extra preconditions beyond valid pointers.
-            unsafe {
-                let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-                libc::sigemptyset(&raw mut action.sa_mask);
-                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut());
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let res = bun_sys::windows::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::TRUE,
-            );
-            if res == 0 {
-                if cfg!(debug_assertions) {
-                    bun_core::warn!("Failed to set abort handler\n");
-                }
-            }
-        }
-    }
-
-    pub(crate) fn uninstall() {
-        #[cfg(windows)]
-        {
-            let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
-        }
+        aggregate_exit_code(
+            self.handles
+                .iter()
+                .map(|h| h.process.as_ref().map(|p| &p.status)),
+        )
     }
 }
 
@@ -1139,18 +1059,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
-                stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
-                stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
+                stdout: buffered_stdio(),
+                stderr: buffered_stdio(),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {

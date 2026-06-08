@@ -645,6 +645,36 @@ pub unsafe fn enqueue_patch_task_pre(this: &mut PackageManager, task: *mut Patch
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Returns the task-callback list for `task_id`, creating and initializing it
+/// if this is the first callback registered for the task.
+fn task_callback_list<'a>(
+    this: &'a mut PackageManager,
+    task_id: Task::Id,
+) -> Result<&'a mut TaskCallbackList, bun_core::Error> {
+    let entry = this.task_queue.get_or_put_context(task_id, ())?;
+    if !entry.found_existing {
+        *entry.value_ptr = TaskCallbackList::default();
+    }
+    Ok(entry.value_ptr)
+}
+
+/// Registers dependency `id` as a callback for `task_id`, tagging it as a
+/// root or transitive dependency.
+fn push_dependency_task_callback(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    is_root: bool,
+) -> Result<(), bun_core::Error> {
+    let ctx = if is_root {
+        TaskCallbackContext::RootDependency(id)
+    } else {
+        TaskCallbackContext::Dependency(id)
+    };
+    task_callback_list(this, task_id)?.push(ctx);
+    Ok(())
+}
+
 /// Q: "What do we do with a dependency in a package.json?"
 /// A: "We enqueue it!"
 pub fn enqueue_dependency_with_main_and_success_fn(
@@ -1179,18 +1209,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
-                        if !manifest_entry_parse.found_existing {
-                            *manifest_entry_parse.value_ptr = TaskCallbackList::default();
-                        }
-
-                        let ctx = if is_root {
-                            TaskCallbackContext::RootDependency(id)
-                        } else {
-                            TaskCallbackContext::Dependency(id)
-                        };
-                        manifest_entry_parse.value_ptr.push(ctx);
+                        push_dependency_task_callback(this, task_id, id, is_root)?;
                     }
                     return Ok(());
                 }
@@ -1215,11 +1234,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let alias = this.lockfile.str_detached(&dependency.name);
             let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
 
             if cfg!(debug_assertions) {
                 bun_output::scoped_log!(
@@ -1246,15 +1260,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(checkout_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
                 if needs_ctx {
-                    entry.value_ptr.push(ctx);
+                    push_dependency_task_callback(this, checkout_id, id, is_root)
+                        .expect("unreachable");
+                } else {
+                    task_callback_list(this, checkout_id).expect("unreachable");
                 }
 
                 if dependency.behavior.is_peer() {
@@ -1280,14 +1290,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
                 this.task_batch.push(ThreadPool::Batch::from(task));
             } else {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(clone_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
+                push_dependency_task_callback(this, clone_id, id, is_root).expect("unreachable");
 
                 if dependency.behavior.is_peer() {
                     if !install_peer {
@@ -1332,24 +1335,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — `entry` mutably borrows
-            // `this.task_queue`; scope it tightly so the calls below can
-            // reborrow `*this`.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root).expect("unreachable");
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -1532,22 +1518,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            let ctx = if is_root {
-                TaskCallbackContext::RootDependency(id)
-            } else {
-                TaskCallbackContext::Dependency(id)
-            };
-            // reshaped for borrowck — scope `entry` tightly.
-            {
-                let entry = this
-                    .task_queue
-                    .get_or_put_context(task_id, ())
-                    .expect("unreachable");
-                if !entry.found_existing {
-                    *entry.value_ptr = TaskCallbackList::default();
-                }
-                entry.value_ptr.push(ctx);
-            }
+            push_dependency_task_callback(this, task_id, id, is_root).expect("unreachable");
 
             if dependency.behavior.is_peer() {
                 if !install_peer {
@@ -2187,6 +2158,41 @@ fn get_or_put_resolved_package_with_find_result(
     // `guard` drops here → success_fn(this, dependency_id, package.meta.id)
 }
 
+/// Scans the root package's dependencies for a workspace entry matching
+/// `name_hash`; on a match, records the resolution via `success_fn` and
+/// returns the already-resolved workspace package.
+fn resolve_root_workspace_package(
+    this: &mut PackageManager,
+    name_hash: PackageNameHash,
+    dependency_id: DependencyID,
+    success_fn: SuccessFn,
+) -> Option<ResolvedPackageResult> {
+    let root_package = this.lockfile.root_package()?;
+    let root_dependencies = root_package
+        .dependencies
+        .get(this.lockfile.buffers.dependencies.as_slice());
+    let root_resolutions = root_package
+        .resolutions
+        .get(this.lockfile.buffers.resolutions.as_slice());
+
+    debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
+    for (root_dep, &workspace_package_id) in root_dependencies.iter().zip(root_resolutions) {
+        if workspace_package_id != invalid_package_id
+            && root_dep.version.tag == dependency::version::Tag::Workspace
+            && root_dep.name_hash == name_hash
+        {
+            // make sure verifyResolutions sees this resolution as a valid package id
+            success_fn(this, dependency_id, workspace_package_id);
+            return Some(ResolvedPackageResult {
+                package: *this.lockfile.packages.get(workspace_package_id as usize),
+                is_first_time: false,
+                task: None,
+            });
+        }
+    }
+    None
+}
+
 fn get_or_put_resolved_package(
     this: &mut PackageManager,
     name_hash: PackageNameHash,
@@ -2313,54 +2319,27 @@ fn get_or_put_resolved_package(
 
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
-            'resolve_from_workspace: {
-                if version.tag == dependency::version::Tag::Npm {
-                    let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                        this.lockfile.workspace_paths.get(&name_hash)
-                    } else {
-                        None
-                    };
-                    let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    let npm_group = &version.npm().version;
-                    if this.options.link_workspace_packages
-                        && ((workspace_version.is_some()
-                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            || (workspace_path.is_some() && npm_group.is_star()))
+            if version.tag == dependency::version::Tag::Npm {
+                let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
+                    this.lockfile.workspace_paths.get(&name_hash)
+                } else {
+                    None
+                };
+                let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
+                let buf = this.lockfile.buffers.string_bytes.as_slice();
+                let npm_group = &version.npm().version;
+                if this.options.link_workspace_packages
+                    && ((workspace_version.is_some()
+                        && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
+                        // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
+                        // if the workspace doesn't have a version, it can still be used if
+                        // dependency version is wildcard
+                        || (workspace_path.is_some() && npm_group.is_star()))
+                {
+                    if let Some(resolved) =
+                        resolve_root_workspace_package(this, name_hash, dependency_id, success_fn)
                     {
-                        let Some(root_package) = this.lockfile.root_package() else {
-                            break 'resolve_from_workspace;
-                        };
-                        let root_dependencies = root_package
-                            .dependencies
-                            .get(this.lockfile.buffers.dependencies.as_slice());
-                        let root_resolutions = root_package
-                            .resolutions
-                            .get(this.lockfile.buffers.resolutions.as_slice());
-
-                        debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
-                        for (root_dep, &workspace_package_id) in
-                            root_dependencies.iter().zip(root_resolutions)
-                        {
-                            if workspace_package_id != invalid_package_id
-                                && root_dep.version.tag == dependency::version::Tag::Workspace
-                                && root_dep.name_hash == name_hash
-                            {
-                                // make sure verifyResolutions sees this resolution as a valid package id
-                                success_fn(this, dependency_id, workspace_package_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this
-                                        .lockfile
-                                        .packages
-                                        .get(workspace_package_id as usize),
-                                    is_first_time: false,
-                                    task: None,
-                                }));
-                            }
-                        }
+                        return Ok(Some(resolved));
                     }
                 }
             }
@@ -2474,46 +2453,21 @@ fn get_or_put_resolved_package(
             let find_result = match find_result_opt {
                 Some(r) => r,
                 None => {
-                    'resolve_workspace_from_dist_tag: {
-                        // choose a workspace for a dist_tag only if a version was not found
-                        if version.tag == dependency::version::Tag::DistTag {
-                            let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                                this.lockfile.workspace_paths.get(&name_hash)
-                            } else {
-                                None
-                            };
-                            if workspace_path.is_some() {
-                                let Some(root_package) = this.lockfile.root_package() else {
-                                    break 'resolve_workspace_from_dist_tag;
-                                };
-                                let root_dependencies = root_package
-                                    .dependencies
-                                    .get(this.lockfile.buffers.dependencies.as_slice());
-                                let root_resolutions = root_package
-                                    .resolutions
-                                    .get(this.lockfile.buffers.resolutions.as_slice());
-
-                                debug_assert_eq!(root_dependencies.len(), root_resolutions.len());
-                                for (root_dep, &workspace_package_id) in
-                                    root_dependencies.iter().zip(root_resolutions)
-                                {
-                                    if workspace_package_id != invalid_package_id
-                                        && root_dep.version.tag
-                                            == dependency::version::Tag::Workspace
-                                        && root_dep.name_hash == name_hash
-                                    {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        success_fn(this, dependency_id, workspace_package_id);
-                                        return Ok(Some(ResolvedPackageResult {
-                                            package: *this
-                                                .lockfile
-                                                .packages
-                                                .get(workspace_package_id as usize),
-                                            is_first_time: false,
-                                            task: None,
-                                        }));
-                                    }
-                                }
+                    // choose a workspace for a dist_tag only if a version was not found
+                    if version.tag == dependency::version::Tag::DistTag {
+                        let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
+                            this.lockfile.workspace_paths.get(&name_hash)
+                        } else {
+                            None
+                        };
+                        if workspace_path.is_some() {
+                            if let Some(resolved) = resolve_root_workspace_package(
+                                this,
+                                name_hash,
+                                dependency_id,
+                                success_fn,
+                            ) {
+                                return Ok(Some(resolved));
                             }
                         }
                     }

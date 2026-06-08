@@ -4778,6 +4778,11 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
+        // Note: reborrow so the aggregate branch can lend the list to its
+        // iteration ctx and the add-to-error-list tail can still see it after
+        // `print_error_from_maybe_private_data`.
+        let mut exception_list = exception_list;
+
         if value.is_aggregate_error(global_ref) {
             // `getErrorsProperty` is `getDirect` (own slot, nothrow): it
             // returns empty when the own `errors` property is absent (deleted
@@ -4837,28 +4842,27 @@ impl VirtualMachine {
                     formatter: std::ptr::from_mut(formatter),
                     writer: std::ptr::from_mut(writer),
                     exception_list: exception_list
+                        .as_deref_mut()
                         .map(std::ptr::from_mut::<ExceptionList>)
                         .unwrap_or(core::ptr::null_mut()),
                     allow_ansi_color,
                     allow_side_effects,
                 };
-                // `for_each` can run user JS (e.g. a patched
-                // `Array.prototype[Symbol.iterator]`); this runs inside the
-                // exception printer, so clear anything it threw rather than
-                // leaving a new exception pending.
                 if errors
                     .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                    .is_err()
+                    .is_ok()
                 {
-                    global_ref.clear_exception_except_termination();
+                    return;
                 }
-                return;
+                // Iteration ran user JS and threw (e.g. a patched
+                // `Array.prototype[Symbol.iterator]`). This runs inside the
+                // exception printer, so clear the secondary exception
+                // (terminations stay pending) and fall through to print the
+                // AggregateError itself instead of swallowing it.
+                global_ref.clear_exception_except_termination();
             }
         }
 
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
         let was_internal = self.print_error_from_maybe_private_data(
             value,
             exception_list.as_deref_mut(),

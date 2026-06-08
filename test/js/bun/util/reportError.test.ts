@@ -140,6 +140,10 @@ const tamperedAggregateErrors = [
     "unhandled rejection with deleted errors",
     'const e = new AggregateError([], "agg_boom"); delete e.errors; Promise.reject(e);',
   ],
+  [
+    "poisoned array iterator",
+    'const e = new AggregateError([new Error("inner")], "agg_boom"); Object.defineProperty(Array.prototype, Symbol.iterator, { value() { throw new Error("poisoned"); } }); throw e;',
+  ],
 ] as const;
 
 test.each(tamperedAggregateErrors)(

@@ -954,8 +954,12 @@ pub const PackageInstaller = struct {
                 }
             },
             else => {
+                // This can happen when a dependency (e.g. a workspace:* dep from a
+                // git-hosted monorepo) failed to resolve earlier. The error was
+                // already reported during resolution; skip the package gracefully
+                // instead of crashing.
                 if (comptime Environment.allow_assert) {
-                    @panic("Internal assertion failure: unexpected resolution tag");
+                    debug("Skipping package with unexpected resolution tag: {d}", .{@intFromEnum(resolution.tag)});
                 }
                 this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;

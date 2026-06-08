@@ -1833,7 +1833,7 @@ pub const ARES_ESERVICE: c_int = 25;
 pub const ARES_ENOSERVER: c_int = 26;
 
 #[repr(i32)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr, strum::FromRepr)]
 pub enum Error {
     ENODATA = ARES_ENODATA,
     EFORMERR = ARES_EFORMERR,
@@ -2013,13 +2013,12 @@ impl Error {
         // c-ares returns positive ARES_* codes; Node's wrapper sometimes negates.
         // `unsigned_abs` avoids the i32::MIN overflow that `.abs()` would hit.
         let n = rc.unsigned_abs();
-        assert!(
-            (1..=ARES_ENOSERVER as u32).contains(&n),
-            "c-ares status {rc} out of range",
-        );
-        // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
-        // contiguous discriminants `1..=ARES_ENOSERVER`.
-        Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
+        // `from_repr` (strum::FromRepr) is a checked `match` over every declared
+        // discriminant, so no transmute is needed; a status outside the ARES_*
+        // range means version skew with the vendored c-ares.
+        let err = Error::from_repr(n as i32);
+        assert!(err.is_some(), "c-ares status {rc} out of range");
+        err
     }
 }
 

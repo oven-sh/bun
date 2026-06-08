@@ -276,7 +276,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
-        if (newCwd === "." || newCwd === "" || newCwd === "./") {
+        if (newCwd === undefined || newCwd === "." || newCwd === "" || newCwd === "./") {
           newCwd = defaultCwd ?? process.cwd();
         }
 

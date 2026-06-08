@@ -8,6 +8,10 @@
 // Crate-private: implementation detail of `json.rs`; no external consumers.
 mod json_lexer;
 
+// ───── number_scan ────────────────────────────────────────────────────────
+// Decimal number-literal digit scanner shared by the json and toml lexers.
+mod number_scan;
+
 // ───── json ───────────────────────────────────────────────────────────────
 // Real port — wired against `crate::json_lexer` (the cycle-break above) and
 // `bun_ast::js_ast`; resolves against the local lexer so `bun_js_parser`

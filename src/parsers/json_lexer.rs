@@ -222,6 +222,28 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     }
 }
 
+impl<'a, 'bump> crate::number_scan::DecimalLexer<'a> for Lexer<'a, 'bump>
+where
+    'bump: 'a,
+{
+    #[inline]
+    fn code_point(&self) -> CodePoint {
+        self.code_point
+    }
+    #[inline]
+    fn end(&self) -> usize {
+        self.end
+    }
+    #[inline]
+    fn end_mut(&mut self) -> &mut usize {
+        &mut self.end
+    }
+    #[inline]
+    fn step(&mut self) {
+        Lexer::step(self)
+    }
+}
+
 impl<'a, 'bump> Lexer<'a, 'bump>
 where
     // `identifier` may point into `source.contents` (`'a`) *or* a bump-alloc'd
@@ -697,7 +719,6 @@ where
             return self.syntax_error();
         }
 
-        let mut underscore_count: usize = 0;
         let mut last_underscore_end: usize = 0;
         let mut has_dot_or_exponent = first == '.' as CodePoint;
         let mut base: f64 = 0.0;
@@ -818,87 +839,10 @@ where
             }
         } else {
             // Floating-point literal;
-            let is_invalid_legacy_octal_literal = first == '0' as CodePoint
-                && (self.code_point == '8' as CodePoint || self.code_point == '9' as CodePoint);
-
-            // Initial digits;
-            loop {
-                if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                    if self.code_point != '_' as CodePoint {
-                        break;
-                    }
-                    // Cannot have multiple underscores in a row;
-                    if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                        self.syntax_error()?;
-                    }
-                    // The specification forbids underscores in this case;
-                    if is_invalid_legacy_octal_literal {
-                        self.syntax_error()?;
-                    }
-                    last_underscore_end = self.end;
-                    underscore_count += 1;
-                }
-                self.step();
-            }
-
-            // Fractional digits;
-            if first != '.' as CodePoint && self.code_point == '.' as CodePoint {
-                // An underscore must not come last;
-                if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                    self.end -= 1;
-                    self.syntax_error()?;
-                }
-                has_dot_or_exponent = true;
-                self.step();
-                if self.code_point == '_' as CodePoint {
-                    self.syntax_error()?;
-                }
-                loop {
-                    if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                        if self.code_point != '_' as CodePoint {
-                            break;
-                        }
-                        // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                            self.syntax_error()?;
-                        }
-                        last_underscore_end = self.end;
-                        underscore_count += 1;
-                    }
-                    self.step();
-                }
-            }
-
-            // Exponent;
-            if self.code_point == 'e' as CodePoint || self.code_point == 'E' as CodePoint {
-                // An underscore must not come last;
-                if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                    self.end -= 1;
-                    self.syntax_error()?;
-                }
-                has_dot_or_exponent = true;
-                self.step();
-                if self.code_point == '+' as CodePoint || self.code_point == '-' as CodePoint {
-                    self.step();
-                }
-                if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                    self.syntax_error()?;
-                }
-                loop {
-                    if self.code_point < '0' as CodePoint || self.code_point > '9' as CodePoint {
-                        if self.code_point != '_' as CodePoint {
-                            break;
-                        }
-                        // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
-                            self.syntax_error()?;
-                        }
-                        last_underscore_end = self.end;
-                        underscore_count += 1;
-                    }
-                    self.step();
-                }
-            }
+            let scan = crate::number_scan::scan_decimal_digits(self, first)?;
+            let underscore_count = scan.underscore_count;
+            last_underscore_end = scan.last_underscore_end;
+            has_dot_or_exponent = scan.has_dot_or_exponent;
 
             // Take a slice of the text to parse;
             let text = self.raw();

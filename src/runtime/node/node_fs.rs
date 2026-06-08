@@ -4728,13 +4728,13 @@ pub mod ret {
                     // items dropped here (auto free)
                     Ok(array)
                 }
-                Readdir::Buffers(items) => {
+                Readdir::Buffers(mut items) => {
                     // Node returns `Buffer[]` for `{ encoding: "buffer" }`, not
                     // `Uint8Array[]`. Ownership of every `Buffer`'s bytes
                     // transfers to JSC via `to_node_buffer`; the boxed slice
                     // itself is freed when `items` drops.
                     let array = JSValue::create_empty_array(global_object, items.len())?;
-                    for (i, item) in items.iter().enumerate() {
+                    for (i, item) in items.iter_mut().enumerate() {
                         let res = item.to_node_buffer(global_object);
                         if res == JSValue::ZERO {
                             return Ok(JSValue::ZERO);

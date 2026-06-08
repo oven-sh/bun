@@ -9,6 +9,8 @@
 # `Cargo.lock` is committed so the test driver pins the transitive dep
 # graph with `--locked` — keeps the compile-fail check hermetic rather
 # than re-resolving `bun_jsc`'s deps against crates.io on every run.
+# If a dependency changes anywhere in bun_jsc's graph, regenerate it:
+#   (cd test/regression/marked-array-buffer-ownership-soundness-fixture && cargo update)
 [workspace]
 
 [package]

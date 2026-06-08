@@ -139,6 +139,32 @@ export default {
     setResourceTimingBufferSize(_) {
       return performance.setResourceTimingBufferSize(...arguments);
     },
+    timerify(fn) {
+      if (typeof fn !== 'function') {
+        throw new TypeError('The "fn" argument must be of type function');
+      }
+      return function (...args) {
+        const start = performance.now();
+        try {
+          const result = fn.apply(this, args);
+          // If result is a promise, measure when it resolves
+          if (result && typeof result.then === 'function') {
+            return result.then((value) => {
+              const duration = performance.now() - start;
+              performance.measure(fn.name || 'anonymous', { start, duration: start + duration });
+              return value;
+            });
+          }
+          const duration = performance.now() - start;
+          performance.measure(fn.name || 'anonymous', { start, duration: start + duration });
+          return result;
+        } catch (error) {
+          const duration = performance.now() - start;
+          performance.measure(fn.name || 'anonymous', { start, duration: start + duration });
+          throw error;
+        }
+      };
+    },
     timeOrigin: performance.timeOrigin,
     toJSON(_) {
       return performance.toJSON(...arguments);

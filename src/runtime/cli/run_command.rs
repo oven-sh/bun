@@ -661,14 +661,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Ok(Some(info)) => Some(info),
             };
         // Fallback root DirInfo for callers that ignore the return value
-        // (filter_run.rs, pack_command.rs both discard it). Tries "/"
-        // (standard Linux) or on OHOS "/data/local/tmp" which is always
-        // readable even when "/" is blocked by SELinux.
-        let root_dir_info_fallback: bun_resolver::DirInfoRef = this_transpiler
-            .resolver
-            .read_dir_info_ignore_error(b"/data/local/tmp")
-            .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
-            .expect("read_dir_info_ignore_error failed for /data/local/tmp and /");
+        // (filter_run.rs, pack_command.rs both discard it). Uses $HOME
+        // (always readable on OHOS; "/" is blocked by SELinux).
+        let home_str = std::env::var("HOME").unwrap_or_default();
+        let root_dir_info_fallback: bun_resolver::DirInfoRef = if !home_str.is_empty() {
+            this_transpiler
+                .resolver
+                .read_dir_info_ignore_error(home_str.as_bytes())
+                .unwrap_or_else(|| {
+                    this_transpiler
+                        .resolver
+                        .read_dir_info_ignore_error(b"/")
+                        .expect("neither $HOME nor / is readable")
+                })
+        } else {
+            this_transpiler
+                .resolver
+                .read_dir_info_ignore_error(b"/")
+                .expect("neither $HOME nor / is readable")
+        };
 
         this_transpiler.resolver.store_fd = false;
 

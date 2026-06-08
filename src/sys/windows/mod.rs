@@ -4925,6 +4925,17 @@ pub unsafe fn move_file_ex_w(
         return bun_sys::Result::errno(err.to_e(), bun_sys::Tag::rename);
     }
 
+    const RENAME_FALLBACK_FLAGS: DWORD =
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH;
+    if flags & !RENAME_FALLBACK_FLAGS != 0 {
+        return bun_sys::Result::errno(err.to_e(), bun_sys::Tag::rename);
+    }
+
+    // COPY_ALLOWED/WRITE_THROUGH only affect MoveFileExW copy/delete moves.
+    // The fallback below is deliberately rename-only: same-volume renames
+    // preserve the requested operation, while cross-volume moves fail loudly
+    // instead of copying into the final destination.
+
     let existing_len = unsafe { nul_terminated_wide_len(existing_file_name) };
     let new_len = unsafe { nul_terminated_wide_len(new_file_name) };
     // SAFETY: both pointers were checked non-null above and are

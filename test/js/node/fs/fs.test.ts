@@ -3568,7 +3568,7 @@ it("test syscall errno, issue#4198", () => {
 });
 
 it.if(isWindows)("rename and renameSync replace existing files on Windows", async () => {
-  const dir = tempDir("windows-rename-replace", {
+  using dir = tempDir("windows-rename-replace", {
     "from-sync.txt": "from sync",
     "to-sync.txt": "to sync",
     "from-async.txt": "from async",
@@ -3592,7 +3592,7 @@ it.if(isWindows)("rename and renameSync replace existing files on Windows", asyn
   expect(readFileSync(toAsync, "utf8")).toBe("from async");
   expect(existsSync(fromAsync)).toBe(false);
 
-  const relativeDir = tempDir("windows-rename-relative", {
+  using relativeDir = tempDir("windows-rename-relative", {
     "nested/from.txt": "relative",
     "to.txt": "old",
   });
@@ -3605,7 +3605,7 @@ it.if(isWindows)("rename and renameSync replace existing files on Windows", asyn
     process.chdir(cwd);
   }
   expect(readFileSync(join(relativePath, "to.txt"), "utf8")).toBe("relative");
-  expect(existsSync(join(relativePath, "nested", "to.txt"))).toBe(false);
+  expect(existsSync(join(relativePath, "nested", "from.txt"))).toBe(false);
 });
 
 it.if(isWindows)("writing to windows hidden file is possible", () => {

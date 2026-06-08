@@ -33,6 +33,7 @@ describe("issue #3192", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+    expect(stderr).toContain("Saved yarn.lock");
     expect(exitCode).toBe(0);
 
     // Read the generated yarn.lock

@@ -50,10 +50,13 @@ describe.concurrent(
         const baseDir = `${tmpdir}/bun-build-outfile-${Date.now()}`;
         const outfile = path.join(baseDir, "index.exe");
         mkdirSync(baseDir, { recursive: true });
-        writeFileSync(outfile, "stale executable");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
+        try {
+          writeFileSync(outfile, "stale executable");
+          await testCompile(outfile);
+          await testExec(outfile);
+        } finally {
+          fs.rmSync(baseDir, { recursive: true, force: true });
+        }
       }
       {
         const baseDir = `${tmpdir}/bun-build-outfile2-${Date.now()}`;

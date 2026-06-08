@@ -1510,11 +1510,8 @@ async function getPipeline(options = {}) {
     }
   }
 
-  // Binary-size tracking covers the artifacts that ship.
-  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
-  if (!buildId && strippedPlatforms.length) {
-    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
-  }
+  // DEBUG BRANCH ONLY: binary-size depends on every build target; the trimmed
+  // platform list breaks its dependencies and cancels the whole build.
 
   // Sign Windows builds on release (non-canary main) or when [sign windows]
   // is in the commit message (for testing the sign step on a branch).

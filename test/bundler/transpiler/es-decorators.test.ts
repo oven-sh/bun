@@ -366,6 +366,158 @@ describe("ES Decorators", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/31965
+  describe("sibling decorated classes don't share lowering temps", () => {
+    test("superclass addInitializer fires for subclass instances", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        function trace(name) {
+          return function (target, ctx) {
+            ctx.addInitializer(function () {
+              order.push(name + " on " + this.constructor.name);
+            });
+            return target;
+          };
+        }
+        class A {
+          @trace("A.field") accessor counter = 0;
+          @trace("A.foo") get foo() { return 1; }
+        }
+        class B extends A {
+          @trace("B.bar") get bar() { return 2; }
+        }
+        new A();
+        order.push("--");
+        new B();
+        console.log(order.join(","));
+      `);
+      expect(stderr).toBe("");
+      // Initializer order matches tsc --target es2022 and esbuild: within a
+      // class, getter/method extra initializers run before accessor initializers.
+      expect(stdout).toBe("A.foo on A,A.field on A,--,A.foo on B,A.field on B,B.bar on B\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("each class's addInitializer fires exactly once for its own class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        function trace(name) {
+          return function (target, ctx) {
+            ctx.addInitializer(function () { order.push(name); });
+            return target;
+          };
+        }
+        class A { @trace("A.foo") get foo() { return 1; } }
+        class B { @trace("B.bar") get bar() { return 2; } }
+        new A();
+        new B();
+        console.log(order.join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A.foo,B.bar\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("same-named accessors in two classes use separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(target, ctx) { return target; }
+        class A { @dec accessor x = 1 }
+        class B { @dec accessor x = 2 }
+        const a = new A();
+        const b = new B();
+        console.log(a.x, b.x);
+        a.x = 10;
+        console.log(a.x, b.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n10 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("same-named decorated private fields in two classes use separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(target, ctx) { return target; }
+        class A { @dec #x = 1; getX() { return this.#x; } }
+        const a = new A();
+        class B { @dec #x = 2; getX() { return this.#x; } }
+        const b = new B();
+        console.log(a.getX(), b.getX());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated class expressions keep separate state and names", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const order = [];
+        function trace(name) {
+          return function (target, ctx) {
+            ctx.addInitializer(function () { order.push(name); });
+            return target;
+          };
+        }
+        const A = class { @trace("A.foo") get foo() { return 1; } };
+        const B = class { @trace("B.bar") get bar() { return 2; } };
+        new A();
+        new B();
+        console.log(A.name, B.name, order.join(","));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A B A.foo,B.bar\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated classes in two bundled files keep separate state", async () => {
+      using dir = tempDir("es-dec-bundle", {
+        "a.js": `
+          export const order = [];
+          function dec(target, ctx) {
+            ctx.addInitializer(function () { order.push("A.foo on " + this.constructor.name); });
+            return target;
+          }
+          export class A { @dec get foo() { return 1; } }
+        `,
+        "b.js": `
+          import { order } from "./a.js";
+          function dec(target, ctx) {
+            ctx.addInitializer(function () { order.push("B.bar on " + this.constructor.name); });
+            return target;
+          }
+          export class B { @dec get bar() { return 2; } }
+        `,
+        "index.js": `
+          import { A, order } from "./a.js";
+          import { B } from "./b.js";
+          new A();
+          new B();
+          console.log(order.join(","));
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "index.js", "--outfile=bundle.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect(filterStderr(buildStderr)).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "bundle.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("A.foo on A,B.bar on B\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("standard vs experimental mode switching", () => {
     test("JS files use standard decorators by default", async () => {
       // JS files always use standard decorators, even when

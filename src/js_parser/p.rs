@@ -541,6 +541,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub temp_refs_to_declare: List<'a, TempRef>,
     pub temp_ref_count: i32,
 
+    /// Tracks the `var` temp names minted by the standard-decorator lowering
+    /// (`_init`, `_dec`, ...) so each name is only used once per file. The
+    /// transpile-only path never runs a renamer, so sibling decorated classes
+    /// would otherwise emit colliding declarations in the enclosing scope that
+    /// clobber each other's state. Maps a name to the last numeric suffix
+    /// handed out for it (1 = the bare name).
+    pub decorator_temp_name_counts: HashMap<&'a [u8], u32>,
+
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
     // The old "var" statements are turned into regular assignments instead. This
@@ -9219,6 +9227,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            decorator_temp_name_counts: Default::default(),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

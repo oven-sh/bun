@@ -21,8 +21,8 @@
 // reintroduced, the fixture compiles again and this test fails.
 
 import { spawn, which } from "bun";
-import { existsSync } from "node:fs";
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const cargo = which("cargo");

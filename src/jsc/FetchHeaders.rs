@@ -161,18 +161,27 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
+    /// Returns `Err` when header validation (`FetchHeaders::fill`) throws;
+    /// `None` does not happen without a pending exception, so a successful
+    /// call always yields `Ok(Some(..))`.
     pub fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
         buf: &ZigString,
         count_: u32,
-    ) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        let p =
-            unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
-        NonNull::new(p)
+    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
+        // `createValueNotJS` can throw (header validation); route through the
+        // exception-checking wrapper so the pending-exception state is
+        // observed (BUN_JSC_validateExceptionChecks).
+        host_fn::from_js_host_call_generic(global, || {
+            // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
+            // passed by address only.
+            let p = unsafe {
+                WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_)
+            };
+            NonNull::new(p)
+        })
     }
 
     pub fn from(

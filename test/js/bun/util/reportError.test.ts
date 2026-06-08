@@ -122,3 +122,56 @@ test("native error printer handles lone surrogates in message and stack frame na
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
 });
+
+// The uncaught-error printer used to pass the result of a `getDirect` lookup
+// of `AggregateError.errors` straight to the iteration machinery. When the own
+// property was deleted, replaced with a non-iterable, or redefined as an
+// accessor, it iterated an empty/garbage JSValue: a segfault (or a silently
+// swallowed error) instead of the user's actual error. Tampered values must
+// fall back to plain error printing.
+const tamperedAggregateErrors = [
+  ["deleted errors property", 'const e = new AggregateError([], "agg_boom"); delete e.errors; throw e;'],
+  ["non-iterable errors value", 'const e = new AggregateError([], "agg_boom"); e.errors = 42; throw e;'],
+  [
+    "accessor errors property",
+    'const e = new AggregateError([], "agg_boom"); Object.defineProperty(e, "errors", { get() { return [new Error("inner")]; } }); throw e;',
+  ],
+  [
+    "unhandled rejection with deleted errors",
+    'const e = new AggregateError([], "agg_boom"); delete e.errors; Promise.reject(e);',
+  ],
+] as const;
+
+test.each(tamperedAggregateErrors)(
+  "uncaught AggregateError with tampered `errors` does not crash the printer (%s)",
+  async (_name, fixture) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // The user's real error is printed instead of being replaced by a crash.
+    expect(stderr).toContain("agg_boom");
+    // Normal uncaught-error exit (1), no signal.
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  },
+);
+
+test("uncaught AggregateError with intact `errors` still prints each sub-error", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'throw new AggregateError([new Error("inner_a"), new Error("inner_b")], "agg_boom");'],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("inner_a");
+  expect(stderr).toContain("inner_b");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
+});

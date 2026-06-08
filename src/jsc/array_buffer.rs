@@ -923,15 +923,13 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        // allocator.dupe(u8, str) → Box::<[u8]>::from(str); the buffer is later
+        // freed via the default allocator (`MarkedArrayBuffer_deallocator` →
+        // `default_alloc::free`).
+        Ok(MarkedArrayBuffer::from_owned_bytes(
+            Box::from(str),
+            JSType::Uint8Array,
+        ))
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
@@ -952,9 +950,13 @@ impl MarkedArrayBuffer {
         })
     }
 
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
+    /// Take ownership of a default-allocator `Box<[u8]>` and wrap it as an
+    /// owning `MarkedArrayBuffer`. The buffer is freed exactly once: either by
+    /// [`MarkedArrayBuffer::destroy`] or by the deallocator installed when the
+    /// buffer is handed to JSC (`to_js` / `to_node_buffer`).
+    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
             owns_buffer: true,
             pinned: false,
         }
@@ -977,13 +979,19 @@ impl MarkedArrayBuffer {
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
-    /// allocator (e.g. via `from_string`/`from_bytes`). Does not free the struct itself;
+    /// allocator (e.g. via `from_string`/`from_owned_bytes`). Does not free the struct itself;
     /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
     pub fn destroy(&mut self) {
         if self.owns_buffer {
             self.owns_buffer = false;
-            // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-            unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
+            // An empty `Box<[u8]>` has no backing allocation — `from_owned_bytes`
+            // stored its dangling pointer, so there is nothing to free (same
+            // reasoning as `JSValue::create_buffer_from_box`).
+            if self.buffer.byte_len != 0 {
+                // SAFETY: `owns_buffer` is only set by `from_owned_bytes`, which
+                // took the pointer from a non-empty default-allocator `Box<[u8]>`.
+                unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
+            }
         }
     }
 

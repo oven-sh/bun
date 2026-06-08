@@ -1727,7 +1727,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         secure_ptr: *mut c_void,
     ) -> *mut c_void {
         let tcp = input_socket.cast::<us_socket_t>();
-        // outlives this call.
         let vm = global_this.bun_vm().as_mut();
         let ws = bun_core::heap::into_raw(Box::new(WebSocket::<SSL> {
             ref_count: Cell::new(1),

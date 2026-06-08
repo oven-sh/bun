@@ -217,9 +217,24 @@ pub fn callback(task: *ThreadPool.Task) void {
                 this.status = Status.fail;
                 this.data = .{ .git_clone = bun.invalid_fd };
                 return;
-            } else {
-                return;
-            };
+            } else
+                // For URL schemes not recognized as HTTPS or SSH (e.g. file://, git://),
+                // try passing the URL directly to git clone which handles them natively.
+                Repository.download(
+                    manager.allocator,
+                    this.request.git_clone.env,
+                    &this.log,
+                    manager.getCacheDirectory(),
+                    this.id,
+                    name,
+                    url,
+                    attempt,
+                ) catch |err| {
+                    this.err = err;
+                    this.status = Status.fail;
+                    this.data = .{ .git_clone = bun.invalid_fd };
+                    return;
+                };
 
             this.err = null;
             this.data = .{ .git_clone = .fromStdDir(dir) };

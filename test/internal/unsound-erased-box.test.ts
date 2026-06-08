@@ -19,26 +19,32 @@ const rustSources = globAllSources()
   .rust.filter(p => p.endsWith(".rs"))
   .sort();
 
-async function scan(pattern: RegExp): Promise<string[]> {
+// Read and preprocess each file once; both tests scan the cache.
+const sources = new Map<string, string>();
+for (const abs of rustSources) {
+  const content = await file(abs).text();
+  // Strip full-line comments so prose mentions don't count.
+  const stripped = content.replace(/^\s*\/\/.*$/gm, "");
+  sources.set(path.relative(root, abs).replaceAll(path.sep, "/"), stripped);
+}
+
+function scan(pattern: RegExp): string[] {
   const offenders: string[] = [];
-  for (const abs of rustSources) {
-    const content = await file(abs).text();
-    // Strip full-line comments so prose mentions don't count.
-    const stripped = content.replace(/^\s*\/\/.*$/gm, "");
+  for (const [source, stripped] of sources) {
     if (pattern.test(stripped)) {
-      offenders.push(path.relative(root, abs).replaceAll(path.sep, "/"));
+      offenders.push(source);
     }
   }
   return offenders;
 }
 
-test("ErasedBox (safe-forgeable ptr/dtor pair) stays deleted", async () => {
-  expect(await scan(/\bErasedBox\b/)).toEqual([]);
+test("ErasedBox (safe-forgeable ptr/dtor pair) stays deleted", () => {
+  expect(scan(/\bErasedBox\b/)).toEqual([]);
 });
 
-test("no pub destructor function-pointer fields", async () => {
+test("no pub destructor function-pointer fields", () => {
   // A `pub dtor: unsafe fn(..)` field lets safe code in any crate swap in an
   // arbitrary destructor; whatever later calls it (typically a safe `Drop`)
   // then runs a forged function on a forged pointer.
-  expect(await scan(/\bpub\s+dtor\s*:\s*unsafe\s+fn\b/)).toEqual([]);
+  expect(scan(/\bpub\s+dtor\s*:\s*unsafe\s+fn\b/)).toEqual([]);
 });

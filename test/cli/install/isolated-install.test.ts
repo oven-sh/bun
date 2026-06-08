@@ -622,6 +622,98 @@ describe("optional peers", () => {
   });
 });
 
+test("patched package with multiple peer variants should not re-apply patch (#28147)", async () => {
+  // Regression test: when a patched dependency resolves to multiple isolated
+  // store variants (different peer hashes), the patch should only be applied
+  // once during extraction, not re-applied per variant. Re-applying while
+  // another variant is already hardlinking from that shared cache directory
+  // causes EPERM on Windows.
+  //
+  // Setup: peer-deps@1.0.0 has peerDependencies: { "no-deps": "*" }.
+  // provides-peer-deps-1-0-0 depends on peer-deps + no-deps@1.0.0
+  // provides-peer-deps-2-0-0 depends on peer-deps + no-deps@2.0.0
+  // This creates two isolated store variants for peer-deps (different peer hashes).
+  // We use `bun patch` to create the patch, avoiding manual patch format issues.
+
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patch-peer-variants",
+      dependencies: {
+        "provides-peer-deps-1-0-0": "1.0.0",
+        "provides-peer-deps-2-0-0": "1.0.0",
+      },
+    }),
+  );
+
+  // Initial install without patch
+  await runBunInstall(bunEnv, packageDir);
+
+  // Use bun patch to create a proper patch for peer-deps
+  const patchProc = spawn({
+    cmd: [bunExe(), "patch", "peer-deps"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await patchProc.exited).toBe(0);
+
+  // Modify the patched package to prove the patch was applied
+  const peerDepsPkgPath = join(packageDir, "node_modules", "peer-deps", "package.json");
+  const peerDepsPkg = JSON.parse(await file(peerDepsPkgPath).text());
+  peerDepsPkg.description = "patched";
+  await write(peerDepsPkgPath, JSON.stringify(peerDepsPkg, null, 4));
+
+  // Commit the patch
+  const commitProc = spawn({
+    cmd: [bunExe(), "patch", "--commit", "node_modules/peer-deps"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await commitProc.exited).toBe(0);
+
+  async function verifyInstall() {
+    const storeDirs = (
+      await Array.fromAsync(
+        new Bun.Glob("peer-deps@*").scan({
+          cwd: join(packageDir, "node_modules", ".bun"),
+          onlyFiles: false,
+        }),
+      )
+    ).sort();
+
+    // peer-deps should have at least 2 store variants (different peer hashes)
+    expect(storeDirs.length).toBeGreaterThanOrEqual(2);
+
+    // Verify the patch was applied in every store variant
+    for (const storeDir of storeDirs) {
+      const patchedPkg = await file(
+        join(packageDir, "node_modules", ".bun", storeDir, "node_modules", "peer-deps", "package.json"),
+      ).json();
+      expect(patchedPkg.description).toBe("patched");
+    }
+  }
+
+  // Reinstall with the patch to exercise the extraction + patch + hardlink path
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  await verifyInstall();
+
+  // Reinstall again from clean node_modules to exercise the cache-hit path
+  // (missing_from_cache == false). Before the fix, this would re-apply the
+  // patch per variant, causing EPERM on Windows.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  await verifyInstall();
+});
+
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

@@ -658,7 +658,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     // that propagate as Ok(None) from dir_info_cached_miss.
                     None
                 }
-                Ok(Some(info)) => Some(info),
+                Ok(Some(info)) => {
+                    Some(info)
+                }
             };
         // Fallback root DirInfo for callers that ignore the return value
         // (filter_run.rs, pack_command.rs both discard it). Uses $HOME
@@ -783,7 +785,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        Ok(root_dir_info_fallback)
+        Ok(root_dir_info.unwrap_or(root_dir_info_fallback))
     }
 
     /// Best-effort default-loader lookup by file extension. Thin forwarder to

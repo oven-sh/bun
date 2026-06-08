@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import fs from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1605,6 +1606,35 @@ describe("bundler", () => {
         expect(build.success).toBe(false);
         expect(asyncStarted).toBe(true);
         expect(asyncCompleted).toBe(true);
+      },
+    };
+  });
+
+  itBundled("plugin/ResolveNullFallbackSymlink", ({ root }) => {
+    return {
+      files: {
+        "index.ts": `
+          import { value } from "./link/mod.ts";
+          console.log(value);
+        `,
+        "real/mod.ts": `
+          export const value = "symlinked";
+        `,
+      },
+      plugins(builder) {
+        // Create a directory symlink before resolution happens.
+        const linkPath = path.join(root, "link");
+        const targetPath = path.join(root, "real");
+        if (!fs.existsSync(linkPath)) {
+          fs.symlinkSync(targetPath, linkPath, "junction");
+        }
+
+        builder.onResolve({ filter: /.*/ }, () => {
+          return null;
+        });
+      },
+      run: {
+        stdout: "symlinked",
       },
     };
   });

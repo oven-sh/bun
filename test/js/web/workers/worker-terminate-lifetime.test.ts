@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -19,9 +19,13 @@ const timeout = slow ? 60_000 : 20_000;
 // LeakSanitizer, whose sweep (enabled by ASAN CI lanes via detect_leaks=1)
 // then takes minutes — disable it in the child; the use-after-free detection
 // these tests exist for is AddressSanitizer proper and unaffected.
+//
+// Not on Windows: bmalloc's system-heap fallback is unsupported there, so
+// Malloc=1 aborts the child at startup, and no Windows lane runs ASAN — the
+// tests still cover the plain clean-shutdown contract.
 const debugHeapEnv = {
   ...bunEnv,
-  Malloc: "1",
+  ...(isWindows ? {} : { Malloc: "1" }),
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
 };
 

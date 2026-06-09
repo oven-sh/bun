@@ -36,12 +36,6 @@ interface DockerComposeOptions {
   composeFile?: string;
 }
 
-// Daemon errors produced when two `compose up` invocations for the same
-// project race each other: container create name conflicts, network create
-// conflicts, and colliding with an in-flight removal during recreate. Any
-// other failure (unhealthy container, missing image) is reported immediately.
-const composeUpRaceSignature = /already in use|already exists|already in progress/i;
-
 class DockerComposeHelper {
   private projectName: string;
   private composeFile: string;
@@ -139,27 +133,13 @@ class DockerComposeHelper {
     // healthy, which with `interval: 1h` and an engine that doesn't honor the
     // 5s start_interval default means "hang until the test's beforeAll times
     // out with no error message". 60 covers cold mysql init on tmpfs.
-    //
-    // Retried on create conflicts: `compose up` is not safe to run
-    // concurrently for one project. Two invocations can both see the
-    // container as missing and race to create it, and the loser exits with
-    // "Conflict. The container name ... is already in use". CI hits this
-    // routinely: runner.node.mjs backgrounds warmup-ci.ts's `up` while the
-    // first docker-using test runs its own, and Buildkite shards on one host
-    // share the daemon. The winner's container exists by the time the loser
-    // fails, so re-running `up` reuses it and waits for health as usual.
-    const upArgs = ["up", "-d", "--wait", "--wait-timeout", "60", service];
-    let up = await this.exec(upArgs);
-    for (let attempt = 1; up.exitCode !== 0 && attempt < 3 && composeUpRaceSignature.test(up.stderr); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 500 * attempt));
-      up = await this.exec(upArgs);
-    }
+    const { exitCode, stderr } = await this.exec(["up", "-d", "--wait", "--wait-timeout", "60", service]);
 
-    if (up.exitCode !== 0) {
+    if (exitCode !== 0) {
       const ps = await this.exec(["ps", "-a", service]);
       const logs = await this.exec(["logs", "--tail", "50", service]);
       throw new Error(
-        `Failed to start service ${service}: ${up.stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
+        `Failed to start service ${service}: ${stderr}\n` + `--- ps ---\n${ps.stdout}\n--- logs ---\n${logs.stdout}`,
       );
     }
   }
@@ -205,7 +185,61 @@ class DockerComposeHelper {
     throw new Error(`Port ${port} did not become ready within ${timeout}ms`);
   }
 
+  // Ask the shard's coordinator (test/docker/coordinator.ts, spawned by
+  // scripts/runner.node.mjs) to start the service, and wait for its ready
+  // message with the port mapping. The coordinator owns every `compose up`
+  // for the shard, so concurrent processes can't race duplicate invocations
+  // into the daemon. Resolves null when no coordinator is configured or the
+  // socket is unreachable; the caller then runs compose directly (local dev,
+  // or the coordinator died). A reply of ok=false is a real service failure
+  // and is thrown rather than retried through the fallback.
+  private ensureViaCoordinator(service: ServiceName): Promise<ServiceInfo | null> {
+    const socketPath = process.env.BUN_DOCKER_COORDINATOR;
+    if (!socketPath) {
+      return Promise.resolve(null);
+    }
+
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(socketPath);
+      let buffer = "";
+      let replied = false;
+      socket.setEncoding("utf8");
+      socket.on("connect", () => {
+        socket.write(JSON.stringify({ type: "ensure", service }) + "\n");
+      });
+      socket.on("data", chunk => {
+        buffer += chunk;
+        const newline = buffer.indexOf("\n");
+        if (newline === -1 || replied) return;
+        replied = true;
+        socket.end();
+        try {
+          const reply = JSON.parse(buffer.slice(0, newline));
+          if (reply.ok) {
+            resolve(reply.info);
+          } else {
+            reject(new Error(`Failed to start service ${service} (via coordinator): ${reply.error}`));
+          }
+        } catch {
+          // Garbled reply: treat the coordinator as broken and fall back.
+          resolve(null);
+        }
+      });
+      socket.on("error", () => {
+        if (!replied) resolve(null);
+      });
+      socket.on("close", () => {
+        if (!replied) resolve(null);
+      });
+    });
+  }
+
   async ensure(service: ServiceName): Promise<ServiceInfo> {
+    const viaCoordinator = await this.ensureViaCoordinator(service);
+    if (viaCoordinator !== null) {
+      return viaCoordinator;
+    }
+
     try {
       await this.ensureDocker();
     } catch (error) {

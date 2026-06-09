@@ -105,7 +105,7 @@ pub enum ObservableGetter {
 
 pub use bun_spawn::process::StdioKind;
 
-// PORT NOTE: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
+// Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
 // hooks are hand-expanded below for `Subprocess<'_>`.
 //
@@ -116,12 +116,12 @@ pub use bun_spawn::process::StdioKind;
 // codegen shim hands to whichever method JS calls next. `UnsafeCell`-backed
 // fields suppress `noalias` on the outer `&Subprocess`, making the miscompile
 // structurally impossible.
-// Intrusive ref-count: bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
-// `RefPtr<Subprocess>` provides ref/deref and frees the Box when ref_count → 0.
+// Intrusive ref-count: `RefPtr<Subprocess>` provides ref/deref and frees the
+// Box when ref_count → 0; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub ref_count: RefCount<Subprocess<'a>>,
-    /// Intrusively-refcounted `Process` (Zig: `*Process`). Allocated via
+    /// Intrusively-refcounted `Process`. Allocated via
     /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
     /// from construction is released in [`Subprocess::finalize`] via
     /// `Process::deref()`. Not `Arc` — `Process` carries its own
@@ -138,7 +138,7 @@ pub struct Subprocess<'a> {
     /// Terminal attached to this subprocess (if spawned with terminal option)
     pub terminal: Cell<Option<NonNull<Terminal>>>,
 
-    // Zig: `*jsc.JSGlobalObject` — JSC global outlives every Subprocess.
+    // The JSC global outlives every Subprocess.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub observable_getters: Cell<EnumSet<ObservableGetter>>,
     pub closed: Cell<EnumSet<StdioKind>>,
@@ -148,7 +148,8 @@ pub struct Subprocess<'a> {
     pub ipc_data: JsCell<Option<IPC::SendQueue>>,
     pub flags: Cell<Flags>,
 
-    // TODO(port): lifetime — weak observer, nulled in onStdinDestroyed; no ownership
+    /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
+    /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
     /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
@@ -170,8 +171,8 @@ pub struct Subprocess<'a> {
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
 
-// PORT NOTE: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
-// spawn_maybe_sync` fills every field explicitly (see PORT NOTE there), and
+// Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
+// spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
@@ -222,10 +223,9 @@ impl<'a> Subprocess<'a> {
         }
     }
 
-    /// Borrow the intrusively-refcounted `Process`. Zig stores `*Process` and
-    /// reads/mutates freely; every access site is single-threaded on the JS
-    /// mutator, so projecting `&`/`&mut` through the raw pointer mirrors the
-    /// original semantics.
+    /// Borrow the intrusively-refcounted `Process`. Every access site is
+    /// single-threaded on the JS mutator, so projecting `&`/`&mut` through
+    /// the raw pointer is sound.
     #[inline]
     pub fn process(&self) -> &Process {
         self.process.get()
@@ -239,15 +239,16 @@ impl<'a> Subprocess<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — Zig `*Process` semantics. R-2: `&self`
+        // SAFETY: see `process()` — all access is on the single JS-mutator
+        // thread. R-2: `&self`
         // (interior-mutability) so callers don't need `&mut Subprocess`;
         // `Process` lives in a separate allocation (BackRef) so the returned
         // `&mut` never aliases `*self`. Single JS-mutator thread.
         unsafe { &mut *self.process.as_ptr() }
     }
 
-    /// Borrow the stored JSC global. Zig stores `*jsc.JSGlobalObject` raw; the
-    /// global is guaranteed to outlive every Subprocess it created.
+    /// Borrow the stored JSC global. The global is guaranteed to outlive
+    /// every Subprocess it created.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
@@ -270,19 +271,19 @@ impl<'a> Subprocess<'a> {
         self.flags.set(v);
     }
 
-    /// Intrusive `ref()` — Zig's `pub const ref = ref_count.ref`.
+    /// Intrusive `ref()`.
     #[inline]
     pub fn ref_(&self) {
         // SAFETY: `&self` → live `*const Self`; `RefCount::ref_` only touches
         // the intrusive counter via `addr_of_mut!`.
         unsafe { RefCount::<Self>::ref_(self.as_ctx_ptr()) }
     }
-    /// Intrusive `deref()` — Zig's `pub const deref = ref_count.deref`.
+    /// Intrusive `deref()`.
     /// May free `self`; do not use `self` after calling.
     #[inline]
     pub fn deref(&self) {
         // SAFETY: `&self` → live `*const Self`; destructor handles the Box.
-        // R-2: `&self` so callers can `defer self.deref()` without holding a
+        // R-2: `&self` so callers can deref at scope exit without holding a
         // unique borrow across re-entrant JS.
         unsafe { RefCount::<Self>::deref(self.as_ctx_ptr()) }
     }
@@ -453,7 +454,6 @@ impl Subprocess<'_> {
             return true;
         }
 
-        // PERF(port): was `inline for` over .{stdout, stderr} — unrolled manually.
         if self.stdout.get().has_pending_activity() {
             return true;
         }
@@ -496,9 +496,8 @@ impl Subprocess<'_> {
                     &self.stderr
                 };
                 if matches!(out.get(), Readable::Pipe(_)) {
-                    // Mirror Zig: copy the pipe pointer out, reassign `out.*`, then
-                    // mutate/deref the pipe. In Rust, move the Rc<PipeReader> out of
-                    // `*out` first so reassigning doesn't drop it while still borrowed.
+                    // Move the Rc<PipeReader> out of `*out` first so
+                    // reassigning doesn't drop it while still borrowed.
                     let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
                         unreachable!()
                     };
@@ -586,9 +585,8 @@ impl Subprocess<'_> {
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stdin);
-        // PORT NOTE: reshaped for borrowck — Zig passed `&stdin` and `*Subprocess`
-        // separately (aliasing). `Writable::to_js` takes only the parent and
-        // projects `stdin` internally so no two `&mut` overlap here.
+        // `Writable::to_js` takes only the parent and projects `stdin`
+        // internally so no two `&mut` overlap here.
         Ok(Writable::to_js(this, global_this))
     }
 
@@ -768,8 +766,6 @@ impl Subprocess<'_> {
             self.update_has_pending_activity();
         }
 
-        // Zig `defer if (must_deref) this.deref()` — there are no early returns
-        // above, so running it last is the exact LIFO order.
         if must_deref {
             self.deref();
         }
@@ -844,9 +840,8 @@ impl Subprocess<'_> {
             #[cfg(windows)]
             {
                 if let StdioResult::Buffer(buffer) = item {
-                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`); Zig's
-                    // `@intFromPtr(item.buffer.fd().cast())` is just the
-                    // numeric handle value.
+                    // `UvHandle::fd()` returns a `HANDLE` (`*mut c_void`);
+                    // expose the numeric handle value.
                     let fdno: usize = buffer.fd() as usize;
                     array.push(global, JSValue::js_number(fdno as f64))?;
                 } else {
@@ -897,8 +892,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // defer this.deref();
-        // defer this.disconnectIPC(true);
+        // `deref()` and `disconnect_ipc(true)` run at the tail of this body.
         // R-2: now that both take `&self`, scopeguard would no longer alias —
         // kept explicit at the tail for now (no early returns in this body).
 
@@ -1121,13 +1115,10 @@ impl Subprocess<'_> {
             }
         }
 
-        // defer if (!did_update_has_pending_activity) this.updateHasPendingActivity();
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
-        // defer this.disconnectIPC(true);
         self.disconnect_ipc(true);
-        // defer this.deref();
         self.deref();
     }
 
@@ -1199,8 +1190,7 @@ impl Subprocess<'_> {
             if let StdioResult::Buffer(buffer) = item {
                 // `uv_close` is async — the pipe must outlive this scope until
                 // `on_pipe_close` runs and reclaims the allocation. Hand the
-                // `Box` back to libuv as a raw pointer (Zig keeps `*uv.Pipe`
-                // and `clearAndFree` only frees the slice of pointers).
+                // `Box` back to libuv as a raw pointer.
                 Box::leak(buffer).close(on_pipe_close);
             }
         }
@@ -1272,7 +1262,7 @@ impl Subprocess<'_> {
         if exit_handler_pending {
             this.deref();
         }
-        // Match Zig's `this.process.deref()`: release the intrusive ref now,
+        // Release the intrusive ref now,
         // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
         // no code path reads `this.process` after this (finalize runs once).
         // SAFETY: `process` is the live Box-backed Process; deref() frees it
@@ -1543,8 +1533,6 @@ pub mod testing_apis {
         Ok(JSValue::TRUE)
     }
 }
-// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
 pub use testing_apis as testing_ap_is;
-
-// ported from: src/runtime/api/bun/subprocess.zig

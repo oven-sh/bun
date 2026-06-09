@@ -1,7 +1,7 @@
 // The binding generator to rule them all.
-// Converts binding definition files (.bind.ts) into C++ and Zig code.
+// Converts binding definition files (.bind.ts) into C++ and native binding code.
 //
-// Generated bindings are available in `bun.generated.<basename>.*` in Zig,
+// Generated bindings are available as `bun.generated.<basename>.*` on the native side,
 // or `Generated::<basename>::*` in C++ from including `Generated<basename>.h`.
 import assert from "node:assert";
 import fs from "node:fs";
@@ -60,8 +60,8 @@ function resolveVariantStrategies(vari: Variant, name: string) {
     const abiType = !isNullable && arg.type.canDirectlyMapToCAbi();
     if (abiType) {
       arg.loweringStrategy = {
-        // This does not work in release builds, possibly due to a Zig 0.13 bug
-        // regarding by-value extern structs in C functions.
+        // Passing by-value extern structs in C functions did not work
+        // reliably in release builds.
         // type: cAbiTypeInfo(abiType)[0] > 8 ? "c-abi-pointer" : "c-abi-value",
         // Always pass an argument by-pointer for now.
         type: abiType === "*anyopaque" || abiType === "*JSGlobalObject" ? "c-abi-value" : "c-abi-pointer",
@@ -1376,7 +1376,7 @@ for (const [filename, { functions, typedefs }] of files) {
     cpp.line(`}`);
     cpp.line();
 
-    // Generated Zig dispatch functions
+    // Generated dispatch functions
     variNum = 1;
     for (const vari of fn.variants) {
       const dispatchName = extDispatchVariant(namespaceVar, fn.name, variNum);

@@ -66,5 +66,3 @@ pub fn get(code: u16) -> Option<&'static [u8]> {
         _ => None,
     }
 }
-
-// ported from: src/runtime/server/HTTPStatusText.zig

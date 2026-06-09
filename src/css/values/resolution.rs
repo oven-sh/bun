@@ -87,5 +87,3 @@ impl Resolution {
         }
     }
 }
-
-// ported from: src/css/values/resolution.zig

@@ -1,6 +1,6 @@
 // GENERATED: re-run `bun misctools/generate-add-completions.ts` with .rs output
-// (source src/cli/add_completions.zig is auto-generated; do not hand-port the
-// compressed_data blob, FirstLetter/Index tables, or init/getPackages — update the generator.)
+// (do not hand-edit the compressed_data blob, FirstLetter/Index tables, or
+// init/getPackages — update the generator.)
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -33,7 +33,7 @@ pub(crate) enum FirstLetter {
     Z = b'z',
 }
 
-/// Largest per-letter package list length (Zig: `pub const biggest_list`).
+/// Largest per-letter package list length.
 pub(crate) const BIGGEST_LIST: usize = 1034;
 
 /// Decompress the package-name table. The compressed blob and Index table are

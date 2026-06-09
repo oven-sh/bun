@@ -251,6 +251,48 @@ describe("InternalSourceMap.fromVLQ validation", () => {
   });
 });
 
+describe("InternalSourceMap.toVLQ", () => {
+  test.concurrent("window state of i32::MIN must not crash the VLQ encoder", async () => {
+    // SyncEntry state is raw i32, so a blob whose first window starts at
+    // generated column i32::MIN makes appendVLQTo pass a delta of exactly
+    // i32::MIN to VLQ.encode. i32::MIN has no sign-magnitude representation;
+    // the encoder's magnitude negation overflowed on it (debug builds abort
+    // with "attempt to negate with overflow"). The crash handler reaches the
+    // same encoder edge with bitcast u32 address halves while reporting a
+    // crash. fromVLQ rejects negative absolutes, so craft the blob by hand.
+    // Run in a child process so the abort is recorded as a failure here
+    // instead of taking down the test runner.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { internalSourceMap } = require("bun:internal-for-testing");
+         // Blob layout (see src/sourcemap/InternalSourceMap.rs):
+         // [0..8] total_len u64, [8..16] mapping_count u64,
+         // [16..24] input_line_count u64, [24..28] sync_count u32,
+         // [28..32] stream_offset u32, [32..56] SyncEntry, [56..88] window
+         // header (count=1, no deltas), [88] stream tail pad.
+         const blob = new Uint8Array(89);
+         const dv = new DataView(blob.buffer);
+         dv.setBigUint64(0, 89n, true); // total_len
+         dv.setBigUint64(8, 1n, true); // mapping_count
+         dv.setUint32(24, 1, true); // sync_count
+         dv.setUint32(28, 56, true); // stream_offset
+         dv.setInt32(36, -2147483648, true); // SyncEntry.generated_column
+         blob[56] = 1; // window mapping count
+         console.log("TOVLQ: " + internalSourceMap.toVLQ(blob));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // i32::MIN wraps to the "-0" encoding ("B"); the other three fields are 0.
+    expect(stdout).toBe("TOVLQ: BAAA\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("InternalSourceMap round-trip", () => {
   test("synthetic: fromVLQ → toVLQ preserves all 4-field positions; names dropped, 1-field skipped", () => {
     const vlqIn = buildSyntheticVLQ();

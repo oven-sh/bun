@@ -37,9 +37,6 @@ impl Default for LengthOrNumber {
     }
 }
 
-// Zig `deinit` only freed the owned `calc` Box inside Length — handled by Drop now.
-// Zig `eql` → derive(PartialEq); Zig `deepClone` → derive(Clone).
-
 pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
 /// Either a [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage), or the `auto` keyword.
@@ -62,8 +59,6 @@ impl LengthPercentageOrAuto {
     }
 }
 
-// Zig `eql` → derive(PartialEq); Zig `deepClone` → derive(Clone).
-
 const PX_PER_IN: f32 = 96.0;
 const PX_PER_CM: f32 = PX_PER_IN / 2.54;
 const PX_PER_MM: f32 = PX_PER_CM / 10.0;
@@ -74,15 +69,13 @@ const PX_PER_PC: f32 = PX_PER_IN / 6.0;
 // ──────────────────────────────────────────────────────────────────────────
 // LengthValue
 //
-// The Zig original is a `union(enum)` with ~50 variants, each carrying a single
-// `CSSNumber` (f32). Nearly every method iterates `std.meta.fields(@This())` /
-// `bun.meta.EnumFields(@This())` to dispatch by tag — Zig comptime reflection.
+// An enum with ~50 variants, each carrying a single `CSSNumber` (f32).
 //
 // Per PORTING.md §"Comptime reflection": >8 variants → small macro generator.
 // `define_length_units!` generates the enum plus the handful of per-variant
 // dispatch helpers (`value()`, `unit()`, `from_unit_ci()`, `map_value()`,
 // `try_same_unit_op()`, `feature()`); all higher-level methods are then written
-// in terms of those, keeping the logic 1:1 with the Zig.
+// in terms of those.
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! define_length_units {
@@ -138,7 +131,7 @@ macro_rules! define_length_units {
                 }
             }
 
-            /// Compat-feature gate for this unit (the Zig `FeatureMap`).
+            /// Compat-feature gate for this unit.
             #[inline]
             fn feature(&self) -> Option<Feature> {
                 match self { $( Self::$variant(_) => $feature, )* }
@@ -268,8 +261,7 @@ define_length_units! {
     Cqmax: b"cqmax" => Some(Feature::ContainerQueryLengthUnits),
 }
 
-// The Zig `comptime { ... }` block at :253-262 statically asserts that
-// `FeatureMap` covers every variant. The macro above guarantees this by
+// The macro above guarantees feature coverage of every variant by
 // construction (one `=> $feature` per variant), so no separate assert needed.
 
 impl LengthValue {
@@ -351,7 +343,6 @@ impl LengthValue {
     }
 
     pub(crate) fn map(self, map_fn: impl FnOnce(f32) -> f32) -> LengthValue {
-        // PERF(port): was comptime monomorphization (`comptime map_fn: *const fn`).
         self.map_value(map_fn)
     }
 
@@ -397,7 +388,7 @@ impl LengthValue {
 impl PartialEq for LengthValue {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        // Zig `eql`: same tag AND equal payload (f32 `==`).
+        // Same tag AND equal payload (f32 `==`).
         core::mem::discriminant(self) == core::mem::discriminant(other)
             && self.value() == other.value()
     }
@@ -422,8 +413,6 @@ impl Length {
         self.clone()
     }
 
-    // Zig `deinit` → Drop on Box<Calc<Length>> handles this.
-
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
         if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
@@ -439,8 +428,6 @@ impl Length {
 
     // to_css — provided by #[derive(css::ToCss)] (Box<Calc<Length>> auto-derefs
     // to Calc::<V: CalcValue>::to_css inherent). parse KEPT (custom Calc::Value unwrap).
-
-    // Zig `eql` → derive(PartialEq).
 
     pub(crate) fn px(p: CSSNumber) -> Length {
         Self::Value(LengthValue::Px(p))
@@ -526,8 +513,7 @@ impl Length {
                 right: Box::new(b.into_calc()),
             })),
         }
-        // PORT NOTE: reshaped for borrowck — Zig matched on tags then accessed
-        // `a.calc.value` / `b.calc.value` while both were still bound; Rust needs
+        // For borrowck this needs
         // to move out of the Box, so the conditions are folded into match guards.
     }
 
@@ -557,9 +543,8 @@ impl Length {
                 }
                 _ => return None,
             }
-            // TODO(port): the Zig builds `Length{ .calc = s.left }` without
-            // cloning (alias of the same heap node). With `Box` ownership we
-            // must clone here; revisit if Calc nodes become arena-backed refs.
+            // `Box` ownership requires cloning the sub-nodes here (no aliasing
+            // of the same heap node).
         }
 
         if let Self::Calc(c) = other {
@@ -596,8 +581,7 @@ impl Length {
             },
             _ => length,
         }
-        // PORT NOTE: reshaped for borrowck — Zig rebinds `c` while reading `c.*`;
-        // Rust moves out of the Box once and rebuilds.
+        // For borrowck, this moves out of the Box once and rebuilds.
     }
 
     pub(crate) fn try_sign(&self) -> Option<f32> {
@@ -699,7 +683,7 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // PORT NOTE: `LengthValue::try_op` takes a 2-arg closure (ctx folded
+        // `LengthValue::try_op` takes a 2-arg closure (ctx folded
         // in by caller); the `protocol::TryOp` shape passes `C` by-value with
         // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
         // might be called more than once. Inline the same-unit + px-convert
@@ -708,8 +692,8 @@ impl protocol::TryOp for LengthValue {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:447) —
-        // preserving that behavior verbatim; likely an upstream bug.
+        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
+        // for behavioral compatibility.
         if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(LengthValue::Px(f(ctx, a, b)));
         }
@@ -722,8 +706,8 @@ impl protocol::TryOpTo for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:473) —
-        // preserving that behavior verbatim; likely an upstream bug.
+        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
+        // for behavioral compatibility.
         if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(f(ctx, a, b));
         }
@@ -799,9 +783,8 @@ impl protocol::TryMap for Angle {
 impl protocol::TryOp for Angle {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // PORT NOTE: `Angle::op` takes a `fn(C, f32, f32)` pointer (Zig
-        // `comptime`-monomorphized fn arg), so we can't pass the generic
-        // closure through it. Inline the per-variant dispatch here instead.
+        // `Angle::op` takes a `fn(C, f32, f32)` pointer, so we can't pass the
+        // generic closure through it. Inline the per-variant dispatch here instead.
         Some(match (self, rhs) {
             (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(f(ctx, *a, *b)),
             (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(f(ctx, *a, *b)),
@@ -847,5 +830,3 @@ impl protocol::IsCompatible for Angle {
         true
     }
 }
-
-// ported from: src/css/values/length.zig

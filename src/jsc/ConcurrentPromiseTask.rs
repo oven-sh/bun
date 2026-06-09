@@ -13,8 +13,7 @@ use bun_ptr::BackRef;
 /// - `then(&mut self, &mut JSPromise)` — resolves the promise with the result on the JS thread
 pub trait ConcurrentPromiseTaskContext: Sized {
     /// Tag this `ConcurrentPromiseTask<Self>` carries when enqueued back onto the
-    /// JS event loop's concurrent queue (`task_tag::*`). Mirrors Zig's
-    /// per-instantiation `TaggedPointerUnion` membership (e.g. `CopyFilePromiseTask`).
+    /// JS event loop's concurrent queue (`task_tag::*`).
     const TASK_TAG: TaskTag;
 
     fn run(&mut self);
@@ -29,20 +28,18 @@ pub trait ConcurrentPromiseTaskContext: Sized {
 /// - `run(*Context)` - performs the work on the thread pool
 /// - `then(*Context, jsc.JSPromise)` - resolves the promise with the result on the JS thread
 pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
-    // Zig: `ctx: *Context` — heap-allocated by caller (e.g. `bun.new(CopyFile, ...)`).
-    // Owned here so dropping the task frees the context (matches Zig `Context.deinit()` → `bun.destroy`).
+    // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
     pub event_loop: BackRef<EventLoop>,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
 
     // This is a poll because we want it to enter the uSockets loop
-    // PORT NOTE: `ref` is a Rust keyword; field renamed to `ref_`.
+    // (`ref` is a Rust keyword, hence `ref_`)
     pub ref_: KeepAlive,
 }
 
@@ -59,8 +56,6 @@ impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'
 }
 
 impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Context> {
-    // Zig: `pub const new = bun.TrivialNew(@This());` — folded into `Box::new` below.
-
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
         // `VirtualMachine::get()` returns the JS-thread singleton; the VM and
         // its `EventLoop` outlive every task scheduled on it.
@@ -135,5 +130,3 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
-
-// ported from: src/jsc/ConcurrentPromiseTask.zig

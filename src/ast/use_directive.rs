@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum UseDirective {
     // TODO: Remove this, and provide `UseDirective.Optional` instead
@@ -49,5 +49,3 @@ impl UseDirective {
         None
     }
 }
-
-// ported from: src/js_parser/ast/UseDirective.zig

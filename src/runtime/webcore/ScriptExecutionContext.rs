@@ -25,5 +25,3 @@ impl IdentifierExt for Identifier {
         self.global_object().is_some()
     }
 }
-
-// ported from: src/runtime/webcore/ScriptExecutionContext.zig

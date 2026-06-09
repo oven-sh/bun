@@ -1043,7 +1043,8 @@ try {
 
 | Connection Errors                 | Description                                          |
 | --------------------------------- | ---------------------------------------------------- |
-| `ERR_POSTGRES_CONNECTION_CLOSED`  | Connection was terminated or never established       |
+| `ERR_POSTGRES_CONNECTION_CLOSED`  | An established connection was terminated             |
+| `ERR_POSTGRES_CONNECTION_FAILED`  | Connection could not be established (refused, or closed before the handshake completed — e.g. the server is still starting up) |
 | `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period |
 | `ERR_POSTGRES_IDLE_TIMEOUT`       | Connection closed due to inactivity                  |
 | `ERR_POSTGRES_LIFETIME_TIMEOUT`   | Connection exceeded maximum lifetime                 |

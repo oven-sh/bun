@@ -761,6 +761,31 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_close(&self) {
+        // A close before the handshake finished means the server (or an
+        // intermediary like a container port proxy) accepted the TCP
+        // connection but went away before completing startup — e.g. the
+        // database is still initializing. Report it as a connect failure
+        // (the connection was never established) rather than a closed
+        // connection so the error is actionable.
+        self.handle_socket_failure(|this| match this.status.get() {
+            Status::Connecting | Status::SentStartupMessage => this.fail_fmt(
+                b"ERR_POSTGRES_CONNECTION_FAILED",
+                format_args!("Connection closed before the connection was established"),
+            ),
+            _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
+        });
+    }
+
+    pub fn on_connect_error(&self) {
+        self.handle_socket_failure(|this| {
+            this.fail_fmt(
+                b"ERR_POSTGRES_CONNECTION_FAILED",
+                format_args!("Failed to connect"),
+            );
+        });
+    }
+
+    fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
 
         if self.vm().is_shutting_down() {
@@ -778,7 +803,7 @@ impl PostgresSQLConnection {
             event_loop.enter();
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
 
-            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            fail(self);
             event_loop.exit();
         }
     }
@@ -1421,7 +1446,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        Self::guarded(this, |t| t.on_close());
+        Self::guarded(this, |t| t.on_connect_error());
     }
 
     pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {

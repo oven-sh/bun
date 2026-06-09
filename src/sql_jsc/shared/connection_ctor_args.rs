@@ -26,7 +26,10 @@ macro_rules! impl_ssl_mode_arg {
         }
     };
 }
-// TODO: update the MySQL mapping to match MySQL's own ssl-mode set.
+// Both drivers use the same five postgres-shaped modes: the JS side
+// (`normalizeSSLMode` in src/js/internal/sql/shared.ts) normalizes each
+// driver's accepted ssl-mode spellings to this one wire enum, so MySQL's
+// native ssl-mode vocabulary never crosses this boundary.
 impl_ssl_mode_arg!(bun_sql::mysql::ssl_mode::SSLMode);
 impl_ssl_mode_arg!(bun_sql::postgres::SSLMode);
 

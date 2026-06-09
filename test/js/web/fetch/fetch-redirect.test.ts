@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // https://github.com/oven-sh/bun/issues/12701
 it("fetch() preserves body on redirect", async () => {
@@ -101,5 +101,7 @@ it("fetch() does not leak intermediate redirect URLs in multi-hop chains", async
   // (~21 MiB each). Without it, allocator growth plateaus after warmup so
   // the second half stays near zero. Asserting on the second half avoids
   // counting one-off arena growth that can still occur shortly after warmup.
-  expect(secondHalfMiB).toBeLessThan(12);
+  // Under ASAN the free quarantine (default 256 MB) plus redzones and glibc
+  // page retention inflate RSS even with no leak, so widen the threshold.
+  expect(secondHalfMiB).toBeLessThan(isASAN ? 400 : 12);
 }, 60_000);

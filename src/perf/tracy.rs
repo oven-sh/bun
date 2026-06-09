@@ -1,25 +1,18 @@
 //! https://github.com/wolfpld/tracy
 //! To use this module, you must have Tracy installed on your system.
 //! On macOS, you can install it with `brew install tracy`.
-//!
-//! This file is based on the code from Zig's transpiler source.
-//! Thank you to the Zig team
-
-#![allow(dead_code)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-#[allow(unused_imports)]
 use bun_core::env_var;
 
 pub const ENABLE_ALLOCATION: bool = false;
 pub const ENABLE_CALLSTACK: bool = false;
 
-// PORT NOTE: Zig `pub var enable = false;` — use AtomicBool so reads are safe
-// from any thread without `unsafe`. All loads/stores are Relaxed (matches Zig's
-// unsynchronized plain global).
+// An AtomicBool keeps reads safe from any thread without `unsafe`. All
+// loads/stores are Relaxed.
 static ENABLE: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
@@ -33,16 +26,10 @@ pub fn set_enable(v: bool) {
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ___tracy_c_zone_context {
     pub id: u32,
     pub active: c_int,
-}
-
-impl Default for ___tracy_c_zone_context {
-    fn default() -> Self {
-        Self { id: 0, active: 0 }
-    }
 }
 
 impl ___tracy_c_zone_context {
@@ -89,16 +76,11 @@ impl ___tracy_c_zone_context {
 
 pub type Ctx = ___tracy_c_zone_context;
 
+/// Begin a Tracy zone. The
+/// per-callsite static source location is emitted by the `tracy_trace!`
+/// macro, which calls this with the already-built static.
 #[inline]
 pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
-    // TODO(port): Zig signature is `trace(comptime src: std.builtin.SourceLocation)`
-    // and synthesizes a per-monomorphization `static holder.srcloc`. Rust cannot
-    // create a fresh static per generic-value instantiation without a macro, so this
-    // fn takes the already-built static directly. TODO(port): provide a `tracy_trace!()`
-    // macro that emits a per-callsite
-    // `static SRCLOC: ___tracy_source_location_data { function: concat!(module_path!(),"\0"),
-    // file: concat!(file!(),"\0"), line: line!(), .. }` and calls this — do NOT
-    // reintroduce an intermediate SourceLocation struct.
     if !enable() {
         return Ctx::default();
     }
@@ -110,12 +92,12 @@ pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     }
 }
 
+/// Begin a named Tracy zone. The
+/// per-callsite static (with `name` set) is emitted by the
+/// `tracy_trace_named!` macro, which calls this with the already-built
+/// static.
 #[inline]
 pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
-    // TODO(port): Zig `traceNamed(comptime src, comptime name)` — same
-    // per-callsite-static issue as `trace`. The `name` is folded into the
-    // caller-provided static `srcloc.name`. TODO(port): add a
-    // `tracy_trace_named!("name")` macro.
     if !enable() {
         return Ctx::default();
     }
@@ -125,41 +107,75 @@ pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     } else {
         ___tracy_emit_zone_begin(srcloc, 1)
     }
+}
+
+/// Begin a Tracy zone with a per-callsite static source location.
+/// Expands to a fresh `static SRCLOC` per
+/// callsite (no intermediate `SourceLocation` struct) and calls
+/// `tracy::trace`.
+#[macro_export]
+macro_rules! tracy_trace {
+    () => {{
+        static SRCLOC: $crate::tracy::___tracy_source_location_data =
+            $crate::tracy::___tracy_source_location_data {
+                name: ::core::ptr::null(),
+                function: concat!(module_path!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
+                file: concat!(file!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
+                line: line!(),
+                color: 0,
+            };
+        $crate::tracy::trace(&SRCLOC)
+    }};
+}
+
+/// Begin a named Tracy zone with a per-callsite static source location.
+/// The name must be a
+/// string literal; it is NUL-terminated and stored in the per-callsite
+/// static, then passed to `tracy::trace_named`.
+#[macro_export]
+macro_rules! tracy_trace_named {
+    ($name:literal) => {{
+        static SRCLOC: $crate::tracy::___tracy_source_location_data =
+            $crate::tracy::___tracy_source_location_data {
+                name: concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
+                function: concat!(module_path!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
+                file: concat!(file!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
+                line: line!(),
+                color: 0,
+            };
+        $crate::tracy::trace_named(&SRCLOC)
+    }};
 }
 
 pub fn tracy_allocator() -> TracyAllocator {
-    TracyAllocator::init(None)
+    TracyAllocator::init()
 }
 
-/// Zig: `fn TracyAllocator(comptime name: ?[:0]const u8) type { return struct { ... } }`
-///
-/// In Zig this is a `std.mem.Allocator` vtable wrapper around a parent allocator.
-/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so the
-/// `std.mem.Allocator` parameter is deleted and the parent is implicitly the
+/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so there is
+/// no allocator parameter; the parent is implicitly the
 /// global mimalloc (`#[global_allocator]`).
-// TODO(port): re-express as a `core::alloc::GlobalAlloc` shim over
-// `bun_alloc::Mimalloc` that emits tracy alloc/free hooks (alloc/alloc_named/
-// free/free_named below). Only relevant if `ENABLE_ALLOCATION` is flipped on —
-// it is `false` today, so this is dead in practice.
-// PERF(port): Zig monomorphized on `comptime name`; Rust stores it as a field
-// because `Option<&'static CStr>` is not a valid const-generic param on stable.
-pub struct TracyAllocator {
-    name: Option<&'static core::ffi::CStr>,
-}
+// The tracy alloc/free hooks (`___tracy_emit_memory_alloc` etc.) are not
+// wired up: `ENABLE_ALLOCATION` is `false`,
+// so allocation tracking is intentionally dead.
+// If it is ever flipped on, express it as a `core::alloc::GlobalAlloc` shim
+// over the global mimalloc that emits the tracy hooks.
+pub struct TracyAllocator {}
 
 impl TracyAllocator {
-    pub fn init(name: Option<&'static core::ffi::CStr>) -> Self {
-        Self { name }
+    pub fn init() -> Self {
+        Self {}
     }
-
-    // PORT NOTE: Zig `allocFn`/`resizeFn`/`freeFn` built a `std.mem.Allocator`
-    // vtable. That concept does not exist in the Rust port (global mimalloc via
-    // `#[global_allocator]`); the tracy emit hooks they called are preserved
-    // below as `alloc`/`alloc_named`/`free`/`free_named` for a future
-    // `GlobalAlloc` shim to use.
 }
 
-/// This function only accepts comptime-known strings, see `message_copy` for runtime strings
+/// This function only accepts `'static` strings, see `message_copy` for runtime strings
 #[inline]
 pub fn message(msg: &'static core::ffi::CStr) {
     if !enable() {
@@ -171,7 +187,7 @@ pub fn message(msg: &'static core::ffi::CStr) {
     );
 }
 
-/// This function only accepts comptime-known strings, see `message_color_copy` for runtime strings
+/// This function only accepts `'static` strings, see `message_color_copy` for runtime strings
 #[inline]
 pub fn message_color(msg: &'static core::ffi::CStr, color: u32) {
     if !enable() {
@@ -231,9 +247,8 @@ pub fn named_frame(name: &'static core::ffi::CStr) -> Frame {
     Frame { name }
 }
 
-/// Zig: `fn Frame(comptime name: [:0]const u8) type`
-// PERF(port): was comptime monomorphization (zero-sized struct per name) —
-// store name as a field instead.
+/// Tracy frame span; `name` is stored as a field (one struct serves all
+/// names).
 pub struct Frame {
     name: &'static core::ffi::CStr,
 }
@@ -258,64 +273,6 @@ fn frame_mark_end(name: &'static core::ffi::CStr) {
         return;
     }
     ___tracy_emit_frame_mark_end(name.as_ptr());
-}
-
-#[inline]
-fn alloc(ptr: *mut u8, len: usize) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_alloc_callstack(ptr.cast(), len, CALLSTACK_DEPTH, 0);
-    } else {
-        ___tracy_emit_memory_alloc(ptr.cast(), len, 0);
-    }
-}
-
-#[inline]
-fn alloc_named(ptr: *mut u8, len: usize, name: &'static core::ffi::CStr) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_alloc_callstack_named(
-            ptr.cast(),
-            len,
-            CALLSTACK_DEPTH,
-            0,
-            name.as_ptr(),
-        );
-    } else {
-        ___tracy_emit_memory_alloc_named(ptr.cast(), len, 0, name.as_ptr());
-    }
-}
-
-#[inline]
-fn free(ptr: *mut u8) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_free_callstack(ptr.cast(), CALLSTACK_DEPTH, 0);
-    } else {
-        ___tracy_emit_memory_free(ptr.cast(), 0);
-    }
-}
-
-#[inline]
-fn free_named(ptr: *mut u8, name: &'static core::ffi::CStr) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_free_callstack_named(ptr.cast(), CALLSTACK_DEPTH, 0, name.as_ptr());
-    } else {
-        ___tracy_emit_memory_free_named(ptr.cast(), 0, name.as_ptr());
-    }
 }
 
 /// Function-pointer type aliases for dynamically-loaded Tracy C API.
@@ -344,26 +301,6 @@ mod tracy_fns {
     pub(super) type emit_zone_value =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
     pub(super) type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
-    pub(super) type emit_memory_alloc =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int);
-    pub(super) type emit_memory_alloc_callstack =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, depth: c_int, secure: c_int);
-    pub(super) type emit_memory_free = unsafe extern "C" fn(ptr: *const c_void, secure: c_int);
-    pub(super) type emit_memory_free_callstack =
-        unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int);
-    pub(super) type emit_memory_alloc_named =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int, name: *const c_char);
-    pub(super) type emit_memory_alloc_callstack_named = unsafe extern "C" fn(
-        ptr: *const c_void,
-        size: usize,
-        depth: c_int,
-        secure: c_int,
-        name: *const c_char,
-    );
-    pub(super) type emit_memory_free_named =
-        unsafe extern "C" fn(ptr: *const c_void, secure: c_int, name: *const c_char);
-    pub(super) type emit_memory_free_callstack_named =
-        unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int, name: *const c_char);
     pub(super) type emit_message =
         unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
     pub(super) type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
@@ -497,88 +434,6 @@ fn ___tracy_emit_zone_end(ctx: ___tracy_c_zone_context) {
     unsafe { f(ctx) }
 }
 #[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc(ptr: *const c_void, size: usize, secure: c_int) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_callstack(
-    ptr: *const c_void,
-    size: usize,
-    depth: c_int,
-    secure: c_int,
-) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_alloc_callstack>(c"___tracy_emit_memory_alloc_callstack")
-            .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, depth, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free(ptr: *const c_void, secure: c_int) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_callstack(ptr: *const c_void, depth: c_int, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_free_callstack>(c"___tracy_emit_memory_free_callstack")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, depth, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_named(
-    ptr: *const c_void,
-    size: usize,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_callstack_named(
-    ptr: *const c_void,
-    size: usize,
-    depth: c_int,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc_callstack_named>(
-        c"___tracy_emit_memory_alloc_callstack_named",
-    )
-    .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, depth, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_named(ptr: *const c_void, secure: c_int, name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_callstack_named(
-    ptr: *const c_void,
-    depth: c_int,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_free_callstack_named>(
-        c"___tracy_emit_memory_free_callstack_named",
-    )
-    .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, depth, secure, name) }
-}
-#[allow(non_snake_case)]
 fn ___tracy_emit_message(txt: *const u8, size: usize, callstack: c_int) {
     let f = dlsym::<tracy_fns::emit_message>(c"___tracy_emit_message").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
@@ -612,7 +467,6 @@ fn ___tracy_emit_frame_mark(name: *const c_char) {
 pub fn init() -> bool {
     #[cfg(target_family = "wasm")]
     {
-        // TODO(port): bun.Environment.isNative — assuming "native" == not-wasm
         return false;
     }
 
@@ -684,11 +538,9 @@ impl Default for ___tracy_source_location_data {
     }
 }
 
-// PORT NOTE: Zig defined `Handle` as a per-instantiation local struct inside
-// `dlsym`, giving each (Type, symbol) pair its own static handle. That is
-// wasteful (re-dlopens libtracy per symbol) and not expressible in Rust without
-// const-generic strings. Use a single shared handle instead — dlopen on the
-// same path is refcounted so behavior is equivalent.
+// A single shared handle serves all symbols (a per-(Type, symbol) handle
+// would wastefully re-dlopen libtracy per symbol; dlopen on the same path is
+// refcounted anyway).
 static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 fn handle_getter() -> Option<*mut c_void> {
@@ -764,16 +616,15 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                 )))]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
 
-                // TODO(port): RTLD flags — Zig used `@bitCast(@as(i32, -2))` on
-                // macOS (RTLD_DEFAULT semantics for dlopen?) and default `.{}` on
-                // Linux. Map to bun_sys::dlopen flag type once defined.
+                // RTLD flags passed straight through to dlopen as raw values:
+                // -2 on macOS, 0 elsewhere.
                 #[cfg(target_os = "macos")]
                 let rtld: i32 = -2;
                 #[cfg(not(target_os = "macos"))]
                 let rtld: i32 = 0;
 
                 if let Some(path) = env_var::BUN_TRACY_PATH.get() {
-                    // std.posix.toPosixPath — copy into a NUL-terminated PathBuffer.
+                    // Copy into a NUL-terminated PathBuffer.
                     let mut buf = bun_paths::PathBuffer::uninit();
                     let zpath = bun_paths::resolve_path::z(path, &mut buf);
                     if let Some(handle) = bun_sys::dlopen(zpath, rtld) {
@@ -794,18 +645,28 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
             }
         }
 
-        // PORT NOTE: Zig `bun.C.dlsymWithHandle` cached per-(Type,symbol) via a comptime
-        // local static. Rust has no const-generic-string statics; do an uncached lookup
-        // through the shared handle. PERF(port): per-symbol OnceLock cache — profile if it shows up on a hot path.
+        // Uncached lookup through the shared handle. PERF: a per-symbol
+        // OnceLock cache is possible — profile if it shows up on a hot path.
         let p = bun_sys::dlsym_impl(handle_getter(), sym_z)?;
-        // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI
-        // (same contract as Zig `bun.cast(Type, ptr)`).
+        // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
 }
 
-// TODO(port): Zig pulls this from `@import("build_options").tracy_callstack_depth`.
-// Wire to build-time config (env! / cfg-set const).
+// Only consulted when `ENABLE_CALLSTACK` is true.
 const CALLSTACK_DEPTH: c_int = 10;
 
-// ported from: src/perf/tracy.zig
+#[cfg(test)]
+mod tests {
+    // Expand both macros so the per-callsite statics (and their const
+    // initializers) are compile-checked even though no runtime caller exists
+    // yet. With `enable()` false (the default), `trace`/`trace_named` return
+    // `Ctx::default()` and `end()` is a no-op, so this is safe to run.
+    #[test]
+    fn trace_macros_expand() {
+        let ctx = crate::tracy_trace!();
+        ctx.end();
+        let named = crate::tracy_trace_named!("test");
+        named.end();
+    }
+}

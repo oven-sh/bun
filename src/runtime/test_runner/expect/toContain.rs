@@ -1,8 +1,6 @@
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
-use bun_jsc::console_object::Formatter;
 use bun_core::strings;
 
 use super::Expect;
@@ -29,8 +27,8 @@ impl Expect {
         expected.ensure_still_alive();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a struct lifetime param.
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
+        // avoid a struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
@@ -71,15 +69,19 @@ impl Expect {
                 entry_: *mut c_void,
                 item: JSValue,
             ) {
-                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted by Zig `entry_.?`. global/pass
-                // point at live stack locals for the duration of the for_each call.
                 debug_assert!(!entry_.is_null());
+                // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
+                // for_each as opaque userdata; non-null asserted above.
                 let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
-                let Ok(same) = item.is_same_value(entry.expected, unsafe { &*entry.global }) else {
+                // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
+                // stack frame, which outlives the synchronous for_each this callback runs inside.
+                let global = unsafe { &*entry.global };
+                let Ok(same) = item.is_same_value(entry.expected, global) else {
                     return;
                 };
                 if same {
+                    // SAFETY: entry.pass is `&raw mut pass` on the caller's stack, live for the
+                    // duration of for_each; this callback is the sole writer (no aliasing &mut).
                     unsafe { *entry.pass = true };
                     // TODO(perf): break out of the `forEach` when a match is found
                 }
@@ -104,13 +106,11 @@ impl Expect {
         }
 
         // handle failure
-        // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-        // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
-        // create a second Formatter (cheap struct init, no shared state) to satisfy borrowck.
+        // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper,
+        // so a second Formatter (cheap struct init, no shared state) satisfies borrowck.
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -126,7 +126,6 @@ impl Expect {
             );
         }
 
-        // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,
@@ -143,5 +142,3 @@ impl Expect {
         )
     }
 }
-
-// ported from: src/test_runner/expect/toContain.zig

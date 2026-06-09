@@ -55,8 +55,8 @@ fn hmac(password: &[u8], data: &[u8]) -> Option<[u8; 32]> {
 }
 
 impl SASL {
-    // PORT NOTE: reshaped for borrowck — Zig passed `*PostgresSQLConnection` but
-    // only read `connection.password`. Taking `&mut PostgresSQLConnection` here
+    // Note: takes the password slice rather than `&mut PostgresSQLConnection` —
+    // only `connection.password` is read, and `&mut PostgresSQLConnection` here
     // would alias the `&mut self.authentication_state` borrow live at the call
     // site in `PostgresSQLConnection::on`. Caller dereferences the
     // self-referential `*const [u8]` and passes the slice directly.
@@ -66,8 +66,7 @@ impl SASL {
         iteration_count: u32,
         password: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // Zig: `jsc.API.Bun.Crypto.EVP.pbkdf2` (src/runtime/api/crypto.zig).
-        // PORT NOTE: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
+        // Note: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
         // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
         // avoid the `bun_runtime` dep (which would create a cycle through
         // `bun_jsc`); `bun_boringssl_sys` is already a direct dependency.
@@ -113,13 +112,12 @@ impl SASL {
     }
 
     pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         debug_assert!(self.server_signature_len == 0);
 
         let server_key = hmac(self.salted_password(), b"Server Key")
-            .ok_or(bun_core::err!("InvalidServerKey"))?;
-        let server_signature_bytes =
-            hmac(&server_key, auth_string).ok_or(bun_core::err!("InvalidServerSignature"))?;
+            .ok_or_else(|| bun_core::err!("InvalidServerKey"))?;
+        let server_signature_bytes = hmac(&server_key, auth_string)
+            .ok_or_else(|| bun_core::err!("InvalidServerSignature"))?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,
@@ -135,11 +133,13 @@ impl SASL {
     pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
-        // TODO(port): bun_jsc::VirtualMachine::get / RareData::boring_engine
-        // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
-        // `None` falls through to BoringSSL's default engine, which is
-        // functionally equivalent for SHA256. Swap once bun_jsc compiles.
-        SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut());
+        // BoringSSL's `EVP_DigestInit_ex` never reads its `ENGINE*`
+        // argument (see vendor/boringssl/crypto/fipsmodule/digest/digest.cc.inc;
+        // the parameter exists only for OpenSSL API compatibility). Passing
+        // null is bit-identical, so the upward hook is intentionally dropped —
+        // same rationale as `s3_signing::credentials::boring_engine`.
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut()) };
         hmac(&sha_digest, auth_string).unwrap()
     }
 
@@ -154,7 +154,5 @@ impl SASL {
     }
 }
 
-// TODO(port): Zig `deinit` is reset-for-reuse (zeroes scalar state, no owned resources);
-// add `pub fn reset(&mut self)` if callers need it. Not mapped to Drop — no side effects.
-
-// ported from: src/sql_jsc/postgres/SASL.zig
+// The only "deinit" site (`AuthenticationState::zero`) replaces the whole
+// enum variant by assignment, so no `reset()` is needed and nothing maps to Drop.

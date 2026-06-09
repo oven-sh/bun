@@ -1,14 +1,13 @@
-//! `js_parser/ast/Ast.zig` — the parser-output struct.
+//! The parser-output struct.
 //!
 //! Moved down from `bun_js_parser` so `bun_js_printer` can consume it without
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
-use bun_alloc::AstAlloc;
+use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{AutoContext, StringContext};
-use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap, VecExt};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
-use crate::import_record::ImportRecord;
 use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
@@ -17,12 +16,11 @@ use crate::{
 
 use crate::part::List as PartList;
 use crate::symbol::List as SymbolList;
-// `ImportRecord.List` is `Vec<ImportRecord>` (`bun_ast::import_record::List`).
-type ImportRecordList = Vec<ImportRecord>;
+type ImportRecordList<'a> = crate::import_record::List<'a>;
 
-pub type TopLevelSymbolToParts = ArrayHashMap<Ref, Vec<u32>>;
+pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
-pub struct Ast {
+pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
     pub runtime_imports: runtime::Imports,
@@ -51,16 +49,15 @@ pub struct Ast {
 
     /// These are stored at the AST level instead of on individual AST nodes so
     /// they can be manipulated efficiently without a full AST traversal
-    pub import_records: ImportRecordList,
+    pub import_records: ImportRecordList<'a>,
 
-    // `hashbang`/`directive` are `[]const u8` slices into source text (not
-    // freed in Zig `deinit`). `StoreStr` records them under the same
-    // lifetime-erased contract as `StoreRef`.
+    // `hashbang`/`directive` are slices into source text. `StoreStr` records
+    // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
-    pub parts: PartList,
+    pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity
-    pub symbols: SymbolList,
+    pub symbols: SymbolList<'a>,
     pub module_scope: Scope,
     pub char_freq: Option<CharFreq>,
     pub exports_ref: Ref,
@@ -76,10 +73,8 @@ pub struct Ast {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    // TODO(port): `[]u32` not freed in Zig `deinit` — likely arena-owned. Using Box<[u32]> for now.
-    pub export_star_import_records: Box<[u32]>,
+    pub export_star_import_records: AstVec<u32>,
 
-    // arena: std.mem.Allocator,
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
     pub commonjs_named_exports: CommonJSNamedExports,
@@ -99,11 +94,10 @@ pub struct Ast {
     pub import_meta_ref: Ref,
 }
 
-// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
-// `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
-// is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
-impl Default for Ast {
-    fn default() -> Self {
+// `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
+// so `Default` no longer applies; use `Ast::empty_in(arena)`.
+impl<'a> Ast<'a> {
+    pub fn empty_in(arena: &'a bun_alloc::MimallocArena) -> Self {
         Self {
             approximate_newline_count: 0,
             has_lazy_export: false,
@@ -121,11 +115,11 @@ impl Default for Ast {
             import_keyword: Range::NONE,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,
-            import_records: Default::default(),
+            import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
             directive: None,
-            parts: Default::default(),
-            symbols: Default::default(),
+            parts: PartList::new_in(arena),
+            symbols: SymbolList::new_in(arena),
             module_scope: Scope::default(),
             char_freq: None,
             exports_ref: Ref::NONE,
@@ -134,7 +128,7 @@ impl Default for Ast {
             require_ref: Ref::NONE,
             named_imports: Default::default(),
             named_exports: Default::default(),
-            export_star_import_records: Box::default(),
+            export_star_import_records: AstAlloc::vec(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
@@ -173,62 +167,23 @@ pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringCo
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
-pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>, AutoContext, AstAlloc>;
+pub type TsEnumsMap =
+    ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 
-impl Ast {
-    pub fn from_parts(parts: Box<[Part]>) -> Ast {
+impl<'a> Ast<'a> {
+    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
+        let mut p = PartList::with_capacity_in(parts.len(), arena);
+        p.extend(parts.into_vec());
         Ast {
-            parts: PartList::from_owned_slice(parts),
-            runtime_imports: Default::default(),
-            ..Default::default()
+            parts: p,
+            ..Ast::empty_in(arena)
         }
     }
 
-    // Zig `initTest` borrowed `parts` via `Part.List.fromBorrowedSliceDangerous`
-    // and relied on explicit `deinit` never being called. `Vec::drop` now
-    // unconditionally guards on `Origin::Borrowed` (not debug-only), so unwrapping
-    // the `ManuallyDrop` is safe — the caller's slice is never freed by `Ast`'s Drop.
-    pub fn init_test(parts: &[Part]) -> Ast {
-        Ast {
-            // SAFETY: test-only helper; the borrowed list is tagged
-            // `Origin::Borrowed`, so `Vec::drop` skips the free, and no
-            // grow/free path is reached on `Ast.parts` before the borrow ends.
-            parts: std::mem::ManuallyDrop::into_inner(unsafe {
-                PartList::from_borrowed_slice_dangerous(parts)
-            }),
-            runtime_imports: Default::default(),
-            ..Default::default()
-        }
-    }
-
-    // Zig: `pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };`
-    // All fields use their defaults, so `Ast::default()` is the Rust equivalent.
-    // TODO(port): if a true `const` is required at use sites, revisit once field types are `const`-constructible.
-    pub fn empty() -> Ast {
-        Ast::default()
-    }
-
-    // Zig: `std.json.stringify(self.parts, opts, stream)` where
-    // `opts = .{ .whitespace = .{ .separator = true } }`. In the Rust port the
-    // `crate::JsonWriter` trait stands in for the configured
-    // `std.json.WriteStream` (separator/whitespace are properties of the
-    // writer impl, not passed per-call), so the body collapses to a single
-    // `write` of the parts slice — the writer emits the JSON array,
-    // dispatching to `Part::json_stringify` per element (same shape as
-    // `Part::json_stringify` writing `self.stmts`). No live callers.
-    pub fn to_json<W: crate::JsonWriter>(&self, stream: &mut W) -> Result<(), bun_core::Error> {
-        // PORT NOTE: `whitespace.separator = true` is the caller's
-        // responsibility when constructing the `JsonWriter` impl.
-        stream.write(self.parts.slice())
-    }
-
-    // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
-    // and was guarded by "Do not call this if it wasn't globally allocated!".
-    // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
-    // preserve the Zig conditional-free behavior. Revisit.
+    // `parts`/`symbols`/`import_records` are `ArenaVec`s (`BabyVec`) whose
+    // `Drop` deallocates through the allocator each instance was constructed
+    // with, so arena-vs-heap conditional-free is encoded in the type — no
+    // explicit body needed.
 }
 
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/Ast.zig

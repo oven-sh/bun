@@ -10,10 +10,10 @@ use crate::jsc::{
 use crate::shared::CachedStructure;
 use bun_boringssl_sys as boringssl;
 use bun_core::strings;
-use bun_core::{TimespecMockMode, err, fmt as bun_fmt, timespec};
+use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
-use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
+use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
@@ -23,7 +23,7 @@ use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 use super::js_mysql_query::JSMySQLQuery;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
-// PORT NOTE: `my_sql_connection::MySQLConnection` (the protocol-layer struct)
+// `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
 // the `pub use JSMySQLConnection as MySQLConnection` re-export below.
@@ -33,9 +33,7 @@ use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
-use bun_core::time::NS_PER_MS;
-
-// PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
+// The #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
 // js_mysql_connection` (which owns the extern symbols) — the hand-rolled
 // `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
@@ -110,8 +108,7 @@ impl Drop for DerefOnDrop {
 
 impl JSMySQLConnection {
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
-    /// idiom. The guard stashes a raw pointer (not `&Self`) so no Rust
+    /// releases it on drop. The guard stashes a raw pointer (not `&Self`) so no Rust
     /// reference is held across the potential free in `deref()`; the `&self`
     /// receiver here is only borrowed for the bump itself.
     #[inline]
@@ -126,10 +123,6 @@ impl JSMySQLConnection {
     #[inline]
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-    #[inline]
-    fn vm_ptr(&self) -> *mut VirtualMachine {
-        self.vm.as_ptr()
     }
     /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
@@ -349,9 +342,7 @@ impl JSMySQLConnection {
         });
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
-    // `impl` block tries to call `constructor()` unqualified; re-enable once the
-    // proc-macro emits `Self::constructor` for receiverless impl items.
+    // Exported via the `.classes.ts` codegen (`MySQLConnectionClass__construct`).
     pub fn constructor(
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -369,11 +360,11 @@ impl JSMySQLConnection {
     }
 
     pub fn close(&self) {
-        // Zig `this.ref(); defer { updateReferenceType(); deref(); }`. Re-enter
-        // through a `ParentRef` (lifetime-erased `&Self`) so no Rust borrow is
-        // held across the potential free in `deref()`. Guard drop order is
-        // LIFO: `_ref` (deref) drops last, after `update_reference_type()` has
-        // run, so `*p` is still live when the defer body executes.
+        // Re-enter through a `ParentRef` (lifetime-erased `&Self`) so no Rust
+        // borrow is held across the potential free in `deref()`. Guard drop
+        // order is LIFO: `_ref` (deref) drops last, after
+        // `update_reference_type()` has run, so `*p` is still live when the
+        // defer body executes.
         let p = ParentRef::new(self);
         let _ref = self.ref_guard();
         scopeguard::defer! {
@@ -394,8 +385,8 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return self.close();
         }
-        // Zig `this.ref(); defer this.deref();` — raw-pointer RAII guard so no
-        // reference is live across the potential free.
+        // Raw-pointer RAII guard so no reference is live across the potential
+        // free.
         let _ref = self.ref_guard();
         let _loop_guard = self.event_loop().entered();
         self.ensure_js_value_is_alive();
@@ -416,7 +407,7 @@ impl JSMySQLConnection {
     ///
     /// Raw-pointer-shaped (not `&mut self`): ends in `heap::take(this)`, and a
     /// `&mut self` protector live across the dealloc would be UB under Stacked
-    /// Borrows — direct mapping of Zig's `fn deinit(this: *@This())`.
+    /// Borrows.
     fn deinit(this: *mut Self) {
         // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
         // `this` is the live `heap::alloc` ptr from `create_instance`, sole
@@ -479,13 +470,12 @@ impl JSMySQLConnection {
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
-        let hostname_str = arguments[0].to_bun_string(global_object)?;
-        // defer hostname_str.deref() — Drop on bun_core::String
+        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
         let port = arguments[1].coerce::<i32>(global_object)?;
 
-        let username_str = arguments[2].to_bun_string(global_object)?;
-        let password_str = arguments[3].to_bun_string(global_object)?;
-        let database_str = arguments[4].to_bun_string(global_object)?;
+        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
+        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
+        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
         // TODO: update this to match MySQL.
         let ssl_mode: SSLMode = match arguments[5].to_int32() {
             0 => SSLMode::Disable,
@@ -527,7 +517,7 @@ impl JSMySQLConnection {
             let mut err = uws::create_bun_socket_error_t::none;
             secure = vm
                 .ssl_ctx_cache()
-                .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {
                 drop(tls_config);
                 return Err(
@@ -542,7 +532,7 @@ impl JSMySQLConnection {
         // below. Ownership passes to `MySQLConnection.init` once `Box::new`
         // succeeds — we null the locals at that point so the connect-fail path
         // (which `deref()`s the connection) doesn't double-free.
-        let mut tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
+        let tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
             if let Some(s) = s {
                 // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
                 unsafe { boringssl::SSL_CTX_free(s) };
@@ -550,15 +540,12 @@ impl JSMySQLConnection {
             drop(cfg);
         });
 
-        let options_str = arguments[7].to_bun_string(global_object)?;
-        let path_str = arguments[8].to_bun_string(global_object)?;
+        let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
+        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
-        // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
-        // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
-        // The Rust `init` takes `Box<[u8]>` per field (each separately owned),
-        // so we just copy each string into its own allocation. `options_buf`
-        // (the original arena handle, kept only so `cleanup()` could free it)
-        // becomes an empty box.
+        // `init` takes `Box<[u8]>` per field (each separately owned), so we
+        // copy each string into its own allocation. `options_buf` becomes an
+        // empty box.
         let username: Box<[u8]> = Box::from(username_str.to_utf8_without_ref().slice());
         let password: Box<[u8]> = Box::from(password_str.to_utf8_without_ref().slice());
         let database: Box<[u8]> = Box::from(database_str.to_utf8_without_ref().slice());
@@ -588,6 +575,7 @@ impl JSMySQLConnection {
         let use_unnamed_prepared_statements = arguments[14].as_boolean();
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
+        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
@@ -608,6 +596,7 @@ impl JSMySQLConnection {
                 tls_config,
                 secure,
                 ssl_mode,
+                allow_public_key_retrieval,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
@@ -655,10 +644,10 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
+                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
-                    let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
@@ -688,18 +677,15 @@ impl JSMySQLConnection {
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
-    // TODO(port): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,
@@ -707,9 +693,8 @@ impl JSMySQLConnection {
     ) -> JsResult<JSValue> {
         this.stop_timers();
 
-        // Zig `defer this.updateReferenceType();` — R-2: `&Self` is `Copy`, so
-        // the scopeguard closure captures a shared reborrow and the body's
-        // `connection_mut()` borrow is non-overlapping.
+        // R-2: `&Self` is `Copy`, so the scopeguard closure captures a shared
+        // reborrow and the body's `connection_mut()` borrow is non-overlapping.
         scopeguard::defer! {
             this.update_reference_type();
         }
@@ -774,7 +759,6 @@ impl JSMySQLConnection {
     }
 
     fn fail_fmt(&self, error_code: AnyMySQLErrorT, args: core::fmt::Arguments<'_>) {
-        // bun.handleOom(std.fmt.allocPrint(...)) → write into Vec<u8>
         let mut message: Vec<u8> = Vec::new();
         {
             use std::io::Write;
@@ -786,11 +770,9 @@ impl JSMySQLConnection {
     }
 
     fn fail_with_js_value(&self, value: JSValue) {
-        // Zig `this.ref(); defer { ...; updateReferenceType(); deref(); }` —
-        // runs on every exit path. Re-enter through a raw pointer so no
+        // Runs on every exit path. Re-enter through a raw pointer so no
         // reference is live across the potential free in `deref()`. LIFO drop
-        // order: the `defer!` body runs first, then `_ref` releases the count
-        // — matches Zig.
+        // order: the `defer!` body runs first, then `_ref` releases the count.
         let p = ParentRef::new(self);
         let _ref = self.ref_guard();
         scopeguard::defer! {
@@ -863,7 +845,7 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&self, request: &JSMySQLQuery, result: MySQLQueryResult) {
+    pub fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
@@ -875,11 +857,11 @@ impl JSMySQLConnection {
     ) -> Result<(), OnResultRowError> {
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
-        // PORT NOTE: `MySQLStatement::structure(&mut self) -> &CachedStructure`
+        // `MySQLStatement::structure(&mut self) -> &CachedStructure`
         // would keep `*statement` exclusively borrowed for the lifetime of the
         // returned ref, blocking the `&statement.columns` / `fields_flags` reads
-        // below. Stash a `ParentRef` (lifetime-erased `&T`; Zig holds it by
-        // value) and `as_deref` at the `to_js` call site — `*statement`
+        // below. Stash a `ParentRef` (lifetime-erased `&T`)
+        // and `as_deref` at the `to_js` call site — `*statement`
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
@@ -892,7 +874,6 @@ impl JSMySQLConnection {
             ResultMode::Raw | ResultMode::Values => None,
         };
         let fields_flags = statement.fields_flags;
-        // PERF(port): was stack-fallback allocator (4096 bytes)
         let mut row = ResultSet::Row {
             global_object: &self.global_object,
             columns: &statement.columns,
@@ -969,7 +950,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: ErrorPacket) {
+    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();
@@ -999,21 +980,18 @@ impl JSMySQLConnection {
     pub fn get_statement_from_signature_hash(
         &self,
         signature_hash: u64,
-    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::Error> {
-        // TODO(port): narrow error set — `get_or_put` currently yields `AllocError`.
-        self.connection_mut()
-            .statements
-            .get_or_put(signature_hash)
-            .map_err(|_| bun_core::err!("OutOfMemory"))
+    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
+    {
+        self.connection_mut().statements.get_or_put(signature_hash)
     }
 }
 
-/// Referenced by `dispatch.zig` (kind = `.mysql[_tls]`).
+/// uSockets event handlers for the MySQL connection (plain and TLS).
 pub struct SocketHandler<const SSL: bool>;
 
-// PORT NOTE: Zig's `pub const SocketType = uws.NewSocketHandler(ssl)` is an
-// inherent associated type, which is unstable in Rust (`feature(inherent_associated_types)`).
-// Spell out `NewSocketHandler<SSL>` at every use site instead.
+// Inherent associated types are unstable in Rust
+// (`feature(inherent_associated_types)`), so spell out
+// `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: NewSocketHandler<SSL>) -> AnySocket {
         if SSL {
@@ -1054,7 +1032,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            // ssl_error.toJS(this.#globalObject) catch return
             let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
                 return;
             };
@@ -1073,7 +1050,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
-        // Zig `defer this.deref();` — releases the socket ref taken in on_open.
+        // Releases the socket ref taken in on_open.
         // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
         // shaped so no reference outlives the potential free.
         let _ref = DerefOnDrop(this.as_ctx_ptr());
@@ -1095,10 +1072,9 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        // Zig `this.ref(); defer this.deref();` + `defer { resetConnectionTimeout(); ... }`.
         // Both guards re-enter via raw pointer so no reference is live across
         // the potential free. Guard drop order is LIFO, so `_ref` (deref) runs
-        // last — matches Zig.
+        // last.
         let p = ParentRef::new(this);
         let _ref = this.ref_guard();
 
@@ -1153,13 +1129,10 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
 // pub const js = jsc.Codegen.JSMySQLConnection; — re-exported via `use ... as js` above.
 // fromJS / fromJSDirect / toJS — provided by #[bun_jsc::JsClass] derive.
 
-/// Zig re-export pattern: `MySQLQuery.zig` / `MySQLRequestQueue.zig` /
-/// `JSMySQLQuery.zig` import the JS-wrapper type under the bare
+/// Sibling modules import the JS-wrapper type under the bare
 /// `MySQLConnection` name (the connection state-machine struct lives in
 /// `my_sql_connection`). Surface the alias here so `super::js_mysql_connection::
 /// MySQLConnection` resolves to this type, not the protocol-layer struct.
 pub use JSMySQLConnection as MySQLConnection;
 
 pub type Writer = my_sql_connection::Writer;
-
-// ported from: src/sql_jsc/mysql/JSMySQLConnection.zig

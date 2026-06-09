@@ -17,17 +17,12 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::ZBox;
 use bun_core::{self, ZigString};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
-
-use crate::napi::NapiEnv;
 
 use super::{ABIType, Function};
 
 unsafe extern "C" {
-    /// `JSGlobalObject::makeNapiEnvForFFI` — heap-allocated env owned by VM.
-    fn ZigGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject) -> *mut NapiEnv;
     /// `JSValue::getOwn` — own-property lookup (no prototype-chain walk).
     /// Declared locally while `bun_jsc::JSValue::get_own` (JSValue.rs) is gated.
     fn JSC__JSValue__getOwn(
@@ -37,12 +32,12 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `JSValue::getOwn` (JSValue.zig:1578) — own-property lookup. Local thin
+/// Own-property lookup. Local thin
 /// wrapper while `bun_jsc::JSValue::get_own` stays gated.
 #[inline]
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
     let key_str = bun_core::String::init(ZigString::init(key));
-    // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
+    // Open a top exception scope before the FFI call (the C++ side has a
     // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
     // would assert under `BUN_JSC_validateExceptionChecks=1`.
     bun_jsc::top_scope!(scope, global);
@@ -56,7 +51,7 @@ fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Opti
 // Symbol-spec parsing — generate_symbols / generate_symbol_for_function
 // ══════════════════════════════════════════════════════════════════════════
 
-/// `FFI.generateSymbolForFunction` (FFI.zig:1518) — parse one
+/// Parse one
 /// `{ args, returns, threadsafe, ptr }` spec into a `Function`.
 pub fn generate_symbol_for_function(
     global: &JSGlobalObject,
@@ -85,10 +80,9 @@ pub fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
-                    // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
                     return Ok(Some(
@@ -111,7 +105,6 @@ pub fn generate_symbol_for_function(
                 ))));
             };
             abi_types.push(abi);
-            // PERF(port): was appendAssumeCapacity
         }
     }
 
@@ -126,7 +119,7 @@ pub fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, b"returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -193,7 +186,7 @@ pub fn generate_symbol_for_function(
     Ok(None)
 }
 
-/// `FFI.generateSymbols` (FFI.zig:1662) — iterate own-properties of `object`,
+/// Iterate own-properties of `object`,
 /// parsing each value as a `Function` spec.
 pub fn generate_symbols(
     global: &JSGlobalObject,
@@ -235,7 +228,6 @@ pub fn generate_symbols(
         function.base_name = Some(base_name);
 
         symbols.insert(&key, function);
-        // PERF(port): was putAssumeCapacity
     }
 
     Ok(None)
@@ -246,28 +238,7 @@ pub fn generate_symbols(
 // ══════════════════════════════════════════════════════════════════════════
 
 impl Function {
-    /// `Function.compile` (FFI.zig:1769). Prints the C trampoline source,
-    /// compiles + relocates it via TinyCC, and stores the resulting
-    /// `JSFunctionCall` symbol address in `self.step`.
-    ///
-    /// `bun_tcc_sys::tcc` (the method-ful `State` API) is still gated, so
-    /// this body short-circuits to `Step::Failed` after generating the
-    /// source. The full TCC sequence (`State::init` → `add_symbol` →
-    /// `compile_string` → `relocate` → `get_symbol`) is preserved verbatim
-    /// in `ffi_body.rs:1940-2024` and re-enables once `bun_tcc_sys` un-gates.
-    pub fn compile(&mut self, _napi_env: Option<&NapiEnv>) -> Result<(), bun_core::Error> {
-        let mut source_code: Vec<u8> = Vec::new();
-        self.print_source_code(&mut source_code)?;
-        source_code.push(0);
-
-        // TODO(blocked): bun_tcc_sys::State (compile/relocate/add_symbol/get_symbol)
-        //   — un-gate from `ffi_body.rs` once `bun_tcc_sys::tcc` is real.
-        let _ = source_code;
-        self.fail(b"TinyCC is not available in this build of Bun");
-        Ok(())
-    }
-
-    /// `Function.printSourceCode` (FFI.zig:2007) — emit the C trampoline that
+    /// Emit the C trampoline that
     /// adapts a JSC host-call frame to the native symbol's ABI.
     pub fn print_source_code(
         &self,
@@ -331,16 +302,16 @@ impl Function {
                         i
                     )?;
                 } else if *arg == ABIType::NapiValue {
-                    write!(
+                    writeln!(
                         writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                         i
                     )?;
                 } else if arg.needs_a_cast_in_c() {
                     if i < self.arg_types.len() - 1 {
-                        write!(
+                        writeln!(
                             writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};\n",
+                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                             i
                         )?;
                     } else {
@@ -351,9 +322,9 @@ impl Function {
                         )?;
                     }
                 } else if i < self.arg_types.len() - 1 {
-                    write!(writer, "  int64_t arg{} = *argsPtr++;\n", i)?;
+                    writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
                 } else {
-                    write!(writer, "  int64_t arg{} = *argsPtr;\n", i)?;
+                    writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
                 }
             }
         }
@@ -417,7 +388,7 @@ impl Function {
         Ok(())
     }
 
-    /// `Function.printCallbackSourceCode` (FFI.zig:2170) — emit the C
+    /// Emit the C
     /// trampoline that adapts a native call into a JSC `FFI_Callback_call`.
     pub fn print_callback_source_code(
         &self,
@@ -429,7 +400,7 @@ impl Function {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)
                 .unwrap_or(0);
-            write!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL\n", ptr)?;
+            writeln!(writer, "#define JS_GLOBAL_OBJECT (void*)0x{:X}ULL", ptr)?;
         }
 
         writer.write_all(b"#define IS_CALLBACK 1\n")?;
@@ -477,9 +448,9 @@ impl Function {
 
         if !self.arg_types.is_empty() {
             let mut arg_buf = [0u8; 32];
-            write!(
+            writeln!(
                 writer,
-                " ZIG_REPR_TYPE arguments[{}];\n",
+                " ZIG_REPR_TYPE arguments[{}];",
                 self.arg_types.len()
             )?;
 
@@ -487,9 +458,9 @@ impl Function {
             for (i, arg) in self.arg_types.iter().enumerate() {
                 let printed = bun_core::fmt::print_int(&mut arg_buf[3..], i);
                 let arg_name = &arg_buf[0..3 + printed];
-                write!(
+                writeln!(
                     writer,
-                    "arguments[{}] = {}.asZigRepr;\n",
+                    "arguments[{}] = {}.asZigRepr;",
                     i,
                     arg.to_js(arg_name)
                 )?;
@@ -531,26 +502,3 @@ impl Function {
         Ok(())
     }
 }
-
-// ══════════════════════════════════════════════════════════════════════════
-// NAPI env helper
-// ══════════════════════════════════════════════════════════════════════════
-
-/// Allocates a `NapiEnv` only if any `Function` in the set takes a
-/// `napi_env`/`napi_value` argument.
-pub(super) fn make_napi_env_if_needed<'a>(
-    functions: impl IntoIterator<Item = &'a Function>,
-    global_this: &JSGlobalObject,
-) -> Option<&'static NapiEnv> {
-    for function in functions {
-        if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null heap-allocated env owned by the
-            // VM (lifetime ≥ DevServer/FFI lifetime).
-            // TODO(port): lifetime — `'static` is a stand-in for VM lifetime.
-            return Some(unsafe { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
-        }
-    }
-    None
-}
-
-// ported from: src/runtime/ffi/FFI.zig

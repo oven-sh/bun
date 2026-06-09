@@ -6,13 +6,13 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{self, Format as LockfileFormat, LoadResult, Lockfile};
+use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
@@ -22,13 +22,17 @@ use super::options::{self, Enable, LogLevel};
 use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
 // ───────────────────────────── method wrappers ───────────────────────────────
-// Thin `&mut self` shims so call sites can use Zig's method-style spelling
+// Thin `&mut self` shims so call sites can use method-style spelling
 // (`pm.getCacheDirectory()` / `pm.getTemporaryDirectory()`). The bodies live
 // in the free functions below to keep them callable without an `impl` path.
 
 impl PackageManager {
+    /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
+    /// because the descriptor is owned by `self.cache_directory_` — handing out
+    /// an owning `Dir` would close the cached fd when the caller drops it.
+    /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub fn get_cache_directory(&mut self) -> Dir {
+    pub fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
@@ -36,18 +40,16 @@ impl PackageManager {
     /// `PackageManifestMap::by_name_hash_allow_expired`'s disk-fallback path
     /// reads. Captured by value so the loop body can hold `&mut self.manifests`
     /// alongside `&self.lockfile` / `&self.options` without aliasing the whole
-    /// `&mut self` (Stacked-Borrows UB the Zig `*PackageManager` pattern is
-    /// immune to).
+    /// `&mut self` (which would be Stacked-Borrows UB).
     ///
     /// The cache directory is opened lazily here only when
-    /// `options.enable.manifest_cache` is set (the only branch that reads it),
-    /// matching the Zig `byNameHashAllowExpired` gating.
+    /// `options.enable.manifest_cache` is set (the only branch that reads it).
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
         crate::package_manifest_map::DiskCacheCtx {
             enable_manifest_cache,
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
-            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self).fd()),
+            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
         }
     }
@@ -128,8 +130,12 @@ impl PackageManager {
 
 // ───────────────────────────── cache directory ────────────────────────────────
 
+/// Returns a borrowed view (`Fd`) of the lazily-opened cache directory. The
+/// descriptor is owned by `PackageManager::cache_directory_` (closed only if
+/// the singleton is ever dropped). Callers must not close the returned `Fd`;
+/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
-pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
+pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
     // path projects.
     unsafe { get_cache_directory_raw(this) }
@@ -146,23 +152,26 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
+pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // SAFETY: caller contract — `cache_directory_` is disjoint from any
     // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory_ } {
-        return d;
+    if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
+        return d.fd();
     }
+    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
+    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
+    let fd = d.fd();
     // SAFETY: as above; single writer.
     unsafe { (*this).cache_directory_ = Some(d) };
-    d
+    fd
 }
 
 #[inline]
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
     (
-        Fd::from_std_dir(&cache_dir),
+        cache_dir,
         AbsPath::from(this.cache_directory_path.as_bytes())
             .expect("cache_directory_path is absolute"),
     )
@@ -170,7 +179,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // PORT NOTE: Zig used `bun.once(...)`; `bun_core::Once<T, fn(A)->T>` can't
+    // `bun_core::Once<T, fn(A)->T>` can't
     // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
     // directly and split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
@@ -203,14 +212,15 @@ static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
 fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
-    let cache_directory = get_cache_directory(manager);
+    let cache_directory_fd = get_cache_directory(manager);
+    let cache_directory = Dir::borrow(&cache_directory_fd);
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
     let temp_dir_name = FileSystem::get_default_temp_dir();
 
     let mut tried_dot_tmp = false;
     let mut tempdir: Dir =
-        match sys::make_path::make_open_path(Dir::cwd(), temp_dir_name, Default::default()) {
+        match sys::make_path::make_open_path(&Dir::cwd(), temp_dir_name, Default::default()) {
             Ok(d) => d,
             Err(_) => {
                 tried_dot_tmp = true;
@@ -221,10 +231,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 ) {
                     Ok(d) => d,
                     Err(err) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: bun is unable to access tempdir: {}",
                             err.name()
-                        ));
+                        );
                         Global::crash();
                     }
                 }
@@ -235,7 +245,6 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    // TODO(port): std.time.Timer — using bun_core::time::Timer placeholder
     let mut timer = if manager.options.log_level != LogLevel::Silent {
         Some(bun_core::time::Timer::start().expect("unreachable"))
     } else {
@@ -262,31 +271,31 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     ) {
                         Ok(d) => d,
                         Err(err) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to access tempdir: {}",
                                 err.name()
-                            ));
+                            );
                             Global::crash();
                         }
                     };
 
                     if verbose_install() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
                             err2.name()
-                        ));
+                        );
                     }
 
                     continue 'brk;
                 }
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
                     err2.name()
-                ));
+                );
                 Global::crash();
             }
         };
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
@@ -296,28 +305,28 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
                         Ok(d) => d,
                         Err(err2) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to write files to tempdir: {}",
                                 err2.name()
-                            ));
+                            );
                             Global::crash();
                         }
                     };
 
                     if verbose_install() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><d>info<r>: cannot move files from tempdir: {}, using fallback",
                             bun_fmt::s(err.name())
-                        ));
+                        );
                     }
 
                     continue 'brk;
                 }
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
                     bun_fmt::s(err.name())
-                ));
+                );
                 Global::crash();
             }
         }
@@ -333,15 +342,14 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         let elapsed = timer.as_mut().unwrap().read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
-            let cache_dir_path: &[u8] =
-                match sys::get_fd_path(Fd::from_std_dir(&cache_directory), &mut path_buf) {
-                    Ok(p) => &p[..],
-                    Err(_) => b"it",
-                };
-            Output::pretty_errorln(format_args!(
+            let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
+                Ok(p) => &p[..],
+                Err(_) => b"it",
+            };
+            bun_core::pretty_errorln!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                 bun_fmt::s(cache_dir_path)
-            ));
+            );
         }
     }
 
@@ -393,7 +401,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
                     unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
                     // SAFETY: see fn safety contract.
                     unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
                     continue;
@@ -413,16 +420,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
             Ok(d) => return d,
             Err(err) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
                     err.name()
-                ));
+                );
                 Global::crash();
             }
         }
     }
-    #[allow(unreachable_code)]
-    unreachable!()
 }
 
 pub struct CacheDir {
@@ -480,8 +485,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
-// PERF(port): the Zig originals lean on `std.fmt.bufPrint{,Z}`, which the
-// straight port mapped to `core::fmt::write` over a `format_args!` of
+// PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `CacheVersionFormatter` / `PatchHashFmt` / `hex_int_*`
 // pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
@@ -573,10 +577,7 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
         let at = self.at;
-        debug_assert!(at < self.buf.len());
-        // SAFETY: see `put`; one byte of headroom for the NUL is part of the
-        // PathBuffer-size invariant.
-        unsafe { *self.buf.as_mut_ptr().add(at) = 0 };
+        self.buf[at] = 0;
         ZStr::from_buf(self.buf, at)
     }
 }
@@ -702,7 +703,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
         cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
             .as_bytes()
             .len();
-    // PORT NOTE: reshaped for borrowck — resume the cursor at the basename's
+    // reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
     let mut w = ByteCursor {
@@ -818,8 +819,7 @@ pub fn cached_tarball_folder_name(
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(Fd::from_std_dir(&get_cache_directory(this)), folder_path)
-        .unwrap_or(false)
+    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────
@@ -833,13 +833,17 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
         .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
-    manager.options.bin_path = ZStr::from_slice_with_nul(&path[..]);
+    manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
 
-pub fn global_link_dir(this: &mut PackageManager) -> Dir {
-    if let Some(d) = this.global_link_dir {
-        return d;
+/// Returns a borrowed view (`Fd`) of the lazily-opened global link directory.
+/// The descriptor is owned by `PackageManager::global_link_dir` (closed only if
+/// the singleton is ever dropped). Callers must not close the returned `Fd`;
+/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
+pub fn global_link_dir(this: &mut PackageManager) -> Fd {
+    if let Some(d) = this.global_link_dir.as_ref() {
+        return d.fd();
     }
 
     let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
@@ -856,22 +860,22 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
             Global::exit(1);
         }
     };
+    let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
+        Ok(d) => d,
+        Err(err) => {
+            Output::err(
+                err,
+                "failed to open global link dir node_modules at '{}'",
+                (global_dir.fd(),),
+            );
+            Global::exit(1);
+        }
+    };
+    let link_fd = link_dir.fd();
     this.global_dir = Some(global_dir);
-    this.global_link_dir = Some(
-        match global_dir.make_open_path(b"node_modules", Default::default()) {
-            Ok(d) => d,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to open global link dir node_modules at '{}'",
-                    (Fd::from_std_dir(&global_dir),),
-                );
-                Global::exit(1);
-            }
-        },
-    );
+    this.global_link_dir = Some(link_dir);
     let mut buf = PathBuffer::uninit();
-    let path_ = match sys::get_fd_path(Fd::from_std_dir(&this.global_link_dir.unwrap()), &mut buf) {
+    let path_ = match sys::get_fd_path(link_fd, &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -885,7 +889,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
     this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
         FileSystem::instance().dirname_store().append(path_),
     ));
-    this.global_link_dir.unwrap()
+    link_fd
 }
 
 pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
@@ -893,7 +897,7 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
     &this.global_link_dir_path
 }
 
-pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Dir, &[u8]) {
+pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Fd, &[u8]) {
     let dir = global_link_dir(this);
     (dir, &this.global_link_dir_path)
 }
@@ -906,7 +910,6 @@ pub fn path_for_cached_npm_path<'a>(
     package_name: &[u8],
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
-    // TODO(port): narrow error set
     let mut cache_path_buf = PathBuffer::uninit();
 
     let cache_path = cached_npm_package_folder_name_print(
@@ -917,7 +920,7 @@ pub fn path_for_cached_npm_path<'a>(
         None,
     );
     let cache_path_len = cache_path.as_bytes().len();
-    // PORT NOTE: reshaped for borrowck — drop borrow before mutating buffer
+    // reshaped for borrowck — drop borrow before mutating buffer
 
     if cfg!(debug_assertions) {
         debug_assert!(cache_path_buf[package_name.len()] == b'@');
@@ -925,10 +928,11 @@ pub fn path_for_cached_npm_path<'a>(
 
     cache_path_buf[package_name.len()] = SEP;
 
-    let cache_dir: Fd = Fd::from_std_dir(&get_cache_directory(this));
+    let cache_dir: Fd = get_cache_directory(this);
 
     #[cfg(windows)]
     {
+        let _ = cache_dir;
         let mut path_buf = PathBuffer::uninit();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
@@ -963,16 +967,15 @@ pub fn path_for_cached_npm_path<'a>(
 pub fn path_for_resolution<'a>(
     this: &mut PackageManager,
     package_id: PackageID,
-    resolution: Resolution,
+    resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
-    // TODO(port): narrow error set
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
             let npm = *resolution.npm();
             let package_name_ = this.lockfile.packages.items_name()[package_id as usize];
-            // PORT NOTE: borrowck — `path_for_cached_npm_path` reborrows `this`
+            // borrowck — `path_for_cached_npm_path` reborrows `this`
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
@@ -984,7 +987,9 @@ pub fn path_for_resolution<'a>(
 }
 
 pub struct CacheDirAndSubpath<'a> {
-    pub cache_dir: Dir,
+    /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
+    /// (or is `Fd::cwd()`); callers must not close it.
+    pub cache_dir: Fd,
     pub cache_dir_subpath: &'a ZStr,
 }
 
@@ -998,7 +1003,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
     let name = pkg_name;
-    let mut cache_dir = Dir::cwd();
+    let mut cache_dir = Fd::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
 
     match resolution.tag {
@@ -1030,7 +1035,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
-            cache_dir = Dir::cwd();
+            cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball => {
             let tarball = *resolution.local_tarball();
@@ -1053,12 +1058,12 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
-            cache_dir = Dir::cwd();
+            cache_dir = Fd::cwd();
         }
         ResolutionTag::Symlink => {
             let directory = global_link_dir(manager);
 
-            // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
+            // borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
             let folder = resolution
@@ -1068,7 +1073,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
-                cache_dir = Dir::cwd();
+                cache_dir = Fd::cwd();
             } else {
                 let global_link_dir = global_link_dir_path(manager);
                 let ptr = &mut folder_path_buf.0[..];
@@ -1099,7 +1104,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
 pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
-    // TODO(port): narrow error set
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
         sys::CreateFlags {
@@ -1109,10 +1113,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     ) {
         Ok(f) => f,
         Err(err) => {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error:<r> {} create package.json",
-                err.name()
-            ));
+            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", err.name());
             Global::crash();
         }
     };
@@ -1123,9 +1124,8 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
-    // TODO(port): narrow error set
     let file = attempt_to_create_package_json_and_open()?;
-    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+    let _ = file.close(); // close error is non-actionable
     Ok(())
 }
 
@@ -1134,7 +1134,7 @@ pub fn save_lockfile(
     load_result: &LoadResult,
     save_format: LockfileFormat,
     had_any_diffs: bool,
-    // TODO(dylan-conway): this and `packages_len_before_install` can most likely be deleted
+    // NOTE(dylan-conway): this and `packages_len_before_install` can most likely be deleted
     // now that git dependnecies don't append to lockfile during installation.
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
@@ -1178,11 +1178,11 @@ pub fn save_lockfile(
         if !this.options.global {
             if log_level != LogLevel::Silent {
                 match this.subcommand {
-                    Subcommand::Remove => Output::pretty_errorln(format_args!(
+                    Subcommand::Remove => bun_core::pretty_errorln!(
                         "\npackage.json has no dependencies! Deleted empty lockfile"
-                    )),
+                    ),
                     _ => {
-                        Output::pretty_errorln(format_args!("No packages! Deleted empty lockfile"))
+                        bun_core::pretty_errorln!("No packages! Deleted empty lockfile")
                     }
                 }
             }
@@ -1191,10 +1191,10 @@ pub fn save_lockfile(
         return Ok(());
     }
 
-    // PORT NOTE: Zig held `*Progress.Node` across the body; `Progress::start`
+    // `Progress::start`
     // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer (mirrors Zig's
-    // non-exclusive `*Node`; the node lives inside `this.progress.root`).
+    // the `&mut this` reborrows below. Stash as a raw pointer
+    // (the node lives inside `this.progress.root`).
     let mut save_node: *mut ProgressNode = core::ptr::null_mut();
 
     if log_level.show_progress() {
@@ -1246,7 +1246,7 @@ pub fn save_lockfile(
         this.progress.root.end();
         this.progress = Default::default();
     } else if log_level != LogLevel::Silent {
-        Output::pretty_errorln(format_args!("Saved lockfile"));
+        bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
@@ -1255,12 +1255,10 @@ pub fn save_lockfile(
 
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    // PORT NOTE: Zig passed `Lockfile.LoadResult` by value (large structs are
-    // passed by const-ref under Zig's ABI). The Rust caller continues using
+    // The caller continues using
     // `load_result` after this call, so take it by shared reference.
     load_result: &LoadResult,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if let LoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
             let mut slice = manager.lockfile.packages.slice();
@@ -1275,12 +1273,9 @@ pub fn update_lockfile_if_needed(
 }
 
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
-    // TODO(port): narrow error set
-
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    // PORT NOTE: `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used
-    // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
+    // Windows opens via `get_default_temp_dir`.
     let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
     secret[0..8].copy_from_slice(
@@ -1291,8 +1286,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let mut base64_bytes = [0u8; 64];
     bun_core::csprng(&mut base64_bytes);
 
-    // Zig `std.fmt.bufPrint(buf, "{x}", .{&base64_bytes})` on a `*[64]u8` formats
-    // each byte as zero-padded 2-char lower hex (128 chars total).
+    // Format each byte as zero-padded 2-char lower hex (128 chars total).
     let tmpname_len = {
         let mut cursor = &mut tmpname_buf[8..];
         let initial_len = cursor.len();
@@ -1305,10 +1299,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
 
     if let Err(err) = tmpfile.create(tmpname) {
-        Output::pretty_errorln(format_args!(
-            "<r><red>error:<r> failed to create tmpfile: {}",
-            err.name()
-        ));
+        bun_core::pretty_errorln!("<r><red>error:<r> failed to create tmpfile: {}", err.name());
         Global::crash();
     }
 
@@ -1318,12 +1309,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             lockfile: &this.lockfile,
             options: &this.options,
             successfully_installed: None,
-            // PORT NOTE: Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
-            // never reads `updates`, but pass an empty slice to match the spec
-            // exactly rather than `&this.update_requests`.
+            // `Yarn::print` never reads `updates`; pass an empty slice.
             updates: &[],
         };
-        // PORT NOTE: Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
+        // `bun_sys::File`
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
         // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
@@ -1379,8 +1368,7 @@ impl fmt::Display for PatchHashFmt {
     }
 }
 
-// PORTING.md §Global mutable state: bool flag → AtomicBool. Set once during
-// the (Once-guarded) temp-dir probe; never read today but kept for Zig parity.
+// Set once during the (Once-guarded) temp-dir probe; never read today.
 static USING_FALLBACK_TEMP_DIR: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -1393,9 +1381,8 @@ fn verbose_install() -> bool {
     PackageManager::verbose_install()
 }
 
-/// Thread-local cached folder-name buffer accessor. Zig used a plain
-/// `threadlocal var [bun.MAX_PATH_BYTES]u8`. PORTING.md §Global mutable state:
-/// single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
+/// Thread-local cached folder-name buffer accessor.
+/// Single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
 /// is the unique live borrow at every call site. Callers must not hold the
 /// result across a call that re-enters this accessor (per-statement reborrow
 /// shape — same contract the prior `*mut [u8]` API imposed, now centralized
@@ -1404,7 +1391,7 @@ fn verbose_install() -> bool {
 fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the
     // thread-local cell outlives all callers and only one `&mut` is taken at a
-    // time per call site (Zig also reused this buffer non-reentrantly).
+    // time per call site (the buffer is reused non-reentrantly).
     unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
@@ -1414,5 +1401,3 @@ const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
     // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
     ZStr::from_static(bytes_with_nul)
 }
-
-// ported from: src/install/PackageManager/PackageManagerDirectories.zig

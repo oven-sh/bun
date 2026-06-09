@@ -1,11 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::DiffFormatter;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_nth_called_with(
+pub(crate) fn to_have_been_nth_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -114,5 +111,3 @@ pub fn to_have_been_nth_called_with(
         format_args!("\n\nCall #{}:\n{}\n", nth_call_num, diff_format),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenNthCalledWith.zig

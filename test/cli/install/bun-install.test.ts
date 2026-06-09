@@ -42,8 +42,9 @@ expect.extend({
   },
 });
 
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 
@@ -9012,7 +9013,7 @@ describe.concurrent("bun-install", () => {
       expect(await exists(join(ctx.package_dir, "bun.lockb"))).toBeFalse();
       expect(await file(join(ctx.package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 1,
+        "lockfileVersion": 2,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -9170,4 +9171,346 @@ describe.concurrent("bun-install", () => {
       expect(await exited).toBe(1);
     });
   });
+});
+
+it("rejects dependency aliases containing '..' path segments", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+    // The alias (the key in `dependencies`) becomes the folder name under
+    // node_modules/. An alias containing ".." segments must not be able to
+    // place the package outside the project directory. The name is unique per
+    // run so a previous (vulnerable) run's escape artifact can't fail this one.
+    const escapeName =
+      "bun-install-alias-escape-target-" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          [`../../${escapeName}`]: "npm:baz@0.0.3",
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    // node_modules/../../<escapeName> resolves to a sibling of the project
+    // directory; nothing may be materialized there.
+    expect(await exists(join(ctx.package_dir, "..", escapeName))).toBe(false);
+    // The alias is reported as invalid instead of being used as a path.
+    expect(err).toContain("Invalid dependency name");
+    expect(out).not.toContain("1 package installed");
+    expect(await exited).toBe(1);
+  });
+});
+
+it("does not extract a tarball for a dependency alias containing '..' path segments", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+
+    // The dependency alias (the key in `dependencies`) is used to derive the
+    // temporary extraction folder name. Point bun's temp dir at a deep
+    // directory tree we control so that an alias with '..' segments would have
+    // to land inside `zone` (above the temp dir) to be observed.
+    using zoneDir = tempDir("install-alias-tmp-zone", {
+      "a/b/c/.keep": "",
+    });
+    const zone = String(zoneDir);
+    const bunTmp = join(zone, "a", "b", "c");
+
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          "x/../../../..": `${ctx.registry_url}baz-0.0.3.tgz`,
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_TMPDIR: bunTmp, TMPDIR: bunTmp },
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    const exitCode = await exited;
+
+    // Nothing from the tarball may be written above bun's temp dir (zone/a/b/c).
+    expect(await readdirSorted(zone)).toEqual(["a"]);
+    expect(await readdirSorted(join(zone, "a"))).toEqual(["b"]);
+    expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
+    // The unsafe alias is reported as an error and nothing is installed.
+    expect(err).toContain("Refusing to install package with invalid name");
+    expect(out).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+it("does not install transitive file: dependencies that point outside their package", async () => {
+  // A dependency declared by a non-workspace package (here: a folder dependency
+  // of the project) uses a file: specifier pointing at an absolute path outside
+  // of that package and outside the project. That directory must not be linked
+  // into node_modules.
+  using dir = tempDir("transitive-file-dep", {
+    "secret/credentials.txt": "do-not-link-me",
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        "evil-folder-dep": "file:./evil-folder-dep",
+      },
+    }),
+    "project/evil-folder-dep/index.js": "module.exports = 1;",
+  });
+  const projectDir = join(String(dir), "project");
+  const secretDir = join(String(dir), "secret");
+
+  await write(
+    join(projectDir, "evil-folder-dep", "package.json"),
+    JSON.stringify({
+      name: "evil-folder-dep",
+      version: "1.0.0",
+      dependencies: {
+        loot: "file:" + secretDir.replaceAll("\\", "/"),
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: projectDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  // The directory outside the package must not appear under node_modules,
+  // neither hoisted nor nested under the declaring package.
+  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+  // The dependency is reported as unresolvable instead of silently linking local files.
+  expect(err).toContain("Could not find package.json");
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
+it("does not install transitive file: dependencies with overlong folder targets", async () => {
+  const overlongTarget = "file:./" + Buffer.alloc(120000, "a").toString();
+  using dir = tempDir("transitive-file-dep-overlong", {
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: {
+        "evil-folder-dep": "file:./evil-folder-dep",
+      },
+    }),
+    "project/evil-folder-dep/index.js": "module.exports = 1;",
+    "project/evil-folder-dep/package.json": JSON.stringify({
+      name: "evil-folder-dep",
+      version: "1.0.0",
+      dependencies: {
+        loot: overlongTarget,
+      },
+    }),
+  });
+  const projectDir = join(String(dir), "project");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: projectDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  expect(await exists(join(projectDir, "node_modules", "loot"))).toBe(false);
+  expect(await exists(join(projectDir, "node_modules", "evil-folder-dep", "node_modules", "loot"))).toBe(false);
+  expect(err).toContain("unsafe folder path");
+  expect(out).not.toContain("2 packages installed");
+  expect(exitCode).toBe(1);
+});
+
+it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
+  // For `file:` tarball dependencies, the dependency alias (the key in
+  // `dependencies`) is used to derive the temporary extraction folder name.
+  // Point bun's temp dir and cache at directories we control so an alias with
+  // '..' segments would have to land in one of the directories above the temp
+  // dir (or next to the fixture directories) to be observed.
+  using dir = tempDir("local-tarball-alias-segments", {
+    "zone/a/b/c/d/.keep": "",
+    "project/package.json": JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "../../../../../..": "file:./baz-0.0.3.tgz",
+      },
+    }),
+    "project-ok/package.json": JSON.stringify({
+      name: "bar",
+      version: "0.0.1",
+      dependencies: {
+        "baz-local": "file:./baz-0.0.3.tgz",
+      },
+    }),
+  });
+  const root = String(dir);
+  const zone = join(root, "zone");
+  const bunTmp = join(zone, "a", "b", "c", "d");
+  const testEnv = {
+    ...env,
+    BUN_TMPDIR: bunTmp,
+    TMPDIR: bunTmp,
+    BUN_INSTALL_CACHE_DIR: join(root, "cache"),
+  };
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project", "baz-0.0.3.tgz"));
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project-ok", "baz-0.0.3.tgz"));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const err = await stderr.text();
+  const out = await stdout.text();
+  const exitCode = await exited;
+
+  // Nothing from the tarball may be written into the directories above bun's
+  // temp dir (zone/a/b/c/d).
+  expect(await readdirSorted(zone)).toEqual(["a"]);
+  expect(await readdirSorted(join(zone, "a"))).toEqual(["b"]);
+  expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
+  expect(await readdirSorted(join(zone, "a", "b", "c"))).toEqual(["d"]);
+  // The tarball's files (`index.js`, `package.json`) may not appear next to
+  // the fixture directories either.
+  expect(await exists(join(root, "package.json"))).toBe(false);
+  expect(await exists(join(root, "index.js"))).toBe(false);
+  // The unsafe alias is rejected as an install folder name and nothing is installed.
+  expect(err).toContain('Invalid dependency name "../../../../../.."');
+  expect(out).not.toContain("1 package installed");
+  expect(exitCode).not.toBe(0);
+
+  // A normal alias for the same local tarball still installs.
+  const {
+    stdout: stdoutOk,
+    stderr: stderrOk,
+    exited: exitedOk,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project-ok"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const errOk = await stderrOk.text();
+  const outOk = await stdoutOk.text();
+  const exitCodeOk = await exitedOk;
+  expect(await exists(join(root, "project-ok", "node_modules", "baz-local", "package.json"))).toBe(true);
+  expect(errOk).not.toContain("error:");
+  expect(outOk).toContain("1 package installed");
+  expect(exitCodeOk).toBe(0);
+});
+
+it("does not create a cache index entry outside the cache directory for a dependency alias of '..'", async () => {
+  // For git/github/tarball dependencies the dependency alias (the key in
+  // `dependencies`) is used as the folder name for the per-package cache
+  // index (`<cache>/<alias>/<resolved-folder>` symlinks). The alias must be a
+  // single safe path segment; an alias of exactly ".." must not cause index
+  // entries to be created in the parent of the cache directory.
+  using dir = tempDir("cache-index-alias-dotdot", {
+    "cache-holder/cache/.keep": "",
+    "project/package.json": JSON.stringify({
+      name: "cache-index-alias-app",
+      version: "1.0.0",
+      dependencies: {
+        "..": "file:./baz-a-0.0.3.tgz",
+      },
+    }),
+    "project-ok/package.json": JSON.stringify({
+      name: "cache-index-alias-ok-app",
+      version: "1.0.0",
+      dependencies: {
+        "baz-ok": "file:./baz-b-0.0.3.tgz",
+      },
+    }),
+  });
+  const root = String(dir);
+  const cacheHolder = join(root, "cache-holder");
+  const cacheDir = join(cacheHolder, "cache");
+  const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project", "baz-a-0.0.3.tgz"));
+  await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(root, "project-ok", "baz-b-0.0.3.tgz"));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const err = await stderr.text();
+  await stdout.text();
+  const exitCode = await exited;
+
+  // The parent of the cache directory must contain only the cache directory
+  // itself — no per-alias index entries (e.g. "@T@<hash>..." symlinks) may be
+  // planted next to it.
+  expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
+  // The unsafe alias is rejected as an install folder name.
+  expect(err).toContain('Invalid dependency name ".."');
+  expect(exitCode).not.toBe(0);
+
+  // A normal single-segment alias still gets its cache index entry, inside the
+  // cache directory, and installs fine.
+  const {
+    stdout: stdoutOk,
+    stderr: stderrOk,
+    exited: exitedOk,
+  } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: join(root, "project-ok"),
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: testEnv,
+  });
+  const errOk = await stderrOk.text();
+  const outOk = await stdoutOk.text();
+  const exitCodeOk = await exitedOk;
+
+  expect(await exists(join(cacheDir, "baz-ok"))).toBe(true);
+  expect(await exists(join(root, "project-ok", "node_modules", "baz-ok", "package.json"))).toBe(true);
+  // The cache parent still only contains the cache directory after a normal install.
+  expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
+  expect(errOk).not.toContain("error:");
+  expect(outOk).toContain("1 package installed");
+  expect(exitCodeOk).toBe(0);
 });

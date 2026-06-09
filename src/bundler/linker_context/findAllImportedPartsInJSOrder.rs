@@ -3,12 +3,10 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
-    Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,
+    Chunk, Index, IndexInt, LinkerContext, PartRange,
     chunk::{self, EntryPoint, Order},
     js_meta::Wrap,
-    linker_graph::FileColumns as _,
 };
-use bun_ast as js_ast;
 use bun_core::perf;
 
 pub fn find_all_imported_parts_in_js_order(
@@ -19,7 +17,7 @@ pub fn find_all_imported_parts_in_js_order(
 
     let mut part_ranges_shared: Vec<PartRange> = Vec::new();
     let mut parts_prefix_shared: Vec<PartRange> = Vec::new();
-    // PERF(port): temp_arena dropped — these arena-fed scratch lists could become
+    // PERF: these scratch lists could become
     // `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
     // (introduces lifetimes on this fn + visitor). Profile if hot.
     for (index, chunk) in chunks.iter_mut().enumerate() {
@@ -49,12 +47,10 @@ pub fn find_imported_parts_in_js_order(
 ) -> Result<(), bun_core::Error> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
-    // PERF(port): this.arena() dropped — was per-LinkerContext arena; profile if hot.
     {
         let distances = this.graph.files.items_distance_from_entry_point();
         let stable_source_indices = this.graph.stable_source_indices.slice();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
-            // PERF(port): was appendAssumeCapacity
             chunk_order_array.push(Order {
                 source_index,
                 distance: distances[source_index as usize],
@@ -68,13 +64,13 @@ pub fn find_imported_parts_in_js_order(
     part_ranges_shared.clear();
     parts_prefix_shared.clear();
 
-    // PORT NOTE: reshaped for borrowck — capture before constructing visitor
+    // Capture before constructing the visitor (borrowck).
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // PORT NOTE: the Zig visitor holds a *LinkerContext alongside SoA column slices
-    // borrowed from it, and mutates one column (`entry_point_chunk_index`). Rust
-    // borrowck forbids the latter through a shared `&LinkerContext`, so cache that
+    // The visitor holds a LinkerContext alongside SoA column slices
+    // borrowed from it, and mutates one column (`entry_point_chunk_index`).
+    // Borrowck forbids the latter through a shared `&LinkerContext`, so cache that
     // single mutable column as a raw `*mut [u32]` (provenance via the
     // `MultiArrayList.bytes: *mut u8` raw-pointer field — see
     // `scanImportsAndExports.rs` for the same pattern). All other `c.*` accesses
@@ -84,7 +80,6 @@ pub fn find_imported_parts_in_js_order(
 
     let (files_in_chunk_order, parts_in_chunk_order) = {
         let mut visitor = FindImportedPartsVisitor {
-            // PERF(port): files/visited were this.arena() arena — profile if hot.
             files: Vec::new(),
             part_ranges: core::mem::take(part_ranges_shared),
             parts_prefix: core::mem::take(parts_prefix_shared),
@@ -99,7 +94,6 @@ pub fn find_imported_parts_in_js_order(
             entry_point_chunk_indices,
         };
 
-        // PERF(port): was comptime bool dispatch (nested `inline else`) — profile if hot.
         match (with_code_splitting, with_scb) {
             (true, true) => run_visits::<true, true>(&mut visitor, &chunk_order_array),
             (true, false) => run_visits::<true, false>(&mut visitor, &chunk_order_array),
@@ -107,15 +101,13 @@ pub fn find_imported_parts_in_js_order(
             (false, false) => run_visits::<false, false>(&mut visitor, &chunk_order_array),
         }
 
-        // PERF(port): was this.arena() arena — profile if hot.
         let mut parts_in_chunk_order: Vec<PartRange> =
             Vec::with_capacity(visitor.part_ranges.len() + visitor.parts_prefix.len());
         // bun.concat: parts_prefix first, then part_ranges
         parts_in_chunk_order.extend_from_slice(&visitor.parts_prefix);
         parts_in_chunk_order.extend_from_slice(&visitor.part_ranges);
 
-        // Zig `defer { part_ranges_shared.* = visitor.part_ranges; ... visitor.visited.deinit(); }`
-        // No fallible ops remain past this point in Rust, so plain move-back is equivalent.
+        // No fallible ops remain past this point, so plain move-back works.
         *part_ranges_shared = visitor.part_ranges;
         *parts_prefix_shared = visitor.parts_prefix;
         // visitor.visited dropped implicitly
@@ -123,7 +115,6 @@ pub fn find_imported_parts_in_js_order(
         (visitor.files, parts_in_chunk_order)
     };
 
-    // PORT NOTE: `chunk.content.javascript` union field access → enum match.
     match &mut chunk.content {
         chunk::Content::Javascript(js) => {
             js.files_in_chunk_order = files_in_chunk_order.into_boxed_slice();
@@ -150,8 +141,8 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_bits: &'a AutoBitSet,
     pub flags: &'a [crate::js_meta::Flags],
-    pub parts: &'a [Vec<Part>],
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub parts: &'a [bun_ast::PartList<'ctx>],
+    pub import_records: &'a [bun_ast::import_record::List<'ctx>],
     pub files: Vec<IndexInt>,
     pub part_ranges: Vec<PartRange>,
     pub visited: HashMap<IndexInt, ()>,
@@ -160,7 +151,7 @@ pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_point: EntryPoint,
     pub chunk_index: u32,
     /// Raw column pointer into `c.graph.files` for the single mutable write in
-    /// `visit` (see PORT NOTE above).
+    /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
 }
 
@@ -215,10 +206,11 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
 
-        let parts = self.parts[source_index as usize].slice();
+        let parts = self.parts[source_index as usize].as_slice();
+        let parts_live = &self.c.graph.parts_live[source_index as usize];
         if can_be_split
             && is_file_in_chunk
-            && parts[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize].is_live
+            && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
         {
             Self::append_or_extend_range(
                 &mut self.part_ranges,
@@ -227,12 +219,12 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
             );
         }
 
-        let records = self.import_records[source_index as usize].slice();
+        let records = self.import_records[source_index as usize].as_slice();
 
         for part_index_ in 0..parts.len() {
             let part = &parts[part_index_];
             let part_index = part_index_ as u32;
-            let is_part_in_this_chunk = is_file_in_chunk && part.is_live;
+            let is_part_in_this_chunk = is_file_in_chunk && parts_live.is_set(part_index_);
             for &record_id in part.import_record_indices.slice() {
                 let record: &ImportRecord = &records[record_id as usize];
                 if record.source_index.is_valid()
@@ -291,5 +283,3 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/findAllImportedPartsInJSOrder.zig

@@ -7,12 +7,9 @@ use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 
-/// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
-/// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
-/// structs are layout-identical (the code `@ptrCast`s between the parents), so
-/// we use a single Rust type for both.
+/// Layer slot used in both `ImportConditions.layer` and `ImportRule.layer`.
+/// The two uses are layout-identical, so a single type serves both.
 #[repr(C)]
 #[derive(Default)]
 pub struct Layer {
@@ -165,7 +162,7 @@ impl ImportConditions {
 #[repr(C)]
 pub struct ImportRule {
     /// The url to import.
-    // TODO(port): arena lifetime — `&'bump [u8]` once crate-wide thread lands.
+    // TODO: arena lifetime — `&'bump [u8]` once crate-wide thread lands.
     pub url: &'static [u8],
 
     /// An optional cascade layer name, or `None` for an anonymous layer.
@@ -228,15 +225,18 @@ impl ImportRule {
     pub fn conditions(&self) -> &ImportConditions {
         // SAFETY: ImportConditions is #[repr(C)] with fields {layer, supports, media}
         // laid out identically to the {layer, supports, media} field run of ImportRule
-        // (also #[repr(C)]). The Zig code relies on this same layout pun via @ptrCast.
+        // (also #[repr(C)]).
         // The pointer is derived from `self` (not `&self.layer`) so its provenance
         // covers all three fields — going through a field reference would narrow
         // provenance to just `layer` and make sibling-field reads UB under SB.
-        // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
-        let base = std::ptr::from_ref::<Self>(self).cast::<u8>();
+        //
+        // Long-term, the pun should be replaced with an actual
+        // `conditions: ImportConditions` field on `ImportRule` (see the struct
+        // doc on `ImportConditions`); that touches every `.layer`/`.supports`/
+        // `.media` access crate-wide, so it is deferred.
         unsafe {
-            &*base
-                .add(core::mem::offset_of!(Self, layer))
+            &*std::ptr::from_ref(self)
+                .byte_add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
         }
     }
@@ -245,10 +245,9 @@ impl ImportRule {
         // SAFETY: see `conditions()` above. Derived from `&mut self` (full-struct
         // provenance) via byte offset so the returned `&mut ImportConditions` may
         // legally write `supports` and `media`, not just `layer`.
-        let base = std::ptr::from_mut::<Self>(self).cast::<u8>();
         unsafe {
-            &mut *base
-                .add(core::mem::offset_of!(Self, layer))
+            &mut *std::ptr::from_mut(self)
+                .byte_add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
         }
     }
@@ -281,9 +280,8 @@ impl ImportRule {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `url: &'static [u8]`
-        // is an arena-owned slice → identity copy (generics.zig "const
-        // strings" rule); `media` routes through `dc::media_list` until
+        // `url: &'static [u8]` is an arena-owned slice → identity copy;
+        // `media` routes through `dc::media_list` until
         // `MediaList` gains an arena-aware `deep_clone`.
         Self {
             url: self.url,
@@ -319,7 +317,6 @@ impl ImportRule {
             dest.serialize_string(placeholder)?;
 
             if let Some(deps) = &mut dest.dependencies {
-                // PERF(port): was `catch unreachable` (alloc cannot fail under arena)
                 deps.push(css::Dependency::Import(d));
             }
         } else {
@@ -371,7 +368,3 @@ const _: () = {
 };
 
 // silence unused-import warnings on the gated bodies' deps
-#[allow(unused_imports)]
-use {Arena as _Arena, ImportRecord as _ImportRecord};
-
-// ported from: src/css/rules/import.zig

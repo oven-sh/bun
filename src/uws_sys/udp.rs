@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::Loop;
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
@@ -236,5 +235,3 @@ unsafe extern "C" {
     safe fn us_udp_packet_buffer_payload_length(buf: &mut PacketBuffer, index: c_int) -> c_int;
     safe fn us_udp_packet_buffer_truncated(buf: &mut PacketBuffer, index: c_int) -> c_int;
 }
-
-// ported from: src/uws_sys/udp.zig

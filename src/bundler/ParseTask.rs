@@ -1,5 +1,3 @@
-//! Port of src/bundler/ParseTask.zig
-//!
 //! A `ParseTask` is the unit of work scheduled on the thread pool for each
 //! source file the bundler needs to parse. It carries everything needed to
 //! read the file (or use already-loaded contents), run the JS/CSS/etc. parser,
@@ -16,17 +14,15 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, Error as AnyError, FeatureFlags, declare_scope, err, scoped_log};
 use bun_sys::Fd;
-// PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; the draft used the
-// struct alias which made `ThreadPoolLib::Task` unresolvable. Import the module.
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use bun_ast::Index;
 use bun_ast::{self as ast, E, Expr, G, Part};
 use bun_js_parser as js_parser;
-// PORT NOTE: `BundledAst<'arena>` — the bundler graph stores `'static`-erased
+// `BundledAst<'arena>` — the bundler graph stores `'static`-erased
 // ASTs (arena outlives the link step). Use the crate-level alias so the
 // `Success`/helper signatures don't carry an explicit `'static` everywhere.
-use crate::ungate_support::JSAst;
+use crate::JSAst;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;
 
@@ -38,19 +34,18 @@ use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::{ContentHasher, UseDirective, perf, target_from_hashbang};
+use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
 
-/// `bun.jsc.EventLoopTask` (ParseTask.zig:Result.task). T6 type erased here.
 #[allow(non_snake_case)]
 mod EventLoop {
-    pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
+    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
 }
 
-// PORT NOTE: the per-file parse arena is held as `bump: &'static Bump` (the
+// the per-file parse arena is held as `bump: &'static Bump` (the
 // worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
 // borrows directly. No erasure helper is needed; `StoreStr::new` covers the
@@ -60,7 +55,7 @@ mod EventLoop {
 // live on the canonical `impl Plugin` in `bundle_v2.rs::api::JSBundler` next to
 // the other FFI wrappers; `bundler::JSBundlerPlugin` re-exports that type.
 //
-// PORT NOTE: `FileMap::get` now lives on the real `JSBundler::FileMap` in
+// `FileMap::get` now lives on the real `JSBundler::FileMap` in
 // bundle_v2.rs (no longer an opaque forward-decl). The placeholder
 // always-miss `get` shim that used to sit here has been removed so the two
 // inherent impls don't collide.
@@ -73,13 +68,14 @@ mod EventLoop {
 #[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
-    // TODO(port): arena lifetime — contents may be arena-owned, plugin-owned,
-    // or &'static (runtime). Using &'static as a placeholder.
+    // The `'static` is ownership-erased: contents may be arena-owned,
+    // plugin-owned, or truly static (runtime source). The producer keeps the
+    // backing allocation alive for the duration of the bundle pass.
     Contents(&'static [u8]),
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ContentsOrFdTag {
+pub(crate) enum ContentsOrFdTag {
     Fd,
     Contents,
 }
@@ -89,7 +85,7 @@ pub enum ContentsOrFdTag {
 // ───────────────────────────────────────────────────────────────────────────
 
 pub struct ParseTask {
-    // PORT NOTE: lifetime-erased `'static` — paths borrow from `DirnameStore`
+    // lifetime-erased `'static` — paths borrow from `DirnameStore`
     // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
     pub path: Fs::Path<'static>,
     pub secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
@@ -113,7 +109,7 @@ pub struct ParseTask {
     pub module_type: options::ModuleType,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
-    /// BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in
+    /// BACKREF (LIFETIMES.tsv) — written through in
     /// `on_complete`. `None` only in the `default()` placeholder; every
     /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
@@ -143,7 +139,9 @@ pub struct Result {
     /// returned source code by the plugin.
     pub external: ExternalFreeFunction,
 }
-
+// `Result` lives in a bump arena (no Drop on free); boxing the large arm
+// would leak the heap allocation. The size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 pub enum ResultValue {
     Success(Success),
     Err(ResultError),
@@ -157,14 +155,14 @@ pub struct WatcherData {
 
 impl WatcherData {
     /// When no files to watch, this encoding is used.
-    pub const NONE: WatcherData = WatcherData {
+    pub(crate) const NONE: WatcherData = WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
     };
 }
 
 pub struct Success {
-    pub ast: JSAst,
+    pub ast: JSAst<'static>,
     pub source: Source,
     pub log: Log,
     pub use_directive: UseDirective,
@@ -226,15 +224,15 @@ impl ParseTask {
     pub fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
-        // Zig `ctx: *BundleV2` — take `*mut` so the stored BACKREF retains
+        // Take `*mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'_>,
     ) -> ParseTask {
-        // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-        // arena outlives the bundle pass, so deref'ing the raw pointer here to
-        // borrow `name`/`version` is sound.
         let (package_name, package_version) = match resolve_result.package_json {
+            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
+            // arena outlives the bundle pass, so deref'ing the raw pointer here to
+            // borrow `name`/`version` is sound.
             Some(pj) => unsafe {
                 let pj = &*pj;
                 (
@@ -244,14 +242,14 @@ impl ParseTask {
             },
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
-        // only read `transpiler().options.target` here.
-        let known_target = unsafe { (*ctx).transpiler().options.target };
+        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
+        // write provenance from the `*mut BundleV2` parameter; caller passes a
+        // live `&mut BundleV2` coerced to `*mut`.
+        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-            // write provenance from the `*mut BundleV2` parameter.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
-            path: resolve_result.path_pair.primary.clone(),
+            ctx: Some(ctx_ref),
+            path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
@@ -259,7 +257,7 @@ impl ParseTask {
             side_effects: resolve_result.primary_side_effects_data,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
             // nominal type (`bun_options_types::jsx::Pragma`). Preserves
-            // jsxImportSource/runtime/etc. from tsconfig.json (.zig:122).
+            // jsxImportSource/runtime/etc. from tsconfig.json.
             jsx: resolve_result.jsx.clone(),
             source_index,
             module_type: resolve_result.module_type,
@@ -283,14 +281,11 @@ impl ParseTask {
             stage: ParseTaskStage::NeedsSourceCode,
             tree_shaking: false,
             is_entry_point: false,
-            // TODO(port): Zig struct-field defaults; Rust has no per-field
-            // default syntax. Consider impl Default for ParseTask and use
-            // `..Default::default()` here.
         }
     }
 
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
-    /// callers can spell it `ParseTask::get_runtime_source` (matches Zig).
+    /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
     pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
         parse_worker::get_runtime_source(target)
@@ -346,7 +341,10 @@ impl Default for ParseTask {
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
-pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `io_task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub(crate) unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
@@ -356,7 +354,10 @@ pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
-pub fn task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
@@ -530,13 +531,8 @@ pub mod parse_worker {
                 )
             }
         };
-        // PERF(port): Zig built one comptime string per Target variant via
-        // `inline else`. Here we use `const_format::concatcp!` per arm; the match
-        // itself is runtime but each arm yields a &'static str. Profile if the
-        // extra match matters (it shouldn't — called once).
 
         let parse_task = ParseTask {
-            // TODO(port): Zig used `undefined` for ctx; using None.
             ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
@@ -569,19 +565,18 @@ pub mod parse_worker {
             is_entry_point: false,
         };
         let source = Source {
-            // PORT NOTE: `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
+            // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
             // from `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // directly rather than `clone()` across the type boundary.
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
-                name: bun_paths::fs::PathName::init(b"runtime"),
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
             },
             contents: std::borrow::Cow::Borrowed(runtime_code.as_bytes()),
-            // PORT NOTE: `Source.index` is `bun_ast::Index` (newtype `u32`),
+            // `Source.index` is `bun_ast::Index` (newtype `u32`),
             // distinct from `bun_ast::Index`. Runtime source is index 0.
             index: bun_ast::Index(Index::RUNTIME.get()),
             ..Default::default()
@@ -590,9 +585,6 @@ pub mod parse_worker {
     }
 
     pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
-        // PERF(port): Zig `switch (target) { inline else => |t| comptime ... }`
-        // monomorphized per variant at comptime. Runtime dispatch here is fine
-        // since each arm in `get_runtime_source_comptime` already yields static data.
         get_runtime_source_comptime(target)
     }
 
@@ -604,7 +596,7 @@ pub mod parse_worker {
     // (`Parser::to_lazy_export_ast`); `bun_css::BundlerStyleSheet` (gated
     // upstream); `Expr::init` overload set for arbitrary `E::*` defaults.
 
-    // PORT NOTE: `transpiler: *mut Transpiler` (raw, Zig `*Transpiler`). Callers
+    // `transpiler: *mut Transpiler` stays raw. Callers
     // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
@@ -612,10 +604,10 @@ pub mod parse_worker {
     fn get_empty_css_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        source: &'static Source,
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
@@ -632,10 +624,10 @@ pub mod parse_worker {
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
-        source: &Source,
-    ) -> core::result::Result<JSAst, AnyError> {
+        source: &'static Source,
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
@@ -656,17 +648,19 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
     // CSS Symbol bridge — `bun_ast::Symbol` ↔ `bun_ast::Symbol`
     //
-    // Both port the same Zig `js_ast.Symbol` (Symbol.zig).
     // `StylesheetExtra.symbols` is `Vec<bun_ast::Symbol>`;
     // `new_lazy_export_ast_impl` takes `Vec<bun_ast::Symbol>`. Convert
     // field-by-field so CSS-module local refs (`ref.inner_index()`) index a
-    // populated symbol table (.zig:613).
+    // populated symbol table.
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn css_symbols_to_parser_symbols(src: Vec<bun_ast::Symbol>) -> bun_ast::symbol::List {
+    fn css_symbols_to_parser_symbols(
+        src: &[bun_ast::Symbol],
+        bump: &'static Bump,
+    ) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
-        let mut out = Vec::<PSym>::init_capacity(src.len() as usize);
-        for s in src.slice() {
+        let mut out = bun_ast::symbol::List::with_capacity_in(src.len(), bump);
+        for s in src {
             // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
             // `s.kind`/`s.import_item_status` are already the target nominal types
             // — the former `#[repr(u8)]` round-trip bridge is no longer needed.
@@ -675,7 +669,7 @@ pub mod parse_worker {
             // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
             // — same nominal type, no bridge needed.
             let link: bun_ast::Ref = s.link.get();
-            out.append_assume_capacity(PSym {
+            out.push(PSym {
                 original_name: bun_ast::StoreStr::new(s.original_name.slice()),
                 // CSS-module locals are never ES6 namespace-aliased (the CSS parser
                 // never assigns `namespace_alias`); drop rather than bridge the
@@ -715,8 +709,8 @@ pub mod parse_worker {
     // The signature now names the real `ParserOptions`; body un-gates in lockstep
     // with the above.
 
-    // PORT NOTE: `transpiler`/`resolver` are raw `*mut` (Zig `*Transpiler` /
-    // `*Resolver`). In Zig the caller passes `resolver = &transpiler.resolver`, so
+    // `transpiler`/`resolver` are raw `*mut`. The caller may pass
+    // `resolver = &transpiler.resolver`, so
     // the two may point into the same allocation. Taking `&mut Transpiler` +
     // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
     // disjoint `(*transpiler).options` field, never the whole struct.
@@ -724,15 +718,15 @@ pub mod parse_worker {
     fn get_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions,
+        opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
-        source: &Source,
+        source: &'static Source,
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
-    ) -> core::result::Result<JSAst, AnyError> {
+    ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
@@ -743,24 +737,18 @@ pub mod parse_worker {
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
                 let _trace = perf::trace("Bundler.ParseJS");
-                // PORT NOTE: `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
-                // Zig (.zig:335-342) passes the *same* `opts` (bitwise copy) to the
-                // empty-AST fallback; since Rust moves `opts` into `.parse()`,
+                // `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
+                // The empty-AST fallback needs the same options; since `opts`
+                // moves into `.parse()`,
                 // snapshot a faithful field-by-field copy via
                 // `Options::clone_for_lazy_export` (co-located with the struct so
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
-                return if let Some(res) = (crate::cache::JavaScript {}).parse(
-                    bump, // TODO(port): zig passed transpiler.arena
-                    opts,
-                    &topts.define,
-                    log,
-                    source,
-                )? {
-                    // PORT NOTE: Zig's `js_parser.Result` is a bare-union whose
-                    // `.ast` field is read unconditionally. The Rust port models it
-                    // as an enum; `Cached`/`AlreadyBundled` are runtime-loader
+                return if let Some(res) =
+                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
+                {
+                    // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
                         bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
@@ -774,8 +762,6 @@ pub mod parse_worker {
                 } else {
                     get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
                 };
-                // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
-                // to monomorphize the RootType. Expanded to two calls.
             }
             Loader::Json | Loader::Jsonc => {
                 let _trace = perf::trace("Bundler.ParseJSON");
@@ -784,11 +770,10 @@ pub mod parse_worker {
                 } else {
                     bun_resolver::tsconfig_json::JsonMode::Json
                 };
-                // SAFETY: `resolver` is a live `*mut Resolver` (Zig `*Resolver`);
+                // SAFETY: `resolver` is a live `*mut Resolver`;
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode, true)?
-                    .map(Into::into)
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
@@ -806,14 +791,13 @@ pub mod parse_worker {
             Loader::Toml => {
                 let _trace = perf::trace("Bundler.ParseTOML");
                 let mut temp_log = Log::init();
-                // PORT NOTE: Zig `defer { temp_log.cloneToWithRecycled(log, true);
-                // temp_log.msgs.clearAndFree() }` runs on the error path too.
+                // `temp_log` must flush into `log` on the error path too.
                 // scopeguard would alias `log`/`temp_log` (both borrowed mutably
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?.into();
+                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -833,9 +817,8 @@ pub mod parse_worker {
             Loader::Yaml => {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
-                    let root: Expr =
-                        bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?.into();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -855,9 +838,9 @@ pub mod parse_worker {
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
                 let mut temp_log = Log::init();
-                let result = (|| -> core::result::Result<JSAst, AnyError> {
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?.into();
+                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -911,7 +894,7 @@ pub mod parse_worker {
                             Some(source),
                             Loc::EMPTY,
                             b"Failed to render markdown to HTML",
-                        ); // logger OOM-only (Zig: catch unreachable)
+                        ); // logger OOM-only
                         return Err(err!("ParserError"));
                     }
                 };
@@ -947,7 +930,7 @@ pub mod parse_worker {
 
             Loader::SqliteEmbedded | Loader::Sqlite => {
                 if !topts.target.is_bun() {
-                    // logger OOM-only (Zig: catch unreachable)
+                    // logger OOM-only
                     let _ = log.add_error(
                         Some(source),
                         Loc::EMPTY,
@@ -1068,7 +1051,7 @@ pub mod parse_worker {
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
                 if topts.target == options::Target::Browser {
-                    // logger OOM-only (Zig: catch unreachable)
+                    // logger OOM-only
                     let _ = log.add_error(
                     Some(source),
                     Loc::EMPTY,
@@ -1135,7 +1118,7 @@ pub mod parse_worker {
                 ));
             }
             Loader::Html => {
-                // PORT NOTE: scope the scanner so its `&mut log` / `&source`
+                // scope the scanner so its `&mut log` / `&source`
                 // borrows release before `new_lazy_export_ast` re-borrows them.
                 let import_records = {
                     let mut scanner = HTMLScanner::init(log, source);
@@ -1158,7 +1141,7 @@ pub mod parse_worker {
                     b"",
                 )?
                 .unwrap();
-                ast.import_records = import_records;
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
                 //
@@ -1170,20 +1153,20 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
-                ast.parts.slice_mut()[1] = Part {
+                // Liveness for this synthetic part is seeded in
+                // `tree_shaking_and_code_splitting` (the per-part bitset
+                // does not exist at parse time).
+                ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
-                    is_live: true,
-                    import_record_indices: 'brk2: {
+                    import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices =
-                            Vec::<u32>::init_capacity(import_records_len as usize);
-                        bun_core::vec::extend_from_fn(
-                            &mut import_record_indices,
+                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
                             import_records_len as usize,
-                            |i| u32::try_from(i).expect("int cast"),
                         );
-                        break 'brk2 import_record_indices;
+                        import_record_indices
+                            .extend(0..u32::try_from(import_records_len).expect("int cast"));
+                        import_record_indices
                     },
                     ..Default::default()
                 };
@@ -1202,18 +1185,18 @@ pub mod parse_worker {
                 let mut import_records = Vec::<ImportRecord>::default();
                 let source_code = &source.contents;
                 let mut temp_log = Log::init();
-                // PORT NOTE: Zig `defer { temp_log.appendToMaybeRecycled(log, source) }` —
-                // folded into linear control flow (scopeguard would alias `log`/`temp_log`).
+                // `temp_log` is flushed into `log` on every exit path via linear
+                // control flow (scopeguard would alias `log`/`temp_log`).
 
                 const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
                 let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
                     && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
                         == CSS_MODULE_SUFFIX;
-                // PORT NOTE: `parse_bundler` takes `ParserOptions<'static>` (the
+                // `parse_bundler` takes `ParserOptions<'static>` (the
                 // `'a` on `ParserOptions` is PhantomData-only; storage is a raw
                 // `NonNull<Log>`). Construct via `default(None)` to get `'static`,
                 // then poke the logger pointer in directly — `temp_log` outlives
-                // all parsing/minification below (mirrors Zig's `*Log` aliasing).
+                // all parsing/minification below.
                 let parser_options = {
                     let mut parseropts = bun_css::ParserOptions::default(None);
                     parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
@@ -1233,7 +1216,7 @@ pub mod parse_worker {
                 ) {
                     Ok(v) => v,
                     Err(e) => {
-                        // .zig:587 — surface the actual CSS parse diagnostic.
+                        // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
                         let _ = temp_log.append_to_maybe_recycled(log, source);
                         return Err(err!("SyntaxError"));
@@ -1254,7 +1237,7 @@ pub mod parse_worker {
                     },
                     &extra,
                 ) {
-                    // .zig:604 — surface the actual minify diagnostic.
+                    // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
                     let _ = temp_log.append_to_maybe_recycled(log, source);
                     return Err(err!("MinifyError"));
@@ -1264,16 +1247,13 @@ pub mod parse_worker {
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 let root = Expr::init(E::Object::default(), Loc { start: 0 });
-                let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
-                // PORT NOTE: `StylesheetExtra.symbols` is
+                // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
-                // `Vec<bun_ast::Symbol>`. Both port the same Zig
-                // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
-                // index a populated symbol table (.zig:613).
-                let symbols = css_symbols_to_parser_symbols(extra.symbols);
-                // PORT NOTE: Zig `defer temp_log.appendToMaybeRecycled(log, source)`
-                // (.zig:564-566) flushes on EVERY exit including this `try`; mirror
-                // by matching explicitly so accumulated CSS-module diagnostics are
+                // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
+                // index a populated symbol table.
+                let symbols = css_symbols_to_parser_symbols(&extra.symbols, bump);
+                // `temp_log` flushes into `log` on EVERY exit; match explicitly
+                // so accumulated CSS-module diagnostics are
                 // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
@@ -1287,8 +1267,9 @@ pub mod parse_worker {
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 let mut ast = JSAst::init(lazy?.unwrap());
+                let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
-                ast.import_records = import_records;
+                ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
             // TODO:
@@ -1378,8 +1359,8 @@ pub mod parse_worker {
     // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
     // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
 
-    // PORT NOTE: `transpiler`/`resolver` are raw `*mut` (Zig `*Transpiler` /
-    // `*Resolver`). Callers pass `resolver = &mut (*transpiler).resolver`; taking
+    // `transpiler`/`resolver` are raw `*mut`.
+    // Callers pass `resolver = &mut (*transpiler).resolver`; taking
     // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
     // touch the disjoint `(*transpiler).fs` and `(*resolver).caches.fs` fields.
     fn get_code_for_parse_task_without_plugins(
@@ -1389,7 +1370,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        loader: Loader,
+        _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1450,20 +1431,13 @@ pub mod parse_worker {
                     }
                 }
 
-                // TODO: this arena may be wrong for native plugins
-                //
-                // Zig (`ParseTask.zig:707-711`): pass `bun.default_allocator`
-                // when the loader copies its contents into the `OutputFile`
-                // (that memory must outlive the per-file worker arena), else the
-                // worker arena. Routing the non-copy case through `bump` keeps
-                // the source bytes in the bulk-reset worker arena instead of
-                // churning the global allocator's large-object free list one
-                // `Vec<u8>` per file.
-                let read_arena: Option<&Bump> = if loader.should_copy_for_bundling() {
-                    None
-                } else {
-                    Some(bump)
-                };
+                // Always read into the worker arena: it is pinned for the
+                // entire bundle pass (freed only via `pool.deinit()` inside
+                // `deinit_without_freeing_arena`, after `process_files_to_copy`
+                // has already deep-copied every additional-file body into its
+                // `OutputFile`). This avoids churning the global allocator with
+                // one `Vec<u8>` per file.
+                let read_arena: Option<&Bump> = Some(bump);
                 // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
                 // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
@@ -1478,7 +1452,7 @@ pub mod parse_worker {
                     read_arena,
                 ) {
                     Ok(e) => {
-                        // PORT NOTE: `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
+                        // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
                         // are structurally identical twins; convert
                         // by-variant so ownership of `Owned(Vec<u8>)` transfers.
                         use bun_resolver::cache::Contents as RC;
@@ -1501,7 +1475,12 @@ pub mod parse_worker {
                     }
                     Err(e) => {
                         let source = Source::init_empty_file(
-                            // TODO(port): zig duped via log.msgs.arena
+                            // `file_path.text`
+                            // borrows either the process-lifetime DirnameStore
+                            // pool (resolver paths) or, after the
+                            // `BuiltInModule::Import` reassignment above, the
+                            // framework-owned `built_in_modules` storage held by
+                            // the BundleV2 — both outlive the log's consumption.
                             file_path.text,
                         );
                         if e == err!("ENOENT") || e == err!("FileNotFound") {
@@ -1550,7 +1529,7 @@ pub mod parse_worker {
     // `dispatch::PluginVTable` slot). Also calls the gated
     // `get_code_for_parse_task_without_plugins`.
 
-    // PORT NOTE: `transpiler`/`resolver` are raw `*mut` — see
+    // `transpiler`/`resolver` are raw `*mut` — see
     // `get_code_for_parse_task_without_plugins`.
     #[allow(clippy::too_many_arguments)]
     fn get_code_for_parse_task<'b>(
@@ -1601,6 +1580,7 @@ pub mod parse_worker {
             deferred_error: None,
             should_continue_running: &should_continue_running,
             result: core::ptr::null_mut(),
+            original_contents: None,
         };
 
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
@@ -1617,7 +1597,7 @@ pub mod parse_worker {
     pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
         task: &'a mut ParseTask,
         log: &'a mut Log,
-        // PORT NOTE: raw `*mut` (Zig `*Transpiler` / `*Resolver`). Callers pass
+        // raw `*mut`. Callers pass
         // `resolver = &mut (*transpiler).resolver`; storing `&'a mut Transpiler<'b>`
         // alongside `&'a mut Resolver<'b>` would be aliased-`&mut` UB. The data
         // lifetime `'b` is retained on the pointee for variance only.
@@ -1627,18 +1607,23 @@ pub mod parse_worker {
         file_path: &'a mut Fs::Path<'b>,
         loader: &'a mut Loader,
         deferred_error: Option<AnyError>,
-        // Zig `*i32`. `fetch_source_code` and `OnBeforeParsePlugin__isDone` re-enter
+        // `fetch_source_code` and `OnBeforeParsePlugin__isDone` re-enter
         // via FFI while the outer `run` call has already handed this same i32 to
         // C++, so a `&'a mut i32` here would be aliased-`&mut` UB. `Cell<i32>` is
         // `repr(transparent)` over `UnsafeCell<i32>`; FFI receives `Cell::as_ptr()`
         // (a real `*mut i32`) and Rust callers use safe `.get()/.set()`.
         should_continue_running: &'a core::cell::Cell<i32>,
 
-        // Raw pointer (Zig: `?*OnBeforeParseResult`). Must stay raw — the pointee
+        // Raw pointer. Must stay raw — the pointee
         // is `OnBeforeParseResultWrapper.result`, and `get_wrapper` walks back to
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
+        // Owns the `Contents` fetched by `fetch_source_code` so the buffer the
+        // native plugin reads through `wrapper.original_source` stays alive for
+        // the duration of `run`. Returned to the caller when the plugin keeps
+        // the original source, dropped otherwise.
+        original_contents: Option<crate::cache::Contents>,
     }
 
     #[repr(C)]
@@ -1706,11 +1691,10 @@ pub mod parse_worker {
         }
     }
 
-    // Restore the Zig comptime asserts (`ParseTask.zig:808-818`) the port dropped.
     // These structs are passed by-pointer to **third-party** native plugins via
     // `packages/bun-native-bundler-plugin-api/bundler_plugin.h`, so layout drift
     // is a silent ABI break for every plugin in the wild. Literals are the 64-bit
-    // C layout; TODO(port): replace with codegen-probed constants.
+    // C layout from `bundler_plugin.h`.
     bun_core::assert_ffi_layout!(
         OnBeforeParseArguments, 64, 8;
         struct_size @ 0, context @ 8, path_ptr @ 16, path_len @ 24,
@@ -1729,7 +1713,7 @@ pub mod parse_worker {
     );
 
     impl BunLogOptions {
-        pub fn source_line_text(&self) -> &[u8] {
+        pub(crate) fn source_line_text(&self) -> &[u8] {
             if !self.source_line_text_ptr.is_null() && self.source_line_text_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1746,7 +1730,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub fn path(&self) -> &[u8] {
+        pub(crate) fn path(&self) -> &[u8] {
             if !self.path_ptr.is_null() && self.path_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1758,7 +1742,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub fn message(&self) -> &[u8] {
+        pub(crate) fn message(&self) -> &[u8] {
             if !self.message_ptr.is_null() && self.message_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1770,15 +1754,13 @@ pub mod parse_worker {
             b""
         }
 
-        pub fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-            // Zig (ParseTask.zig:874-884) passes `this.path()` through and dupes
-            // `source_line_text` via `log.msgs.arena`. `Location.{file,line_text}`
+        pub(crate) fn append(&self, log: &mut Log, namespace: &'static [u8]) {
+            // `Location.{file,line_text}`
             // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
             // (freed when the Log drops) and returns a lifetime-erased borrow —
             // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
-            // Zig stored it unduped (a raw slice into C-plugin memory that may be
-            // freed after `log_fn` returns — a latent UAF in the spec); duping is
-            // strictly safer and matches the intent.
+            // a raw slice into C-plugin memory may be
+            // freed after `log_fn` returns, so duping is required.
             let source_line_text = self.source_line_text();
             let file = log.dupe(self.path());
             let line_text = if !source_line_text.is_empty() {
@@ -1817,7 +1799,11 @@ pub mod parse_worker {
             let _ = log.add_msg(msg);
         }
 
-        pub extern "C" fn log_fn(
+        /// # Safety
+        /// `args_` and `log_options_`, when non-null, must point at live
+        /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
+        /// call (the native-plugin FFI contract).
+        pub(crate) unsafe extern "C" fn log_fn(
             args_: *mut OnBeforeParseArguments,
             log_options_: *mut BunLogOptions,
         ) {
@@ -1825,6 +1811,8 @@ pub mod parse_worker {
             let Some(args) = (unsafe { args_.as_mut() }) else {
                 return;
             };
+            // SAFETY: called from C plugin; when non-null, `log_options_` points
+            // to a live `BunLogOptions` for the duration of the call.
             let Some(log_options) = (unsafe { log_options_.as_ref() }) else {
                 return;
             };
@@ -1835,16 +1823,15 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub struct OnBeforeParseResultWrapper {
+    pub(crate) struct OnBeforeParseResultWrapper {
         pub original_source: *const u8,
         pub original_source_len: usize,
         pub original_source_fd: Fd,
         pub loader: Loader,
         #[cfg(debug_assertions)]
         pub check: u32, // Value to ensure OnBeforeParseResult is wrapped in this struct
-        // TODO(port): zig used `if (debug) u32 else u0`; in release this field
-        // must be zero-sized to keep extern layout matching headers. Verify
-        // with static_assert against bun.c.
+        // (the `cfg(debug_assertions)` gate
+        // above removes the field entirely in release.)
         pub result: OnBeforeParseResult,
     }
 
@@ -1856,16 +1843,22 @@ pub mod parse_worker {
         pub loader: Loader,
 
         pub fetch_source_code_fn:
-            extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
+            unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
 
         pub user_context: *mut c_void,
         pub free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub log: extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
     }
 
     impl OnBeforeParseResult {
-        pub fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
+        /// # Safety
+        /// `result` must be the `.result` field of a live
+        /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
+        /// (derived via `addr_of_mut!(wrapper.result)`).
+        pub(crate) unsafe fn get_wrapper(
+            result: *mut OnBeforeParseResult,
+        ) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
@@ -1879,7 +1872,11 @@ pub mod parse_worker {
 
     // blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
 
-    pub extern "C" fn fetch_source_code(
+    /// # Safety
+    /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
+    /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
+    /// (the native-plugin FFI contract).
+    pub(crate) unsafe extern "C" fn fetch_source_code(
         args: *mut OnBeforeParseArguments,
         result_ptr: *mut OnBeforeParseResult,
     ) -> i32 {
@@ -1889,6 +1886,8 @@ pub mod parse_worker {
         // `OnBeforeParseArguments` stack local vs. the `OnBeforeParsePlugin` it
         // points back to), so holding both `&mut` is sound.
         let args = unsafe { &mut *args };
+        // SAFETY: `args.context` points to the `OnBeforeParsePlugin` that owns
+        // this callback invocation; disjoint from `*args` (see above).
         let this = unsafe { &mut *args.context };
         if this.log.errors > 0
             || this.deferred_error.is_some()
@@ -1897,14 +1896,14 @@ pub mod parse_worker {
             return 1;
         }
 
-        // SAFETY: `result_ptr` is the `.result` field of an
-        // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
-        // raw pointer un-shadowed so `get_wrapper`'s `from_field_ptr!` walk-back
-        // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
-        // would shrink provenance to just the `OnBeforeParseResult` and make the
-        // later offset-walk UB. The `&mut` reborrow below is scoped to end before
-        // any wrapper access so no overlapping `&mut` exists.
         {
+            // SAFETY: `result_ptr` is the `.result` field of an
+            // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
+            // raw pointer un-shadowed so `get_wrapper`'s `from_field_ptr!` walk-back
+            // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
+            // would shrink provenance to just the `OnBeforeParseResult` and make the
+            // later offset-walk UB. The `&mut` reborrow below is scoped to end before
+            // any wrapper access so no overlapping `&mut` exists.
             let result = unsafe { &mut *result_ptr };
             if !result.source_ptr.is_null() {
                 return 0;
@@ -1926,50 +1925,55 @@ pub mod parse_worker {
                     return 1;
                 }
             };
-            // PORT NOTE: in Zig (`.zig:953-975`) `entry.contents` is a slice into
-            // the worker arena (`this.arena`) with no destructor, so storing
-            // `entry.contents.ptr` and letting `entry` go out of scope is sound.
-            // In Rust `Contents::Owned(Vec<u8>)` (the file-read path — see
+            // `Contents::Owned(Vec<u8>)` (the file-read path — see
             // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
             // leave `result.source_ptr` / `wrapper.original_source` dangling for
             // the native plugin and `OnBeforeParsePlugin::run` to read through.
-            // Mirror the Zig contract by transferring ownership out of `entry`
-            // and leaking the buffer for the plugin pass: extract ptr/len/fd,
-            // then `mem::forget` the `Contents` so the bytes outlive the wrapper.
+            // Stash ownership on `this.original_contents` so the bytes outlive
+            // the wrapper; `OnBeforeParsePlugin::run` returns it when the
+            // plugin keeps the original source, or drops it when the plugin
+            // replaces the source.
             let fd = entry.fd;
-            let contents = core::mem::take(&mut entry.contents);
-            let contents_slice = contents.as_slice();
+            this.original_contents = Some(core::mem::take(&mut entry.contents));
+            let contents_slice = this
+                .original_contents
+                .as_ref()
+                .expect("just set")
+                .as_slice();
             let source_ptr = contents_slice.as_ptr();
             let source_len = contents_slice.len();
             result.source_ptr = source_ptr;
             result.source_len = source_len;
             result.free_user_context = None;
             result.user_context = core::ptr::null_mut();
+            // SAFETY: `result_ptr` is `OnBeforeParseResultWrapper.result` (see above).
+            let wrapper = unsafe { OnBeforeParseResult::get_wrapper(result_ptr) };
             // SAFETY: result is always embedded in a wrapper. Write wrapper fields
             // via raw pointer — `wrapper.result`
             // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
             // overlap the live `result` borrow above (aliased-`&mut` UB).
-            let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
             unsafe {
                 (*wrapper).original_source = source_ptr;
                 (*wrapper).original_source_len = source_len;
                 (*wrapper).original_source_fd = fd;
             }
-            // Keep the bytes alive past this scope — `OnBeforeParsePlugin::run`
-            // returns them as the `CacheEntry` (see `Contents::External` below).
-            core::mem::forget(contents);
         }
         0
     }
 
+    /// # Safety
+    /// `this` must be the `.result` field of a live `OnBeforeParseResultWrapper`
+    /// constructed by `OnBeforeParsePlugin::run` (called from C++ with that
+    /// pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+    pub(crate) unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+        // SAFETY: `this` is the wrapper's `.result` field (caller contract).
+        let wrapper = unsafe { OnBeforeParseResult::get_wrapper(this) };
         // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
         // raw pointers throughout: `wrapper.result`
         // *is* `*this`, so materializing `&mut *this` alongside `&mut *wrapper`
         // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
         // provenance so `from_field_ptr!` in `get_wrapper` walks out of bounds.
-        let wrapper = OnBeforeParseResult::get_wrapper(this);
         unsafe {
             (*this).loader = (*wrapper).loader;
             if !(*wrapper).original_source.is_null() {
@@ -1982,10 +1986,15 @@ pub mod parse_worker {
         }
     }
 
+    /// # Safety
+    /// `this` must point at the live `OnBeforeParsePlugin` set up by
+    /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_, '_>) -> i32 {
-        // SAFETY: called from C++ with valid ptr. Read via raw pointers (mirrors
-        // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
+    pub(crate) unsafe extern "C" fn OnBeforeParsePlugin__isDone(
+        this: *mut OnBeforeParsePlugin<'_, '_>,
+    ) -> i32 {
+        // SAFETY: called from C++ with valid ptr. Read via raw pointers
+        // — `wrapper.result` aliases `*result`, so forming
         // overlapping references would be UB, and a `&mut`-derived `*mut` would
         // lack provenance over the enclosing wrapper.
         unsafe {
@@ -2018,7 +2027,6 @@ pub mod parse_worker {
     impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
         pub fn run(
             &mut self,
-            // TODO(port): jsc::api arrives from move-in (TYPE_ONLY → bundler)
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
         ) -> core::result::Result<CacheEntry, AnyError> {
@@ -2126,7 +2134,7 @@ pub mod parse_worker {
                     // a second `&mut` via `&mut *args.context` while `&mut self`
                     // is live would be aliased-`&mut` UB.
                     self.log.errors += 1;
-                    let _ = self.log.add_msg(msg); // logger OOM-only (Zig: catch unreachable)
+                    let _ = self.log.add_msg(msg); // logger OOM-only
                     return Err(err!("InvalidNativePlugin"));
                 }
 
@@ -2140,7 +2148,7 @@ pub mod parse_worker {
 
                 if !wrapper.result.source_ptr.is_null() {
                     let ptr = wrapper.result.source_ptr;
-                    // PORT NOTE: `ExternalFreeFunction.function` is `Option<unsafe extern "C" fn>`;
+                    // `ExternalFreeFunction.function` is `Option<unsafe extern "C" fn>`;
                     // `OnBeforeParseResult.free_user_context` is `Option<extern "C" fn>` (safe ABI per
                     // the C header). Coerce safe→unsafe via cast.
                     let free_fn = wrapper
@@ -2155,11 +2163,24 @@ pub mod parse_worker {
                     }
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
+                    // If the plugin called `fetch_source_code` and left the
+                    // source unchanged, hand the original `Contents` back to
+                    // the caller so the buffer is reclaimed instead of leaked.
+                    // Otherwise the plugin replaced the source; the original
+                    // (if any) drops with `self`.
+                    let contents =
+                        if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
+                            self.original_contents
+                                .take()
+                                .expect("original_contents set alongside original_source")
+                        } else {
+                            crate::cache::Contents::External {
+                                ptr,
+                                len: wrapper.result.source_len,
+                            }
+                        };
                     return Ok(CacheEntry {
-                        contents: crate::cache::Contents::External {
-                            ptr,
-                            len: wrapper.result.source_len,
-                        },
+                        contents,
                         external_free_function: ExternalFreeFunction {
                             ctx: wrapper.result.user_context,
                             function: free_fn,
@@ -2201,18 +2222,18 @@ pub mod parse_worker {
 
         // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
         let data = this.data.as_mut().expect("Worker.data set in create()");
-        // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
-        // `&transpiler.resolver`). Hold both as raw `*mut` and never materialize
+        // `resolver` is a field of
+        // `*transpiler`. Hold both as raw `*mut` and never materialize
         // `&mut Transpiler` while `resolver` is live — the callee chain takes raw
         // pointers and reborrows disjoint fields only.
         // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
         // bundle pass.
         let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // PORT NOTE: errdefer transpiler.resetStore() — reshaped: call on the err
+        // errdefer transpiler.resetStore() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
-        let mut file_path = task.path.clone();
+        let mut file_path = task.path;
         let mut loader = task
             .loader
             // SAFETY: `options` is a disjoint field of the live `*transpiler`.
@@ -2257,7 +2278,7 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success, AnyError> {
-        // PORT NOTE: reshaped for borrowck — `transpiler_for_target` borrows `this`
+        // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
         // so hold it as a raw pointer and reborrow per use site.
         //
@@ -2267,28 +2288,28 @@ pub mod parse_worker {
         // directly — that retag of the parent `&mut` pops the SharedRW tag chain
         // backing the first `transpiler` (and the `resolver` field-projection
         // derived from it), making the later `(*resolver)` derefs in `get_ast` UB.
-        // Zig (.zig:1124, .zig:1189) rebinds `transpiler` while keeping `resolver`
-        // pointing into the original — valid in Zig (no aliasing model); in Rust
+        // `transpiler` may be rebound below while `resolver` keeps
+        // pointing into the original;
         // both calls' `&mut self` must be children of the same raw so neither pops
         // the other's tag chain.
         let worker_raw: *mut crate::Worker = this;
         // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
-        // arena outlives all reads through the returned ASTs. `arena` is a
-        // `*const Bump` field; the deref points outside `*worker_raw`.
+        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
+        // reads through the returned ASTs. `arena` is a `*const Bump` field; the
+        // deref points outside `*worker_raw`.
         let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // PORT NOTE: Zig errdefers (`transpiler.resetStore()` .zig:1123 and
-        // `if (.fd) entry.deinit(arena)` .zig:1148) are reshaped into the
+        // Error-path cleanup (`transpiler.resetStore()` and
+        // `if (.fd) entry.deinit(arena)`) is reshaped into the
         // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
         // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
         // follow. There are no other fallible `?` between here and that match.
-        // PORT NOTE: `resolver` is a field of `*transpiler` (Zig
-        // `&transpiler.resolver`). Keep raw — never materialize `&mut Transpiler`
-        // while a `&mut` derived from `resolver` is live. Per Zig, `resolver` is
+        // `resolver` is a field of
+        // `*transpiler`. Keep raw — never materialize `&mut Transpiler`
+        // while a `&mut` derived from `resolver` is live. `resolver` is
         // bound *before* the possible `transpiler` reassignment below and stays
         // pointing into the original target's transpiler.
         // SAFETY: `transpiler` just derived from a live `&mut`.
@@ -2367,10 +2388,10 @@ pub mod parse_worker {
         {
             // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
             // this is not done when there is one server graph because it is easier for plugins to deal with.
-            // SAFETY: route through `worker_raw` (see top-of-function PORT NOTE)
+            // SAFETY: route through `worker_raw` (see top-of-function note)
             // so this call's `&mut self` is a child of the same raw and does not
             // pop the SharedRW tag backing `resolver` (which still points into the
-            // original target's transpiler per Zig .zig:1189).
+            // original target's transpiler).
             transpiler = std::ptr::from_mut(unsafe {
                 (*worker_raw).transpiler_for_target(options::Target::Browser)
             });
@@ -2379,20 +2400,21 @@ pub mod parse_worker {
         // reassigned above); reborrow only the disjoint `options` field.
         let topts = unsafe { &(*transpiler).options };
 
-        let source = Source {
-            // PORT NOTE: `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
+        // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
+        // `&'bump Source` parameter is satisfied (`bump` is the same arena).
+        let source: &'static Source = bump.alloc(Source {
+            // `Source.path` is `bun_paths::fs::Path<'static>`, distinct from
             // `bun_resolver::fs::Path` (TYPE_ONLY mirror). Construct
             // field-by-field across the type boundary.
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
-                name: bun_paths::fs::PathName::init(file_path.text),
                 pretty: file_path.pretty,
                 is_disabled: file_path.is_disabled,
                 is_symlink: file_path.is_symlink,
             },
             index: bun_ast::Index(task.source_index.get()),
-            // PORT NOTE: `entry.contents` is owned by `task.stage` (written back by
+            // `entry.contents` is owned by `task.stage` (written back by
             // the caller after parse — see `ParseTask::run`). `Source` is stored in
             // `Success` which lives no longer than the `ParseTask` itself, so this
             // borrow is sound. Routed through the audited `StoreStr` arena-erasure
@@ -2401,7 +2423,7 @@ pub mod parse_worker {
             contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
             contents_is_recycled: false,
             ..Default::default()
-        };
+        });
 
         let target = (if task.source_index.get() == 1 {
             target_from_hashbang(entry_contents)
@@ -2430,7 +2452,7 @@ pub mod parse_worker {
         // D042: `crate::options::jsx::Pragma` IS `bun_js_parser::options::JSX::Pragma`
         // (both re-export `bun_options_types::jsx::Pragma`). `to_parser_jsx_pragma`
         // applies the `_None → Automatic` runtime fold the old `From` bridge did so
-        // parser-side `== Automatic` checks keep their semantics (.zig:1207).
+        // parser-side `== Automatic` checks keep their semantics.
         let mut opts = ParserOptions::init(
             crate::transpiler::to_parser_jsx_pragma(task.jsx.clone()),
             loader,
@@ -2445,13 +2467,16 @@ pub mod parse_worker {
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
-        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` mirrors
-        // Zig `transpiler.macro_context.?` — caller (`BundleV2::init`) guarantees
+        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` is
+        // sound — caller (`BundleV2::init`) guarantees
         // it is set before any ParseTask runs.
         // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
         // `'static` erasure: the context outlives the parse.
-        opts.macro_context =
-            unsafe { Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _)) };
+        opts.macro_context = unsafe {
+            Some(&mut *std::ptr::from_mut(
+                (*transpiler).macro_context.as_mut().unwrap(),
+            ))
+        };
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2463,8 +2488,8 @@ pub mod parse_worker {
         opts.features.trim_unused_imports =
             loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);
         opts.features.inlining = topts.minify_syntax;
-        // TODO(port): TYPE_ONLY divergence — `bun_options_types::Format` vs
-        // `bun_js_parser::options::Format`. Map by discriminant.
+        // `bun_options_types::Format` and `bun_js_parser::options::Format` are
+        // distinct enums; map explicitly.
         opts.output_format = match output_format {
             options::Format::Esm => js_parser::options::Format::Esm,
             options::Format::Cjs => js_parser::options::Format::Cjs,
@@ -2482,9 +2507,9 @@ pub mod parse_worker {
         opts.features.standard_decorators = !loader.is_typescript()
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
-        // PORT NOTE: Zig stores a `*const StringSet` (shared); Rust models it as
+        // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
-        // CLI-supplied flag set). PERF(port): retype
+        // CLI-supplied flag set). PERF: retype
         // `RuntimeFeatures.bundler_feature_flags` to `Option<&'a StringSet>` so
         // this clone disappears.
         opts.features.bundler_feature_flags = topts
@@ -2532,31 +2557,34 @@ pub mod parse_worker {
         // `transpiler.options.framework: Option<&bake_types::Framework>`
         // vs `opts.framework: Option<&js_parser::options::Framework>` — both
         // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
-        // reads (Parser.zig:1415,1433) into the parser-side mirror and bump-alloc
+        // reads into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
+            // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
                 is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
                     js_parser::options::FrameworkServerComponents {
                         separate_ssr_graph: sc.separate_ssr_graph,
-                        server_runtime_import: std::borrow::Cow::Owned(
-                            sc.server_runtime_import.to_vec(),
+                        server_runtime_import: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_runtime_import),
                         ),
-                        server_register_client_reference: std::borrow::Cow::Owned(
-                            sc.server_register_client_reference.to_vec(),
+                        server_register_client_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_client_reference),
                         ),
-                        server_register_server_reference: std::borrow::Cow::Owned(
-                            sc.server_register_server_reference.to_vec(),
+                        server_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.server_register_server_reference),
                         ),
-                        client_register_server_reference: std::borrow::Cow::Owned(
-                            sc.client_register_server_reference.to_vec(),
+                        client_register_server_reference: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&sc.client_register_server_reference),
                         ),
                     }
                 }),
                 react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
                     js_parser::options::ReactFastRefresh {
-                        import_source: std::borrow::Cow::Owned(rfr.import_source.to_vec()),
+                        import_source: std::borrow::Cow::Borrowed(
+                            bump.alloc_slice_copy(&rfr.import_source),
+                        ),
                     }
                 }),
             };
@@ -2607,25 +2635,23 @@ pub mod parse_worker {
                     opts,
                     bump,
                     resolver,
-                    &source,
+                    source,
                     loader,
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
                 )
             } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, &source)
+                get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, &source)
+                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
             };
-        // PERF(port): Zig used `switch (bool) { inline else => |as_undefined| ... }`
-        // to monomorphize. Expanded to if/else.
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {
-                // Zig errdefers (.zig:1123, .zig:1148): reset the AST store
+                // Error-path cleanup: reset the AST store
                 // unconditionally, and free the owned `entry.contents` only when
                 // it was sourced from `.fd` (the `.contents` variant is borrowed —
                 // freeing it would double-free in `BundleV2.deinit`).
@@ -2660,9 +2686,8 @@ pub mod parse_worker {
 
         Ok(Success {
             ast,
-            source,
+            source: source.clone(),
             log: core::mem::take(log),
-            // PORT NOTE: Zig returned `log.*` by value; here we take ownership.
             use_directive,
             unique_key_for_additional_file: unique_key_for_additional_file.key,
             side_effects: task.side_effects,
@@ -2689,7 +2714,7 @@ pub mod parse_worker {
     // CONCURRENCY: see `task_callback` — `&mut ParseTask` is unique per callback
     // invocation; all shared state is accessed via `&BundleV2` (read-only) or
     // the per-OS-thread `Worker` arena.
-    pub fn run_from_thread_pool(this: &mut ParseTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ParseTask) {
         run_from_thread_pool_impl(this);
     }
 
@@ -2697,7 +2722,7 @@ pub mod parse_worker {
         // SAFETY: ctx backref valid for the bundle pass (outlives this task).
         let ctx = unsafe { this.ctx() };
         let worker: &mut crate::Worker = crate::Worker::get(ctx);
-        // PORT NOTE: `defer worker.unget()` — handled at function exit (scopeguard
+        // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(
             ParseTask,
@@ -2744,9 +2769,9 @@ pub mod parse_worker {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — `this` and `this.stage.needs_parse`
-            // both borrowed mutably. Zig (.zig:1369) passes `&this.stage.needs_parse`
-            // in-place so the entry's `Contents::Owned` buffer survives in
+            // reshaped for borrowck — `this` and `this.stage.needs_parse`
+            // both borrowed mutably. The entry must live
+            // in-place so its `Contents::Owned` buffer survives in
             // `task.stage` for the bundle's lifetime (Success.source.contents
             // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
             // back* on every path before `break 'value` so dropping the local
@@ -2795,10 +2820,9 @@ pub mod parse_worker {
 
         let result = Box::new(Result {
             ctx: this.ctx.expect("ParseTask.ctx unset"),
-            // Zig `.task = .{}` (.zig:1407) — default-init, NOT `undefined`.
             task: EventLoop::Task::default(),
             value,
-            // PORT NOTE: `ExternalFreeFunction` is POD in Zig (copied); Rust port
+            // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
             watcher_data: match this.contents_or_fd {
@@ -2811,11 +2835,13 @@ pub mod parse_worker {
         });
         let result = bun_core::heap::into_raw(result);
 
-        // Zig matched `worker.ctx.loop().*` on `AnyEventLoop::{js, mini}`.
+        // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
+        drop(core::mem::take(&mut this.jsx));
+
         // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
         // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
         //
-        // Zig `worker.ctx.loop().*` is non-optional (.zig:1416) — `BundleV2::init`
+        // The loop is effectively non-optional — `BundleV2::init`
         // always sets `linker.r#loop` before scheduling any ParseTask. Running
         // `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
@@ -2829,43 +2855,65 @@ pub mod parse_worker {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 owner.enqueue_task_concurrent(
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        on_complete(p);
+                        // SAFETY: `p` is the `result` Box leaked above; ownership
+                        // transfers to `on_complete`, which deallocates it.
+                        unsafe { on_complete(p) };
                         Ok(())
                     }),
                 );
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(Result, task),
-                );
+                // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
+                // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
+                unsafe {
+                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                        result,
+                        on_complete_mini,
+                        offset_of!(Result, task),
+                    );
+                }
             }
         }
-        // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
+        // Runs at function exit, i.e. after enqueue.
         worker.unget();
+    }
+
+    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
+    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
+    fn drop_result_owned_fields(result: &mut Result) {
+        match &mut result.value {
+            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
+            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
+            ResultValue::Empty { .. } => {}
+        }
     }
 
     fn on_complete_mini(result: *mut Result, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
-        // the BACKREF stashed in `result.ctx` (Zig passed `BundleV2` as ParentContext).
+        // the BACKREF stashed in `result.ctx`.
         BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // Zig: `defer bun.default_allocator.destroy(parse_result)` (bundle_v2.zig).
-        // Zig's `destroy` is *struct-only* (no field deinit). 954e9ccb mapped this
-        // to `drop(heap::take(result))`, but that runs full Drop glue:
+        // SAFETY: `result` is uniquely owned (callback contract).
+        drop_result_owned_fields(unsafe { &mut *result });
+        // `drop(heap::take(result))` would run full Drop glue:
         // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
         // graph's placeholder and moves `result.ast` out, so post-swap
         // `result.value` holds the *placeholder* `Source` whose
         // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
         // graph's swapped-in Source still references (asan use-after-poison at
-        // process_files_to_copy:4241 in bundler_loader/_plugin tests). Match Zig:
+        // process_files_to_copy:4241 in bundler_loader/_plugin tests). So:
         // dealloc the box without running Drop.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
         unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 
-    pub fn on_complete(result: *mut Result) {
+    /// # Safety
+    /// `result` must be a live, uniquely-owned heap allocation produced by
+    /// `bun_core::heap::into_raw(Box<Result>)` in `run_from_thread_pool_impl`
+    /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
+    /// this fn, which deallocates `result` before returning. Must run on the
+    /// main/bundler thread (it dereferences `result.ctx` mutably).
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2874,6 +2922,7 @@ pub mod parse_worker {
         // pass and no other `&mut BundleV2` is live on this (main) thread when the
         // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
         BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
+        drop_result_owned_fields(r);
         // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
         // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
         // above; uniquely owned. Dealloc with the same layout, no field Drop.
@@ -2887,8 +2936,4 @@ pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, 
 // Re-exports
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_ast::Ref;
-
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-
-// ported from: src/bundler/ParseTask.zig

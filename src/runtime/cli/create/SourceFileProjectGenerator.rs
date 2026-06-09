@@ -1,5 +1,3 @@
-//! Port of src/cli/create/SourceFileProjectGenerator.zig
-
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
@@ -11,7 +9,6 @@ use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::mal_prelude::*;
 use bun_collections::StringSet;
-use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -19,7 +16,7 @@ use bun_js_parser::js_lexer;
 use bun_paths as path;
 use bun_paths::fs::FileSystem;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
 pub fn generate(
@@ -114,7 +111,7 @@ pub fn generate(
         entry_point,
         result.dependencies.keys(),
         dev_dependencies,
-        template,
+        &template,
         react_component_export,
     )?;
 
@@ -134,24 +131,17 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+        let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
     // Open file for writing
-    let fd = match bun_sys::openat_a(
+    let fd = bun_sys::openat_a(
         Fd::cwd(),
         filename,
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
         0o644,
-    ) {
-        bun_sys::Result::Ok(fd) => fd,
-        bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
-    };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
-    let close_guard = scopeguard::guard(fd, |fd| fd.close());
-
-    // Write contents
-    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
+    )?;
+    match bun_sys::File::from_fd(fd).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }
@@ -164,9 +154,6 @@ fn string_with_replacements(
     relative_name: &[u8],
     react_component_export: &[u8],
 ) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    // PORT NOTE: Zig threaded an allocator and reassigned `input` to leaked
-    // intermediate slices. In Rust we own `Vec<u8>` and rebind it; intermediates
-    // are dropped automatically.
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -249,7 +236,7 @@ pub fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
-    template: Template,
+    template: &Template,
     react_component_export: &[u8],
 ) -> Result<(), bun_core::Error> {
     let mut log = template.logger();
@@ -276,17 +263,12 @@ pub fn generate_files(
     }
 
     // Generate files based on template type
-    // PORT NOTE: Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
-    // to comptime-dispatch to the per-template `files` const and stack-size the
-    // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
-    // we route through `Tag::files()` and use heap Vecs sized at runtime.
-    // PERF(port): was comptime monomorphization + stack arrays.
+    // Route through `Tag::files()` and use heap Vecs sized at runtime.
     {
         let files: &'static [TemplateFile] = template.tag().files();
 
         let mut max_filename_len: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
-        // + `[N]bool created_files` arrays of arena-backed slices. Here a single
+        // A single
         // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
         let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
 
@@ -333,27 +315,20 @@ pub fn generate_files(
         if log.has_written_initial_message {
             Output::print(format_args!("\n"));
         }
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<r>📦 <b>Auto-installing {} detected dependencies<r>\n",
             dependencies.len() + dev_dependencies.len()
-        ));
+        );
     }
 
     if !dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"install");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"install", b"--"];
         argv.extend(dependencies.iter().map(|d| &d[..]));
         run_install(&mut argv)?;
     }
 
     if !dev_dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"add");
-        argv.push(b"-d");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"add", b"-d"];
         argv.extend_from_slice(dev_dependencies);
         run_install(&mut argv)?;
     }
@@ -373,12 +348,11 @@ pub fn generate_files(
                     shadcn_argv.push(b"--src-dir");
                 }
                 shadcn_argv.push(b"-y");
+                shadcn_argv.push(b"--");
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()
-                Output::prettyln(format_args!(
-                    "\n<r>😎 <b>Setting up shadcn/ui components<r>"
-                ));
+                bun_core::prettyln!("\n<r>😎 <b>Setting up shadcn/ui components<r>");
                 Output::command_out(Output::CommandArgv::List(&shadcn_argv));
                 Output::flush();
                 shadcn_argv[0] = bun_core::self_exe_path()?;
@@ -622,7 +596,7 @@ fn get_shadcn_components(
         match loaders[file.get() as usize] {
             bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let import_records = &all[file.get() as usize];
-                for import_record in import_records.slice() {
+                for import_record in import_records.as_slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
                         icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
                     }
@@ -660,7 +634,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return Some(b"default");
             }
 
-            let export_names: &[Box<[u8]>] = exports.keys();
+            let export_names = exports.keys();
             if export_names.len() == 1 {
                 // If there's only one export it can only be this.
                 return Some(&export_names[0][..]);
@@ -671,7 +645,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 continue;
             }
 
-            let filename = source.path.name.non_unique_name_string_base();
+            let filename = source.path.name().non_unique_name_string_base();
             if filename.is_empty() {
                 bun_core::hint::cold();
                 continue;
@@ -688,12 +662,10 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // PORT NOTE: Zig leaked `duped` on the success returns below
-                // (only freed on the fall-through). Route through the process-
-                // lifetime CLI arena to match the returned-slice lifetime; the
-                // fall-through `free` is a no-op (arena-backed).
+                // Route through the process-
+                // lifetime CLI arena to match the returned-slice lifetime.
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
-                duped[0] = duped[0] - 32;
+                duped[0] -= 32;
                 if js_lexer::is_identifier(duped) {
                     if exports.contains(duped) {
                         return Some(duped);
@@ -748,7 +720,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         for c in &mut duped[1..output_index] {
                             match *c {
                                 b'A'..=b'Z' => {
-                                    *c = *c + 32;
+                                    *c += 32;
                                 }
                                 _ => {}
                             }
@@ -759,15 +731,13 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         return Some(&duped[0..output_index]);
                     }
                 }
-
-                // Zig: default_allocator.free(duped) — intentionally leaked above; see PORT NOTE.
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // Zig returns an allocator-owned slice; route through the
+                // Route through the
                 // process-lifetime CLI arena.
                 return Some(crate::cli::cli_dupe(&name_to_try));
             }
@@ -835,7 +805,7 @@ pub enum Reason {
 pub mod react_tailwind_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
@@ -859,8 +829,6 @@ pub mod react_tailwind_spa {
         TemplateFile::new_no_overwrite(b"bunfig.toml", SHARED_BUNFIG_TOML, Reason::Bun),
         TemplateFile::new_no_overwrite(b"package.json", SHARED_PACKAGE_JSON, Reason::Npm),
     ];
-
-    pub const INIT_FILES: &[TemplateFile] = &[];
 }
 
 const SHARED_BUILD_TS: &[u8] =
@@ -876,7 +844,7 @@ const SHARED_BUNFIG_TOML: &[u8] = include_bytes!("projects/react-shadcn-spa/bunf
 pub mod react_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             SHARED_BUILD_TS,
@@ -909,7 +877,7 @@ pub mod react_spa {
 pub mod react_shadcn_spa {
     use super::*;
 
-    pub const FILES: &[TemplateFile] = &[
+    pub(crate) const FILES: &[TemplateFile] = &[
         TemplateFile::new(
             b"lib/utils.ts",
             include_bytes!("projects/react-shadcn-spa/lib/utils.ts"),
@@ -992,7 +960,6 @@ impl Tag {
         }
     }
 
-    /// Replaces Zig's `@field(SourceFileProjectGenerator, @tagName(active)).files`.
     pub fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
@@ -1003,7 +970,7 @@ impl Tag {
 }
 
 impl Template {
-    pub fn logger(&self) -> Logger {
+    pub(crate) fn logger(&self) -> Logger {
         Logger {
             template: self.tag(),
             has_written_initial_message: false,
@@ -1019,18 +986,15 @@ pub struct Logger {
 impl Logger {
     pub fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
         self.has_written_initial_message = true;
-        Output::pretty(format_args!(" <green>create<r>  "));
-        Output::pretty(format_args!("{}", bstr::BStr::new(name)));
+        bun_core::pretty!(" <green>create<r>  ");
+        bun_core::pretty!("{}", bstr::BStr::new(name));
         let name_len = name.len();
         let mut padding: usize = max_name_len - name_len;
         while padding > 0 {
-            Output::pretty(format_args!(" "));
+            bun_core::pretty!(" ");
             padding -= 1;
         }
-        Output::prettyln(format_args!(
-            "   <d>{}<r>",
-            <&'static str>::from(template_file.reason)
-        ));
+        bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }
 
     pub fn if_new(&mut self) {
@@ -1038,7 +1002,7 @@ impl Logger {
             return;
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><d>--------------------------------<r>\n\
              ✨ <b>{}<r> project configured\n\
              \n\
@@ -1052,8 +1016,6 @@ impl Logger {
              \n\
              <blue>Happy bunning! 🐇<r>",
             bstr::BStr::new(self.template.label())
-        ));
+        );
     }
 }
-
-// ported from: src/cli/create/SourceFileProjectGenerator.zig

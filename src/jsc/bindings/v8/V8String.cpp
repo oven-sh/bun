@@ -95,11 +95,11 @@ int String::Utf8Length(Isolate* isolate) const
     if (str->is8Bit()) {
         const auto span = str->span8();
         size_t len = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(span.data()), span.size());
-        return static_cast<int>(len);
+        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
     } else {
         const auto span = str->span16();
         size_t len = simdutf::utf8_length_from_utf16(span.data(), span.size());
-        return static_cast<int>(len);
+        return static_cast<int>(std::min(len, static_cast<size_t>(std::numeric_limits<int>::max())));
     }
 }
 
@@ -162,7 +162,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     auto jsString = localToObjectPointer<JSString>();
     WTF::String string = jsString->getString(isolate->globalObject());
 
-    size_t unsigned_length = length < 0 ? SIZE_MAX : length;
+    size_t unsigned_length = length < 0 ? static_cast<size_t>(std::numeric_limits<int>::max()) : static_cast<size_t>(length);
 
     uint64_t result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
                                       : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
@@ -173,7 +173,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
         buffer[written] = 0;
         written++;
     }
-    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
+    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= unsigned_length) {
         // encode unpaired surrogate
         char16_t surrogate = string[read];
         buffer[written + 0] = 0xe0 | (surrogate >> 12);

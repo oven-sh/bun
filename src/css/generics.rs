@@ -1,22 +1,20 @@
 //! Generic trait-based dispatch for CSS value operations.
 //!
-//! The Zig original (`generics.zig`) uses `@typeInfo`/`@hasDecl`/`@field` comptime
-//! reflection to derive `eql`, `hash`, `deepClone`, `toCss`, `parse`, etc. across
-//! every CSS value type. Per PORTING.md §Comptime reflection, that has no Rust
-//! equivalent — the port defines a trait per protocol, provides blanket impls for
-//! the structural cases (Option/Box/slice/Vec/Vec/SmallList/primitives), and
+//! `eql`, `hash`, `deepClone`, `toCss`, `parse`, etc. are dispatched across
+//! every CSS value type via a trait per protocol, with blanket impls for
+//! the structural cases (Option/Box/slice/Vec/Vec/SmallList/primitives);
 //! per-struct/-enum impls come from the `bun_css_derive` proc-macros
 //! (`#[derive(ToCss, DeepClone, CssEql, CssHash)]` etc.).
 //!
 //! Free functions with the original names are kept as thin trait-method wrappers
-//! so call sites in sibling files port 1:1.
+//! for call sites in sibling files.
 
 use core::cmp::Ordering;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::VecExt;
-// Zig `std.hash.Wyhash` (iterative) → `bun_wyhash::Wyhash` (the final4 variant
-// matching upstream `std.hash.Wyhash`; NOT `Wyhash11`, which is a legacy v0.11
+// `bun_wyhash::Wyhash` is the final4 variant
+// (NOT `Wyhash11`, which is a legacy
 // variant kept only for on-disk lockfile compat — different digest).
 // Re-exported `pub` so `#[derive(CssHash)]` (in `bun_css_derive`) can name the
 // hasher type as `::bun_css::generics::Wyhash` without depending on `bun_wyhash`
@@ -28,7 +26,6 @@ use crate::css_parser as css;
 use crate::css_parser::CssResult;
 use crate::css_parser::{Parser, ParserOptions};
 use crate::printer::Printer;
-use crate::values as css_values;
 use crate::values::angle::Angle;
 use crate::values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, Ident, IdentFns,
@@ -38,25 +35,24 @@ use crate::values::rect::Rect;
 use crate::values::size::Size2D;
 use crate::{PrintErr, VendorPrefix};
 
-// `ArrayList(T)` in the Zig is `std.ArrayListUnmanaged(T)` fed the parser arena.
-// In this AST crate that maps to `bun_alloc::ArenaVec<'bump, T>`.
+// In this AST crate, lists map to `bun_alloc::ArenaVec<'bump, T>` fed the
+// parser arena.
 pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // DeepClone
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// Arena-aware deep clone. Equivalent of Zig's `deepClone(T, *const T, Allocator) T`.
+/// Arena-aware deep clone.
 ///
-/// Per-struct/-enum impls come from `#[derive(DeepClone)]`;
-/// the Zig `implementDeepClone` body is the spec for that derive (field-wise /
+/// Per-struct/-enum impls come from `#[derive(DeepClone)]` (field-wise /
 /// variant-wise recursion).
 pub trait DeepClone<'bump>: Sized {
     fn deep_clone(&self, bump: &'bump Arena) -> Self;
 }
 
-/// `#[derive(DeepClone)]` — field-wise / variant-wise port of Zig's
-/// `css.implementDeepClone`. See `src/css_derive/lib.rs` for the expansion
+/// `#[derive(DeepClone)]` — field-wise / variant-wise deep clone.
+/// See `src/css_derive/lib.rs` for the expansion
 /// rules. Re-exported here so `use crate::generics::DeepClone;` brings both
 /// the trait and the derive into scope (same-name trait+derive is the std
 /// idiom, cf. `Clone`).
@@ -64,51 +60,35 @@ pub use bun_css_derive::DeepClone;
 
 #[inline]
 pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
-    // TODO(port): Zig `implementDeepClone` is comptime field/variant reflection.
-    // In Rust this is the body of `#[derive(DeepClone)]`; the free fn just
-    // forwards to the trait so existing callers keep working.
     this.deep_clone(bump)
 }
 
-// Alias: in Zig `deepClone` (structural type-dispatch entry) and
-// `implementDeepClone` (field-reflection body) are distinct, but in Rust both
-// collapse to `T::deep_clone` because the structural dispatch lives in the
-// blanket impls below and the field-reflection lives in `#[derive(DeepClone)]`.
+// Alias: structural dispatch lives in the blanket impls below and the
+// field-reflection lives in `#[derive(DeepClone)]`; both collapse to
+// `T::deep_clone`.
 // Kept as a re-export so generated code (`properties_generated.rs`) and
 // hand-written callers can use either name.
 pub use implement_deep_clone as deep_clone;
 
-pub fn can_transitively_implement_deep_clone<T>() -> bool {
-    // TODO(port): Zig checks `@typeInfo(T) == .struct | .union`. In Rust this
-    // gate becomes "does T impl DeepClone" — i.e. a trait bound at the call
-    // site, not a runtime check. Kept as a stub for diff parity.
-    true
-}
-
-// Blanket impls covering the structural cases the Zig switch handled inline.
+// Blanket impls covering the structural cases.
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        match self {
-            Some(v) => Some(v.deep_clone(bump)),
-            None => None,
-        }
+        self.as_ref().map(|v| v.deep_clone(bump))
     }
 }
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump T {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `bun.create(arena, TT, deepClone(TT, this.*, arena))`
         bump.alloc((**self).deep_clone(bump))
     }
 }
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: alloc slice, then memcpy if simple-copy else element-wise deepClone.
-        // PERF(port): Zig fast-paths `isSimpleCopyType` with @memcpy — profile if hot
+        // PERF: element-wise deep_clone — profile if hot
         // (specialization would let `T: Copy` use `alloc_slice_copy`).
         bump.alloc_slice_fill_iter(self.iter().map(|e| e.deep_clone(bump)))
     }
@@ -117,8 +97,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for &'bump [T] {
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for ArrayList<'bump, T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        // Zig: `css.deepClone(T, arena, this)` → alloc capacity, element-wise deepClone.
-        // PERF(port): Zig fast-paths simple-copy types with @memcpy — profile if hot.
+        // PERF: element-wise deep_clone — profile if hot.
         let mut out = ArrayList::with_capacity_in(self.len(), bump);
         for item in self.iter() {
             out.push(item.deep_clone(bump));
@@ -205,25 +184,23 @@ pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
 
-/// `#[derive(CssEql)]` — field-wise / variant-wise port of Zig's
-/// `css.implementEql`. See `src/css_derive/lib.rs` for the expansion rules.
+/// `#[derive(CssEql)]` — field-wise / variant-wise equality.
+/// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssEql;` brings both trait and
 /// derive into scope (same-name idiom, cf. `Clone`).
 pub use bun_css_derive::CssEql;
 
 #[inline]
 pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    // TODO(port): Zig `implementEql` is comptime field/variant reflection ==
-    // the body of `#[derive(CssEql)]`. Free fn forwards to trait.
     this.eql(other)
 }
 
 #[inline]
-pub fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
+pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
 }
 
-pub fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
+pub(crate) fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }
@@ -233,11 +210,6 @@ pub fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bo
             return false;
         }
     }
-    true
-}
-
-pub fn can_transitively_implement_eql<T>() -> bool {
-    // TODO(port): see can_transitively_implement_deep_clone — becomes a trait bound.
     true
 }
 
@@ -311,7 +283,7 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 ///
 /// Exported sibling of `eql_simple!` for crate-defined types whose
 /// inherent `pub fn eql(&self, other) { self == other }` was a pure `PartialEq`
-/// forwarder (Zig `css.implementEql(@This())` leakage).
+/// forwarder.
 ///
 /// Unlike `#[derive(CssEql)]` (field-wise `.eql()` walk), this does **not**
 /// require every field type to itself impl `CssEql`; it bridges
@@ -350,7 +322,7 @@ impl CssEql for str {
 impl<T: CssEql, const N: usize> CssEql for [T; N] {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Zig: element-wise eql (length is `N` on both sides by type).
+        // Element-wise eql (length is `N` on both sides by type).
         for (a, b) in self.iter().zip(other.iter()) {
             if !a.eql(b) {
                 return false;
@@ -370,7 +342,6 @@ impl<T: CssEql + ?Sized> CssEql for Box<T> {
 impl CssEql for VendorPrefix {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Zig: `VendorPrefix.eql` is bitwise compare of the packed struct.
         *self == *other
     }
 }
@@ -414,8 +385,7 @@ mod ident_eql {
 // Bridge inherent eql/hash/deep_clone → trait impls
 //
 // Many CSS value types carry hand-rolled inherent `eql`/`hash`/`deep_clone`
-// (ported verbatim from the Zig `implementEql`/`implementHash`/
-// `implementDeepClone` bodies — usually because a field is a raw `*const [u8]`
+// (usually because a field is a raw `*const [u8]`
 // arena slice that the derive can't see through). The `#[derive(CssEql/…)]`
 // expansion on *containing* types dispatches via UFCS trait paths, so those
 // inherent methods alone don't satisfy the bound. These thin forwarding impls
@@ -476,13 +446,24 @@ mod inherent_bridge {
     bridge_deep_clone!(AnimationName);
 
     use crate::properties::custom::UAEnvironmentVariable;
-    bridge_eql!(UAEnvironmentVariable);
+    impl CssEql for UAEnvironmentVariable {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            UAEnvironmentVariable::eql(*self, *other)
+        }
+    }
     // CssHash — via #[derive(CssHash)] on the enum (properties/custom.rs).
-    bridge_deep_clone!(UAEnvironmentVariable);
+    bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
     use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
-    bridge_eql!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    impl CssEql for WebKitScrollbarPseudoElement {
+        #[inline]
+        fn eql(&self, other: &Self) -> bool {
+            WebKitScrollbarPseudoElement::eql(*self, *other)
+        }
+    }
+    bridge_eql!(ViewTransitionPartName);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
     bridge_hash!(ViewTransitionPartName);
     bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
@@ -507,7 +488,7 @@ mod inherent_bridge {
         ($($t:ty),* $(,)?) => {$(
             impl super::IsCompatible for $t {
                 #[inline]
-                fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+                fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
                     <$t>::is_compatible(self, browsers)
                 }
             }
@@ -608,7 +589,18 @@ mod inherent_bridge {
     bridge_eql_partialeq!(LineStyle);
     bridge_deep_clone!(BorderSideWidth);
     bridge_deep_clone_copy!(LineStyle);
-    bridge_is_compatible!(BorderSideWidth, LineStyle);
+    impl super::IsCompatible for BorderSideWidth {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            BorderSideWidth::is_compatible(self, browsers)
+        }
+    }
+    impl super::IsCompatible for LineStyle {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            LineStyle::is_compatible(*self, browsers)
+        }
+    }
     bridge_clone_partialeq!(
         BorderColor,
         BorderStyle,
@@ -645,7 +637,7 @@ mod inherent_bridge {
     use crate::properties::border_image::{
         BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
     };
-    // PORT NOTE: BorderImageRepeat/SideWidth/Slice carry inherent
+    // BorderImageRepeat/SideWidth/Slice carry inherent
     // `deep_clone(&self, &Arena)` / `eql(&self, &Self)` (no `Clone`/`PartialEq`
     // derives — see border_image.rs), so route through bridge_deep_clone/eql.
     bridge_deep_clone!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
@@ -654,8 +646,8 @@ mod inherent_bridge {
     bridge_eql!(BorderImage);
 
     use crate::properties::border_radius::BorderRadius;
-    // PORT NOTE: BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
-    // Clone/PartialEq derives — see border_radius.rs PORT NOTE).
+    // BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
+    // Clone/PartialEq derives — see border_radius.rs).
     bridge_deep_clone!(BorderRadius);
     bridge_eql!(BorderRadius);
 
@@ -665,12 +657,8 @@ mod inherent_bridge {
         BackgroundRepeat, BackgroundSize,
     };
     bridge_eql!(Background);
-    bridge_deep_clone!(
-        Background,
-        BackgroundSize,
-        BackgroundPosition,
-        BackgroundRepeat
-    );
+    bridge_deep_clone!(Background, BackgroundSize, BackgroundPosition);
+    bridge_deep_clone_copy!(BackgroundRepeat);
     bridge_clone_partialeq!(BackgroundAttachment, BackgroundClip, BackgroundOrigin);
 
     // ── properties/align ──
@@ -724,15 +712,48 @@ mod inherent_bridge {
         FontVariantCaps,
         LineHeight,
     );
-    bridge_is_compatible!(
-        FontWeight,
-        FontSize,
-        FontStretch,
-        FontStyle,
-        FontVariantCaps,
-        LineHeight,
-        FontFamily,
-    );
+    impl super::IsCompatible for FontWeight {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontWeight::is_compatible(self, browsers)
+        }
+    }
+    impl super::IsCompatible for FontSize {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontSize::is_compatible(self, browsers)
+        }
+    }
+    impl super::IsCompatible for FontStretch {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontStretch::is_compatible(*self, browsers)
+        }
+    }
+    impl super::IsCompatible for FontStyle {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontStyle::is_compatible(*self, browsers)
+        }
+    }
+    impl super::IsCompatible for FontVariantCaps {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontVariantCaps::is_compatible(*self, browsers)
+        }
+    }
+    impl super::IsCompatible for LineHeight {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            LineHeight::is_compatible(self, browsers)
+        }
+    }
+    impl super::IsCompatible for FontFamily {
+        #[inline]
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+            FontFamily::is_compatible(self, browsers)
+        }
+    }
     bridge_clone_partialeq!(FontFamily);
     // `Font` DeepClone/CssEql now via `#[derive]` on the struct (properties/font.rs).
 
@@ -744,15 +765,13 @@ mod inherent_bridge {
 
     // ── properties/display ──
     use crate::properties::display::{Display, Visibility};
-    bridge_deep_clone!(Display);
+    bridge_deep_clone_copy!(Display);
     bridge_eql_partialeq!(Display);
     bridge_clone_partialeq!(Visibility);
 
     // ── properties/overflow ──
     use crate::properties::overflow::{Overflow, OverflowKeyword, TextOverflow};
-    bridge_eql!(Overflow);
-    bridge_deep_clone!(Overflow);
-    bridge_clone_partialeq!(OverflowKeyword, TextOverflow);
+    bridge_clone_partialeq!(Overflow, OverflowKeyword, TextOverflow);
 
     // ── properties/position ──
     use crate::properties::position::Position as PositionProp;
@@ -799,7 +818,7 @@ mod inherent_bridge {
 
     // ── properties/ui ──
     use crate::properties::ui::ColorScheme;
-    bridge_deep_clone!(ColorScheme);
+    bridge_deep_clone_copy!(ColorScheme);
     bridge_eql_partialeq!(ColorScheme);
 
     // ── properties/css_modules ──
@@ -837,9 +856,10 @@ mod inherent_bridge {
     bridge_eql_partialeq!(PropertyId);
 }
 
-// TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →
-// bitwise `==`. In Rust those are `bitflags!` types implementing `PartialEq`;
-// add `impl<T: BitFlags> CssEql for T` or per-type impls.
+// Packed bitfields are `bitflags!` types whose derived `PartialEq` already
+// compares contents, routed through the per-type `bridge_eql_partialeq!` calls above.
+// (A blanket `impl<T: bitflags::Flags> CssEql for T` would collide with the container
+// blanket impls under coherence, so coverage stays per-type.)
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Hash
@@ -852,16 +872,14 @@ pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
 }
 
-/// `#[derive(CssHash)]` — field-wise / variant-wise port of Zig's
-/// `css.implementHash`. See `src/css_derive/lib.rs` for the expansion rules.
+/// `#[derive(CssHash)]` — field-wise / variant-wise hashing.
+/// See `src/css_derive/lib.rs` for the expansion rules.
 /// Re-exported here so `use crate::generics::CssHash;` brings both trait and
 /// derive into scope.
 pub use bun_css_derive::CssHash;
 
 #[inline]
 pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
-    // TODO(port): Zig `implementHash` is comptime field/variant reflection ==
-    // the body of `#[derive(CssHash)]`. Free fn forwards to trait.
     this.hash(hasher)
 }
 
@@ -870,21 +888,16 @@ pub fn hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-pub fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
+pub(crate) fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
     for item in this.iter() {
         item.hash(hasher);
     }
 }
 
-pub fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
+pub(crate) fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
-}
-
-pub fn has_hash<T>() -> bool {
-    // TODO(port): becomes `T: CssHash` bound at call site; stub for diff parity.
-    true
 }
 
 impl CssHash for () {
@@ -895,9 +908,8 @@ impl CssHash for () {
 impl<T: CssHash> CssHash for Option<T> {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `hash()` dispatcher: Some → hash inner, None → no-op (no prefix).
-        // The "null"/"some" prefixes are from implementHash's dead .optional arm
-        // (guarded by @compileError) — do NOT emit them here.
+        // Some → hash inner, None → no-op. Do NOT emit "null"/"some"
+        // prefixes here.
         if let Some(v) = self {
             v.hash(hasher);
         }
@@ -913,7 +925,7 @@ impl<T: CssHash + ?Sized> CssHash for &T {
 
 impl<T: CssHash> CssHash for [T] {
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `hash()` for `.slice` pointers iterates items only — no len prefix.
+        // Iterates items only — no len prefix.
         for item in self {
             item.hash(hasher);
         }
@@ -922,8 +934,8 @@ impl<T: CssHash> CssHash for [T] {
 
 impl<T: CssHash, const N: usize> CssHash for [T; N] {
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig: `bun.writeAnyToHasher(hasher, list.len)` — feeds the raw bytes
-        // of `usize` into the hasher. `bun_core::write_any_to_hasher` exists
+        // Feed the raw bytes
+        // of the `usize` length into the hasher. `bun_core::write_any_to_hasher` exists
         // but is `H: Hasher`-generic and routes through `Hasher::write`, which
         // for `Wyhash11` calls `update` — so inlining the `usize` byte-feed
         // here is byte-identical and avoids the trait hop.
@@ -962,7 +974,6 @@ macro_rules! hash_simple {
         impl CssHash for $t {
             #[inline]
             fn hash(&self, hasher: &mut Wyhash) {
-                // Zig: `hasher.update(std.mem.asBytes(&this))`
                 hasher.update(&self.to_ne_bytes());
             }
         }
@@ -1002,7 +1013,6 @@ impl<T: CssHash + ?Sized> CssHash for Box<T> {
 impl CssHash for VendorPrefix {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig: `hasher.update(std.mem.asBytes(&this))` on the packed-struct repr.
         hasher.update(&[self.as_bits()]);
     }
 }
@@ -1010,8 +1020,7 @@ impl CssHash for VendorPrefix {
 impl CssHash for bun_ast::Loc {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
-        // Zig `implementHash` doesn't reach `Loc` (callers skip it), but
-        // providing a structural hash here lets `#[derive(CssHash)]` types
+        // Providing a structural hash here lets `#[derive(CssHash)]` types
         // include a `loc` field without `#[css(skip)]` if they want.
         hasher.update(&self.start.to_ne_bytes());
     }
@@ -1055,7 +1064,7 @@ pub fn slice<L: ListContainer>(val: &L) -> &[L::Item] {
 }
 
 pub trait IsCompatible {
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool;
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool;
 }
 
 /// `#[derive(IsCompatible)]` — field-wise / variant-wise port of the
@@ -1066,30 +1075,29 @@ pub trait IsCompatible {
 pub use bun_css_derive::IsCompatible;
 
 #[inline]
-pub fn is_compatible<T: IsCompatible>(val: &T, browsers: crate::targets::Browsers) -> bool {
+pub(crate) fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {
     val.is_compatible(browsers)
 }
 
 impl<T: IsCompatible + ?Sized> IsCompatible for &T {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         (**self).is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible + ?Sized> IsCompatible for Box<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         (**self).is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible> IsCompatible for Option<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
-        // Zig's `isCompatible` doesn't special-case Optional, but every
-        // hand-written caller treats absent as compatible (no value → no
-        // feature gate to check).
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
+        // Every hand-written caller treats absent as compatible (no value →
+        // no feature gate to check).
         match self {
             Some(v) => v.is_compatible(browsers),
             None => true,
@@ -1099,7 +1107,7 @@ impl<T: IsCompatible> IsCompatible for Option<T> {
 
 impl<T: IsCompatible> IsCompatible for [T] {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         for item in self {
             if !item.is_compatible(browsers) {
                 return false;
@@ -1111,19 +1119,19 @@ impl<T: IsCompatible> IsCompatible for [T] {
 
 impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         self.as_slice().is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible> IsCompatible for Vec<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         self.as_slice().is_compatible(browsers)
     }
 }
 
-// The Zig original blanket-impls over "any list container". A Rust blanket
+// A blanket
 // `impl<L: ListContainer>` conflicts with the `&T` impl above (coherence can't
 // prove `&T` never impls `ListContainer`), so spell out the three concrete
 // container types instead.
@@ -1133,7 +1141,7 @@ macro_rules! is_compatible_container {
         where
             <$ty as ListContainer>::Item: IsCompatible,
         {
-            fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
                 for item in ListContainer::slice(self) {
                     if !item.is_compatible(browsers) {
                         return false;
@@ -1152,8 +1160,7 @@ is_compatible_container!(
 // ───────────────────────────────────────────────────────────────────────────────
 // Parse / ParseWithOptions
 // ───────────────────────────────────────────────────────────────────────────────
-// Zig's `generic.parse(T, input)` / `generic.parseWithOptions(T, input, opts)`
-// dispatch via `@hasDecl(T, "parse"[WithOptions])`. In Rust each leaf value
+// Each leaf value
 // type either hand-writes an inherent `parse(&mut Parser) -> CssResult<Self>`
 // or derives one via `#[derive(Parse)]` / `#[derive(DefineEnumProperty)]`; the
 // trait below is the uniform bound that `Property::parse` and the container
@@ -1161,7 +1168,7 @@ is_compatible_container!(
 //
 // `Parse` is intentionally lifetime-free: every value-type parser takes
 // `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
-// TODO(refactor): `'bump` arena threading is a follow-up; until then the parser
+// `'bump` arena threading is a follow-up; until then the parser
 // holds the arena and arena-backed lists go through `from_list(Vec)`.
 
 /// `T::parse(&mut Parser) -> CssResult<T>`.
@@ -1171,8 +1178,8 @@ pub trait Parse: Sized {
 
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
 ///
-/// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
-/// PORT NOTE: Rust can't express that as a `where Self: Parse` default method
+/// Falling back to `parse` when a type has no `parse_with_options`
+/// can't be expressed as a `where Self: Parse` default method
 /// — the bound becomes part of the *method signature*, so the free
 /// `parse_with_options::<T>` below would require `T: Parse` even for impls
 /// that override the body. Instead the fallthrough lives in
@@ -1228,7 +1235,7 @@ impl<T: Parse> ParseWithOptions for Vec<T> {
     }
 }
 
-// Zig `.pointer` arm (`generics.zig:273-279`): parse the pointee then heap-allocate.
+// Parse the pointee then heap-allocate.
 impl<T: Parse> Parse for Box<T> {
     #[inline]
     fn parse(input: &mut Parser) -> CssResult<Self> {
@@ -1323,13 +1330,8 @@ pub trait ToCss {
 }
 
 #[inline]
-pub fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+pub(crate) fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
     this.to_css(dest)
-}
-
-pub fn has_to_css<T>() -> bool {
-    // TODO(port): becomes `T: ToCss` bound; stub for diff parity.
-    true
 }
 
 impl<T: ToCss + ?Sized> ToCss for &T {
@@ -1339,7 +1341,7 @@ impl<T: ToCss + ?Sized> ToCss for &T {
     }
 }
 
-// Zig `.pointer` arm (`generics.zig:338-341`): recurse into `*T` pointee.
+// Recurse into the pointee.
 impl<T: ToCss + ?Sized> ToCss for Box<T> {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -1395,13 +1397,13 @@ impl<T: ToCss + PartialEq> ToCss for Rect<T> {
 impl ToCss for f32 {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSNumberFns::to_css(self, dest)
+        CSSNumberFns::to_css(*self, dest)
     }
 }
 impl ToCss for CSSInteger {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSIntegerFns::to_css(self, dest)
+        CSSIntegerFns::to_css(*self, dest)
     }
 }
 impl ToCss for CustomIdent {
@@ -1461,7 +1463,7 @@ macro_rules! impl_parse_tocss_via_inherent {
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
-                <$ty>::to_css(self, dest)
+                (*self).to_css(dest)
             }
         }
     )+};
@@ -1489,11 +1491,6 @@ pub trait TryFromAngle: Sized {
     fn try_from_angle(angle: Angle) -> Option<Self>;
 }
 
-#[inline]
-pub fn try_from_angle<T: TryFromAngle>(angle: Angle) -> Option<T> {
-    T::try_from_angle(angle)
-}
-
 impl TryFromAngle for CSSNumber {
     #[inline]
     fn try_from_angle(angle: Angle) -> Option<Self> {
@@ -1505,28 +1502,18 @@ pub trait TrySign {
     fn try_sign(&self) -> Option<f32>;
 }
 
-#[inline]
-pub fn try_sign<T: TrySign>(val: &T) -> Option<f32> {
-    val.try_sign()
-}
-
 impl TrySign for CSSNumber {
     #[inline]
     fn try_sign(&self) -> Option<f32> {
-        Some(CSSNumberFns::sign(self))
+        Some(CSSNumberFns::sign(*self))
     }
 }
-// TODO(port): Zig fallback `if @hasDecl(T, "sign") T.sign else T.trySign` —
-// model as a trait with default method delegating to `Sign` where available.
+// Each type
+// implements `TrySign` explicitly (delegating to its inherent `sign` where one exists).
 
 pub trait TryMap: Sized {
-    // Zig: `comptime map_fn: *const fn(f32) f32` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization.
     fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>;
-}
-
-#[inline]
-pub fn try_map<T: TryMap>(val: &T, map_fn: impl Fn(f32) -> f32) -> Option<T> {
-    val.try_map(map_fn)
 }
 
 impl TryMap for CSSNumber {
@@ -1537,20 +1524,10 @@ impl TryMap for CSSNumber {
 }
 
 pub trait TryOpTo: Sized {
-    // Zig: `comptime op_fn: *const fn(...)` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization.
     // `R` is method-generic (not trait-generic) so `TryOpTo` can appear as a
     // supertrait bound without committing to a result type.
     fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
-}
-
-#[inline]
-pub fn try_op_to<T: TryOpTo, R, C>(
-    lhs: &T,
-    rhs: &T,
-    ctx: C,
-    op_fn: impl Fn(C, f32, f32) -> R,
-) -> Option<R> {
-    lhs.try_op_to(rhs, ctx, op_fn)
 }
 
 impl TryOpTo for CSSNumber {
@@ -1562,24 +1539,14 @@ impl TryOpTo for CSSNumber {
 
 impl IsCompatible for CSSNumber {
     #[inline]
-    fn is_compatible(&self, _: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }
 
 pub trait TryOp: Sized {
-    // Zig: `comptime op_fn: *const fn(...)` — generic param preserves monomorphization.
+    // Generic param preserves monomorphization.
     fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self>;
-}
-
-#[inline]
-pub fn try_op<T: TryOp, C>(
-    lhs: &T,
-    rhs: &T,
-    ctx: C,
-    op_fn: impl Fn(C, f32, f32) -> f32,
-) -> Option<T> {
-    lhs.try_op(rhs, ctx, op_fn)
 }
 
 impl TryOp for CSSNumber {
@@ -1594,14 +1561,9 @@ pub trait PartialCmp {
 }
 
 #[inline]
-pub fn partial_cmp<T: PartialCmp>(lhs: &T, rhs: &T) -> Option<Ordering> {
-    lhs.partial_cmp(rhs)
-}
-
-#[inline]
-pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
-    let lte = *lhs <= *rhs;
-    let rte = *lhs >= *rhs;
+pub(crate) fn partial_cmp_f32(lhs: f32, rhs: f32) -> Option<Ordering> {
+    let lte = lhs <= rhs;
+    let rte = lhs >= rhs;
     if !lte && !rte {
         return None;
     }
@@ -1617,7 +1579,7 @@ pub fn partial_cmp_f32(lhs: &f32, rhs: &f32) -> Option<Ordering> {
 impl PartialCmp for f32 {
     #[inline]
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        partial_cmp_f32(self, rhs)
+        partial_cmp_f32(*self, *rhs)
     }
 }
 impl PartialCmp for CSSInteger {
@@ -1653,5 +1615,3 @@ impl MulF32 for CSSNumber {
         self * rhs
     }
 }
-
-// ported from: src/css/generics.zig

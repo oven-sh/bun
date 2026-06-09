@@ -3,15 +3,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::Output;
 
 use crate as clap;
-use crate::args;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
-// TODO(port): Zig `pub var` — using AtomicBool for safe mutable global.
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
-pub struct Arg<'p, 'a, Id> {
+pub(crate) struct Arg<'p, 'a, Id> {
     pub param: &'p clap::Param<Id>,
     pub value: Option<&'a [u8]>,
 }
@@ -29,7 +27,7 @@ pub enum State<'a> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum ArgError {
+pub(crate) enum ArgError {
     #[error("DoesntTakeValue")]
     DoesntTakeValue,
     #[error("MissingValue")]
@@ -67,14 +65,14 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub diagnostic: Option<&'p mut clap::Diagnostic>,
 }
 
-// PORT NOTE: ArgIterator was a comptime duck-typed param in Zig; expressed here as
-// the `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
+// ArgIterator is the
+// `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
 impl<'p, 'a, Id, ArgIterator> StreamingClap<'p, 'a, Id, ArgIterator>
 where
     ArgIterator: ArgIter<'a>,
 {
     /// Get the next Arg that matches a Param.
-    pub fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
+    pub(crate) fn next(&mut self) -> Result<Option<Arg<'p, 'a, Id>>, ArgError> {
         match self.state {
             State::Normal => self.normal(),
             State::Chaining(state) => self.chainging(state),
@@ -112,7 +110,7 @@ where
                     None
                 };
 
-                // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
+                // Copy the slice ref so `&mut self` is free inside the loop.
                 let params = self.params;
                 for param in params {
                     if !param.names.matches_long(name) {
@@ -160,7 +158,7 @@ where
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        Output::warn(&format_args!(
+                        bun_core::warn!(
                             "unrecognized flag: {}{}\n",
                             if arg_info.kind == ArgKind::Long {
                                 "--"
@@ -168,7 +166,7 @@ where
                                 "-"
                             },
                             bstr::BStr::new(name),
-                        ));
+                        );
                         Output::flush();
                     }
 
@@ -177,10 +175,7 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn(&format_args!(
-                        "unrecognized argument: {}\n",
-                        bstr::BStr::new(name)
-                    ));
+                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
                     Output::flush();
                 }
                 Ok(None)
@@ -219,7 +214,7 @@ where
         let index = state.index;
         let next_index = index + 1;
 
-        // PORT NOTE: reshaped for borrowck — copy slice ref so &mut self is free inside loop.
+        // Copy the slice ref so `&mut self` is free inside the loop.
         let params = self.params;
         for param in params {
             let Some(short) = param.names.short else {
@@ -229,9 +224,10 @@ where
                 continue;
             }
 
-            // Before we return, we have to set the new state of the clap
-            // PORT NOTE: Zig `defer` hoisted — every path below returns, and nothing
-            // between here and those returns reads `self.state`.
+            // Before we return, we have to set the new state of the clap.
+            // (Hoisting this above the returns is fine — every path
+            // below returns, and nothing between here and those returns reads
+            // `self.state`.)
             if arg.len() <= next_index || param.takes_value != clap::Values::None {
                 self.state = State::Normal;
             } else {
@@ -336,8 +332,8 @@ where
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
         if let Some(d) = self.diagnostic.as_deref_mut() {
-            // PORT NOTE: Zig assigned borrowed `arg`/`name` slices; Rust `Diagnostic`
-            // owns its bytes (error path only) — see lib.rs.
+            // `Diagnostic` owns
+            // its bytes (error path only) — see lib.rs.
             d.arg = arg.to_vec();
             d.short = short;
             d.long = long.map(|l| l.to_vec());
@@ -349,6 +345,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args;
 
     fn test_no_err(
         params: &[clap::Param<u8>],
@@ -402,10 +399,33 @@ mod tests {
                 Ok(Some(_)) => {}
                 Ok(None) => break,
                 Err(_err) => {
-                    // TODO(port): io.fixedBufferStream + diag.report — `Diagnostic::report`
-                    // currently routes through `bun_core::Output` (stderr) and ignores its
-                    // writer arg, so we cannot capture output to compare against `expected`.
-                    let _ = expected;
+                    // Bun's `Diagnostic::report` deliberately ignores its writer arg
+                    // and routes through `bun_core::Output` (stderr),
+                    // so the rendered message can't be captured here.
+                    // Instead, rebuild the flag name the
+                    // same way `report` does from the diagnostic fields and assert
+                    // the expected message names it in quotes.
+                    let mut name_buf = [0u8; 1024];
+                    let captured: &[u8] = if let Some(s) = diag.short {
+                        name_buf[0] = b'-';
+                        name_buf[1] = s;
+                        &name_buf[..2]
+                    } else if let Some(l) = diag.long.as_deref() {
+                        name_buf[0] = b'-';
+                        name_buf[1] = b'-';
+                        name_buf[2..2 + l.len()].copy_from_slice(l);
+                        &name_buf[..2 + l.len()]
+                    } else {
+                        &diag.arg
+                    };
+                    assert!(
+                        expected.windows(captured.len() + 2).any(|w| w[0] == b'\''
+                            && w[w.len() - 1] == b'\''
+                            && &w[1..w.len() - 1] == captured),
+                        "expected message {:?} does not name captured arg {:?}",
+                        bstr::BStr::new(expected),
+                        bstr::BStr::new(captured),
+                    );
                     return;
                 }
             }
@@ -794,5 +814,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/clap/streaming.zig

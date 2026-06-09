@@ -36,8 +36,8 @@ impl Params {
 pub struct RareData {
     libdeflate_compressor: Cell<Option<*mut libdeflate_sys::Compressor>>,
     libdeflate_decompressor: Cell<Option<*mut libdeflate_sys::Decompressor>>,
-    // PERF(port): was StackFallbackAllocator(128 * 1024) — profile if hot.
-    // Zig kept a 128KB inline buffer reused as scratch for (de)compression output.
+    // PERF: a 128KB inline buffer reused as scratch for (de)compression
+    // output could avoid per-call allocation — profile if hot.
 }
 
 impl Default for RareData {
@@ -53,14 +53,12 @@ impl RareData {
     pub const STACK_BUFFER_SIZE: usize = 128 * 1024;
 
     pub fn array_list(&self) -> Vec<u8> {
-        // PERF(port): Zig handed back an ArrayList aliasing the 128KB stack_fallback
-        // buffer (zero-alloc). Allocates a fresh heap Vec per call — profile if hot.
+        // PERF: allocates a fresh heap Vec per call — profile if hot.
         Vec::with_capacity(Self::STACK_BUFFER_SIZE)
     }
 
-    // Zig `allocator()` returned the stack-fallback allocator. Allocator params are
+    // Allocator params are
     // dropped in non-AST crates; callers use the global allocator.
-    // PERF(port): was stack-fallback
 
     pub fn decompressor(&self) -> *mut libdeflate_sys::Decompressor {
         match self.libdeflate_decompressor.get() {
@@ -95,7 +93,7 @@ impl Drop for RareData {
             // SAFETY: allocated by libdeflate_alloc_decompressor, freed exactly once here.
             unsafe { libdeflate_sys::Decompressor::destroy(d) };
         }
-        // Zig: bun.destroy(this) — handled by Box<RareData> drop at the owner.
+        // Deallocation is handled by Box<RareData> drop at the owner.
     }
 }
 
@@ -109,13 +107,11 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::z_stream,
     pub decompress_stream: zlib::z_stream,
     pub params: Params,
-    // PORT NOTE: Zig borrowed `&RareData` from VM `bun_jsc::RareData` (pooled
-    // libdeflate handles, shared across connections). `bun_jsc::RareData::
-    // websocket_deflate()` currently returns an opaque placeholder (the real
-    // type is *this* `RareData`, which would be a dep cycle), so own a
-    // per-connection instance instead.
-    // PERF(port): per-connection libdeflate alloc — restore VM-pooled instance
-    // once `bun_jsc::rare_data::WebSocketDeflateRareData` is wired to this type.
+    // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
+    // handles, shared across connections), but `bun_jsc::RareData::websocket_deflate()`
+    // returns an opaque placeholder (the real type is *this* `RareData`, which
+    // would be a dep cycle), so each connection owns a fresh instance instead —
+    // a per-connection libdeflate allocation, not a correctness divergence.
     pub rare_data: RareData,
 }
 
@@ -155,17 +151,18 @@ pub enum CompressError {
 bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
-    pub fn init(params: Params, rare_data: &mut JscRareData) -> Result<Box<Self>, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn init(
+        params: Params,
+        rare_data: &mut JscRareData,
+    ) -> Result<Box<Self>, bun_core::Error> {
         let mut self_ = Box::new(Self {
             params,
             compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
             decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            // TODO(port): bun_jsc::rare_data::WebSocketDeflateRareData —
             // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
-            // placeholder in bun_jsc; the real type is `self::RareData` (this
-            // module), which bun_jsc cannot import without a dep cycle. Until a
-            // re-export shim lands, fall back to a fresh per-connection instance.
+            // placeholder in bun_jsc (the real type is `self::RareData`, which
+            // bun_jsc cannot import without a dep cycle), so use a fresh
+            // per-connection instance — see the `rare_data` field note.
             rare_data: {
                 let _ = rare_data;
                 RareData::default()
@@ -222,7 +219,11 @@ impl PerMessageDeflate {
         len < RareData::STACK_BUFFER_SIZE
     }
 
-    pub fn decompress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), DecompressError> {
+    pub(crate) fn decompress(
+        &mut self,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), DecompressError> {
         let initial_len = out.len();
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
@@ -293,7 +294,11 @@ impl PerMessageDeflate {
         Ok(())
     }
 
-    pub fn compress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), CompressError> {
+    pub(crate) fn compress(
+        &mut self,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), CompressError> {
         self.compress_stream.next_in = in_buf.as_ptr();
         self.compress_stream.avail_in = u32::try_from(in_buf.len()).expect("unreachable");
 
@@ -343,8 +348,6 @@ impl Drop for PerMessageDeflate {
             zlib::deflateEnd(&raw mut self.compress_stream);
             zlib::inflateEnd(&raw mut self.decompress_stream);
         }
-        // Zig: self.allocator.destroy(self) — handled by Box drop at the owner.
+        // Deallocation is handled by Box drop at the owner.
     }
 }
-
-// ported from: src/http_jsc/websocket_client/WebSocketDeflate.zig

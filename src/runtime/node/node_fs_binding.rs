@@ -3,9 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult, SysErrorJsc as _,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -13,22 +11,16 @@ use crate::node::fs::{
 };
 
 /// Signature of every generated NodeFS host function.
-pub type NodeFSFunction =
+pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
-// Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
-// PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
-// (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that the
-// Zig comptime block reflected per `function_name` are spelled out once in
-// `node_fs.rs` (the `NodeFS::dispatch` table + `async_::*` aliases) and reused
-// here via the `node_fs_bindings!` macro at the bottom of this file.
+// The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
+// spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
+// `async_::*` aliases) and reused here via the `node_fs_bindings!` macro at
+// the bottom of this file.
 
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
-// Zig: `fn Bindings(comptime function_name) type { return struct { runSync, runAsync } }`
-// PORT NOTE: collapsed to two free generic fns; the `comptime function_name`
-// becomes a `const F: NodeFSFunctionEnum`, and the reflected `Arguments` /
-// return type become `A: FsArgument` / `R: FsReturn`.
 
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
@@ -84,15 +76,14 @@ fn run_async<A: FsArgument>(
     let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
     slice.will_be_async = true;
 
-    // Zig uses a `deinit: bool` flag + conditional `defer` to keep `slice`
-    // alive past return when ownership transfers to the Task. The Rust port
-    // mirrors this with `ManuallyDrop`: dropped only on the early-return
+    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
+    // to the Task: dropped only on the early-return
     // error/abort branches; on the success path the Task owns `args` (whose
     // protected JSValues are released by `Drop for ThreadSafe<A>` when the
     // Task completes), and `slice` is intentionally not dropped — its
     // `Drop`-unprotect would race that.
 
-    let args = match <A as FsArgument>::from_js(global, &mut slice) {
+    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
         Err(err) => {
             // SAFETY: not yet dropped; only drop site for this path.
@@ -102,6 +93,7 @@ fn run_async<A: FsArgument>(
     };
 
     if global.has_exception() {
+        args.unprotect();
         drop(args);
         // SAFETY: not yet dropped; only drop site for this path.
         unsafe { ManuallyDrop::drop(&mut slice) };
@@ -116,6 +108,7 @@ fn run_async<A: FsArgument>(
                         global,
                         reason.to_js(global),
                     );
+                args.unprotect();
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };
@@ -124,8 +117,8 @@ fn run_async<A: FsArgument>(
         }
     }
 
-    // `switch (comptime function_name) { else => {} }` — the `.cp` /
-    // `.readdir` arms are handled by their dedicated bindings below.
+    // The `cp` / `readdir` operations are handled by their dedicated
+    // bindings below.
     // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(global, this, args, vm))
@@ -188,9 +181,8 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `.cp`'s `Task.create` (Zig) takes the parser arena as
-    /// a 5th arg. The Rust `AsyncCpTask::create` copies its paths via
-    /// `to_thread_safe()` instead, so the arena is dropped with `slice`.
+    /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
+    /// `to_thread_safe()`, so the arena is dropped with `slice`.
     pub fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
@@ -287,7 +279,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match this
             .node_fs
-            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -335,7 +327,7 @@ impl Binding {
 
         match this
             .node_fs
-            .with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync))
+            .with_mut(|nfs| nfs.unwatch_file((), Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
@@ -343,9 +335,8 @@ impl Binding {
     }
 }
 
-/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block from the
-/// Zig. Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple that the
-/// Zig comptime reflection derived from `@typeInfo(NodeFS.<fn>)`.
+/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.
+/// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op.
 macro_rules! node_fs_bindings {
     ( $( $sync:ident / $async_:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
@@ -417,7 +408,7 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub fn create_binding(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 
     let vm = global.bun_vm_ptr();
@@ -431,7 +422,10 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_memfd_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
 
     if arguments.len < 1 {
@@ -458,5 +452,3 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     }
 }
-
-// ported from: src/runtime/node/node_fs_binding.zig

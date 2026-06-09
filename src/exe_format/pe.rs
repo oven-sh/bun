@@ -88,9 +88,12 @@ pub struct PEFile {
     pub last_va_end: u32,
 }
 
-#[repr(C)]
+// PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
+// live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
+// for it to be sound to materialize references/pointers to them from the buffer.
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DOSHeader {
+pub(crate) struct DOSHeader {
     pub e_magic: u16,      // Magic number
     pub e_cblp: u16,       // Bytes on last page of file
     pub e_cp: u16,         // Pages in file
@@ -112,9 +115,9 @@ pub struct DOSHeader {
     pub e_lfanew: u32,     // File address of new exe header
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct PEHeader {
+pub(crate) struct PEHeader {
     pub signature: u32,               // PE signature
     pub machine: u16,                 // Machine type
     pub number_of_sections: u16,      // Number of sections
@@ -125,9 +128,9 @@ pub struct PEHeader {
     pub characteristics: u16,         // Characteristics
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct OptionalHeader64 {
+pub(crate) struct OptionalHeader64 {
     pub magic: u16,                            // Magic number
     pub major_linker_version: u8,              // Major linker version
     pub minor_linker_version: u8,              // Minor linker version
@@ -160,16 +163,16 @@ pub struct OptionalHeader64 {
     pub data_directories: [DataDirectory; 16], // Data directories
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct DataDirectory {
+pub(crate) struct DataDirectory {
     pub virtual_address: u32,
     pub size: u32,
 }
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Copy, Clone)]
-pub struct SectionHeader {
+pub(crate) struct SectionHeader {
     pub name: [u8; 8],                // Section name
     pub virtual_size: u32,            // Virtual size
     pub virtual_address: u32,         // Virtual address
@@ -187,11 +190,8 @@ const DOS_SIGNATURE: u16 = 0x5A4D; // "MZ"
 const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 
 // Section characteristics
-const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
 const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
 const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
-const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
-const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 
 // Directory indices and DLL characteristics
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
@@ -200,10 +200,9 @@ const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
 
-// Safe access helpers for unaligned views
-// TODO(port): Zig used `*align(1) const T`; Rust references require alignment.
-// These return raw pointers; callers must treat reads/writes as potentially unaligned.
-// Consider `#[repr(C, packed)]` on header structs or `ptr::read_unaligned`.
+// Safe access helpers for unaligned views.
+// All header structs are `#[repr(C, packed)]` (align 1), so a bounds-checked byte
+// pointer into the image can be cast and dereferenced directly.
 fn view_at_const<T>(buf: &[u8], off: usize) -> Result<*const T, Error> {
     if off + size_of::<T>() > buf.len() {
         return Err(Error::OutOfBounds);
@@ -258,10 +257,6 @@ impl PEFile {
         view_at_const::<DOSHeader>(&self.data, self.dos_header_offset)
     }
 
-    fn get_dos_header_mut(&mut self) -> Result<*mut DOSHeader, Error> {
-        view_at_mut::<DOSHeader>(&mut self.data, self.dos_header_offset)
-    }
-
     fn get_pe_header(&self) -> Result<*const PEHeader, Error> {
         view_at_const::<PEHeader>(&self.data, self.pe_header_offset)
     }
@@ -284,22 +279,12 @@ impl PEFile {
         if start + size > self.data.len() {
             return Err(Error::OutOfBounds);
         }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) const SectionHeader
+        // SAFETY: bounds-checked above; SectionHeader is #[repr(C, packed)] (align 1) POD.
         let ptr = unsafe { self.data.as_ptr().add(start).cast::<SectionHeader>() };
+        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
+        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
+        // with no invalid bit patterns.
         Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
-    }
-
-    fn get_section_headers_mut(&mut self) -> Result<&mut [SectionHeader], Error> {
-        let start = self.section_headers_offset;
-        let size = size_of::<SectionHeader>() * self.num_sections as usize;
-        if start + size > self.data.len() {
-            return Err(Error::OutOfBounds);
-        }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
-        let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
-        Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
 
     pub fn init(pe_data: &[u8]) -> Result<Box<PEFile>, Error> {
@@ -348,7 +333,6 @@ impl PEFile {
         // 5. Read optional header
         let size_of_optional_header = pe_header.size_of_optional_header;
         let number_of_sections = pe_header.number_of_sections;
-        // PORT NOTE: reshaped for borrowck — drop pe_header borrow before re-borrowing data
         let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
         // SAFETY: validated bounds above
         let optional_header = unsafe { &mut *optional_header };
@@ -387,15 +371,13 @@ impl PEFile {
         let section_alignment = optional_header.section_alignment;
 
         if num_sections > 0 {
-            // SAFETY: bounds-checked above
-            let sections_ptr = unsafe {
-                data.as_ptr()
-                    .add(section_headers_offset)
-                    .cast::<SectionHeader>()
-            };
-            let sections = unsafe { slice::from_raw_parts(sections_ptr, num_sections as usize) };
-
-            for section in sections {
+            for i in 0..num_sections as usize {
+                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
+                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
+                // `section_headers_offset + section_headers_size <= data.len()` check above.
+                let section = unsafe {
+                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
+                };
                 if section.size_of_raw_data > 0 {
                     if section.pointer_to_raw_data < first_raw {
                         first_raw = section.pointer_to_raw_data;
@@ -440,6 +422,7 @@ impl PEFile {
             unsafe { ptr::addr_of_mut!((*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY]) };
         // SAFETY: dd_ptr is within the OptionalHeader64 struct
         let sec_off_u32 = unsafe { (*dd_ptr).virtual_address }; // file offset (not RVA)
+        // SAFETY: dd_ptr is within the OptionalHeader64 struct (bounds-checked via view_at_mut)
         let sec_size_u32 = unsafe { (*dd_ptr).size };
 
         if sec_off_u32 == 0 || sec_size_u32 == 0 {
@@ -579,8 +562,9 @@ impl PEFile {
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
-        // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
+        // Capture the needed scalars from opt before re-borrowing self.data below.
         let file_alignment = unsafe { (*opt).file_alignment };
+        // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
         let section_alignment = unsafe { (*opt).section_alignment };
 
         // 3. Duplicate .bun guard - compare all 8 bytes exactly
@@ -791,8 +775,6 @@ impl PEFile {
 
     /// Write the modified PE file
     pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
-        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -893,45 +875,11 @@ impl PEFile {
     }
 }
 
-/// Utilities for PE file detection and validation
-pub mod utils {
-    use super::*;
-
-    pub fn is_pe(data: &[u8]) -> bool {
-        if data.len() < size_of::<DOSHeader>() {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; DOSHeader is #[repr(C)] POD at offset 0
-        // TODO(port): potentially unaligned — Zig used *align(1) const DOSHeader
-        let dos = unsafe { &*data.as_ptr().cast::<DOSHeader>() };
-        if dos.e_magic != DOS_SIGNATURE {
-            return false;
-        }
-
-        let off = dos.e_lfanew as usize;
-        if off < size_of::<DOSHeader>() || off > data.len().saturating_sub(size_of::<PEHeader>()) {
-            return false;
-        }
-
-        // SAFETY: bounds-checked above; PEHeader is #[repr(C)] POD
-        // TODO(port): potentially unaligned — Zig used *align(1) const PEHeader
-        let pe = unsafe { &*data.as_ptr().add(off).cast::<PEHeader>() };
-        pe.signature == PE_SIGNATURE
-    }
-}
-
-/// Windows-specific external interface for accessing embedded Bun data
-/// This matches the macOS interface but for PE files
-pub const BUN_COMPILED_SECTION_NAME: &str = ".bun";
-
-/// External C interface declarations - these are implemented in C++ bindings
-/// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
-/// directly access the .bun section from the current process memory without
-/// loading the entire executable.
+// External C interface declarations - these are implemented in C++ bindings
+// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
+// directly access the .bun section from the current process memory without
+// loading the entire executable.
 unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }
-
-// ported from: src/exe_format/pe.zig

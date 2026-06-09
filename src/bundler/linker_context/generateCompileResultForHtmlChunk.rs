@@ -1,23 +1,19 @@
 use crate::mal_prelude::*;
 use core::ffi::c_void;
-use core::mem::offset_of;
 use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
-use bun_collections::BoundedArray;
-use bun_collections::VecExt;
 use bun_core::strings;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, PendingPartRange, debug};
+use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
 use crate::options::Loader;
-use crate::thread_pool::Worker;
-use crate::{BundleV2, Chunk, CompileResult, IndexInt};
+use crate::{Chunk, CompileResult};
 
 /// Rrewrite the HTML with the following transforms:
 /// 1. Remove all <script> and <link> tags which were not marked as
@@ -45,19 +41,21 @@ use crate::{BundleV2, Chunk, CompileResult, IndexInt};
 // `&mut LinkerContext` — `c_ptr` stays raw; the HTML rewriter takes
 // `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
-pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
-    // SAFETY: `task` is the `task` field of a `PendingPartRange` scheduled by
-    // `generate_chunks_in_parallel`; recover the parent via offset_of.
-    // `GenerateChunkCtx` fields are raw `*mut` (not `&mut`), so reading them
-    // through `&PendingPartRange` / `&GenerateChunkCtx` is a plain `Copy` of
-    // the pointer value and preserves the mutable provenance they were
-    // constructed with — no `addr_of!` provenance dance needed.
-    let part_range: &PendingPartRange =
-        unsafe { &*bun_core::from_field_ptr!(PendingPartRange, task, task) };
+//
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live `PendingPartRange`
+/// scheduled by `generate_chunks_in_parallel`; see
+/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
+/// for the full contract. Matches the `Task::callback: unsafe fn(*mut Task)`
+/// contract.
+pub unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
+    // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
+    // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
+    let (part_range, _c_ptr, chunk_ptr, _worker) =
+        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
-    let worker = Worker::get(ctx.bundle());
-    let _unget = scopeguard::guard(&mut *worker, |w| w.unget());
 
     // `ctx.chunks` is a `BackRef<[Chunk]>` constructed via `new_mut` (write
     // provenance); recover the raw `*mut [Chunk]` for the HTML loader, which
@@ -71,7 +69,7 @@ pub fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
     // SAFETY: HTML chunks have exactly one part-range (i == 0); see
     // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(ctx.chunk.as_ptr(), i, result) };
+    unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
 }
 
 #[derive(Default)]
@@ -83,19 +81,13 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
-    #[allow(dead_code)]
-    source_index: IndexInt,
     import_records: &'a [ImportRecord],
-    #[allow(dead_code)]
-    log: *mut Log,
     current_import_record_index: u32,
     /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
     /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
     /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
     chunk: bun_ptr::BackRef<Chunk>,
     chunks: *mut [Chunk],
-    #[allow(dead_code)]
-    minify_whitespace: bool,
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,
@@ -248,7 +240,6 @@ impl<'a> HTMLLoader<'a> {
         }
         self.added_head_tags = true;
 
-        // PERF(port): was stack-fallback (std.heap.stackFallback(256))
         let slices = self.get_head_tags();
         for slice in slices.as_slice() {
             end_tag.before(slice, true)?;
@@ -263,13 +254,9 @@ impl<'a> HTMLLoader<'a> {
         }
         self.added_body_script = true;
 
-        // PERF(port): was stack-fallback (std.heap.stackFallback(256))
-        // `self.chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
-        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
-        if let Some(js_chunk) = self
-            .chunk
-            .get_js_chunk_for_html(unsafe { &mut *self.chunks })
-        {
+        // SAFETY: `self.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
+        let chunks = unsafe { &mut *self.chunks };
+        if let Some(js_chunk) = self.chunk.get_js_chunk_for_html(chunks) {
             let mut script = Vec::new();
             write!(
                 &mut script,
@@ -282,9 +269,8 @@ impl<'a> HTMLLoader<'a> {
         Ok(())
     }
 
-    fn get_head_tags(&self) -> BoundedArray<Vec<u8>, 2> {
-        // PERF(port): was stack-fallback arena; now heap Vec<u8>
-        let mut array: BoundedArray<Vec<u8>, 2> = BoundedArray::default();
+    fn get_head_tags(&self) -> Vec<Vec<u8>> {
+        let mut array: Vec<Vec<u8>> = Vec::with_capacity(2);
         // `self.chunk` is a `BackRef` (safe `Deref`).
         let chunk: &Chunk = &self.chunk;
         // SAFETY: `chunks` raw pointer valid for the link step; sole live `&mut`.
@@ -299,8 +285,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(style_tag);
+                array.push(style_tag);
             }
         } else {
             // Put CSS before JS to reduce chances of flash of unstyled content
@@ -312,8 +297,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(css_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(link_tag);
+                array.push(link_tag);
             }
             if let Some(js_chunk) = chunk.get_js_chunk_for_html(chunks) {
                 // type="module" scripts do not block rendering, so it is okay to put them in head
@@ -324,8 +308,7 @@ impl<'a> HTMLLoader<'a> {
                     BStr::new(js_chunk.unique_key)
                 )
                 .unwrap();
-                // PERF(port): was assume_capacity
-                let _ = array.push(script);
+                array.push(script);
             }
         }
         array
@@ -415,10 +398,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let import_records = c.graph.ast.items_import_records();
     let source_index = chunk.entry_point.source_index();
 
-    // HTML bundles for dev server must be allocated to it, as it must outlive
-    // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
-    // In Rust with global mimalloc this distinction collapses; verify DevServer ownership.
+    // HTML bundles for the dev server must outlive the bundle task (see
+    // `DevServer.RouteBundle.HTML.bundled_html_text`). The output is built in a
+    // plain `Vec<u8>` and returned as an owned `Box<[u8]>` inside
+    // `CompileResult::Html`, so it lives as long as whoever holds the
+    // `CompileResult` — no arena-lifetime distinction needed.
 
     // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
     // field is currently dead_code, so no write actually occurs through this
@@ -428,15 +412,13 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
     let has_dev_server = c.dev_server.is_some();
     let contents: &[u8] = &sources[source_index as usize].contents;
-    let records = import_records[source_index as usize].slice();
+    let records = import_records[source_index as usize].as_slice();
 
+    let _ = (source_index, log, minify_whitespace);
     let mut html_loader = HTMLLoader {
         linker: c,
-        source_index,
         import_records: records,
-        log,
         current_import_record_index: 0,
-        minify_whitespace,
         compile_to_standalone_html,
         chunk: bun_ptr::BackRef::new(chunk),
         chunks,
@@ -478,8 +460,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     } else {
         'brk: {
             if !html_loader.added_head_tags || !html_loader.added_body_script {
-                // PERF(port): @branchHint(.cold) — this is if the document is missing all head, body, and html elements.
-                // PERF(port): was stack-fallback (std.heap.stackFallback(256))
+                // Cold path: the document is missing all of the head, body, and html elements.
                 if !html_loader.added_head_tags {
                     let slices = html_loader.get_head_tags();
                     for slice in slices.as_slice() {
@@ -489,12 +470,9 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                 }
                 if !html_loader.added_body_script {
                     if html_loader.compile_to_standalone_html {
-                        // `chunk` is a `BackRef` (safe `Deref`); SAFETY for `chunks`:
-                        // raw `*mut [Chunk]` valid for the link step, sole live `&mut`.
-                        if let Some(js_chunk) = html_loader
-                            .chunk
-                            .get_js_chunk_for_html(unsafe { &mut *html_loader.chunks })
-                        {
+                        // SAFETY: `html_loader.chunks` raw `*mut [Chunk]` valid for the link step; sole live `&mut`.
+                        let chunks = unsafe { &mut *html_loader.chunks };
+                        if let Some(js_chunk) = html_loader.chunk.get_js_chunk_for_html(chunks) {
                             let mut script = Vec::new();
                             write!(
                                 &mut script,
@@ -508,14 +486,12 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                     html_loader.added_body_script = true;
                 }
             }
-            // value is ignored. fail loud if hit in debug
-            // TODO(port): Zig returned `undefined` in debug to fail loud; Rust has no direct equivalent.
-            break 'brk if cfg!(debug_assertions) { 0 } else { 0 };
+            // value is ignored
+            break 'brk 0;
         }
     };
 
     CompileResult::Html {
-        // TODO(port): Zig returned `output.items` (slice into the ArrayList). Here we hand over the Vec.
         code: html_loader.output.into_boxed_slice(),
         source_index,
         script_injection_offset,
@@ -523,5 +499,3 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
 }
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
-
-// ported from: src/bundler/linker_context/generateCompileResultForHtmlChunk.zig

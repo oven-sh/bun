@@ -6,8 +6,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSModuleLoader;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque ZST handle on the Rust side; Rust never reads or
 // writes bytes through it. C++ mutates VM state internally, but that is outside
 // Rust's aliasing model, so these externs take `*const JSGlobalObject` (matching
@@ -46,28 +44,25 @@ unsafe extern "C" {
 impl JSModuleLoader {
     pub fn evaluate(
         global_object: &JSGlobalObject,
-        source_code_ptr: *const u8,
-        source_code_len: usize,
-        origin_url_ptr: *const u8,
-        origin_url_len: usize,
-        referrer_url_ptr: *const u8,
-        referrer_url_len: usize,
+        source_code: &[u8],
+        origin_url: &[u8],
+        referrer_url: &[u8],
         this_value: JSValue,
-        exception: *mut JSValue,
+        exception: &mut JSValue,
     ) -> JSValue {
-        // SAFETY: thin wrapper over C++ JSC__JSModuleLoader__evaluate; caller guarantees
-        // ptr/len pairs are valid for reads and `exception` points to a writable JSValue slot.
-        // `global_object` is an opaque ZST handle — passed as `*const` per the FFI convention
-        // in `JSGlobalObject.rs`; C++-side mutation is outside Rust's aliasing model.
+        // SAFETY: thin wrapper over C++ JSC__JSModuleLoader__evaluate; slice ptr/len pairs are
+        // valid for reads for the duration of the FFI call and `exception` is a unique writable
+        // JSValue slot. `global_object` is an opaque ZST handle — passed as `*const` per the FFI
+        // convention in `JSGlobalObject.rs`; C++-side mutation is outside Rust's aliasing model.
         unsafe {
             JSC__JSModuleLoader__evaluate(
                 global_object,
-                source_code_ptr,
-                source_code_len,
-                origin_url_ptr,
-                origin_url_len,
-                referrer_url_ptr,
-                referrer_url_len,
+                source_code.as_ptr(),
+                source_code.len(),
+                origin_url.as_ptr(),
+                origin_url.len(),
+                referrer_url.as_ptr(),
+                referrer_url.len(),
                 this_value,
                 exception,
             )
@@ -131,5 +126,3 @@ impl JSModuleLoader {
         .ok_or(JsError::Thrown)
     }
 }
-
-// ported from: src/jsc/JSModuleLoader.zig

@@ -1,6 +1,5 @@
 use alloc::borrow::Cow;
 use core::ffi::{c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};
@@ -111,8 +110,7 @@ impl CallFrame {
     #[inline]
     fn as_unsafe_js_value_array(&self) -> *const JSValue {
         // SAFETY: CallFrame is an opaque handle whose address IS the base of the
-        // JSC register array; reinterpreting &self as *const JSValue mirrors the
-        // Zig @ptrCast(@alignCast(self)).
+        // JSC register array, so reinterpreting &self as *const JSValue is valid.
         std::ptr::from_ref::<CallFrame>(self).cast::<JSValue>()
     }
 
@@ -127,6 +125,8 @@ impl CallFrame {
         // which in turn calls 'ALWAYS_INLINE int32_t Register::payload() const'
         // which accesses `.encodedValue.asBits.payload`
         // JSC stores and works with value as signed, but it is always 1 or more.
+        // SAFETY: `registers` is the JSC register-file base derived from `&self`;
+        // OFFSET_ARGUMENT_COUNT_INCLUDING_THIS is a valid in-bounds Register slot.
         unsafe {
             u32::try_from(
                 (*registers.add(OFFSET_ARGUMENT_COUNT_INCLUDING_THIS))
@@ -145,7 +145,6 @@ impl CallFrame {
     pub fn arguments_old<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 15);
-        // PERF(port): was `switch { inline 1...15 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {
@@ -153,7 +152,7 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init(count.min(MAX), slice.as_ptr())
+            Arguments::<MAX>::init(count.min(MAX), slice)
         }
     }
 
@@ -162,7 +161,6 @@ impl CallFrame {
     pub fn arguments_undef<const MAX: usize>(&self) -> Arguments<MAX> {
         let slice = self.arguments();
         debug_assert!(MAX <= 9);
-        // PERF(port): was `switch { inline 1...9 => |count| ... }` comptime monomorphization — profile if it shows up on a hot path.
         let count = slice.len().min(MAX);
         if count == 0 {
             Arguments {
@@ -170,7 +168,7 @@ impl CallFrame {
                 len: 0,
             }
         } else {
-            Arguments::<MAX>::init_undef(count.min(MAX), slice.as_ptr())
+            Arguments::<MAX>::init_undef(count.min(MAX), slice)
         }
     }
 
@@ -218,14 +216,14 @@ union Register {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-union EncodedValueDescriptor {
+pub union EncodedValueDescriptor {
     ptr: JSValue, // JSCell*
     as_bits: AsBits,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct AsBits {
+pub struct AsBits {
     payload: i32,
     tag: i32,
 }
@@ -237,18 +235,16 @@ pub struct Arguments<const MAX: usize> {
 
 impl<const MAX: usize> Arguments<MAX> {
     #[inline]
-    pub fn init(i: usize, ptr: *const JSValue) -> Self {
+    pub fn init(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::ZERO; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
     }
 
     #[inline]
-    pub fn init_undef(i: usize, ptr: *const JSValue) -> Self {
+    pub fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        // SAFETY: caller guarantees `ptr[0..i]` is valid; i <= MAX.
-        args[0..i].copy_from_slice(unsafe { bun_core::ffi::slice(ptr, i) });
+        args[0..i].copy_from_slice(&src[0..i]);
         Self { ptr: args, len: i }
     }
 
@@ -290,21 +286,19 @@ impl<'a> Iterator<'a> {
 ///
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Borrowed (`init`) or
-    /// heap-owned dupe (`init_async`) — Zig's `initAsync` does
-    /// `bun.default_allocator.dupe(jsc.JSValue, slice)` so the remaining slice
-    /// survives the original CallFrame stack slot being reused before async
-    /// work consumes the arguments. A borrowed `&'a [JSValue]` here would
-    /// dangle in that case.
+    /// Backing storage for the remaining-args view. Both [`Self::init`] and
+    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
+    /// struct's lifetime to the source slice, so a heap-owned dupe
+    /// buys nothing here (it could not outlive `'a`). Kept as
+    /// `Cow` so a future caller that does own its args can pass `Owned`
+    /// without changing the type.
     remaining_buf: Cow<'a, [JSValue]>,
-    /// Cursor into `remaining_buf`; advances on `eat()`. Replaces Zig's
-    /// `remaining.ptr += 1` reslice (which a `Cow` can't express in-place).
+    /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    /// Zig: `bun.ArenaAllocator` (= `std.heap.ArenaAllocator`), which is **lazy** —
-    /// `init()` allocates nothing. The Rust `bun_alloc::Arena` is a `MimallocArena`
+    /// `bun_alloc::Arena` is a `MimallocArena`
     /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
-    /// caller actually needs scratch storage (currently none do in the Rust port).
+    /// caller actually needs scratch storage (currently none do).
     pub arena: Option<bun_alloc::Arena>,
     pub all: &'a [JSValue],
     pub threw: bool,
@@ -319,7 +313,7 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    /// Lazily create the scratch arena (Zig: `slice.arena.allocator()`).
+    /// Lazily create the scratch arena.
     #[inline]
     pub fn arena(&mut self) -> &bun_alloc::Arena {
         self.arena.get_or_insert_with(bun_alloc::Arena::new)
@@ -338,8 +332,7 @@ impl<'a> ArgumentsSlice<'a> {
             return;
         }
         // `remaining_buf.len() == all.len()` for both init variants, so
-        // `all.len() - remaining().len()` reduces to `remaining_start` —
-        // matching Zig's `self.all.len - self.remaining.len`.
+        // `all.len() - remaining().len()` reduces to `remaining_start`.
         let index = self.all.len() - self.remaining().len();
         self.protected.set(index);
         self.all[index].protect();
@@ -354,8 +347,7 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
-        // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64);
-        // mirrors Zig @ptrCast(slice.ptr).
+        // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64).
         let as_values =
             unsafe { bun_core::ffi::slice(slice.as_ptr().cast::<JSValue>(), slice.len()) };
         Self::init(vm, as_values)
@@ -375,10 +367,11 @@ impl<'a> ArgumentsSlice<'a> {
     }
 
     pub fn init_async(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
-        // Spec (CallFrame.zig:258-265): `.remaining = bun.default_allocator.dupe(jsc.JSValue, slice)`.
-        // `all` stays borrowed (matches Zig) so `protect_eat` index math holds.
+        // `all: &'a [JSValue]` already pins the struct lifetime to `slice`, so a
+        // heap-owned dupe of `remaining` cannot outlive `slice` anyway — borrow instead of copying.
+        // `all` stays borrowed so `protect_eat` index math holds.
         ArgumentsSlice {
-            remaining_buf: Cow::Owned(slice.to_vec()),
+            remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
             all: slice,
@@ -420,8 +413,6 @@ impl<'a> Drop for ArgumentsSlice<'a> {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
 // `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
 // to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
@@ -438,5 +429,3 @@ unsafe extern "C" {
     #[cfg(debug_assertions)]
     fn Bun__CallFrame__describeFrame(cf: *const CallFrame) -> *const core::ffi::c_char;
 }
-
-// ported from: src/jsc/CallFrame.zig

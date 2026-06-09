@@ -6,7 +6,7 @@ use core::ptr;
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_paths::{self as path, PathBuffer, WPathBuffer};
+use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
 use bun_threading::Mutex;
 
@@ -15,9 +15,7 @@ use bun_sys::windows::HANDLE;
 
 bun_core::declare_scope!(watcher, visible);
 
-pub type Platform = WindowsWatcher;
-
-pub type EventListIndex = core::ffi::c_int;
+pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
     pub mutex: Mutex,
@@ -62,10 +60,9 @@ pub enum Action {
     RenamedNew = w::FILE_ACTION_RENAMED_NEW_NAME,
 }
 
-pub struct FileEvent {
+pub(crate) struct FileEvent {
     pub action: Action,
-    // BACKREF: Zig `[]u16` borrows `DirWatcher.buf`. [`RawSlice`] (not a
-    // lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
+    // [`RawSlice`] (not a lifetime-carrying `&'a [u16]`) so `FileEvent` carries no lifetime param;
     // the buffer is live until the next `prepare()` — encapsulated by the
     // `RawSlice` outlives-holder invariant so callers read via safe `.slice()`.
     pub filename: RawSlice<u16>,
@@ -76,7 +73,6 @@ pub struct DirWatcher {
     /// must be initialized to zero (even though it's never read or written in our code),
     /// otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
     pub overlapped: w::OVERLAPPED,
-    /// Zig had `align(@alignOf(w.FILE_NOTIFY_INFORMATION))` on this field.
     /// `FILE_NOTIFY_INFORMATION` is DWORD-aligned (4); the preceding
     /// `OVERLAPPED` (32 bytes, align 8) guarantees `buf` lands at offset 32,
     /// which the `assert_ffi_layout!` below locks in (and `32 % 4 == 0` is the
@@ -88,7 +84,7 @@ pub struct DirWatcher {
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
 // the `*FILE_NOTIFY_INFORMATION` cast. Asserting the offset (not just the
-// total size) is what discharges the dropped Zig `align(...)` annotation.
+// total size) is what proves that alignment requirement.
 bun_core::assert_ffi_layout!(
     DirWatcher,
     32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>(),
@@ -126,13 +122,12 @@ impl DirWatcher {
         {
             let err = w::Win32Error::get();
             bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
-            // TODO(port): bun_sys::Tag::watch — full syscall enum not yet in subset.
             return Err(bun_sys::Error {
                 // Route the raw code through the `u32` `SystemErrnoInit` impl
                 // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
                 errno: bun_sys::SystemErrno::init(err.0 as u32)
                     .unwrap_or(bun_sys::SystemErrno::EINVAL) as _,
-                syscall: bun_sys::Tag::TODO,
+                syscall: bun_sys::Tag::watch,
                 ..Default::default()
             });
         }
@@ -143,31 +138,30 @@ impl DirWatcher {
 
 /// Iterates `FILE_NOTIFY_INFORMATION` records out of a `DirWatcher`'s buffer.
 ///
-/// PORT NOTE: holds a [`BackRef<DirWatcher>`] instead of a lifetime-carrying
+/// holds a [`BackRef<DirWatcher>`] instead of a lifetime-carrying
 /// `&'a DirWatcher` so `WindowsWatcher::next` does not keep `&mut Watcher.platform`
 /// borrowed across `watch_loop_cycle`'s inner loop (which mutates sibling
 /// fields). The `BackRef` invariant — pointee outlives holder — is upheld
 /// because the iterator is only advanced while the owning `DirWatcher` is
 /// alive and `prepare()` has not been re-called; safe `Deref` replaces the
 /// previously open-coded raw `(*self.watcher).buf` projection.
-pub struct EventIterator {
+pub(crate) struct EventIterator {
     pub watcher: BackRef<DirWatcher>,
     pub offset: usize,
     pub has_next: bool,
 }
 
 impl EventIterator {
-    pub fn next(&mut self) -> Option<FileEvent> {
+    pub(crate) fn next(&mut self) -> Option<FileEvent> {
         if !self.has_next {
             return None;
         }
-        // PORT NOTE: Zig std's FILE_NOTIFY_INFORMATION omits the flexible FileName member
-        // (so `@sizeOf` == 12 == offset of FileName); the Rust binding includes
-        // `FileName: [WCHAR; 1]`, so `size_of` == 16. Use the field offset, not the struct
+        // The Rust binding includes `FileName: [WCHAR; 1]`, so `size_of` == 16
+        // while the fixed record header is 12 bytes. Use the field offset, not the struct
         // size, to locate the variable-length filename.
         let name_offset = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
         // `self.watcher` is a `BackRef<DirWatcher>` — pointee live until the
-        // next `prepare()` (see struct PORT NOTE) — so reading `buf` is safe.
+        // next `prepare()` (see the struct-level note) — so reading `buf` is safe.
         let buf_ptr = self.watcher.buf.as_ptr();
         // SAFETY: `buf` was filled by ReadDirectoryChangesW with a sequence of
         // FILE_NOTIFY_INFORMATION records; `offset` is advanced only by
@@ -190,8 +184,7 @@ impl EventIterator {
         let name_bytes = &self.watcher.buf[name_start..name_start + info.FileNameLength as usize];
         let filename: RawSlice<u16> = RawSlice::new(bun_core::cast_slice::<u8, u16>(name_bytes));
 
-        // PORT NOTE: Zig `@enumFromInt` is safety-checked in debug; Rust `transmute`
-        // into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
+        // `transmute` into an exhaustive #[repr(u32)] enum is immediate UB on an unlisted
         // discriminant. Use a checked match — kernel docs guarantee 1..=5 today.
         let action: Action = match info.Action {
             w::FILE_ACTION_ADDED => Action::Added,
@@ -222,9 +215,9 @@ impl EventIterator {
 }
 
 impl WindowsWatcher {
-    // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
-    // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
-    pub fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
+    // `self` is the pre-allocated `platform` slot inside crate::Watcher
+    // (64KB+ buffers; avoid moving).
+    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -278,9 +271,7 @@ impl WindowsWatcher {
             let _ = w::CloseHandle(h);
         });
 
-        // PORT NOTE: Zig's `this.watcher = .{ .dirHandle = handle }` writes via result-location
-        // semantics with `buf: ... = undefined` (well-defined "unspecified bytes" in Zig). In Rust,
-        // materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
+        // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
         // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
         // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
         // filled by ReadDirectoryChangesW before any read.
@@ -298,14 +289,14 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // disarm errdefer guards on success
+        // disarm the cleanup scopeguards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
         scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
     /// wait until new events are available
-    pub fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
+    pub(crate) fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
@@ -332,12 +323,11 @@ impl WindowsWatcher {
                     return Ok(None);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    // TODO(port): bun_sys::Tag::watch
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)
                             .unwrap_or(bun_sys::SystemErrno::EINVAL)
                             as _,
-                        syscall: bun_sys::Tag::TODO,
+                        syscall: bun_sys::Tag::watch,
                         ..Default::default()
                     });
                 }
@@ -379,14 +369,14 @@ impl WindowsWatcher {
                 );
                 return Err(bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as _,
-                    syscall: bun_sys::Tag::TODO,
+                    syscall: bun_sys::Tag::watch,
                     ..Default::default()
                 });
             }
         }
     }
 
-    pub fn stop(&mut self) {
+    pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
@@ -397,15 +387,14 @@ impl WindowsWatcher {
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Timeout {
+pub(crate) enum Timeout {
     Infinite = w::INFINITE,
-    Minimal = 1,
     None = 0,
 }
 
-pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    // PORT NOTE: reshaped for borrowck — Zig held `&this.platform.buf` across the loop while
-    // also calling `this.platform.next()`. We re-borrow buf inside the inner loop instead.
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+    // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
+    // across calls to `this.platform.next()`.
     let base_idx = this.platform.base_idx;
 
     let mut event_id: usize = 0;
@@ -452,7 +441,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
             let n_items = this.watchlist.items_file_path().len();
             for item_idx in 0..n_items {
-                // PORT NOTE: reshaped for borrowck — `rel` is computed in a scoped
+                // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.watchlist` / `this.platform.buf`
                 // are released before we touch `this.watch_events` or hand the
                 // whole `&mut Watcher` to `process_watch_event_batch`.
@@ -482,14 +471,13 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 if event_id >= this.watch_events.len() {
                     // Process current batch of events
                     process_watch_event_batch(this, event_id)?;
-                    // PORT NOTE: passing `this: &mut Watcher` above materialises a fresh Unique
+                    // passing `this: &mut Watcher` above materialises a fresh Unique
                     // borrow over the whole `Watcher`, which under Stacked Borrows pops the
                     // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
                     // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
                     // then dereference a pointer with invalidated provenance — UB that MIRI flags.
                     // The callee never touches `platform.watcher`, so re-deriving the pointer
-                    // here from the now-current `&mut Watcher` restores valid provenance. (Zig
-                    // has no aliasing model so the spec at WindowsWatcher.zig:245 is sound.)
+                    // here from the now-current `&mut Watcher` restores valid provenance.
                     iter.watcher = BackRef::new(&this.platform.watcher);
                     // Reset event_id to start a new batch
                     event_id = 0;
@@ -518,16 +506,16 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     // log("event_count: {d}\n", .{event_count});
 
     let all_events = &mut this.watch_events[0..event_count];
-    all_events.sort_unstable_by(WatchEvent::sort_by_index);
+    all_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    // Zig: `var last_event_id: u32 = std.math.maxInt(u32);` — sentinel must be wider than
+    // The sentinel must be wider than
     // WatchItemIndex (u16) so it can never collide with a real index (incl. no_watch_item=65535).
     let mut last_event_id: u32 = u32::MAX;
 
     for i in 0..all_events.len() {
         if all_events[i].index as u32 == last_event_id {
-            // PORT NOTE: reshaped for borrowck — copy then merge to avoid two &mut into all_events.
+            // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
@@ -538,7 +526,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     if all_events.is_empty() {
         return Ok(());
     }
-    // PORT NOTE: reshaped for borrowck — copy the (small) deduped slice into a
+    // reshaped for borrowck — copy the (small) deduped slice into a
     // local so `this` is no longer mutably borrowed via `watch_events` when we
     // call `write_trace_events` / `on_file_update`. Mirrors INotifyWatcher.
     let mut deduped: Vec<WatchEvent> = all_events[..last_event_index + 1].to_vec();
@@ -554,8 +542,6 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     // defer `flush_evictions()`, which assumes the lock is held to serialize
     // its close+swap_remove against the JS thread's
     // `snapshot_fd_and_package_json` / `append_file_maybe_lock<true>`.
-    // Intentionally diverges from Zig spec (`WindowsWatcher.zig` does not
-    // lock here); same EBADF race exists there.
     let _guard = this.mutex.lock_guard();
     if !this.running.load() {
         return Ok(());
@@ -567,7 +553,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     Ok(())
 }
 
-pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
+pub(crate) fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     let mut op = Op::empty();
     if event.action == Action::Removed {
         op |= Op::DELETE;
@@ -584,5 +570,3 @@ pub fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEven
         ..Default::default()
     }
 }
-
-// ported from: src/watcher/WindowsWatcher.zig

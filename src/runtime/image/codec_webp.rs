@@ -7,9 +7,8 @@ use core::ptr::NonNull;
 use super::codecs;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to libwebp_sys (or runtime_sys); extern fns declared inline here for now.
 unsafe extern "C" {
-    pub fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
+    pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
     fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;
     fn WebPEncodeRGBA(
         rgba: *const u8,
@@ -26,7 +25,7 @@ unsafe extern "C" {
         stride: c_int,
         out: *mut *mut u8,
     ) -> usize;
-    pub fn WebPFree(ptr: *mut c_void);
+    pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
@@ -84,13 +83,12 @@ struct WebPChunkIterator {
 }
 
 bun_opaque::opaque_ffi! {
-    pub struct WebPDemuxer;
-    pub struct WebPMux;
+    pub(crate) struct WebPDemuxer;
+    pub(crate) struct WebPMux;
 }
 
 // `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
 // just forward to these version-checked entry points with the ABI constant.
-// TODO(port): move to libwebp_sys
 unsafe extern "C" {
     fn WebPDemuxInternal(
         data: *const WebPData,
@@ -196,7 +194,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             break 'blk None;
         }
         // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator = unsafe { core::mem::zeroed::<WebPChunkIterator>() };
+        let mut iter: WebPChunkIterator =
+            unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;
@@ -224,7 +223,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     })
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,
@@ -234,8 +233,8 @@ pub fn encode(
 ) -> Result<codecs::Encoded, codecs::Error> {
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
-    // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
     let len = if lossless {
+        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
         unsafe {
             WebPEncodeLosslessRGBA(
                 rgba.as_ptr(),
@@ -246,6 +245,7 @@ pub fn encode(
             )
         }
     } else {
+        // SAFETY: rgba.ptr/len describe a valid readable buffer of stride*h bytes; out is a valid out-param.
         unsafe {
             WebPEncodeRGBA(
                 rgba.as_ptr(),
@@ -336,5 +336,3 @@ pub fn encode(
         free: encoded_wrap_free!(WebPFree),
     })
 }
-
-// ported from: src/runtime/image/codec_webp.zig

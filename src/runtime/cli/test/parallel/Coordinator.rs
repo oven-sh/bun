@@ -4,22 +4,25 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
+#[cfg(unix)]
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
+use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_core::{PathString, ZStr, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::Interned;
 use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
-// PORT NOTE: `bun.spawn.Status` lives in src/runtime/api/bun/process.zig
+// `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
+use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
@@ -28,14 +31,13 @@ pub struct Coordinator<'a> {
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<PathString>,
+    pub files: Vec<Interned>,
     pub cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    // TODO(port): []const [:null]?[*:0]const u8 — see argv note.
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
@@ -81,11 +83,11 @@ impl<'a> Coordinator<'a> {
 
     /// The worker (spawned or not) whose range has the most files remaining.
     fn find_steal_victim(&mut self) -> Option<*mut Worker> {
-        // PORT NOTE: callers (assign_work) hold a live `&mut Worker` pointing
+        // Callers (assign_work) hold a live `&mut Worker` pointing
         // into `self.workers`. `iter_mut()` would materialize a second
         // `&mut Worker` for that same slot — instant UB under Stacked Borrows
         // regardless of what the loop body does. Iterate via raw pointers
-        // instead, mirroring Zig's `for (this.workers) |*v|` (raw `*Worker`).
+        // instead.
         let mut victim: Option<*mut Worker> = None;
         let mut most: u32 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
@@ -93,6 +95,9 @@ impl<'a> Coordinator<'a> {
         for i in 0..len {
             // SAFETY: `i < len`; read-only inspection of `range` through *mut.
             let v = unsafe { base.add(i) };
+            // SAFETY: `v = base.add(i)` with `i < len` is in-bounds for
+            // `self.workers`; field read through *mut so no `&mut Worker` is
+            // formed that could alias the caller's live `w`.
             let n = unsafe { (*v).range.len() };
             if n > most {
                 most = n;
@@ -102,11 +107,11 @@ impl<'a> Coordinator<'a> {
         victim
     }
 
-    pub fn drive(&mut self) {
+    pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
-                return self.abort_all();
+                self.abort_all();
             }
             self.vm.event_loop_ref().tick();
             self.maybe_scale_up();
@@ -170,9 +175,12 @@ impl<'a> Coordinator<'a> {
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
         w.ipc = Default::default();
-        // The Zig stores a back-pointer; in Rust this is an intrusive backref (raw ptr).
-        w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
-        w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
+        // Intrusive backref (raw ptr).
+        // Built via from_mut so the stored `*const` carries write provenance:
+        // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
+        let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
+        w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
+        w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
         match w.start() {
             Ok(()) => {}
             Err(e) => {
@@ -198,7 +206,6 @@ impl<'a> Coordinator<'a> {
         if self.bailed || !self.has_undispatched_files() {
             return;
         }
-        // TODO(port): std.time.milliTimestamp() — verify bun_core helper name.
         let now = bun_core::time::milli_timestamp();
         for w in self.workers[..self.spawned_count as usize].iter() {
             if !w.alive {
@@ -228,14 +235,14 @@ impl<'a> Coordinator<'a> {
             return w.shutdown();
         }
         if let Some(idx) = w.range.pop_front() {
-            return w.dispatch(idx, self.files[idx as usize].slice());
+            return w.dispatch(idx, self.files[idx as usize].as_bytes());
         }
         // Steal the back half of the largest remaining range as a contiguous
         // block. The thief walks it forward via popFront, so both workers keep
         // directory locality and total steals are O(K log N) instead of O(N).
         // Stealing from not-yet-spawned workers is fine — their range is just
         // an unclaimed reservation.
-        // PORT NOTE: reshaped for borrowck — find_steal_victim returns *mut so
+        // Reshaped for borrowck — find_steal_victim returns *mut so
         // we can borrow `w` and the victim disjointly.
         if let Some(v_ptr) = self.find_steal_victim() {
             // SAFETY: v_ptr points into self.workers. `w` cannot be the victim:
@@ -247,7 +254,7 @@ impl<'a> Coordinator<'a> {
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return w.dispatch(idx, self.files[idx as usize].slice());
+                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
                 }
             }
         }
@@ -260,16 +267,16 @@ impl<'a> Coordinator<'a> {
         }
         self.bailed = true;
         self.break_dots();
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
             self.bail,
             if self.bail == 1 { "" } else { "s" }
-        ));
+        );
         Output::flush();
-        // PORT NOTE: reachable from on_frame/account_crash with the caller's
+        // Reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
-        // via raw pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // via raw pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -284,10 +291,10 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub fn rel_path(&self, file_idx: u32) -> &[u8] {
+    pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
-            self.files[file_idx as usize].slice(),
+            self.files[file_idx as usize].as_bytes(),
         )
     }
 
@@ -328,7 +335,7 @@ impl<'a> Coordinator<'a> {
         w.captured.clear();
     }
 
-    pub fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
+    pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
             frame::Kind::Ready => self.assign_work_or_retry(w),
             frame::Kind::FileStart => {
@@ -382,7 +389,7 @@ impl<'a> Coordinator<'a> {
                     return;
                 }
 
-                // PORT NOTE: reshaped for borrowck — `summary()` mutably borrows
+                // Reshaped for borrowck — `summary()` mutably borrows
                 // `self.reporter`, so the unhandled-errors counter (also on
                 // `self.reporter.jest`) and `bail_out()` must run after the
                 // summary borrow is released.
@@ -413,8 +420,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
             frame::Kind::RepeatBufs => {
-                // PORT NOTE: Zig `inline for` over a 3-tuple of &mut buffers;
-                // unrolled here because an array of disjoint &mut fields needs
+                // Unrolled because an array of disjoint &mut fields needs
                 // explicit splitting.
                 self.reporter
                     .failures_to_repeat_buf
@@ -442,7 +448,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
+    pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
         w.exit_status = Some(status);
         // The Channel delivers any remaining buffered data then close (which
         // sets ipc.done and calls tryReap), so no explicit drain is needed —
@@ -450,17 +456,17 @@ impl<'a> Coordinator<'a> {
         self.try_reap(w);
     }
 
-    pub fn try_reap(&mut self, w: &mut Worker) {
-        // PORT NOTE: SpawnStatus is not Copy (Err arm owns a path); take()
+    pub(crate) fn try_reap(&mut self, w: &mut Worker) {
+        // SpawnStatus is not Copy (Err arm owns a path); take()
         // instead of pattern-match-by-copy.
         if w.exit_status.is_none() || !w.ipc.done {
             return;
         }
         let status = w.exit_status.take().expect("checked above");
-        self.reap_worker(w, status);
+        self.reap_worker(w, &status);
     }
 
-    fn reap_worker(&mut self, w: &mut Worker, status: SpawnStatus) {
+    fn reap_worker(&mut self, w: &mut Worker, status: &SpawnStatus) {
         // Decrement here (not in onProcessExit) so drive() keeps pumping until
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
@@ -477,23 +483,30 @@ impl<'a> Coordinator<'a> {
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
             // regular failure (commonly the OOM killer or the user).
-            let panicked = is_panic_status(&status);
-            self.account_crash(idx, &status);
+            let panicked = is_panic_status(status);
+            self.account_crash(idx, status);
             Output::flush();
             w.inflight = None;
             if panicked {
-                self.abort_on_worker_panic(idx, &status);
+                self.abort_on_worker_panic(idx, status);
+            }
+        }
+
+        if let Some(p) = w.process.take() {
+            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
+            unsafe {
+                (*p).detach();
+                Process::deref(p);
             }
         }
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
-            // TODO(port): explicit deinit of ipc/out/err — in Rust these become
-            // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
-            w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
-            w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
-            w.process = None;
+            // from_mut: keep write provenance on the stored backref (see spawn_worker).
+            let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
+            w.out = WorkerPipe::new(PipeRole::Stdout, w_ptr);
+            w.err = WorkerPipe::new(PipeRole::Stderr, w_ptr);
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -510,8 +523,7 @@ impl<'a> Coordinator<'a> {
             }
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
-            // drops the old values now (pipe FDs, capture buffer) to match the
-            // Zig's explicit deinit() calls.
+            // drops the old values now (pipe FDs, capture buffer).
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
             w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
@@ -522,11 +534,11 @@ impl<'a> Coordinator<'a> {
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(describe_status(&mut buf, status)),
-        ));
+        );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.crashed_files.push(file_idx);
@@ -545,14 +557,14 @@ impl<'a> Coordinator<'a> {
     fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             concat!(
                 "\n<red>error<r>: a test worker process crashed with <b>{}<r> while running <b>{}<r>.\n",
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
             bstr::BStr::new(describe_status(&mut buf, status)),
             bstr::BStr::new(self.rel_path(file_idx)),
-        ));
+        );
         Output::flush();
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
@@ -561,19 +573,23 @@ impl<'a> Coordinator<'a> {
         // crash when the exit arrives. Runs even if --bail already set
         // `bailed`, since bailOut() only shutdown()s idle workers and would
         // leave inflight ones running past the banner.
-        // PORT NOTE: reachable from reap_worker with the caller's
+        // Reachable from reap_worker with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() would
         // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
-        // pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
             // SAFETY: `i < spawned_count <= workers.len()`; field reads
             // through *mut so no `&mut Worker` aliases the caller's `w`.
             let other = unsafe { base.add(i) };
+            // SAFETY: `other` is in-bounds (see above); reading `.alive`
+            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if unsafe { !(*other).alive } {
                 continue;
             }
+            // SAFETY: `other` is in-bounds (see above); reading `.process`
+            // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if let Some(p) = unsafe { (*other).process } {
                 #[cfg(unix)]
                 {
@@ -600,27 +616,29 @@ impl<'a> Coordinator<'a> {
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit
     /// instead of spinning when no live worker remains to make progress.
     fn abort_queued_files(&mut self, reason: &[u8]) {
-        // PORT NOTE: reachable from reap_worker/abort_on_worker_panic with the
+        // Reachable from reap_worker/abort_on_worker_panic with the
         // caller's `w: &mut Worker` still live and used afterward; iter_mut()
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
-        // raw pointers — mirrors Zig `for (this.workers) |*w|`.
+        // raw pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
             // SAFETY: `i < len`; range mutation through *mut so no
             // `&mut Worker` aliases the caller's live `w`.
             let wp = unsafe { base.add(i) };
+            // SAFETY: `wp` is in-bounds (see above); mutating `.range` through
+            // *mut forms no `&mut Worker` aliasing the caller's live `w`.
             while let Some(idx) = unsafe { (*wp).range.pop_front() } {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
-                    // PORT NOTE: reshaped for borrowck — inline rel_path body
+                    // Reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
                     bstr::BStr::new(bun_paths::resolve_path::relative(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        self.files[idx as usize].slice(),
+                        self.files[idx as usize].as_bytes(),
                     )),
                     bstr::BStr::new(reason),
-                ));
+                );
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
                 self.crashed_files.push(idx);
@@ -638,7 +656,7 @@ impl<'a> Coordinator<'a> {
     }
 
     #[cfg(windows)]
-    pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
+    pub(crate) fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
         use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
         unsafe {
@@ -660,11 +678,6 @@ impl<'a> Coordinator<'a> {
             }
             Some(job)
         }
-    }
-
-    #[cfg(not(windows))]
-    pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
-        None
     }
 }
 
@@ -695,7 +708,6 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
 }
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
-    // TODO(port): std.fmt.bufPrint — using io::Write on &mut [u8].
     match status {
         SpawnStatus::Exited(e) => {
             let mut cursor: &mut [u8] = &mut buf[..];
@@ -706,7 +718,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
         // SignalCode is non-exhaustive (`_`); @tagName on an unnamed value
         // (e.g. Linux RT signals 32–64) is safety-checked illegal behavior.
         SpawnStatus::Signaled(sig) => {
-            // PORT NOTE: bun_process::Status::Signaled carries the raw u8 (RT
+            // bun_process::Status::Signaled carries the raw u8 (RT
             // signals included); bun_sys::SignalCode wraps it for name lookup.
             if let Some(name) = bun_sys::SignalCode(*sig).name() {
                 name.as_bytes()
@@ -730,7 +742,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 pub mod abort_handler {
     use super::*;
 
-    pub static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+    pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -764,7 +776,7 @@ pub mod abort_handler {
     /// Restores the previous SIGINT/SIGTERM (or Windows console-ctrl) handlers
     /// when dropped. Returned by [`install`].
     #[must_use = "dropping the guard uninstalls the abort handler"]
-    pub struct Guard(());
+    pub(crate) struct Guard(());
 
     impl Drop for Guard {
         fn drop(&mut self) {
@@ -772,12 +784,12 @@ pub mod abort_handler {
         }
     }
 
-    pub fn install() -> Guard {
+    pub(crate) fn install() -> Guard {
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
             // any read in uninstall(), single-threaded coordinator setup.
-            // PORT NOTE: `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
+            // `&raw mut` + cast (MaybeUninit<T> is repr(transparent))
             // avoids creating &mut to a `static mut` (Rust 2024 hard error).
             unsafe {
                 // SAFETY: POD, zero-valid — sigaction with handler=0/flags=0 is SIG_DFL.
@@ -807,11 +819,11 @@ pub mod abort_handler {
         Guard(())
     }
 
-    pub fn uninstall() {
+    pub(crate) fn uninstall() {
         #[cfg(unix)]
         {
             // SAFETY: PREV_* were initialized by install().
-            // PORT NOTE: `&raw const` + cast avoids creating & to a `static mut`.
+            // `&raw const` + cast avoids creating & to a `static mut`.
             unsafe {
                 libc::sigaction(
                     libc::SIGINT,
@@ -834,5 +846,3 @@ pub mod abort_handler {
         }
     }
 }
-
-// ported from: src/cli/test/parallel/Coordinator.zig

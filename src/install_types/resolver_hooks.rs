@@ -33,7 +33,7 @@ pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
 pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
 
 // ─── ExternalSlice ────────────────────────────────────────────────────────
-// MOVE_DOWN of `install/ExternalSlice.zig` — `(off, len)` index pair into a
+// An `(off, len)` index pair into a
 // flat backing buffer (lockfile string-bytes / dependencies / resolutions).
 // Generic over element type; storage is two u32s with a phantom marker.
 
@@ -44,7 +44,7 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
-// Manual impls: the Zig `extern struct { off: u32, len: u32 }` is unconditionally
+// Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
 // `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
 // by-value `self` methods for non-`Copy` element types (e.g. `Dependency`).
@@ -109,7 +109,7 @@ impl<T> ExternalSlice<T> {
 
     #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
-        // Zig: `@min(in.len, this.off + this.len)` — compute the sum in usize so
+        // Compute the sum in usize so
         // the release-mode clamp applies instead of a debug u32-overflow panic.
         let end = in_.len().min(self.off as usize + self.len as usize);
         debug_assert!(self.off as usize + self.len as usize <= in_.len());
@@ -164,8 +164,8 @@ pub type ResolutionSlice = ExternalSlice<PackageID>;
 
 pub mod behavior {
     bitflags::bitflags! {
-        /// Port of `install/dependency.zig` `Behavior` (packed u8). Bit 0 and
-        /// bit 7 are reserved (`_unused_1`/`_unused_2` in Zig) so the on-disk
+        /// Bit 0 and
+        /// bit 7 are reserved so the on-disk
         /// lockfile encoding stays byte-compatible.
         #[repr(transparent)]
         #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,9 +183,9 @@ pub mod behavior {
 pub use behavior::Behavior;
 
 impl Behavior {
-    /// (name, getter) table mirroring Zig's `@typeInfo(Behavior).@"struct".fields`
-    /// iteration (skipping the leading `_unused_1` and trailing `_unused_2` padding
-    /// bits). Used by debug JSON serialization in place of comptime field reflection.
+    /// (name, getter) table over the named flag bits (skipping the reserved
+    /// bit-0 and bit-7 padding bits). Used by debug JSON serialization in
+    /// place of field reflection.
     pub const NAMED_FLAGS: &'static [(&'static str, fn(&Behavior) -> bool)] = &[
         ("prod", |b| b.contains(Behavior::PROD)),
         ("optional", |b| b.contains(Behavior::OPTIONAL)),
@@ -199,7 +199,7 @@ impl Behavior {
     pub fn is_prod(self) -> bool {
         self.contains(Self::PROD)
     }
-    /// Zig: `optional and !peer` — peer-optionals are reported separately.
+    /// Peer-optionals are reported separately.
     #[inline]
     pub fn is_optional(self) -> bool {
         self.contains(Self::OPTIONAL) && !self.contains(Self::PEER)
@@ -238,13 +238,12 @@ impl Behavior {
         lhs.bits() == rhs.bits()
     }
 
-    /// Zig: `add(this, kind)` — Zig took `@Type(.enum_literal)`; callers pass `Behavior::FLAG`.
     #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
 
-    /// Renamed from Zig `set` (collides with `bitflags::Flags::set`).
+    /// Named `with` so it doesn't collide with `bitflags::Flags::set`.
     #[inline]
     pub fn with(self, kind: Behavior, value: bool) -> Behavior {
         let mut new = self;
@@ -252,7 +251,7 @@ impl Behavior {
         new
     }
 
-    /// Zig: `Behavior.setOptional(this, value)` — toggles the OPTIONAL bit in place.
+    /// Toggles the OPTIONAL bit in place.
     #[inline]
     pub fn set_optional(&mut self, value: bool) {
         self.set(Behavior::OPTIONAL, value);
@@ -297,9 +296,8 @@ const _: () = assert!(Behavior::DEV.bits() == (1 << 3));
 const _: () = assert!(Behavior::PEER.bits() == (1 << 4));
 const _: () = assert!(Behavior::WORKSPACE.bits() == (1 << 5));
 
-/// Port of `install/dependency.zig` `Version.Tag`.
 #[derive(Default, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName: "npm"/"dist_tag"/"github"/...
+#[strum(serialize_all = "snake_case")] // "npm"/"dist_tag"/"github"/...
 #[repr(u8)]
 pub enum DependencyVersionTag {
     #[default]
@@ -337,7 +335,7 @@ pub enum DependencyVersionTag {
 // `Semver.String` handle, a `Repository`, or a `Semver.Query.Group` (all
 // lower-tier `bun_semver` data), so the full union is spellable here. Putting
 // the real union in this crate lets the resolver inspect
-// `value.npm.version.is_exact()` directly (Zig: `package_json.zig:926`) and
+// `value.npm.version.is_exact()` directly and
 // round-trip the parsed value through [`AutoInstaller`] without type erasure.
 
 #[derive(Clone, Copy)]
@@ -361,6 +359,16 @@ pub struct NpmInfo {
     pub name: SemverString,
     pub version: semver::query::Group,
     pub is_alias: bool,
+}
+
+impl Clone for NpmInfo {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            version: self.version.clone(),
+            is_alias: self.is_alias,
+        }
+    }
 }
 
 impl NpmInfo {
@@ -402,11 +410,11 @@ impl TarballInfo {
     }
 }
 
-/// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
-/// lives in [`DependencyVersion::tag`]. `npm`/`git`/`github` are
-/// `ManuallyDrop` because [`NpmInfo`] embeds a `Semver.Query.Group` (owned
-/// linked list); cleanup is the constructing crate's responsibility (Zig has
-/// no destructors here either — arena-freed).
+/// Untagged union; the discriminant
+/// lives in [`DependencyVersion::tag`]. The `npm` arm owns a `Box` linked list
+/// (`Semver.Query.Group`) and is `ManuallyDrop`-wrapped because the union has
+/// no tag; [`DependencyVersion`]'s `Drop`/`Clone` dispatch on `tag` to free /
+/// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
     pub uninitialized: (),
@@ -434,18 +442,8 @@ impl Default for DependencyVersionValue {
     }
 }
 
-impl Clone for DependencyVersionValue {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `repr(C)` union of POD-ish payloads with no `Drop` glue;
-        // every active variant is either `Copy` or `ManuallyDrop<_>` over
-        // arena-backed data. Zig copies these by value; replicate with a
-        // bitwise read.
-        unsafe { core::ptr::read(self) }
-    }
-}
+// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would double-free `npm`.
 
-/// Port of `install/dependency.zig` `Version`.
 #[repr(C)]
 pub struct DependencyVersion {
     pub tag: DependencyVersionTag,
@@ -464,12 +462,28 @@ impl Default for DependencyVersion {
 }
 
 impl Clone for DependencyVersion {
-    #[inline]
     fn clone(&self) -> Self {
+        let value = match self.tag {
+            DependencyVersionTag::Npm => DependencyVersionValue {
+                // SAFETY: tag == Npm, so `npm` is the active arm.
+                npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
+            },
+            // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
+            _ => unsafe { core::ptr::read(&raw const self.value) },
+        };
         Self {
             tag: self.tag,
             literal: self.literal,
-            value: self.value.clone(),
+            value,
+        }
+    }
+}
+
+impl Drop for DependencyVersion {
+    fn drop(&mut self) {
+        if self.tag == DependencyVersionTag::Npm {
+            // SAFETY: tag == Npm, so `npm` is the active arm.
+            unsafe { ManuallyDrop::drop(&mut self.value.npm) };
         }
     }
 }
@@ -495,14 +509,12 @@ impl DependencyVersion {
         Catalog   => catalog: SemverString,   mut catalog_mut;
     }
 
-    /// Zig: `if (version.tag == .npm) version.value.npm else null`.
     #[inline]
     pub fn try_npm(&self) -> Option<&NpmInfo> {
         (self.tag == DependencyVersionTag::Npm).then(|| self.npm())
     }
 
-    /// Port of `dependency_version.value.npm.version.isExact()`
-    /// (resolver/package_json.zig:926). Returns false for non-npm tags.
+    /// Returns false for non-npm tags.
     #[inline]
     pub fn is_exact_npm(&self) -> bool {
         self.try_npm().is_some_and(|n| n.version.is_exact())
@@ -514,22 +526,12 @@ impl DependencyVersion {
 /// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
 /// `bun_install::auto_installer`).
 #[repr(C)]
+#[derive(Default)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            name_hash: 0,
-            name: SemverString::default(),
-            version: DependencyVersion::default(),
-            behavior: Behavior::default(),
-        }
-    }
 }
 
 impl Clone for Dependency {
@@ -551,7 +553,7 @@ impl Dependency {
     /// "name" must be ASC so that later, when we rebuild the lockfile, we
     /// insert it back in reverse order without an extra sorting pass.
     ///
-    /// MOVE_DOWN of `install/dependency.zig` `isLessThan` so the lockfile
+    /// Lives here so the lockfile
     /// stringifier (`bun.lock.rs`) can sort `&[Dependency]` without an upward
     /// `bun_install` edge or an extension trait.
     pub fn is_less_than(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> bool {
@@ -561,12 +563,11 @@ impl Dependency {
         }
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
-    /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
-    /// accepts a strict-weak `lessThan`; Rust's sort requires a full
-    /// `Ordering`). Same key as [`is_less_than`](Self::is_less_than).
+    /// Total-order comparator for `slice::sort_by`. Same key as
+    /// [`is_less_than`](Self::is_less_than).
     pub fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -577,14 +578,13 @@ impl Dependency {
 }
 
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────
-// MOVE_DOWN from `bun_install::npm` (port of `install/npm.zig`) so both
+// MOVE_DOWN from `bun_install::npm` so both
 // `bun_resolver` (package.json `os`/`cpu` arrays) and `bun_install` (manifest
 // parsing, lockfile serialization) name the SAME bit-layout. The bit positions
 // are load-bearing — they round-trip through `bun.lock` and the npm manifest
-// cache; the Zig spec starts at `1 << 1` (bit 0 is never set).
+// cache; the bit values start at `1 << 1` (bit 0 is never set).
 
-/// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`] (Zig: `enum(uN)
-/// { none = 0, all = all_value, _ }` open-enum with associated bit consts).
+/// Common shape of [`OperatingSystem`]/[`Architecture`]/[`Libc`].
 pub trait NegatableEnum: Copy + Eq {
     type Int: 'static
         + Copy
@@ -596,7 +596,7 @@ pub trait NegatableEnum: Copy + Eq {
     const NONE: Self;
     const ALL: Self;
     const ALL_VALUE: Self::Int;
-    /// Zig: `ComptimeStringMap.get` — length-gated exact match.
+    /// Length-gated exact match.
     fn lookup_name(key: &[u8]) -> Option<Self::Int>;
     fn name_map_kvs() -> &'static [(&'static [u8], Self::Int)];
     fn has(self, other: Self::Int) -> bool;
@@ -604,7 +604,7 @@ pub trait NegatableEnum: Copy + Eq {
     fn from_raw(n: Self::Int) -> Self;
 }
 
-/// Port of `install/npm.zig` `Negatable(T)` — accumulates an `os`/`cpu`/`libc`
+/// Accumulates an `os`/`cpu`/`libc`
 /// allowlist+blocklist from package.json string arrays, then collapses to a
 /// single bitset via [`combine`](Self::combine).
 #[derive(Clone, Copy)]
@@ -687,9 +687,8 @@ impl<T: NegatableEnum> Negatable<T> {
             return;
         };
 
-        // Zig spec (src/install/npm.zig:551-555): `this.* = .{ .added = …, .removed = … }`
-        // resets `had_wildcard` / `had_unrecognized_values` to their defaults whenever a
-        // recognised token is applied. Match the spec literally so `["any","linux"]`
+        // Applying a recognised token resets `had_wildcard` /
+        // `had_unrecognized_values` to their defaults, so `["any","linux"]`
         // collapses to LINUX (wildcard cleared).
         if is_not {
             *self = Self {
@@ -750,8 +749,7 @@ impl<T: NegatableEnum> Negatable<T> {
     }
 }
 
-/// Zig: `pub fn negatable(this: T) Negatable(T)` — provided as a blanket ext
-/// so each enum doesn't repeat the constructor.
+/// Provided as a blanket ext so each enum doesn't repeat the constructor.
 pub trait NegatableExt: NegatableEnum {
     #[inline]
     fn negatable(self) -> Negatable<Self> {
@@ -768,27 +766,25 @@ impl<T: NegatableEnum> NegatableExt for T {}
 // ─── negatable_names! ─────────────────────────────────────────────────────
 // Single source of truth for the name↔bit table of a `NegatableEnum` newtype.
 //
-// Zig has ONE table per type (`pub const NameMap = bun.ComptimeStringMap(uN, .{...})`,
-// src/install/npm.zig) which comptime-derives BOTH `.kvs` (sorted iteration array,
-// walked by `Negatable.toJson` / bun.lock stringify) AND `.get()` (length-gated lookup).
-// The Rust port had forked that into a hand-maintained `NAME_MAP_KVS` const + a
-// hand-unrolled `lookup_name` match per type — two parallel tables with an
-// add-a-variant-forget-the-other drift hazard.
+// A hand-maintained `NAME_MAP_KVS` const + a separate lookup table per type
+// would be two parallel tables with an add-a-variant-forget-the-other drift
+// hazard.
 //
-// This macro restores the single-source property: caller supplies ONE
+// This macro keeps the single-source property: caller supplies ONE
 // `b"name" => BIT` list (already in `(key.len asc, bytewise asc)` order — that
 // order is LOAD-BEARING: `Negatable::to_json` iterates it to serialize bun.lock
-// `"os"/"cpu"/"libc"` arrays and must stay byte-identical with Zig's
-// `precomputed.sorted_kvs`, src/collections/comptime_string_map.zig:21-27,66).
+// `"os"/"cpu"/"libc"` arrays, whose byte order is part of the lockfile
+// output format).
 // The macro then expands BOTH the inherent `NAME_MAP_KVS` const (kept inherent
 // so non-trait callers like `lockfile_json_stringify_for_debugging` still
 // path-qualify it) AND the full `NegatableEnum` impl, whose `lookup_name`
-// length-gates exactly like Zig `ComptimeStringMap.get`: one `usize` compare
-// per bucket boundary, byte-compare only on length match, early-out once the
-// sorted table passes the requested length. ≤11 entries per type — `phf::Map`
-// would be a hash + indirect load + slice compare for at most 4 candidates.
+// delegates to a `comptime_string_map!` built from the same list (length
+// dispatch + constant-length word compares).
 macro_rules! negatable_names {
-    ($ty:ident : $int:ty => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
+    ($ty:ident : $int:ty, $map:ident => [ $( $key:literal => $bit:ident ),+ $(,)? ]) => {
+        bun_core::comptime_string_map! {
+            static $map: $int = { $( $key => <$ty>::$bit ),+ };
+        }
         impl $ty {
             pub const NAME_MAP_KVS: &'static [(&'static [u8], $int)] =
                 &[ $( ($key, <$ty>::$bit) ),+ ];
@@ -800,10 +796,7 @@ macro_rules! negatable_names {
             const ALL_VALUE: $int = <$ty>::ALL_VALUE;
             #[inline]
             fn lookup_name(key: &[u8]) -> Option<$int> {
-                let n = key.len();
-                $( if $key.len() > n { return None; }
-                   if $key.len() == n && key == $key { return Some(<$ty>::$bit); } )+
-                None
+                $map.get(key).copied()
             }
             #[inline] fn name_map_kvs() -> &'static [(&'static [u8], $int)] { <$ty>::NAME_MAP_KVS }
             #[inline] fn has(self, other: $int) -> bool { <$ty>::has(self, other) }
@@ -854,7 +847,7 @@ impl OperatingSystem {
     pub const CURRENT: Self = Self(Self::FREEBSD);
 
     // NB: NODE not NPM — package.json `os` field uses process.platform values
-    // ("win32"). Also fixes missing Android arm (now "linux", matching Zig).
+    // ("win32").
     pub const CURRENT_NAME: &'static str = bun_core::env::OS_NAME_NODE;
 
     #[inline]
@@ -879,7 +872,7 @@ impl OperatingSystem {
     }
 }
 
-negatable_names! { OperatingSystem: u16 => [
+negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
     b"aix" => AIX, b"linux" => LINUX, b"sunos" => SUNOS, b"win32" => WIN32,
     b"darwin" => DARWIN, b"android" => ANDROID, b"freebsd" => FREEBSD, b"openbsd" => OPENBSD,
 ] }
@@ -899,7 +892,7 @@ impl Libc {
 
     pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: (matches Zig — runtime libc detection)
+    // TODO: runtime libc detection
     pub const CURRENT: Self = Self(Self::GLIBC);
 
     #[inline]
@@ -924,7 +917,7 @@ impl Libc {
     }
 }
 
-negatable_names! { Libc: u8 => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
+negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -994,7 +987,7 @@ impl Architecture {
     }
 }
 
-negatable_names! { Architecture: u16 => [
+negatable_names! { Architecture: u16, ARCHITECTURE_NAMES => [
     b"arm" => ARM, b"ppc" => PPC, b"x32" => X32, b"x64" => X64,
     b"ia32" => IA32, b"mips" => MIPS, b"s390" => S390,
     b"arm64" => ARM64, b"ppc64" => PPC64, b"s390x" => S390X, b"mipsel" => MIPSEL,
@@ -1030,15 +1023,15 @@ impl Clone for Repository {
 
 impl Repository {
     pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        let owner_order = self.owner.order(rhs.owner, lhs_buf, rhs_buf);
         if owner_order != Ordering::Equal {
             return owner_order;
         }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        let repo_order = self.repo.order(rhs.repo, lhs_buf, rhs_buf);
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1049,7 +1042,7 @@ impl Repository {
         builder.count(self.package_name.slice(buf));
     }
 
-    /// Zig `Repository.clone(buf, Builder, builder)` — re-interns each field
+    /// Re-interns each field
     /// into `builder`. Named `clone` so existing `repo.clone(buf, builder)`
     /// call sites resolve; bitwise copy goes through `Copy`/`*repo`.
     pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Repository {
@@ -1077,7 +1070,7 @@ impl Repository {
 }
 
 // ─── VersionedURL ─────────────────────────────────────────────────────────
-// MOVE_DOWN of `install/versioned_url.zig` so `bun_install::resolution::Value`
+// Lives here so `bun_install::resolution::Value`
 // can name the `npm` arm's payload without an upward edge.
 
 pub type VersionedURL = VersionedURLType<u64>;
@@ -1127,7 +1120,6 @@ impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
         builder.count(self.url.slice(buf));
     }
 
-    /// Zig `VersionedURLType.clone(buf, Builder, builder)`.
     pub fn clone<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) -> Self {
         Self {
             version: self.version.append(buf, builder),
@@ -1148,7 +1140,6 @@ impl VersionedURLType<u32> {
 
 // ─── Resolution ───────────────────────────────────────────────────────────
 
-/// Port of `install/resolution.zig` `Resolution.Tag`.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum ResolutionTag {
@@ -1166,7 +1157,7 @@ pub enum ResolutionTag {
     SingleFileModule = 100,
 }
 
-/// Port of `install/resolution.zig` `Resolution.Value` (extern union). Every
+/// Every
 /// payload is `()`, a `Semver.String` handle, a [`Repository`], or a
 /// [`VersionedURLType`] — all lower-tier `bun_semver` data, so the real union
 /// lives here (not an opaque `[u64; N]`). `bun_install::resolution` re-exports
@@ -1194,8 +1185,8 @@ impl<I: VersionInt> Default for ResolutionValue<I> {
     }
 }
 
-/// Port of `install/resolution.zig` `Resolution` (= `ResolutionType(u64)`).
-/// Layout matches Zig `extern struct { tag: u8, _pad: [7]u8, value: Value }`.
+/// Layout is `{ tag: u8, _pad: [7]u8, value: Value }` so the on-disk lockfile
+/// encoding stays byte-compatible.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Resolution {
@@ -1225,7 +1216,7 @@ impl Resolution {
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────
 
-#[repr(u8)] // Zig: enum(u4); u8 is the smallest repr Rust allows
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum PreinstallState {
     Unknown = 0,
@@ -1267,32 +1258,26 @@ impl Default for Features {
 }
 
 impl Features {
-    /// Zig: `Features.main` decl-literal (src/install/install.zig).
     #[inline]
     pub const fn main() -> Self {
         Self::MAIN
     }
-    /// Zig: `Features.npm` decl-literal.
     #[inline]
     pub const fn npm() -> Self {
         Self::NPM
     }
-    /// Zig: `Features.folder` decl-literal.
     #[inline]
     pub const fn folder() -> Self {
         Self::FOLDER
     }
-    /// Zig: `Features.workspace` decl-literal.
     #[inline]
     pub const fn workspace() -> Self {
         Self::WORKSPACE
     }
-    /// Zig: `Features.link` decl-literal.
     #[inline]
     pub const fn link() -> Self {
         Self::LINK
     }
-    /// Zig: `Features.tarball` decl-literal.
     #[inline]
     pub const fn tarball() -> Self {
         Self::TARBALL
@@ -1370,10 +1355,10 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Port of `install.zig` `PackageManager.WakeHandler` — opaque
+/// Opaque
 /// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
 /// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None (Zig: `.{ }`).
+/// it; the fields are `Option` so `Default` is all-None.
 ///
 /// `handler`'s second parameter (`*PackageManager`) is erased to
 /// `*mut c_void` because that concrete type lives in `bun_install` (a higher
@@ -1382,33 +1367,31 @@ pub struct TaskCallbackContext {
 /// lives in this crate — so callers pass the borrow directly.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the handler fn-ptrs are POD.
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
-    /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    /// Zig: `fn(ctx: *anyopaque, dep: Dependency, dep_id: DependencyID, err: anyerror) void`.
-    pub on_dependency_error: Option<fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+    pub on_dependency_error:
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {
     #[inline]
     pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // SAFETY: handler is always set before context per VirtualMachine.zig:1162
+        // `handler` is Some whenever `context` is Some: the sole installer
+        // (runtime::jsc_hooks) sets `context`, `handler`, and
+        // `on_dependency_error` together in one struct literal, and callers
+        // gate on `context.is_some()` before invoking — so this unwrap cannot
+        // fire.
         self.handler.unwrap()
     }
 
-    /// Zig: `getonDependencyError` (sic — the missing underscore is a Zig
-    /// typo; the port uses idiomatic snake_case so the cross-crate caller
-    /// `bun_install::PackageManager::fail_root_resolution` links).
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
-        // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
-        // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
-        // require an unsound transmute between fn-pointer signatures.
-        // TODO(port): upstream fix to PackageManager.zig
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
+        // Same invariant as `get_handler`: set together with `context` by the
+        // sole installer; callers gate on `context.is_some()`.
         self.on_dependency_error.unwrap()
     }
 }
@@ -1462,8 +1445,7 @@ impl DependencyGroup {
     pub const FOUR: [Self; 4] = [Self::DEPENDENCIES, Self::DEV, Self::OPTIONAL, Self::PEER];
 
     /// Reverse map a [`Behavior`] back to the package.json section key. Tests
-    /// dev → optional → peer → prod (Zig: `update_interactive_command.zig`
-    /// `dep.behavior.isDev()` chain); falls through to `"dependencies"` for
+    /// dev → optional → peer → prod; falls through to `"dependencies"` for
     /// PROD/WORKSPACE/BUNDLED/empty.
     #[inline]
     pub fn prop_for_behavior(b: Behavior) -> &'static [u8] {
@@ -1575,9 +1557,9 @@ pub trait AutoInstaller {
         behavior: Behavior,
     ) -> EnqueueResult;
 
-    // ── Dependency parsing (install/dependency.zig) ───────────────────────
+    // ── Dependency parsing ─────────────────────────────────────────────────
     // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases` (dependency.zig:905), so the impl needs a
+    // `pm.known_npm_aliases`, so the impl needs a
     // mutable manager handle even though parsing is otherwise pure.
     fn parse_dependency(
         &mut self,
@@ -1585,7 +1567,7 @@ pub trait AutoInstaller {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
         &mut self,
@@ -1594,9 +1576,9 @@ pub trait AutoInstaller {
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
-    /// Port of `dependency.zig` `Version.Tag.infer` — pure string
+    /// Pure string
     /// classification, but the table lives in `bun_install`.
     fn infer_dependency_tag(&self, dependency: &[u8]) -> DependencyVersionTag;
 }

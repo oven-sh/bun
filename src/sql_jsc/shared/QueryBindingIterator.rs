@@ -68,5 +68,3 @@ impl<'a> QueryBindingIterator<'a> {
         }
     }
 }
-
-// ported from: src/sql_jsc/shared/QueryBindingIterator.zig

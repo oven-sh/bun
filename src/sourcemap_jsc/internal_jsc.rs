@@ -5,12 +5,11 @@ use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_str
 use bun_sourcemap::Ordinal;
 use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 
-pub struct TestingAPIs;
+pub(crate) struct TestingAPIs;
 
 impl TestingAPIs {
-    // TODO(port): bun_jsc::host_fn — proc-macro attribute not yet implemented.
-    pub fn from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let vlq_str = frame.argument(0).to_bun_string(global)?;
+    pub(crate) fn from_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let vlq_str = bun_core::OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let vlq = vlq_str.to_utf8();
 
         let Ok(blob) = internal_source_map::from_vlq(vlq.slice(), 0) else {
@@ -19,7 +18,7 @@ impl TestingAPIs {
         ArrayBuffer::create_uint8_array(global, &blob)
     }
 
-    pub fn to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let Some(ab) = frame.argument(0).as_array_buffer(global) else {
             return Err(global.throw(format_args!("InternalSourceMap.toVLQ: expected Uint8Array")));
         };
@@ -35,7 +34,7 @@ impl TestingAPIs {
         bun_string_jsc::create_utf8_for_js(global, out.list.as_slice())
     }
 
-    pub fn find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let Some(ab) = frame.argument(0).as_array_buffer(global) else {
             return Err(global.throw(format_args!("InternalSourceMap.find: expected Uint8Array")));
         };
@@ -59,7 +58,6 @@ impl TestingAPIs {
         };
 
         let obj = JSValue::create_empty_object(global, 5);
-        // PORT NOTE: stub `JSValue::put` takes `&[u8]` directly (Zig used `ZigString.static_`).
         obj.put(
             global,
             b"generatedLine",
@@ -104,5 +102,3 @@ pub fn testing_to_vlq(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 pub fn testing_find(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::find(global, frame)
 }
-
-// ported from: src/sourcemap_jsc/internal_jsc.zig

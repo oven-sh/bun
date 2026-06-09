@@ -4,7 +4,7 @@ use bun_paths::{PathBuffer, fs::FileSystem};
 
 use crate::{
     InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map, line_offset_table,
+    internal_source_map, line_offset_table, line_offset_table::LineOffsetTableColumns as _,
 };
 
 #[derive(Clone)]
@@ -45,6 +45,15 @@ impl Chunk {
 
     // `pub fn deinit` dropped — body only freed `self.buffer`, which `Drop` on
     // `MutableString` handles automatically.
+
+    /// # Safety
+    /// The returned `Chunk` aliases `self.buffer`'s allocation; at most one may be dropped.
+    #[inline]
+    pub unsafe fn alias(&self) -> Chunk {
+        // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
+        // contract above so the bitwise copy never causes a double free of `buffer`.
+        unsafe { core::ptr::read(self) }
+    }
 
     pub fn print_source_map_contents<const ASCII_ONLY: bool>(
         &self,
@@ -127,13 +136,11 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
     Ok(())
 }
 
-// NOTE: `SourceMapFormat<T>`/`SourceMapFormatCtx` are kept for source-level
-// parity with Zig's `SourceMapFormat(Type)` shape, but `VLQSourceMap` is the
-// only implementor and `NewBuilder`'s hot methods are now concretized on it
+// NOTE: `VLQSourceMap` is the only `SourceMapFormatCtx` implementor and
+// `NewBuilder`'s hot methods are concretized on it
 // (see the `impl NewBuilder<VLQSourceMap>` block below).
 
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
-/// In Zig this was structural (comptime duck typing on `Type`).
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), bun_core::Error>;
@@ -180,9 +187,8 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
 
     #[inline]
     pub fn get_buffer(&mut self) -> &mut MutableString {
-        // PORT NOTE: Zig returned `MutableString` by value (struct copy sharing
-        // the same backing allocation). Rust returns `&mut` to avoid a
-        // double-ownership footgun; callers mutate in place.
+        // Returns `&mut` to avoid a double-ownership footgun;
+        // callers mutate in place.
         self.ctx.get_buffer()
     }
 
@@ -235,10 +241,8 @@ impl SourceMapFormatCtx for VLQSourceMap {
 
     // PERF: `#[inline(always)]` — fat-LTO/CGU=1 was *not* inlining this trait
     // method into `add_source_mapping` (objdump showed 3× `call` per mapping;
-    // 11.77% of `append` samples on the `push %rbp` prologue). Zig's
-    // `Chunk.zig:107` wrapper is `pub inline fn` and the whole chain folds
-    // into `addSourceMapping`. Forcing it leaves only the 64-mapping
-    // `flush_window` out-of-line.
+    // 11.77% of `append` samples on the `push %rbp` prologue). Forcing it
+    // leaves only the 64-mapping `flush_window` out-of-line.
     #[inline(always)]
     fn append_line_separator(&mut self) -> Result<(), bun_core::Error> {
         if let Some(b) = &mut self.internal {
@@ -278,8 +282,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
 
     fn get_buffer(&mut self) -> &mut MutableString {
         if let Some(b) = &mut self.internal {
-            // PORT NOTE: Zig did `this.data = b.finalize().*; b.finalized = null;`
-            // i.e. move the finalized buffer out and clear the builder.
+            // Move the finalized buffer out and clear the builder.
             self.data = b.finalize_take();
             self.internal = None;
         }
@@ -302,18 +305,23 @@ impl SourceMapFormatCtx for VLQSourceMap {
 pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub source_map: SourceMapFormat<T>,
     /// `ManuallyDrop` because in the bundler `printWithWriter` path this is a
-    /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` (Zig
-    /// passed the unmanaged `MultiArrayList` header by value and never
-    /// `deinit`s on that path). The runtime/transpiler `printAst`/`printCommonJS`
+    /// shallow bitwise copy of `LinkerGraph.files[i].line_offset_table` and
+    /// must not be dropped here. The runtime/transpiler `printAst`/`printCommonJS`
     /// paths now defer table construction (see `lazy_line_offset_tables`), so
     /// this is left `EMPTY` there.
-    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List>,
+    pub line_offset_tables: core::mem::ManuallyDrop<line_offset_table::List<bun_alloc::AstAlloc>>,
 
     /// Lazily-generated, *owned* line-offset table for the runtime/transpiler
     /// print path. When no precomputed `line_offset_tables` is supplied and
     /// `deferred_source` is set, this stays `None` until the first
     /// `add_source_mapping` call, which fills it via `LineOffsetTable::generate`.
-    /// Mirrors the Zig transpiler, which only builds the table on demand:
+    /// `AstAlloc`-typed because the only caller that supplies a precomputed
+    /// table is the bundler (`LinkerGraph.files[i].line_offset_table`), which
+    /// builds it with `generate_in::<AstAlloc>` so the slab and every per-row
+    /// `columns_for_non_ascii` payload bulk-free with the worker arena instead
+    /// of needing a per-file teardown loop. Runtime/transpiler callers leave
+    /// this `EMPTY` and use the `Global`-backed `lazy_line_offset_tables` below.
+    /// Building the table only on demand means
     /// modules that emit no source mappings (asset/JSON shims, empty modules,
     /// fully-stripped files) never pay the full-source scan + `MultiArrayList`
     /// allocation. Unlike `line_offset_tables` (a `ManuallyDrop` bitwise alias
@@ -345,10 +353,12 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     /// pointer is stable across moves of `Self`. `&'static` is a lifetime
     /// erasure of that self-borrow — threading a real `'a` would infect every
     /// `Printer<'a, …>` instantiation for a field that's only ever read in
-    /// `add_source_mapping`. Populated lazily on the first mapping (Zig caches
-    /// it eagerly in `Printer.init`, js_printer.zig:5459); reset to `&[]` when
+    /// `add_source_mapping`. Populated lazily on the first mapping; reset to `&[]` when
     /// the lazy table is generated so it re-derives against the new storage.
     pub line_offset_table_byte_offset_list: &'static [u32],
+    /// Cached `byte_offset_to_first_non_ascii` column; same lifetime invariant
+    /// as `line_offset_table_byte_offset_list` above.
+    pub line_offset_table_first_non_ascii: &'static [u32],
 
     // This is a workaround for a bug in the popular "source-map" library:
     // https://github.com/mozilla/source-map/issues/261. The library will
@@ -368,13 +378,14 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
-    /// Zig field-defaults; the Zig caller (`get_source_map_builder`) returned
-    /// `undefined` when source maps are disabled, so this only needs to be
-    /// inert (never read) — but we zero everything for sanity.
+    /// `get_source_map_builder` returns this when source maps are disabled, so
+    /// it only needs to be inert (never read) — but we zero everything for sanity.
     fn default() -> Self {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
-            line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::EMPTY),
+            line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::new_in(
+                bun_alloc::AstAlloc,
+            )),
             lazy_line_offset_tables: None,
             deferred_source: None,
             prev_state: SourceMapState::default(),
@@ -383,6 +394,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
             prev_loc: Loc::EMPTY,
             has_prev_state: false,
             line_offset_table_byte_offset_list: &[],
+            line_offset_table_first_non_ascii: &[],
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
@@ -396,12 +408,14 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 ///
 /// `MultiArrayList::Drop` is **slab-only** — it frees the SoA buffer but never
 /// runs column destructors (a bitwise `clone` can alias two lists onto the same
-/// column heap pointers; see its docs). The eager `print_ast`/`print_common_js`
-/// paths handle this with an explicit `defer`-style scopeguard around their
-/// `ManuallyDrop<List>`; the lazily-built table needs the same drain, so wrap
-/// it in a type that does it automatically. (A `Drop` impl on `NewBuilder`
-/// itself would forbid the `..Default::default()` struct-update used to build
-/// it in `get_source_map_builder`, hence the newtype.)
+/// column heap pointers; see its docs). The bundler's eager
+/// `print_ast`/`print_common_js` paths now use `List<AstAlloc>` (bulk-freed
+/// with the per-worker AST heap) and leave `Builder.line_offset_tables` empty,
+/// so they no longer need a guard. The lazily-built table here is `List<Global>`
+/// and still needs the per-row drain, so wrap it in a type that does it
+/// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
+/// `..Default::default()` struct-update used to build it in
+/// `get_source_map_builder`, hence the newtype.)
 pub struct OwnedLineOffsetTables(pub line_offset_table::List);
 
 impl Drop for OwnedLineOffsetTables {
@@ -426,7 +440,7 @@ pub type SourceMapper<T> = SourceMapFormat<T>;
 // `flush_window`, and downstream crates emit a plain `call`.
 //
 // `#[inline(never)]` is kept on the cross-crate entry points only
-// (`generate_chunk` matches Zig's `noinline`; `add_source_mapping` is the
+// (`generate_chunk`; `add_source_mapping` is the
 // per-token call site from the printer).
 //
 // `update_generated_line_and_column` is split: the `#[inline]` wrapper holds
@@ -434,10 +448,8 @@ pub type SourceMapper<T> = SourceMapFormat<T>;
 // length and return), so it folds into both callers and the per-token path
 // stays a single function with `generated_column`/`last_generated_update` in
 // registers — no `call`+`ret`, no argument/return spill per emitted token.
-// (In the Zig build LLVM folds `updateGeneratedLineAndColumn` wholesale into
-// `addSourceMapping`; as a standalone `pub fn` in Rust it was kept out of
-// line and showed up as its own profile symbol — the call overhead the Zig
-// build doesn't pay.) The rare newline/non-ASCII case tail-calls
+// (As a standalone `pub fn` it was kept out of line and showed up as its own
+// profile symbol.) The rare newline/non-ASCII case tail-calls
 // `update_generated_line_and_column_slow`, which is `#[inline(never)] #[cold]`
 // and lives once in this crate, adjacent to `flush_window`. The concrete
 // (non-generic) impl is what pins one copy per CGU.
@@ -445,8 +457,8 @@ impl NewBuilder<VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
-        // PORT NOTE: reshaped for borrowck — capture scalars before borrowing
-        // `source_map` mutably via `get_buffer`.
+        // Capture scalars before borrowing `source_map` mutably via
+        // `get_buffer`, to satisfy the borrow checker.
         if self.prepend_count {
             let count = self.source_map.get_count();
             let approx = self.approximate_input_line_count;
@@ -456,9 +468,8 @@ impl NewBuilder<VLQSourceMap> {
             buffer.list[8..16].copy_from_slice(&(count as u64).to_ne_bytes());
             buffer.list[16..24].copy_from_slice(&(approx as u64).to_ne_bytes());
         } else {
-            // Zig calls `getBuffer()` unconditionally (which finalizes the
-            // internal builder). `take_buffer()` below also finalizes, so the
-            // effect is preserved.
+            // Finalize the internal builder eagerly; `take_buffer()` below
+            // also finalizes, so the effect is preserved.
             let _ = self.source_map.get_buffer();
         }
         Chunk {
@@ -518,11 +529,11 @@ impl NewBuilder<VLQSourceMap> {
         let mut c: i32;
         while i < n {
             let len = strings::wtf8_byte_sequence_length_with_invalid(slice[i]);
-            // SAFETY: `decode_wtf8_rune_t` reads at most `len` bytes; the Zig
-            // passes `.ptr[0..4]` (unchecked 4-byte view) and the decoder only
-            // dereferences bytes covered by `len`.
+            let mut cp_bytes = [0u8; 4];
+            let take = (len as usize).min(n - i);
+            cp_bytes[..take].copy_from_slice(&slice[i..i + take]);
             c = strings::decode_wtf8_rune_t::<i32>(
-                unsafe { &*slice.as_ptr().add(i).cast::<[u8; 4]>() },
+                cp_bytes,
                 len,
                 strings::UNICODE_REPLACEMENT as i32,
             );
@@ -530,7 +541,7 @@ impl NewBuilder<VLQSourceMap> {
 
             match c {
                 14..=127 => {
-                    // Hot path: Zig uses unchecked `@intCast` here. `i` is bounded by
+                    // Hot path: `i` is bounded by
                     // `slice.len()` (itself a sub-slice indexed by a `u32` offset), and
                     // column deltas are bounded by that same length, so these casts
                     // cannot truncate in practice. Keep the bound check in debug only.
@@ -545,7 +556,6 @@ impl NewBuilder<VLQSourceMap> {
                         let remaining = slice[i..].len();
                         debug_assert!(remaining <= i32::MAX as usize);
                         self.generated_column += remaining as i32 + 1;
-                        i = n;
                         break;
                     }
                 }
@@ -655,9 +665,15 @@ impl NewBuilder<VLQSourceMap> {
             }
         }
 
-        let list: &line_offset_table::List = match &self.lazy_line_offset_tables {
-            Some(t) => &t.0,
-            None => &*self.line_offset_tables,
+        // `line_offset_tables` (bundler-supplied, `AstAlloc`) and
+        // `lazy_line_offset_tables` (runtime-generated, `Global`) are different
+        // `List<A>` instantiations, so we can't unify them behind one `&List`.
+        // Instead, cache the two `u32` columns the hot path reads (both are
+        // `&[u32]` regardless of `A`) and re-dispatch only for the rare
+        // `columns_for_non_ascii` lookup below.
+        let list_len = match &self.lazy_line_offset_tables {
+            Some(t) => t.0.len(),
+            None => self.line_offset_tables.len(),
         };
 
         // We have no sourcemappings.
@@ -666,25 +682,37 @@ impl NewBuilder<VLQSourceMap> {
         //
         // import foo from "./foo.png";
         //
-        if list.len() == 0 {
+        if list_len == 0 {
             return;
         }
 
-        // PERF: cache the `byte_offset_to_start_of_line` column once. The
-        // backing storage is heap-owned by whichever table `list` points at —
-        // `line_offset_tables` (a `ManuallyDrop<MultiArrayList>`) or
+        // PERF: cache the `byte_offset_to_start_of_line` / `…_first_non_ascii`
+        // columns once. The backing storage is heap-owned by whichever table is
+        // active — `line_offset_tables` (a `ManuallyDrop<MultiArrayList>`) or
         // `lazy_line_offset_tables` (built once just above) — and both are kept
         // live and un-resized for the builder's lifetime, so the slice stays
-        // valid across moves of `self`. Zig caches this in `Printer.init`
-        // (js_printer.zig:5459, "costs 1ms according to Instruments"); we
-        // lazy-init here on the first mapping to keep the fix self-contained.
-        if self.line_offset_table_byte_offset_list.len() != list.len() {
-            let col = list.items::<"byte_offset_to_start_of_line", u32>();
+        // valid across moves of `self`. We lazy-init here on the first mapping.
+        if self.line_offset_table_byte_offset_list.len() != list_len {
+            let (start, first_na) = match &self.lazy_line_offset_tables {
+                Some(t) => (
+                    t.0.items_byte_offset_to_start_of_line(),
+                    t.0.items_byte_offset_to_first_non_ascii(),
+                ),
+                None => (
+                    self.line_offset_tables.items_byte_offset_to_start_of_line(),
+                    self.line_offset_tables
+                        .items_byte_offset_to_first_non_ascii(),
+                ),
+            };
             // SAFETY: lifetime widened to `'static` per the invariant above —
             // the backing table outlives every `add_source_mapping` call and is
-            // never reallocated. Same shape as Zig's cached `[]const u32`.
+            // never reallocated.
             self.line_offset_table_byte_offset_list =
-                unsafe { core::slice::from_raw_parts(col.as_ptr(), col.len()) };
+                unsafe { core::slice::from_raw_parts(start.as_ptr(), start.len()) };
+            // SAFETY: same invariant as above — backing table outlives every
+            // `add_source_mapping` call and is never reallocated.
+            self.line_offset_table_first_non_ascii =
+                unsafe { core::slice::from_raw_parts(first_na.as_ptr(), first_na.len()) };
         }
         let byte_offsets = self.line_offset_table_byte_offset_list;
 
@@ -709,9 +737,14 @@ impl NewBuilder<VLQSourceMap> {
             // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
             // comparison below is false and the `columns_for_non_ascii` SoA column
             // (the largest, ~16 B/line) is never touched on the hot ASCII path.
-            let first_non_ascii = list.items::<"byte_offset_to_first_non_ascii", u32>()[idx];
+            let first_non_ascii = self.line_offset_table_first_non_ascii[idx];
             if original_column >= first_non_ascii as i32 {
-                let cols = &list.items::<"columns_for_non_ascii", Box<[i32]>>()[idx];
+                let cols: &[i32] = match &self.lazy_line_offset_tables {
+                    Some(t) => &t.0.items::<"columns_for_non_ascii", Box<[i32]>>()[idx],
+                    None => &self
+                        .line_offset_tables
+                        .items::<"columns_for_non_ascii", Box<[i32], bun_alloc::AstAlloc>>()[idx],
+                };
                 if !cols.is_empty() {
                     original_column = cols[(original_column as u32 - first_non_ascii) as usize];
                 }
@@ -750,5 +783,3 @@ impl NewBuilder<VLQSourceMap> {
 }
 
 pub type Builder = NewBuilder<VLQSourceMap>;
-
-// ported from: src/sourcemap/Chunk.zig

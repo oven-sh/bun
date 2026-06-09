@@ -423,11 +423,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           self.destroy(verifyError);
           return;
         }
-      } else {
+      } else if (self._requestCert) {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
@@ -936,6 +934,9 @@ Socket.prototype.connect = function connect(...args) {
         tls.requestCert = true;
         tls.session = session || tls.session;
         this.servername = tls.servername;
+        if (checkServerIdentity !== undefined) {
+          validateFunction(checkServerIdentity, "options.checkServerIdentity");
+        }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
         if (!connection && tls.socket) {
@@ -2409,7 +2410,7 @@ Server.prototype[kRealListen] = function (
 
   if (contexts) {
     for (const [name, context] of contexts) {
-      // tls.ts stores the InternalSecureContext wrapper; the Zig side wants
+      // tls.ts stores the InternalSecureContext wrapper; the native side wants
       // the native SSL_CTX wrapper at `.context`.
       addServerName(this._handle, name, context.context ?? context);
     }

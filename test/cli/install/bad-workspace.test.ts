@@ -1,13 +1,11 @@
 import { spawnSync } from "bun";
-import { beforeAll, beforeEach, expect, setDefaultTimeout, test } from "bun:test";
+import { beforeEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 let cwd: string;
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 beforeEach(() => {
   cwd = tmpdirSync();

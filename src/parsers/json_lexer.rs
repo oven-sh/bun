@@ -4,22 +4,14 @@
 //! `bun_js_parser::js_lexer::Lexer` (T4), creating a GENUINE same-tier cycle
 //! (`bun_js_parser` → `bun_interchange` → `bun_js_parser`). Per the cycle-break
 //! plan, the ~10 lexer entry-points JSON actually exercises are inlined here
-//! against the *is_json = true* compile-time branch only — i.e. every
-//! `if (comptime is_json) …` arm in `src/js_parser/lexer.zig` is taken, every
+//! against the *is_json = true* branch only — every
 //! JS-only arm (operators, JSX, regexp, template literals, pragmas, hashbang,
 //! private identifiers, bigint) is dropped or hard-errors via
 //! `add_unsupported_syntax_error`. The full `T` token enum is collapsed to the
 //! tokens the JSON parser matches on.
 //!
-//! Source: `src/js_parser/lexer.zig` — `JSONOptions`, `NewLexer_` with
-//! `is_json = true`, `next`, `parseStringLiteral`, `parseNumericLiteralOrDot`,
-//! `expect`/`expected`/`unexpected`, `range`/`loc`/`raw`, `init`/`initJSON`,
-//! `toEString`/`toUTF8EString`, `step`/`nextCodepoint`.
-//!
 //! `bun_js_parser::js_lexer` remains the canonical lexer; this module is a
 //! sliced re-port and is NOT re-exported outside `bun_interchange`.
-
-#![allow(dead_code)]
 
 use bun_alloc::Arena as Bump;
 
@@ -33,7 +25,6 @@ use bun_core::strings::CodePoint;
 // JSONOptions
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `pub const JSONOptions = struct { ... }` (lexer.zig:37).
 #[derive(Clone, Copy)]
 pub struct JSONOptions {
     /// Enable JSON-specific warnings/errors.
@@ -58,7 +49,6 @@ impl JSONOptions {
         allow_trailing_commas: false,
         ignore_leading_escape_sequences: false,
         ignore_trailing_escape_sequences: false,
-        // NOTE: Zig default is `true` (lexer.zig:50).
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
         guess_indentation: false,
@@ -75,7 +65,7 @@ impl Default for JSONOptions {
 // T — token kind (JSON subset)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `js_lexer_tables.T`. This enum carries ONLY the variants the JSON
+/// This enum carries ONLY the variants the JSON
 /// parser inspects; every JS-only token collapses into `TSyntaxError` here.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -101,7 +91,7 @@ pub enum T {
 }
 
 impl T {
-    /// Zig: `tokenToString.get(token)`. Only the JSON subset has names; the
+    /// Only the JSON subset has names; the
     /// rest fall through to `unexpected()`.
     fn to_str(self) -> &'static str {
         match self {
@@ -131,7 +121,6 @@ impl T {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StringLiteralFormat {
     Ascii,
-    Utf16,
     NeedsDecode,
 }
 
@@ -152,19 +141,18 @@ impl Default for IndentInfo {
     }
 }
 
-/// JSON-only lexer. Field layout mirrors the Zig `LexerType` for the fields
-/// the JSON parser reads directly (`token`, `number`, `has_newline_before`,
+/// JSON-only lexer. The public fields are
+/// the ones the JSON parser reads directly (`token`, `number`, `has_newline_before`,
 /// `source`, `end`, `is_ascii_only`, `identifier`, `indent_info`).
 ///
-/// PORT NOTE — borrowck/Stacked Borrows: Zig stored `log: *logger.Log` on
-/// both the lexer *and* the parser (json.zig:103,119). The Rust port keeps a
-/// single `*mut Log` here as the sole provenance chain; the parser does **not**
+/// borrowck/Stacked Borrows: a
+/// single `*mut Log` here is the sole provenance chain; the parser does **not**
 /// hold its own `&mut Log` (that would alias this pointer and any parser-side
 /// `&mut` deref would invalidate the lexer's SharedReadWrite tag — UB the next
 /// time the lexer reports an error). Parser-side log writes go through
 /// `log_mut()`. Matches the toml lexer's shape.
 pub struct Lexer<'a, 'bump> {
-    // PORT NOTE: raw ptr — see struct doc.
+    // raw ptr — see struct doc.
     log: *mut bun_ast::Log,
     pub source: &'a bun_ast::Source,
     bump: &'bump Bump,
@@ -191,7 +179,7 @@ pub struct Lexer<'a, 'bump> {
     /// Only used for JSON stringification when bundling.
     pub is_ascii_only: bool,
 
-    /// Runtime copy of the comptime `JSONOptions`. The cold-path flags
+    /// Runtime copy of `JSONOptions`. The cold-path flags
     /// (`allow_comments`, `guess_indentation`, `ignore_leading_escape_sequences`)
     /// stay runtime; the hot per-byte string loop is monomorphised over
     /// `const QUOTE: u8` and reads `is_json` as compile-time `true` (this
@@ -207,6 +195,9 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     type Err = bun_core::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is the sole provenance chain to the `Log` for the
+        // lifetime of the parse (see struct doc); no other `&mut Log` is held,
+        // so this deref never overlaps another live borrow.
         unsafe { &mut *self.log }
     }
     #[inline]
@@ -270,11 +261,11 @@ where
         }
     }
 
-    /// Zig: `init` — `NewLexer(opts).init`. The parser's 8 const-generic bools
+    /// The parser's 8 const-generic bools
     /// are flattened back into a runtime `JSONOptions` here; the JSON token
-    /// loop is small enough that the comptime specialisation buys nothing at
+    /// loop is small enough that const-generic specialisation buys nothing at
     /// this layer (the full JS lexer is where it mattered).
-    pub fn init(
+    pub(crate) fn init(
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         bump: &'bump Bump,
@@ -286,10 +277,10 @@ where
         Ok(lex)
     }
 
-    /// Zig: `initJSON` — identical body to `init` for the JSON lexer; kept as a
+    /// Identical body to `init`; kept as a
     /// separate entry point because `json.rs` calls it by name in the
     /// `MAYBE_AUTO_QUOTE` retry path.
-    pub fn init_json(
+    pub(crate) fn init_json(
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         bump: &'bump Bump,
@@ -309,7 +300,7 @@ where
     }
 
     #[inline]
-    pub fn range(&self) -> bun_ast::Range {
+    pub(crate) fn range(&self) -> bun_ast::Range {
         bun_ast::Range {
             loc: bun_ast::usize2loc(self.start),
             len: (self.end - self.start) as i32,
@@ -326,6 +317,7 @@ where
     /// Single provenance chain to the `Log` — the parser routes its own log
     /// writes through here too (see struct doc).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
         // SAFETY: see struct doc — `log` is the only handle to the `Log` for
         // the lifetime of the parse; no `&mut Log` is held elsewhere, so this
@@ -383,7 +375,7 @@ where
 
     #[cold]
     fn expected_string(&mut self, text: &str) -> LexResult {
-        // PORT NOTE: the `prev_token_was_await_keyword` branch is JS-only and
+        // the `prev_token_was_await_keyword` branch is JS-only and
         // dropped here.
         let r = self.range();
         if self.source.contents.len() != self.start {
@@ -395,14 +387,14 @@ where
         } else {
             self.add_range_error(r, format_args!("Expected {} but found end of file", text))?;
         }
-        // Spec lexer.zig:1798-1863 — `expectedString` only logs via
-        // `addRangeError` and returns void; it does NOT raise. `expect()` then
+        // `expected_string` only logs via
+        // `add_range_error` and returns; it does NOT raise. `expect()` then
         // falls through to `next()` for error recovery.
         Ok(())
     }
 
     #[cold]
-    pub fn unexpected(&mut self) -> LexResult {
+    pub(crate) fn unexpected(&mut self) -> LexResult {
         self.start = self.start.min(self.end);
         let r = self.range();
         if self.start == self.source.contents.len() {
@@ -413,7 +405,7 @@ where
             self.did_panic = true;
             self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)))?;
         }
-        // Spec lexer.zig:1798-1812 — `unexpected` only logs and returns void;
+        // `unexpected` only logs and returns;
         // callers (e.g. `parse_expr` else arm) follow with an explicit
         // `error.ParserError` if they need to abort.
         Ok(())
@@ -430,18 +422,17 @@ where
             0 => self.parse_string_literal_inner::<0>(),
             q if q == '"' as CodePoint => self.parse_string_literal_inner::<b'"'>(),
             q if q == '\'' as CodePoint => self.parse_string_literal_inner::<b'\''>(),
-            // Only the three above are ever passed (lexer.zig:630 takes
-            // `comptime quote`); anything else is a port bug.
+            // Only the three above are ever passed; anything else is a bug.
             _ => unreachable!("parse_string_literal: invalid quote {}", quote),
         }
     }
 
-    /// Zig: `parseStringLiteral(comptime quote)` with `is_json = true`,
-    /// template-literal (`\``) and `$`-substitution arms removed. `QUOTE == 0`
+    /// String-literal scanner; template-literal (`\``) and `$`-substitution
+    /// arms are JS-only and absent. `QUOTE == 0`
     /// is the implicit (.env auto-quote) string.
     ///
-    /// PERF: `QUOTE` is a const generic mirroring Zig's `comptime quote:
-    /// CodePoint` so the per-byte `match` folds to a guard-free jump table and
+    /// PERF: `QUOTE` is a const generic
+    /// so the per-byte `match` folds to a guard-free jump table and
     /// the `QUOTE == 0` / SIMD-gate checks const-propagate away. `is_json` is
     /// hard-wired `true` (this module *is* the is_json slice — see file header)
     /// so the `< 0x20` control-char check is branchless on the option load.
@@ -507,10 +498,10 @@ where
                     if cp >= 0x80 {
                         needs_decode = true;
                     } else if cp < 0x20 {
-                        // `comptime is_json` is always true in this module.
+                        // `is_json` is always true in this module.
                         self.syntax_error()?;
                     } else if (QUOTE == b'"' || QUOTE == b'\'') && bun_core::env::IS_NATIVE {
-                        // Spec lexer.zig:730-740 — SIMD skip-ahead over plain
+                        // SIMD skip-ahead over plain
                         // ASCII string content. Critical for inline-sourcemap
                         // JSON where `sourcesContent` can be hundreds of KB.
                         let remainder = &self.source.contents[self.current..];
@@ -554,31 +545,15 @@ where
         self.string_literal_start = self.start;
         self.is_ascii_only = self.is_ascii_only && !needs_decode;
 
-        // Spec lexer.zig:775-779 gates the "JSON strings must use double quotes"
-        // error on `if (comptime !FeatureFlags.allow_json_single_quotes)`, and
-        // feature_flags.zig:24 sets `allow_json_single_quotes = true`, so the
-        // spec NEVER emits this error.
-
         Ok(())
     }
 
-    /// Zig: `toEString`.
-    pub fn to_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    /// Converts the current string literal token into an `E::String`,
+    /// decoding escape sequences and choosing UTF-8 vs UTF-16 storage.
+    pub(crate) fn to_e_string(&mut self) -> LexResult<js_ast::E::String> {
         match self.string_literal_raw_format {
             StringLiteralFormat::Ascii => {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
-            }
-            StringLiteralFormat::Utf16 => {
-                // SAFETY: when Utf16, the raw-content slice was produced from a
-                // `[]const u16` reinterpreted as bytes; len is the u16 count.
-                // (JSON path never sets Utf16 — only the JSX rescan does.)
-                let s16 = unsafe {
-                    core::slice::from_raw_parts(
-                        self.string_literal_raw_content.as_ptr().cast::<u16>(),
-                        self.string_literal_raw_content.len(),
-                    )
-                };
-                Ok(js_ast::E::String::init_utf16(s16))
             }
             StringLiteralFormat::NeedsDecode => {
                 // Escape parsing may surface a syntax error.
@@ -599,8 +574,9 @@ where
         }
     }
 
-    /// Zig: `toUTF8EString`.
-    pub fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String> {
+    /// Like [`Self::to_e_string`] but always returns UTF-8 storage,
+    /// transcoding a UTF-16 result if needed.
+    pub(crate) fn to_utf8_e_string(&mut self) -> LexResult<js_ast::E::String> {
         let mut res = self.to_e_string()?;
         if res.is_utf16 {
             let utf8 = strings::to_utf8_alloc(res.slice16());
@@ -610,13 +586,15 @@ where
         Ok(res)
     }
 
-    /// Zig: `decodeEscapeSequences`. Ported for the `is_json = true` arm only —
+    /// Escape-sequence decoder for the JSON arm only —
     /// legacy-octal, template `\r\n` normalization and tagged-template raw
     /// preservation are JS-only and dropped.
-    // TODO(port): JSON spec only permits `\" \\ \/ \b \f \n \r \t \uXXXX`; the
-    // Zig path additionally accepts `\0` `\v` `\x` `\u{…}` etc. and then errors
-    // post-hoc via `is_json` checks. Mirror that once the surrogate-pair
-    // handling in `bun_str` is wired.
+    // Lenient escapes: `\v`, `\x`, `\8`/`\9`
+    // are accepted; `\0`–`\7` (legacy octal)
+    // and `\u{…}` reach
+    // `syntax_error()` via the fallthrough/non-hex-digit arms. Astral
+    // codepoints in raw text are surrogate-pair encoded by `push_codepoint`
+    // (`strings::push_codepoint_utf16`).
     fn decode_escape_sequences(
         &mut self,
         _start: usize,
@@ -631,8 +609,7 @@ where
             let c = iter.c;
             match c {
                 cp if cp == '\\' as CodePoint => {
-                    // Spec lexer.zig:321 — `_ = iterator.next(&iter) or return;`
-                    // (silent Ok return on a trailing backslash).
+                    // Silent Ok return on a trailing backslash.
                     if !iterator.next(&mut iter) {
                         return Ok(());
                     }
@@ -644,17 +621,15 @@ where
                         cp if cp == 'r' as CodePoint => buf.push(0x0d),
                         cp if cp == 't' as CodePoint => buf.push(0x09),
                         cp if cp == 'v' as CodePoint => {
-                            // Vertical tab is invalid JSON. Spec lexer.zig:340-349
-                            // has the is_json check COMMENTED OUT with note
-                            // "We're going to allow it" — unconditionally push.
+                            // Vertical tab is technically invalid JSON, but we
+                            // allow it — unconditionally push.
                             buf.push(0x0b);
                         }
-                        // Spec lexer.zig:426-428 — `'8','9'` pass through as the
-                        // digit char (no is_json gate).
+                        // `'8','9'` pass through as the digit char.
                         cp if cp == '8' as CodePoint || cp == '9' as CodePoint => {
                             push_codepoint(buf, c2);
                         }
-                        // Spec lexer.zig:430-474 — `\xNN` 2-digit hex (no is_json gate).
+                        // `\xNN` 2-digit hex.
                         cp if cp == 'x' as CodePoint => {
                             let mut value: CodePoint = 0;
                             for _ in 0..2 {
@@ -663,14 +638,14 @@ where
                                 }
                                 let c3 = iter.c;
                                 value = match hex_digit_value_u32(c3 as u32) {
-                                    Some(d) => value * 16 | d as CodePoint,
+                                    Some(d) => (value * 16) | d as CodePoint,
                                     None => return self.syntax_error(),
                                 };
                             }
                             push_codepoint(buf, value);
                         }
-                        // Spec lexer.zig:596-607 — only `"` `\` `/` are whitelisted
-                        // for the is_json `else` arm; `\'` falls through to syntaxError.
+                        // Only `"` `\` `/` are whitelisted;
+                        // `\'` falls through to syntax_error.
                         cp if cp == '"' as CodePoint
                             || cp == '\\' as CodePoint
                             || cp == '/' as CodePoint =>
@@ -693,9 +668,8 @@ where
                             buf.push(value as u16);
                         }
                         _ => {
-                            // `comptime is_json` is always true in this module
-                            // (see file header) — the Zig pass-through arm is
-                            // unreachable here.
+                            // The JS-only pass-through arm is unreachable in
+                            // this JSON-only module (see file header).
                             return self.syntax_error();
                         }
                     }
@@ -708,9 +682,8 @@ where
 
     // ── numeric literal ──────────────────────────────────────────────────
 
-    /// Zig: `parseNumericLiteralOrDot`. Spec lexer.zig:2736-2998 has NO is_json
-    /// gate on the radix-prefix integer-literal path (`0x…/0b…/0o…`/legacy
-    /// octal) or underscore separators, so they are accepted here too. Only the
+    /// Radix-prefix integer literals (`0x…/0b…/0o…`/legacy
+    /// octal) and underscore separators are accepted. Only the
     /// bigint `'n'` token is JS-only and left to the trailing
     /// `is_identifier_start` syntax error.
     fn parse_numeric_literal_or_dot(&mut self) -> LexResult {
@@ -770,7 +743,6 @@ where
                             self.syntax_error()?;
                         }
                         last_underscore_end = self.end;
-                        underscore_count += 1;
                     }
                     cp if cp == '0' as CodePoint || cp == '1' as CodePoint => {
                         self.number = self.number * base + (cp - '0' as CodePoint) as f64;
@@ -825,8 +797,7 @@ where
                 }
 
                 // Filter out underscores;
-                // (Zig allocates a filtered buffer here but discards it; mirror
-                // the no-op semantics — `text` is reused below as-is.)
+                // (no-op here — `text` is reused below as-is.)
 
                 // Store bigints as text to avoid precision loss;
                 if is_bigint_literal {
@@ -981,7 +952,7 @@ where
         }
 
         // Handle bigint literals after the underscore-at-end check above;
-        // PORT NOTE: bigint `'n'` falls through to the identifier-start check
+        // bigint `'n'` falls through to the identifier-start check
         // below (T::TBigIntegerLiteral is JS-only and not in this token enum).
 
         // An identifier can't immediately follow a number.
@@ -994,7 +965,7 @@ where
 
     // ── identifier with escapes ──────────────────────────────────────────
 
-    /// Zig: `scanIdentifierWithEscapes(.normal)` (lexer.zig:875). Minimal port
+    /// Minimal identifier-with-escapes scanner
     /// for the JSON keyword set: scans `\uXXXX` / `\u{…}` escapes interleaved
     /// with identifier-continue codepoints, decodes via
     /// `decode_escape_sequences`, and maps the result to
@@ -1044,7 +1015,7 @@ where
         let utf8 = strings::to_utf8_alloc(&buf);
         let contents: &'a [u8] = self.bump.alloc_slice_copy(&utf8);
 
-        // PORT NOTE: full Unicode `isIdentifier` validation omitted — JSON only
+        // full Unicode `isIdentifier` validation omitted — JSON only
         // recognises `true`/`false`/`null`; anything else is `t_identifier`
         // and the parser will reject it.
         self.identifier = contents;
@@ -1059,10 +1030,10 @@ where
 
     // ── next ─────────────────────────────────────────────────────────────
 
-    /// Zig: `next()` with every `if (comptime is_json)` branch taken. Operators
+    /// Advance to the next token. Operators
     /// and JS-only punctuation hard-error; comments are gated on
     /// `opts.allow_comments`.
-    pub fn next(&mut self) -> LexResult {
+    pub(crate) fn next(&mut self) -> LexResult {
         self.has_newline_before = self.end == 0;
 
         loop {
@@ -1251,8 +1222,7 @@ where
                         self.step();
                         continue;
                     }
-                    // Spec lexer.zig:1739-1750 — no is_json gate; scan an
-                    // identifier-with-escapes (e.g. `true` → t_true).
+                    // Scan an identifier-with-escapes (e.g. `true` → t_true).
                     self.scan_identifier_with_escapes()?;
                 }
 
@@ -1305,8 +1275,8 @@ where
                 // here aborts `Lexer::init` before `parse_env_json` gets a
                 // chance to auto-quote.
                 //
-                // They get a dedicated arm (not the catch-all) because the spec
-                // arms (lexer.zig `'('`/`')'`/`'?'`/`'*'`) all `step()` past the
+                // They get a dedicated arm (not the catch-all) because these
+                // arms must `step()` past the
                 // char, while the catch-all leaves `code_point` on `contents[0]`.
                 // The auto-quote retry rebuilds the lexer (same state) and then
                 // calls `parse_string_literal_inner::<0>()`, whose leading
@@ -1386,7 +1356,7 @@ fn is_identifier_start(cp: CodePoint) -> bool {
     matches!(cp, 0x24 /* $ */ | 0x5F /* _ */)
         || (cp >= 'a' as CodePoint && cp <= 'z' as CodePoint)
         || (cp >= 'A' as CodePoint && cp <= 'Z' as CodePoint)
-    // PORT NOTE: full Unicode ID_Start table omitted — JSON only ever
+    // full Unicode ID_Start table omitted — JSON only ever
     // recognises `true`/`false`/`null` here, all ASCII.
 }
 
@@ -1394,5 +1364,3 @@ fn is_identifier_start(cp: CodePoint) -> bool {
 fn is_identifier_continue(cp: CodePoint) -> bool {
     is_identifier_start(cp) || (cp >= '0' as CodePoint && cp <= '9' as CodePoint)
 }
-
-// ported from: src/js_parser/lexer.zig

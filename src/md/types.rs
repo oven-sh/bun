@@ -1,4 +1,5 @@
-// TODO(port): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
+// The md crate sits below `bun_jsc` in the layering, so `bun_jsc::JsResult`
+// is unreachable here; this local alias plays the same role.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
@@ -133,15 +134,14 @@ pub struct WikilinkDetail<'a> {
 
 /// Renderer interface. The parser calls these methods to produce output.
 //
-// PORT NOTE: Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
-// into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
+// A `&mut dyn RendererImpl` fat pointer. LIFETIMES.tsv classified `ptr` as
 // `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
 // (STATIC); the trait object encodes both.
 pub struct Renderer<'a> {
     pub ptr: &'a mut dyn RendererImpl,
 }
 
-/// Trait backing the `Renderer` fat pointer (was Zig `Renderer.VTable`).
+/// Trait backing the `Renderer` fat pointer.
 pub trait RendererImpl {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()>;
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()>;
@@ -174,8 +174,7 @@ impl<'a> Renderer<'a> {
 }
 
 /// Detail data for span events (links, images, wikilinks).
-// TODO(port): lifetime — href/title borrow from the source text; could thread
-// an arena `'bump` lifetime instead.
+/// `href`/`title` borrow from the source text.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
     pub href: &'a [u8],
@@ -215,6 +214,7 @@ impl<'a> SpanDetail<'a> {
         SpanDetail {
             // SAFETY: caller contract.
             href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
+            // SAFETY: caller contract.
             title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
             autolink: self.autolink,
             autolink_email: self.autolink_email,
@@ -226,7 +226,7 @@ impl<'a> SpanDetail<'a> {
 
 /// An attribute is a string that may contain embedded entities.
 /// The text is split into substrings, each with a type (normal or entity).
-// TODO(port): lifetime — substr slices borrow from parser-owned buffers.
+/// The substr slices borrow from parser-owned buffers.
 #[derive(Copy, Clone)]
 pub struct Attribute<'a> {
     /// Slices into the source text, one per substring.
@@ -234,8 +234,8 @@ pub struct Attribute<'a> {
     pub substr_types: &'a [SubstrType],
 }
 
-// PORT NOTE: Zig nests `SubstrType`/`SubstrOffset` inside `Attribute`; Rust has
-// no nested type defs in structs, so they are hoisted to module scope.
+// `SubstrType`/`SubstrOffset` belong conceptually to `Attribute` but Rust has
+// no nested type defs in structs, so they live at module scope.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SubstrType {
@@ -326,8 +326,8 @@ pub struct Container {
 }
 
 /// Block flags stored in MD_BLOCK.
-// PORT NOTE: Zig `packed struct(u32)` with bool fields + u28 padding. Not every
-// field is `bool` (padding), so per PORTING.md this is a transparent newtype
+// Packed u32 with bool bits + 28 bits of padding. Not every
+// field is `bool` (padding), so this is a transparent newtype
 // with manual shift accessors rather than `bitflags!`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
@@ -432,7 +432,7 @@ pub struct Flags {
 }
 
 impl Flags {
-    // Private base mirroring the Zig field defaults so the named presets below
+    // Private base of field defaults so the named presets below
     // can use struct-update syntax in const context.
     const DEFAULTS: Flags = Flags {
         collapse_whitespace: false,
@@ -521,9 +521,6 @@ pub const CODESPAN_MARK_MAXLEN: u32 = 255;
 pub const TABLE_MAXCOLCOUNT: u32 = 128;
 
 /// Reference definition used for link resolution.
-// TODO(port): `label_needs_free`/`title_needs_free` indicate sometimes-owned
-// data (normalized label vs. source slice). Consider `Cow<'a, [u8]>` and drop
-// the bool flags.
 pub struct RefDef<'a> {
     pub label: &'a [u8],
     pub title: Attribute<'a>,
@@ -566,5 +563,3 @@ pub fn task_mark_from_data(data: u32) -> u8 {
 pub fn is_task_checked(task_mark: u8) -> bool {
     task_mark != 0 && task_mark != b' '
 }
-
-// ported from: src/md/types.zig

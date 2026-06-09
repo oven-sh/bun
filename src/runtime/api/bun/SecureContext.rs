@@ -21,8 +21,8 @@ use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 
-/// Mirrors Zig's `pub const js = jsc.Codegen.JSSecureContext`. Re-export the
-/// codegen-emitted module so `$zig(SecureContext.zig, js.getConstructor)` in
+/// Re-export the codegen-emitted module so
+/// `$zig(SecureContext.zig, js.getConstructor)` in
 /// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
 pub use crate::generated_classes::js_SecureContext as js;
 
@@ -46,14 +46,14 @@ pub struct SecureContext {
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
 #[bun_jsc::host_fn]
-pub fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
     // counter, no preconditions).
     Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
 }
 
 impl SecureContext {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
+    // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
     pub fn constructor(
@@ -79,9 +79,9 @@ impl SecureContext {
     /// digest so identical configs return the same `JSSecureContext` cell while
     /// it's alive; falls through to `create()` (which itself hits the native
     /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
+    /// `secureContext === createSecureContext(opts)` hold and lets `Listener`
     /// pointer-compare without a JS-side WeakRef map.
-    // PORT NOTE: codegen (`generated_classes.rs::SecureContextClass__intern`)
+    // Note: codegen (`generated_classes.rs::SecureContextClass__intern`)
     // wraps this in `host_fn_result` and exports the C-ABI shim, so no
     // `#[bun_jsc::host_fn]` here — that macro's Free shim calls by bare name
     // and cannot resolve an associated fn.
@@ -114,7 +114,7 @@ impl SecureContext {
             }
         }
 
-        let sc = Self::create_with_digest(global, ctx_opts, d)?;
+        let sc = Self::create_with_digest(global, &ctx_opts, d)?;
         // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
         let value = Self::to_js_boxed(sc, global);
         cpp::Bun__SecureContextCache__set(global, key, value);
@@ -131,16 +131,16 @@ impl SecureContext {
     /// `us_ssl_ctx_from_options` so that override has roots to validate against.
     pub fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<Box<SecureContext>> {
         let ctx_opts = config.as_usockets();
-        Self::create_with_digest(global, ctx_opts, ctx_opts.digest())
+        Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
     }
 
     fn create_with_digest(
         global: &JSGlobalObject,
-        ctx_opts: uws::socket_context::BunSocketContextOptions,
+        ctx_opts: &uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // PORT NOTE: spec is `global.bunVM().rareData().sslCtxCache()`. In the
+        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
         // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
         // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
         // on this crate's `RuntimeState` (one per JS thread, same lifetime as
@@ -186,6 +186,10 @@ impl SecureContext {
         self.ctx
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
         unsafe { boringssl::SSL_CTX_free(self.ctx) };
@@ -202,11 +206,15 @@ use bun_uws_sys::socket_context::c;
 
 mod cpp {
     use super::*;
-    // TODO(port): move to runtime_sys
     unsafe extern "C" {
-        pub safe fn Bun__SecureContextCache__get(global: &JSGlobalObject, key: u64) -> JSValue;
-        pub safe fn Bun__SecureContextCache__set(global: &JSGlobalObject, key: u64, value: JSValue);
+        pub(super) safe fn Bun__SecureContextCache__get(
+            global: &JSGlobalObject,
+            key: u64,
+        ) -> JSValue;
+        pub(super) safe fn Bun__SecureContextCache__set(
+            global: &JSGlobalObject,
+            key: u64,
+            value: JSValue,
+        );
     }
 }
-
-// ported from: src/runtime/api/bun/SecureContext.zig

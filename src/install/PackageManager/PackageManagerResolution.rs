@@ -18,8 +18,7 @@ use super::PackageManager;
 use super::options::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
+// Free-function re-export surface. Thin shims over the
 // `impl PackageManager` bodies below so `pub use resolution::{...}` in
 // `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
@@ -29,7 +28,7 @@ pub fn format_later_version_in_cache<'a>(
     this: &'a mut PackageManager,
     package_name: &[u8],
     name_hash: PackageNameHash,
-    resolution: Resolution,
+    resolution: &Resolution,
 ) -> Option<semver::version::Formatter<'a, u64>> {
     this.format_later_version_in_cache(package_name, name_hash, resolution)
 }
@@ -55,7 +54,7 @@ pub fn get_installed_versions_from_disk_cache(
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
-    version: dependency::Version,
+    version: &dependency::Version,
 ) -> Option<PackageID> {
     this.resolve_from_disk_cache(package_name, version)
 }
@@ -88,10 +87,9 @@ impl PackageManager {
         &mut self,
         package_name: &[u8],
         name_hash: PackageNameHash,
-        resolution: Resolution,
+        resolution: &Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
-        // Zig forwards `package_name` → `scopeForPackageName` → `byNameHash`,
-        // but the `.load_from_memory` arm never reads scope; keep the param for
+        // The `.load_from_memory` arm never reads scope; keep the param for
         // signature parity.
         let _ = package_name;
         match resolution.tag {
@@ -102,9 +100,9 @@ impl PackageManager {
                     return None;
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig calls
-                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`,
-                // which in Rust would require simultaneous `&mut self.manifests`
+                // reshaped for borrowck —
+                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`
+                // would require simultaneous `&mut self.manifests`
                 // (receiver) and `&mut self` (arg). The memory-only path touches
                 // nothing on `PackageManager` besides the map, so use the
                 // disjoint-borrow helper and read `self.options` / `self.lockfile`
@@ -145,11 +143,12 @@ impl PackageManager {
         tags_buf: &mut Vec<u8>,
         package_name: &[u8],
     ) -> Result<Vec<semver::Version>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut list: Vec<semver::Version> = Vec::new();
-        // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::open_dir(cache_dir, package_name) {
+        let dir = match bun_sys::Dir::borrow(&cache_dir)
+            .open_at(package_name)
+            .map_err(bun_core::Error::from)
+        {
             Ok(d) => d,
             Err(e)
                 if e == bun_core::err!("FileNotFound")
@@ -161,7 +160,6 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // `defer dir.close()` → explicit close after iteration (Dir has no Drop).
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {
@@ -169,7 +167,6 @@ impl PackageManager {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(e) => {
-                    dir.close();
                     return Err(e.into());
                 }
             };
@@ -189,7 +186,6 @@ impl PackageManager {
             let mut version = parsed.version.min();
             let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
             if total > 0 {
-                // PERF(port): was ensureUnusedCapacity — profile if hot
                 let len_before = tags_buf.len();
                 // `clone_into` writes exactly `total` bytes (build.len + pre.len)
                 // into `available` and advances it; zero-fill the tail first so
@@ -202,17 +198,15 @@ impl PackageManager {
             }
 
             list.push(version);
-            // PERF(port): was `catch unreachable` on append — Vec::push aborts on OOM
         }
 
-        dir.close();
         Ok(list)
     }
 
     pub fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
-        version: dependency::Version,
+        version: &dependency::Version,
     ) -> Option<PackageID> {
         if version.tag != dependency::Tag::Npm {
             // only npm supported right now
@@ -220,17 +214,15 @@ impl PackageManager {
             return None;
         }
 
-        // PERF(port): was arena bulk-free (bun.ArenaAllocator + stackFallback(4096)) —
-        // profile if hot. Allocator params dropped; Vec uses global mimalloc.
         let mut tags_buf: Vec<u8> = Vec::new();
         let mut installed_versions =
             match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {
                 Ok(v) => v,
                 Err(err) => {
-                    Output::debug(format_args!(
+                    bun_core::debug!(
                         "error getting installed versions from disk cache: {}",
                         err.name()
-                    ));
+                    );
                     return None;
                 }
             };
@@ -238,8 +230,7 @@ impl PackageManager {
         // TODO: make this fewer passes
         {
             let tags_slice: &[u8] = tags_buf.as_slice();
-            // Zig: `std.sort.pdq(..., sortGt)` — `sortGt` is `order == .gt`, so
-            // pdq sorts descending. Use the total-order helper with swapped args
+            // Sort descending. Use the total-order helper with swapped args
             // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
             // closure is not antisymmetric and may panic since Rust 1.81.
             installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
@@ -260,10 +251,7 @@ impl PackageManager {
                 ) {
                     Ok(p) => p,
                     Err(err) => {
-                        Output::debug(format_args!(
-                            "error getting path for cached npm path: {}",
-                            bun_core::Error::from(err).name()
-                        ));
+                        bun_core::debug!("error getting path for cached npm path: {}", err.name());
                         return None;
                     }
                 };
@@ -280,7 +268,7 @@ impl PackageManager {
                 };
                 match folder_resolver::get_or_put(
                     GlobalOrRelative::CacheFolder(npm_package_path),
-                    dep_version,
+                    &dep_version,
                     b".",
                     self,
                 ) {
@@ -295,10 +283,10 @@ impl PackageManager {
                         return Some(id);
                     }
                     folder_resolver::FolderResolution::Err(err) => {
-                        Output::debug(format_args!(
+                        bun_core::debug!(
                             "error getting or putting folder resolution: {}",
                             err.name()
-                        ));
+                        );
                         return None;
                     }
                 }
@@ -309,7 +297,7 @@ impl PackageManager {
     }
 
     pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // PORT NOTE: reshaped for borrowck — capture lengths before mutable borrows.
+        // reshaped for borrowck — capture lengths before mutable borrows.
         if cfg!(debug_assertions) {
             debug_assert!(
                 (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -330,7 +318,7 @@ impl PackageManager {
     }
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // PORT NOTE: reshaped for borrowck — capture lengths before mutable borrows.
+        // reshaped for borrowck — capture lengths before mutable borrows.
         if cfg!(debug_assertions) {
             debug_assert!(
                 (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -428,5 +416,3 @@ impl PackageManager {
         }
     }
 }
-
-// ported from: src/install/PackageManager/PackageManagerResolution.zig

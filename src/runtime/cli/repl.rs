@@ -11,6 +11,7 @@
 //!
 //! This replaces the TypeScript-based REPL for faster startup and better integration.
 
+#[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
 use std::io::Write as _;
@@ -19,7 +20,9 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{Environment, Output, env_var, fmt, tty};
+#[cfg(unix)]
+use bun_core::tty;
+use bun_core::{Environment, Output, env_var, fmt};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -30,7 +33,6 @@ use bun_sys::{self as sys, Fd};
 // C++ Bindings
 // ============================================================================
 
-// TODO(port): move to cli_sys / jsc_sys
 // NOTE: `globalObject` is `*const` here because `JSGlobalObject` is an opaque
 // FFI handle (zero Rust-visible bytes). All mutation happens on the C++ side;
 // Rust only ever holds `&JSGlobalObject`, so deriving a `*mut` from that shared
@@ -71,7 +73,6 @@ fn global_clear_exception(global: &JSGlobalObject) {
 
 #[inline]
 fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
-    // Spec JSGlobalObject.zig `toJSValue` — `@enumFromInt(@intFromPtr(globalThis))`.
     JSValue::from_cell(std::ptr::from_ref::<JSGlobalObject>(global))
 }
 
@@ -86,17 +87,20 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 
 /// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
 ///
-/// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
-/// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
-/// is the sole driver of `tick()` / `wait_for_promise()` here. The Rust port
-/// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
+/// SAFETY: `VirtualMachine` is single-threaded per JS thread and the REPL
+/// is the sole driver of `tick()` / `wait_for_promise()` here, so no other
+/// `&mut` to the VM can be live. We store `&VirtualMachine` for borrowck
+/// simplicity and cast at the call site.
 #[inline]
-#[allow(invalid_reference_casting)]
+#[allow(invalid_reference_casting, clippy::mut_from_ref)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
-    // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
-    // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
+    // silenced above because `VirtualMachine` is `!Sync` single-thread state and
+    // the REPL is its sole driver here.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
+    // SAFETY: `ptr` is non-null and points to a live `VirtualMachine` (derived from
+    // `&'a VirtualMachine`); the REPL is the sole driver on this single JS thread so
+    // no other `&mut` to this VM exists for `'a` (see fn-level SAFETY doc above).
     unsafe { &mut *ptr }
 }
 
@@ -105,12 +109,9 @@ fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
-const MAX_LINE_LENGTH: usize = 16384;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
-const TAB_WIDTH: usize = 2;
 
 // ANSI escape codes
-const ESC: &str = "\x1b";
 const CSI: &str = concat!("\x1b", "[");
 
 // Colors — Color::RESET, Color::CYAN, … resolve unchanged
@@ -119,14 +120,8 @@ use bun_core::output::ansi as Color;
 // Cursor control
 struct Cursor;
 impl Cursor {
-    const HIDE: &'static str = concat!("\x1b", "[", "?25l");
-    const SHOW: &'static str = concat!("\x1b", "[", "?25h");
-    const SAVE: &'static str = concat!("\x1b", "7");
-    const RESTORE: &'static str = concat!("\x1b", "8");
     const HOME: &'static str = concat!("\x1b", "[", "H");
     const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
-    const CLEAR_TO_END: &'static str = concat!("\x1b", "[", "0K");
-    const CLEAR_TO_START: &'static str = concat!("\x1b", "[", "1K");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -176,15 +171,18 @@ enum Key {
     AltLeft,
     AltRight,
 
-    // Regular printable character
+    // Regular printable ASCII character
     Char(u8),
+
+    // A full multi-byte UTF-8 sequence (len bytes of the array are valid)
+    Text([u8; 4], usize),
 
     // Unknown/unhandled
     Unknown,
 }
 
 impl Key {
-    pub fn from_byte(byte: u8) -> Key {
+    pub(crate) fn from_byte(byte: u8) -> Key {
         match byte {
             1 => Key::CtrlA,
             2 => Key::CtrlB,
@@ -223,7 +221,7 @@ struct History {
 }
 
 impl History {
-    pub fn init() -> History {
+    pub(crate) fn init() -> History {
         History {
             entries: Vec::new(),
             position: 0,
@@ -233,8 +231,7 @@ impl History {
         }
     }
 
-    pub fn load(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(crate) fn load(&mut self) -> Result<(), bun_core::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -269,7 +266,7 @@ impl History {
         Ok(())
     }
 
-    pub fn save(&mut self) {
+    pub(crate) fn save(&mut self) {
         if !self.modified {
             return;
         }
@@ -290,13 +287,12 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
-            sys::Result::Ok(fd) => sys::File { handle: fd },
+        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
+            sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };
-        let file = scopeguard::guard(file, |file| {
-            let _ = file.close();
-        });
+        #[cfg(unix)]
+        let _ = sys::fchmod(file.fd(), 0o600);
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,
@@ -305,7 +301,7 @@ impl History {
         self.modified = false;
     }
 
-    pub fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn add(&mut self, line: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if line.is_empty() {
             return Ok(());
         }
@@ -330,7 +326,7 @@ impl History {
         Ok(())
     }
 
-    pub fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn prev(&mut self, current_line: &[u8]) -> Option<&[u8]> {
         if self.entries.is_empty() {
             return None;
         }
@@ -348,7 +344,7 @@ impl History {
         None
     }
 
-    pub fn next(&mut self) -> Option<&[u8]> {
+    pub(crate) fn next(&mut self) -> Option<&[u8]> {
         if self.position < self.entries.len() {
             self.position += 1;
         }
@@ -366,7 +362,7 @@ impl History {
         None
     }
 
-    pub fn reset_position(&mut self) {
+    pub(crate) fn reset_position(&mut self) {
         self.position = self.entries.len();
         self.temp_line = None;
     }
@@ -382,26 +378,26 @@ struct LineEditor {
 }
 
 impl LineEditor {
-    pub fn init() -> LineEditor {
+    pub(crate) fn init() -> LineEditor {
         LineEditor {
             buffer: Vec::new(),
             cursor: 0,
         }
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.buffer.clear();
         self.cursor = 0;
     }
 
-    pub fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn set(&mut self, text: &[u8]) -> Result<(), bun_alloc::AllocError> {
         self.buffer.clear();
         self.buffer.extend_from_slice(text);
         self.cursor = text.len();
         Ok(())
     }
 
-    pub fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert(&mut self, ch: u8) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.push(ch);
         } else {
@@ -411,11 +407,10 @@ impl LineEditor {
         Ok(())
     }
 
-    pub fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn insert_slice(&mut self, slice: &[u8]) -> Result<(), bun_alloc::AllocError> {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
-            // TODO(port): Vec has no insert_slice; splice is equivalent
             self.buffer
                 .splice(self.cursor..self.cursor, slice.iter().copied());
         }
@@ -423,20 +418,46 @@ impl LineEditor {
         Ok(())
     }
 
-    pub fn delete_char(&mut self) {
+    /// Byte offset of the start of the codepoint ending just before `pos`.
+    /// Walks back over UTF-8 continuation bytes (0x80..=0xBF).
+    fn prev_boundary(&self, pos: usize) -> usize {
+        let mut i = pos;
+        while i > 0 {
+            i -= 1;
+            if self.buffer[i] & 0xC0 != 0x80 {
+                break;
+            }
+        }
+        i
+    }
+
+    /// Byte offset of the start of the codepoint after the one beginning at
+    /// `pos`. Advances by the lead byte's UTF-8 sequence length, clamped to the
+    /// buffer so a truncated/invalid sequence still makes progress.
+    fn next_boundary(&self, pos: usize) -> usize {
+        if pos >= self.buffer.len() {
+            return self.buffer.len();
+        }
+        let step = (strings::wtf8_byte_sequence_length(self.buffer[pos]) as usize).max(1);
+        (pos + step).min(self.buffer.len())
+    }
+
+    pub(crate) fn delete_char(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.buffer.remove(self.cursor);
+            let end = self.next_boundary(self.cursor);
+            self.buffer.drain(self.cursor..end);
         }
     }
 
-    pub fn backspace(&mut self) {
+    pub(crate) fn backspace(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
-            self.buffer.remove(self.cursor);
+            let start = self.prev_boundary(self.cursor);
+            self.buffer.drain(start..self.cursor);
+            self.cursor = start;
         }
     }
 
-    pub fn delete_word(&mut self) {
+    pub(crate) fn delete_word(&mut self) {
         // Delete word forward
         while self.cursor < self.buffer.len() && self.buffer[self.cursor].is_ascii_whitespace() {
             self.buffer.remove(self.cursor);
@@ -446,7 +467,7 @@ impl LineEditor {
         }
     }
 
-    pub fn backspace_word(&mut self) {
+    pub(crate) fn backspace_word(&mut self) {
         // Delete word backward
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
@@ -458,28 +479,28 @@ impl LineEditor {
         }
     }
 
-    pub fn delete_to_end(&mut self) {
+    pub(crate) fn delete_to_end(&mut self) {
         self.buffer.truncate(self.cursor);
     }
 
-    pub fn delete_to_start(&mut self) {
+    pub(crate) fn delete_to_start(&mut self) {
         self.buffer.drain_front(self.cursor);
         self.cursor = 0;
     }
 
-    pub fn move_left(&mut self) {
+    pub(crate) fn move_left(&mut self) {
         if self.cursor > 0 {
-            self.cursor -= 1;
+            self.cursor = self.prev_boundary(self.cursor);
         }
     }
 
-    pub fn move_right(&mut self) {
+    pub(crate) fn move_right(&mut self) {
         if self.cursor < self.buffer.len() {
-            self.cursor += 1;
+            self.cursor = self.next_boundary(self.cursor);
         }
     }
 
-    pub fn move_word_left(&mut self) {
+    pub(crate) fn move_word_left(&mut self) {
         while self.cursor > 0 && self.buffer[self.cursor - 1].is_ascii_whitespace() {
             self.cursor -= 1;
         }
@@ -488,7 +509,7 @@ impl LineEditor {
         }
     }
 
-    pub fn move_word_right(&mut self) {
+    pub(crate) fn move_word_right(&mut self) {
         while self.cursor < self.buffer.len() && !self.buffer[self.cursor].is_ascii_whitespace() {
             self.cursor += 1;
         }
@@ -497,24 +518,38 @@ impl LineEditor {
         }
     }
 
-    pub fn move_to_start(&mut self) {
+    pub(crate) fn move_to_start(&mut self) {
         self.cursor = 0;
     }
 
-    pub fn move_to_end(&mut self) {
+    pub(crate) fn move_to_end(&mut self) {
         self.cursor = self.buffer.len();
     }
 
-    pub fn swap(&mut self) {
-        if self.cursor > 0 && self.cursor < self.buffer.len() {
-            self.buffer.swap(self.cursor - 1, self.cursor);
-            self.cursor += 1;
-        } else if self.cursor > 1 && self.cursor == self.buffer.len() {
-            self.buffer.swap(self.cursor - 2, self.cursor - 1);
-        }
+    pub(crate) fn swap(&mut self) {
+        // Transpose two whole codepoints (not bytes), so multi-byte UTF-8 is
+        // not split. Mid-line swaps the codepoint before the cursor with the
+        // one at it and advances past both; at end-of-line it transposes the
+        // last two codepoints.
+        let (left_start, mid, right_end) = if self.cursor > 0 && self.cursor < self.buffer.len() {
+            let mid = self.cursor;
+            (self.prev_boundary(mid), mid, self.next_boundary(mid))
+        } else if self.cursor == self.buffer.len() {
+            let mid = self.prev_boundary(self.cursor);
+            if mid == 0 {
+                return; // fewer than two codepoints
+            }
+            (self.prev_boundary(mid), mid, self.cursor)
+        } else {
+            return;
+        };
+        // Rotate the two adjacent codepoint ranges [left_start, mid) and
+        // [mid, right_end): moving the left range to the end swaps them.
+        self.buffer[left_start..right_end].rotate_left(mid - left_start);
+        self.cursor = right_end;
     }
 
-    pub fn get_line(&self) -> &[u8] {
+    pub(crate) fn get_line(&self) -> &[u8] {
         &self.buffer
     }
 }
@@ -531,7 +566,7 @@ struct ReplCommand {
 }
 
 impl ReplCommand {
-    pub const ALL: [ReplCommand; 9] = [
+    pub(crate) const ALL: [ReplCommand; 9] = [
         ReplCommand {
             name: b".help",
             help: "Print this help message",
@@ -579,21 +614,16 @@ impl ReplCommand {
         },
     ];
 
-    pub fn find(name: &[u8]) -> Option<&'static ReplCommand> {
-        for cmd in &Self::ALL {
-            if strings::eql_long(cmd.name, name, true)
+    pub(crate) fn find(name: &[u8]) -> Option<&'static ReplCommand> {
+        Self::ALL.iter().find(|&cmd| {
+            strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))
-            {
-                return Some(cmd);
-            }
-        }
-        None
+        })
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplResult {
-    ContinueRepl,
     ExitRepl,
     SkipEval,
 }
@@ -775,15 +805,12 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
         0o644,
     ) {
-        sys::Result::Ok(fd) => sys::File { handle: fd },
+        sys::Result::Ok(fd) => sys::File::from_fd(fd),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;
         }
     };
-    let file = scopeguard::guard(file, |file| {
-        let _ = file.close();
-    });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {
@@ -848,7 +875,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
 // Main REPL Struct
 // ============================================================================
 
-pub struct Repl<'a> {
+pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
     multiline_buffer: Vec<u8>,
@@ -874,7 +901,7 @@ pub struct Repl<'a> {
     pub(super) global: Option<&'a JSGlobalObject>,
 
     // Special REPL variables
-    // PORT NOTE: bare JSValue fields are safe here because Repl is stack-allocated
+    // Note: bare JSValue fields are safe here because Repl is stack-allocated
     // and values are explicitly protect()/unprotect()'d.
     last_result: ProtectedJSValue,
     last_error: ProtectedJSValue,
@@ -885,7 +912,7 @@ pub struct Repl<'a> {
 }
 
 impl<'a> Repl<'a> {
-    pub fn init() -> Repl<'a> {
+    pub(super) fn init() -> Repl<'a> {
         Repl {
             line_editor: LineEditor::init(),
             history: History::init(),
@@ -996,7 +1023,6 @@ impl<'a> Repl<'a> {
             let _ = tty::set_mode(0, tty::Mode::Normal);
 
             // Install SIGINT handler
-            // TODO(port): wrap std.posix.Sigaction in bun_sys
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
             // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
             unsafe {
@@ -1055,10 +1081,9 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer
-        let stdin = sys::File {
-            handle: Fd::stdin(),
-        };
+        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
+        // re-create on every call).
+        let stdin = sys::File::stdin();
         let n = match stdin.read(&mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
@@ -1151,6 +1176,37 @@ impl<'a> Repl<'a> {
             return Some(Key::Escape);
         }
 
+        // Multi-byte UTF-8: assemble the whole sequence so it is inserted as
+        // one unit. A lone/invalid lead byte yields a length of 0; fall back to
+        // reading it as a single raw byte so it is still dropped (not split).
+        let seq_len = strings::utf8_byte_sequence_length(byte) as usize;
+        if seq_len > 1 {
+            let mut bytes = [0u8; 4];
+            bytes[0] = byte;
+            for slot in bytes.iter_mut().take(seq_len).skip(1) {
+                let Some(cont) = self.read_byte() else {
+                    // Stream ended mid-sequence; drop the truncated bytes.
+                    return Some(Key::Unknown);
+                };
+                // A byte that is not a continuation byte (0x80..=0xBF) means the
+                // sequence is malformed; drop the lead bytes but push this one
+                // back so the next read_key sees it (it starts a new keystroke).
+                if cont & 0xC0 != 0x80 {
+                    self.stdin_buf_start -= 1;
+                    return Some(Key::Unknown);
+                }
+                *slot = cont;
+            }
+            // Reject overlong encodings, surrogates, and values above U+10FFFF,
+            // which pass the continuation-byte shape check but are not valid
+            // UTF-8. Keeping the buffer valid avoids feeding bad bytes to the
+            // highlighter and parser.
+            if !strings::is_valid_utf8(&bytes[..seq_len]) {
+                return Some(Key::Unknown);
+            }
+            return Some(Key::Text(bytes, seq_len));
+        }
+
         Some(Key::from_byte(byte))
     }
 
@@ -1203,8 +1259,12 @@ impl<'a> Repl<'a> {
             self.write(line);
         }
 
-        // Position cursor
-        let cursor_pos = prompt_len + self.line_editor.cursor;
+        // Position cursor. The cursor is a byte offset, but the terminal column
+        // is the display width of the text before it, so multi-byte UTF-8 and
+        // wide (e.g. CJK) characters advance the column correctly.
+        let cursor_col =
+            strings::visible::width::exclude_ansi_colors::utf8(&line[..self.line_editor.cursor]);
+        let cursor_pos = prompt_len + cursor_col;
         if cursor_pos < self.terminal_width as usize {
             self.write(b"\r");
             if cursor_pos > 0 {
@@ -1289,7 +1349,7 @@ impl<'a> Repl<'a> {
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
             self.enable_signals_during_wait();
-            // PORT NOTE: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
+            // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
@@ -1382,7 +1442,7 @@ impl<'a> Repl<'a> {
     /// result to stdout. Errors are written to stderr.
     /// Returns true if an error occurred (the caller should set exit_code=1 and
     /// skip onBeforeExit); false on success (caller preserves process.exitCode).
-    pub fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
+    pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
         let Some(global) = self.global else {
             return true;
         };
@@ -1590,7 +1650,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
-            // PORT NOTE: reshaped for borrowck — disable_signals_during_wait called on each path
+            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
             vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
             if vm.jsc_vm().execution_forbidden() {
                 vm_set_execution_forbidden(vm.jsc_vm, false);
@@ -1676,8 +1736,7 @@ impl<'a> Repl<'a> {
         jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut array,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: false,
@@ -1689,7 +1748,6 @@ impl<'a> Repl<'a> {
                 ..Default::default()
             },
         )?;
-        // TODO(port): array.writer.flush() — Vec<u8> writer needs no flush
         Ok(Some(array.into_boxed_slice()))
     }
 
@@ -1723,7 +1781,6 @@ impl<'a> Repl<'a> {
 
     /// Write text to clipboard using OSC 52 escape sequence.
     fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut it = strings::ANSIIterator::init(text);
         let Some(first) = it.next() else {
             return Ok(());
@@ -1738,10 +1795,8 @@ impl<'a> Repl<'a> {
         } else {
             // Has ANSI sequences - collect clean slices then encode
             let mut clean: Vec<u8> = Vec::with_capacity(text.len());
-            // PERF(port): was assume_capacity
             clean.extend_from_slice(first);
             while let Some(slice) = it.next() {
-                // PERF(port): was assume_capacity
                 clean.extend_from_slice(slice);
             }
             let encoded: Vec<u8> = bun_base64::encode_alloc(&clean);
@@ -1779,12 +1834,11 @@ impl<'a> Repl<'a> {
         };
 
         // Create arena for parsing
-        // PERF(port): was MimallocArena bulk-free — using bumpalo per AST-crate convention
         let arena = bun_alloc::Arena::new();
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
@@ -1792,15 +1846,14 @@ impl<'a> Repl<'a> {
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
-        // `ast/repl_transforms.zig` rewrites every top-level `s_local` into a
+        // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
-        // Initialize macro context from transpiler (required for import processing)
-        // PORT NOTE: Zig spec mutates `vm.transpiler` (`*Transpiler`) here; `vm`
-        // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
+        // Initialize macro context from transpiler (required for import processing).
+        // Note: `vm` is `&VirtualMachine` here, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
             vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
@@ -1816,7 +1869,7 @@ impl<'a> Repl<'a> {
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let mut parser = match bun_js_parser::Parser::init(
+        let parser = match bun_js_parser::Parser::init(
             opts,
             &mut log,
             &source,
@@ -1845,12 +1898,14 @@ impl<'a> Repl<'a> {
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
         // Create symbol map from ast.symbols
-        // PORT NOTE: Zig used `Symbol.NestedList.init(&.{ast.symbols})` (borrows
-        // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
-        // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
-        // hazard.
-        let symbols_map =
-            bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        // Note: `Map::init_with_one_list` takes ownership of `ast.symbols`
+        // — see Symbol.rs note on the dangling-slice hazard.
+        let arena = *ast.symbols.allocator();
+        let symbols_map = bun_ast::symbol::Map::init_with_one_list(
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+                .into_iter()
+                .collect(),
+        );
 
         if bun_js_printer::print_ast::<
             _,
@@ -1858,7 +1913,7 @@ impl<'a> Repl<'a> {
             /* GENERATE_SOURCE_MAP */ false,
         >(
             &mut buffer_printer,
-            &arena,
+            arena,
             &ast,
             symbols_map,
             &source,
@@ -1877,12 +1932,6 @@ impl<'a> Repl<'a> {
         Some(Box::<[u8]>::from(written))
     }
 
-    fn set_repl_variables(&self) {
-        // For now, we rely on the C++ evaluation to handle this
-        // The C++ code sets _ and _error after each evaluation
-        let _ = self;
-    }
-
     fn print_js_error(&self, error_value: JSValue) {
         // Interactive REPL writes everything to stdout (single terminal stream).
         self.print_js_error_to(error_value, Output::writer(), self.use_colors);
@@ -1894,10 +1943,9 @@ impl<'a> Repl<'a> {
         writer: &mut bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // PORT NOTE: Zig writes straight through `*std.Io.Writer`. The Rust
-        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
-        // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
-        // error output is tiny.
+        // Note: the `bun_core::io::Writer` vtable doesn't implement
+        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
+        // flush in one shot — REPL error output is tiny.
         let Some(global) = self.global else {
             return;
         };
@@ -1906,8 +1954,7 @@ impl<'a> Repl<'a> {
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
-            &raw const error_value,
-            1,
+            core::slice::from_ref(&error_value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
@@ -1935,14 +1982,13 @@ impl<'a> Repl<'a> {
             return;
         };
         let writer = Output::writer();
-        // PORT NOTE: see `print_js_error_to` — buffer because
+        // Note: see `print_js_error_to` — buffer because
         // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
         let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
@@ -1967,19 +2013,17 @@ impl<'a> Repl<'a> {
     // Main Loop
     // ========================================================================
 
-    pub fn run(&mut self) -> Result<(), bun_core::Error> {
-        self.run_with_vm(None)
-    }
-
-    pub fn run_with_vm(&mut self, vm: Option<&'a VirtualMachine>) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub(super) fn run_with_vm(
+        &mut self,
+        vm: Option<&'a VirtualMachine>,
+    ) -> Result<(), bun_core::Error> {
         self.vm = vm;
         if let Some(v) = vm {
             self.global = Some(v.global());
         }
 
         self.setup_terminal();
-        // PORT NOTE: defer self.restoreTerminal() — handled in Drop + explicit call at end
+        // Note: defer self.restoreTerminal() — handled in Drop + explicit call at end
 
         self.history.load()?;
 
@@ -2015,7 +2059,7 @@ impl<'a> Repl<'a> {
                     if self.editor_mode {
                         // Finish editor mode
                         self.print(format_args!("\n"));
-                        // PORT NOTE: reshaped for borrowck — clone editor_buffer slice before evaluate
+                        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
                             self.evaluate_and_print(&code);
@@ -2090,7 +2134,7 @@ impl<'a> Repl<'a> {
                     self.refresh_line();
                 }
                 Key::ArrowUp | Key::CtrlP => {
-                    // PORT NOTE: reshaped for borrowck — copy line before mutating history
+                    // Note: reshaped for borrowck — copy line before mutating history
                     let cur = self.line_editor.get_line().to_vec();
                     if let Some(prev_line) = self.history.prev(&cur) {
                         let prev_line = prev_line.to_vec();
@@ -2120,6 +2164,10 @@ impl<'a> Repl<'a> {
                     let _ = self.line_editor.insert(c);
                     self.refresh_line();
                 }
+                Key::Text(bytes, len) => {
+                    let _ = self.line_editor.insert_slice(&bytes[..len]);
+                    self.refresh_line();
+                }
                 _ => {}
             }
         }
@@ -2130,10 +2178,9 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_enter(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.print(format_args!("\n"));
 
-        // PORT NOTE: reshaped for borrowck — copy line out so we can call &mut self methods
+        // Note: reshaped for borrowck — copy line out so we can call &mut self methods
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
         if self.editor_mode {
@@ -2175,7 +2222,6 @@ impl<'a> Repl<'a> {
                         self.refresh_line();
                         return Ok(());
                     }
-                    ReplResult::ContinueRepl => {}
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
@@ -2270,7 +2316,7 @@ impl<'a> Repl<'a> {
     }
 
     fn handle_tab(&mut self) {
-        // PORT NOTE: reshaped for borrowck — copy line out
+        // Note: reshaped for borrowck — copy line out
         let line: Vec<u8> = self.line_editor.get_line().to_vec();
 
         // Complete REPL commands
@@ -2437,12 +2483,13 @@ impl<'a> Drop for Repl<'a> {
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+#[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
     if !vm.is_null() {
-        // SAFETY: vm was a valid `*mut jsc::VM` when stored (JS thread is
+        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
-        unsafe { vm_set_execution_forbidden(vm, true) };
+        vm_set_execution_forbidden(vm, true);
     }
 }
 
@@ -2506,17 +2553,4 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
 use crate::api::js_transpiler::is_likely_object_literal;
 
-// ============================================================================
-// Public Entry Point (for CLI integration)
-// ============================================================================
-
-pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
-    let _ = ctx;
-    let mut repl = Repl::init();
-    repl.run()
-}
-
 const VERSION: &str = Environment::VERSION_STRING;
-
-// ported from: src/cli/repl.zig

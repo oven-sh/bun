@@ -10,23 +10,18 @@
 //!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
+#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
 
 use core::sync::atomic::Ordering;
-
-use core::ptr::NonNull;
 
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
-use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
 use super::{Graph, Side};
-use crate::server::StaticRoute;
 
 // ─── submodule bodies ────────────────────────────────────────────────────────
-// Each is a faithful port of the `.zig` sibling. Assets body dissolved into
-// `assets.rs`.
+// Assets body dissolved into `assets.rs`.
 #[path = "../DevServer/DirectoryWatchStore.rs"]
 pub(crate) mod directory_watch_store_body;
 #[path = "../DevServer/ErrorReportRequest.rs"]
@@ -101,7 +96,7 @@ pub enum TraceImportGoal {
 }
 
 /// `DevServer.ConsoleLog.Kind` — `enum(u8) { log = 'l', err = 'e' }`.
-/// Discriminants MUST match Zig: `kind as u8` is sent across FFI to
+/// Discriminants MUST NOT change: `kind as u8` is sent across FFI to
 /// `InspectorBunFrontendDevServerAgent__notifyConsoleLog`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -111,7 +106,8 @@ pub enum ConsoleLogKind {
 }
 
 /// `DevServer.MessageId` — first byte of every server→client HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are the HMR wire protocol and MUST match the client
+/// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum MessageId {
@@ -134,7 +130,8 @@ impl MessageId {
 }
 
 /// `DevServer.IncomingMessageId` — first byte of every client→server HMR frame.
-/// Discriminants MUST match `DevServer.zig` exactly (HMR wire protocol).
+/// Discriminants are the HMR wire protocol and MUST match the client
+/// (`generated.ts`).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IncomingMessageId {
@@ -146,7 +143,8 @@ pub enum IncomingMessageId {
     UnrefSourceMap = b'u',
 }
 
-/// `DevServer.HmrTopic`. Discriminants MUST match `DevServer.zig` exactly.
+/// `DevServer.HmrTopic`. Discriminants are the HMR wire protocol and MUST
+/// match the client.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum HmrTopic {
@@ -162,7 +160,7 @@ impl HmrTopic {
     /// `HmrTopic.max_count` — `@typeInfo(HmrTopic).@"enum".fields.len`.
     pub const MAX_COUNT: usize = 6;
 
-    /// All variants in declaration order — Zig: `std.enums.values(HmrTopic)`.
+    /// All variants in declaration order.
     pub const ALL: &[HmrTopic] = &[
         HmrTopic::HotUpdate,
         HmrTopic::Errors,
@@ -234,9 +232,9 @@ impl IncrementalResult {
         client_components_affected: Vec::new(),
     };
 
-    /// DevServer.zig:3528 `IncrementalResult.reset` — `clearRetainingCapacity()`
-    /// on each list, asserts `failures_removed` was already drained, and
-    /// intentionally leaves `had_adjusted_edges` untouched.
+    /// Clears each list retaining capacity, asserts `failures_removed` was
+    /// already drained, and intentionally leaves `had_adjusted_edges`
+    /// untouched.
     pub fn reset(&mut self) {
         self.framework_routes_affected.clear();
         self.html_routes_soft_affected.clear();
@@ -310,10 +308,10 @@ pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
-/// Local stand-in for the unported `bun_uws::ResponseLike` trait — Zig's
-/// `resp: anytype` modeled as a generic bound. Method shapes mirror
-/// `bun_uws_sys::Response<SSL>` so the `R`-generic bodies type-check.
-// TODO(port): replace with `bun_uws::ResponseLike` once it lands upstream.
+/// Local response trait — the response type is a generic bound.
+/// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
+/// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
+/// grows one, this can be replaced by it.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
@@ -344,12 +342,11 @@ impl ResponseLike for bun_uws::AnyResponse {
         *self
     }
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
-        // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
+        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
         (*self)
             .get_remote_socket_info()
             .map(|a| bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
+                ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
             })
@@ -402,21 +399,20 @@ impl HmrSocket {
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// PORT NOTE: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
-// struct cache-line alignment so each inline `WatcherAtomics.events: [3]` element occupies its
-// own cache line, avoiding false sharing on `contention_indicator` between watcher and dev-server
-// threads. 128 matches `std.atomic.cache_line` on x86_64/aarch64 (Bun's tier-1 targets) and
-// absorbs Intel adjacent-line prefetch.
+// Note: cache-line alignment makes each inline `WatcherAtomics.events: [3]`
+// element occupy its own cache line, avoiding false sharing on
+// `contention_indicator` between watcher and dev-server threads. 128 matches
+// the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
+// adjacent-line prefetch.
 #[repr(align(128))]
 pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
-    /// `*mut` (not `*const`) because `run` mutates the owning DevServer; Zig
-    /// declares `owner: *DevServer`.
+    /// `*mut` (not `*const`) because `run` mutates the owning DevServer.
     pub owner: *mut DevServer,
     pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,
-    /// NUL-joined absolute paths (`ArrayListUnmanaged(u8)` in Zig).
+    /// NUL-joined absolute paths.
     pub extra_files: Vec<u8>,
     pub timer: std::time::Instant,
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
@@ -463,7 +459,6 @@ impl HotReloadEvent {
         unsafe { (*self.owner).bun_watcher.thread_lock.assert_locked() };
     }
 
-    /// `HotReloadEvent.processFileList` — HotReloadEvent.zig:78.
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`.
     pub fn process_file_list(&mut self, dev: &mut DevServer, entry_points: &mut EntryPointList) {
         // RAII: `ThreadLockGuard` stores a raw `*const ThreadLock` and unlocks on
@@ -487,14 +482,12 @@ impl HotReloadEvent {
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
-                    // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
-                    // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
                     let mut new_chain: Option<u32> = None;
                     let mut it: Option<u32> =
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
+                        // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
                         let (source_file_path, specifier, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
@@ -520,7 +513,7 @@ impl HotReloadEvent {
                             // this resolution result is not preserved as passing it
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
-                            // PORT NOTE: inlined `append_file` body for disjoint borrow
+                            // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
@@ -552,7 +545,6 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
-        // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
         bun_core::handle_oom(
             dev.server_graph
                 .invalidate(changed_file_paths, entry_points),
@@ -563,18 +555,18 @@ impl HotReloadEvent {
         );
 
         if entry_points.set.count() == 0 {
-            bun_core::Output::debug_warn(format_args!("nothing to bundle"));
+            bun_core::debug_warn!("nothing to bundle");
             if !changed_file_paths.is_empty() {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified files: {}",
                     bun_core::fmt::fmt_slice(changed_file_paths, ", ")
-                ));
+                );
             }
             if self.dirs.count() > 0 {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified dirs: {}",
                     bun_core::fmt::fmt_slice(self.dirs.keys(), ", ")
-                ));
+                );
             }
 
             dev.publish(
@@ -605,12 +597,13 @@ impl HotReloadEvent {
         self.extra_files.clear();
     }
 
-    /// `HotReloadEvent.appendFile` — HotReloadEvent.zig:55.
+    /// Records a changed file path in the pending hot-reload event (deduplicated).
     pub fn append_file(&mut self, file_path: &[u8]) {
         bun_core::handle_oom(self.files.get_or_put(file_path));
     }
 
-    /// `HotReloadEvent.appendDir` — HotReloadEvent.zig:58.
+    /// Records a changed directory (and, when present, the changed entry
+    /// within it) in the pending hot-reload event (deduplicated).
     pub fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
         if dir_path.is_empty() {
             return;
@@ -625,7 +618,6 @@ impl HotReloadEvent {
         }
 
         let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile if hot.
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
@@ -636,8 +628,7 @@ impl HotReloadEvent {
         self.extra_files.push(0);
     }
 
-    /// `HotReloadEvent.run` — HotReloadEvent.zig:173. Main-thread side of the
-    /// watcher → DevServer hand-off.
+    /// Main-thread side of the watcher → DevServer hand-off.
     ///
     /// Takes a raw `*mut` because `first` is an inline element of
     /// `(*first.owner).watcher_atomics.events[_]`; holding a `&mut HotReloadEvent`
@@ -666,6 +657,8 @@ impl HotReloadEvent {
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            // SAFETY: `first` is live (caller contract); atomic load needs no
+            // exclusivity and does not alias any `&mut` borrow.
             debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
@@ -677,7 +670,6 @@ impl HotReloadEvent {
             return;
         }
 
-        // PERF(port): was stack-fallback allocator (4096 bytes) — profile if hot.
         let mut entry_points = EntryPointList::default();
 
         // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
@@ -689,7 +681,7 @@ impl HotReloadEvent {
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
 
-        // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
+        // Note: raw-ptr loop because `recycle_event_from_dev_server` returns
         // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
         // to avoid aliasing UB.
         let mut current: *mut HotReloadEvent = first;
@@ -738,7 +730,6 @@ impl HotReloadEvent {
         }
 
         if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
-            // PORT NOTE: Zig `bun.handleErrorReturnTrace` has no Rust equivalent.
             return;
         }
     }
@@ -748,11 +739,11 @@ impl HotReloadEvent {
 /// rotated between the watcher thread and the main thread.
 pub struct WatcherAtomics {
     pub events: [HotReloadEvent; 3],
-    /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
-    /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
-    // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype if false sharing
-    // shows up in profiles.
+    /// Atomically encodes a `NextEvent`: values 0..3 are an index into
+    /// `events`, plus the `WAITING`/`DONE` sentinels.
+    // Rust cannot align individual fields, so this field is not cache-line
+    // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
+    // lifecycle.rs) if false sharing ever shows up in profiles.
     pub next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
     pub current_event: Option<u8>,
@@ -766,9 +757,9 @@ pub struct WatcherAtomics {
 }
 
 /// Stored in `WatcherAtomics::next_event` (an `AtomicU8`). Modeled as a
-/// transparent newtype rather than a `#[repr(u8)] enum` because Zig used an
-/// open enum (`_`) where any other value is an index into the `events` array,
-/// and Rust enums cannot hold unlisted discriminants.
+/// transparent newtype rather than a `#[repr(u8)] enum` because any value
+/// other than the named constants is an index into the `events` array, and
+/// Rust enums cannot hold unlisted discriminants.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct NextEvent(pub u8);
@@ -787,12 +778,16 @@ impl WatcherAtomics {
     /// so on, until this function returns `None`.
     ///
     /// Runs on dev server thread.
-    pub fn recycle_event_from_dev_server(
+    ///
+    /// # Safety
+    /// `old_event` must be a live `HotReloadEvent` previously submitted to the
+    /// dev server thread (a slot in `self.events`) and now exclusively owned by
+    /// the caller for reset.
+    pub(crate) fn recycle_event_from_dev_server(
         &mut self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
-        // SAFETY: `old_event` was previously submitted to the dev server thread and is now
-        // exclusively owned by it for reset.
+        // SAFETY: per this function's contract.
         unsafe { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
@@ -881,8 +876,7 @@ impl WatcherAtomics {
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
-            // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
-            // we capture `Instant::now()` here and compute elapsed at the read site.
+            // Monotonic start time; elapsed is computed at the read site.
             ev_ref.timer = std::time::Instant::now();
         }
 
@@ -898,9 +892,15 @@ impl WatcherAtomics {
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
-        // the watcher thread has exclusive access until it is submitted below.
+    ///
+    /// # Safety
+    /// `ev` must be the pointer returned by the matching
+    /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
+    /// thread must still hold exclusive access to it.
+    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
+    #[allow(clippy::needless_borrow)]
+    pub(crate) fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
+        // SAFETY: per this function's contract.
         let ev_ref = unsafe { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();
@@ -922,10 +922,6 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // PORT NOTE: Zig asserted `ev.timer` was not the 0xAA debug-undefined
-            // fill pattern. Rust has no such fill (uninitialized memory is never
-            // observed through a typed place), so the byte-scan is dropped — it
-            // could not fire and reading struct padding is itself UB.
             ev_ref.debug_mutex.unlock();
         }
 
@@ -963,8 +959,9 @@ impl WatcherAtomics {
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
+                    );
                 }
             }
 
@@ -1030,7 +1027,7 @@ impl DirectoryWatchStore {
         unsafe { &mut (*self.owner()).bun_watcher }
     }
 
-    /// `DirectoryWatchStore.freeDependencyIndex` — DirectoryWatchStore.zig.
+    /// Returns a dependency slot to the free list so it can be reused.
     pub fn free_dependency_index(&mut self, index: u32) {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
         // `dependencies` without consulting the free list — do not touch the
@@ -1043,7 +1040,6 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// `DirectoryWatchStore.freeEntry` — DirectoryWatchStore.zig:206.
     /// Expects dependency list to be already freed.
     pub fn free_entry(&mut self, entry_index: usize) {
         let entry = self.watches.values()[entry_index];
@@ -1062,7 +1058,7 @@ impl DirectoryWatchStore {
             &[],
         );
 
-        // Zig: alloc.free(store.watches.keys()[entry_index]) — Box key drops on swap_remove_at.
+        // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
 
         if entry.dir_fd_owned {
@@ -1103,8 +1099,7 @@ pub mod directory_watch_store {
     pub struct Dep {
         pub next: Option<u32>,
         /// The file used. BORROWED slice into `IncrementalGraph.bundled_files`
-        /// key storage; compared by *pointer identity* (Zig:
-        /// `dep.source_file_path.ptr == file_path.ptr`). The graph calls
+        /// key storage; compared by *pointer identity*. The graph calls
         /// `removeDependenciesForFile` before freeing the key, so the slice
         /// outlives every read — `RawSlice` invariant.
         pub source_file_path: bun_ptr::RawSlice<u8>,
@@ -1138,7 +1133,7 @@ bun_bundler::link_impl_DevServerHandle! {
         finalize_bundle(bv2, result) => {
             // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
-            // DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
+            // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(Into::into)
         },
@@ -1150,7 +1145,7 @@ bun_bundler::link_impl_DevServerHandle! {
         put_or_overwrite_asset(path, contents, content_hash) => {
             // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
             // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (Zig spec transferred ownership).
+            // bytes as an owned blob (ownership is transferred).
             let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
             (*this).put_or_overwrite_asset(path, blob, content_hash)
@@ -1190,8 +1185,7 @@ bun_bundler::link_impl_DevServerHandle! {
             Ok(())
         },
         register_barrel_export(barrel_path, alias) => {
-            // Zig `persistBarrelExport` (barrel_imports.zig:540) does
-            // `getOrPut(...) catch return` — silently drop on alloc failure.
+            // Silently drop on alloc failure.
             let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
                 return;
             };
@@ -1201,7 +1195,7 @@ bun_bundler::link_impl_DevServerHandle! {
 }
 
 impl DevServer {
-    /// Length of `configuration_hash_key` — Zig: `[16]u8`.
+    /// Length of `configuration_hash_key`.
     pub const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
     /// Construct the erased handle the bundler stores in
@@ -1218,7 +1212,7 @@ impl DevServer {
     }
 }
 
-/// `DirectoryWatchStore.insert` error set — DirectoryWatchStore.zig:101.
+/// `DirectoryWatchStore::insert` error set.
 #[derive(thiserror::Error, Debug)]
 enum DirectoryWatchInsertError {
     #[error("Ignore")]
@@ -1229,7 +1223,8 @@ enum DirectoryWatchInsertError {
 bun_core::oom_from_alloc!(DirectoryWatchInsertError);
 
 impl DirectoryWatchStore {
-    /// `DirectoryWatchStore.trackResolutionFailure` — DirectoryWatchStore.zig:28.
+    /// Registers a directory watch so that a failed import resolution is
+    /// retried when the containing directory changes.
     pub fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -1281,11 +1276,17 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `client_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `server_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
@@ -1299,7 +1300,6 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// `DirectoryWatchStore.insert` — DirectoryWatchStore.zig:101.
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
     /// `specifier` is cloned.
     fn insert(
@@ -1310,8 +1310,8 @@ impl DirectoryWatchStore {
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses (Zig has no borrowck here).
+        // Note: take a raw pointer so the &mut self borrow from owner() does
+        // not overlap subsequent self.* field accesses.
         let dev: *mut DevServer = self.owner();
 
         bun_core::scoped_log!(
@@ -1323,11 +1323,10 @@ impl DirectoryWatchStore {
         );
 
         if self.dependencies_free_list.is_empty() {
-            // PERF(port): was ensureUnusedCapacity — profile if hot.
             self.dependencies.reserve(1);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture gop scalars before
+        // Note: reshaped for borrowck — capture gop scalars before
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
@@ -1357,7 +1356,7 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
+        // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
         let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> =
             &raw mut self.watches;
@@ -1386,7 +1385,7 @@ impl DirectoryWatchStore {
             if let Some(fd) = cache_fd {
                 (fd, false)
             } else {
-                // std.posix.toPosixPath — build a NUL-terminated path buffer.
+                // Build a NUL-terminated path buffer.
                 if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
                     return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
                 }
@@ -1420,18 +1419,18 @@ impl DirectoryWatchStore {
             }
         });
 
-        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
-        // errdefer free(dir_name) — handled by Drop.
-
-        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
-        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
-        // boxed the trimmed key on insert above, so the reassignment is a
-        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
-
-        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
+        // retains the path until eviction runs (deferred onto `evict_list` and
+        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
+        // transient `dirname()` view of a thread-local path buffer. A borrowed
+        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
+        // the watcher reads it on a file event. Owning the copy also lets the
+        // map keep its own boxed key independently, so no extra intermediate
+        // `Box` is needed here.
+        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
-            &dir_name,
-            bun_watcher::Watcher::get_hash(&dir_name),
+            dir_name_to_watch,
+            bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
@@ -1452,7 +1451,6 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
-        let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }
 
@@ -1464,13 +1462,11 @@ impl DirectoryWatchStore {
             index
         } else {
             let index = u32::try_from(self.dependencies.len()).expect("int cast");
-            // PERF(port): was appendAssumeCapacity — profile if hot.
             self.dependencies.push(dep);
             index
         }
     }
 
-    /// `DirectoryWatchStore.removeDependenciesForFile` — DirectoryWatchStore.zig:233.
     /// Removes all dependencies whose `source_file_path` is the exact slice
     /// `file_path`, compared by *pointer identity* since the slice is shared
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
@@ -1490,7 +1486,7 @@ impl DirectoryWatchStore {
         let mut watch_index = self.watches.count();
         while watch_index > 0 {
             watch_index -= 1;
-            // PORT NOTE: reshaped for borrowck — cannot hold &mut entry across
+            // Note: reshaped for borrowck — cannot hold &mut entry across
             // self.free_dependency_index(); walk by index and re-borrow.
             let mut new_chain: Option<u32> = None;
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
@@ -1498,7 +1494,7 @@ impl DirectoryWatchStore {
                 let dep_next = self.dependencies[index as usize].next;
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
-                // Pointer-identity comparison (Zig: `dep.source_file_path.ptr == file_path.ptr`).
+                // Pointer-identity comparison.
                 if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     self.free_dependency_index(index);
                 } else {

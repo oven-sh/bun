@@ -1,17 +1,16 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 
-// PORT NOTE: std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.
-// Zig matches ' ' and '\t'..'\r' (0x09–0x0D).
+// Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
+// u8::is_ascii_whitespace does not.
 #[inline]
 fn is_zig_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_equal_ignoring_whitespace(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_equal_ignoring_whitespace(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -38,7 +37,6 @@ pub fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        // Zig passed `default_allocator`; drop per §Allocators.
         let value_slice = value.to_slice(global)?;
         let expected_slice = expected.to_slice(global)?;
         // `defer ….deinit()` deleted — Drop handles it.
@@ -91,7 +89,7 @@ pub fn to_equal_ignoring_whitespace(
     }
 
     // handle failure
-    // PORT NOTE: `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
+    // `to_fmt` returns a `ZigFormatter<'a, 'b>` that mutably borrows the
     // backing formatter. Use a second formatter for the received value — `make_formatter` is
     // cheap (no alloc) and this matches sibling matchers (toContainEqual, toBeCloseTo).
     let mut formatter = super::make_formatter(global);
@@ -101,7 +99,6 @@ pub fn to_equal_ignoring_whitespace(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        // TODO(port): get_signature must be `const fn` (was `comptime` in Zig).
         let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -123,5 +120,3 @@ pub fn to_equal_ignoring_whitespace(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toEqualIgnoringWhitespace.zig

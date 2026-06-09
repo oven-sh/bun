@@ -18,7 +18,7 @@ use super::assert::myers_diff::{Diff, DiffKind, Line};
 /// ## Invariants
 /// If not met, this function will panic.
 /// - `actual` and `expected` are alive and have the same encoding.
-pub fn myers_diff(
+pub(crate) fn myers_diff(
     global: &JSGlobalObject,
     actual: &BunString,
     expected: &BunString,
@@ -73,9 +73,9 @@ pub fn myers_diff(
         let _actual_utf8 = actual.to_utf8_without_ref();
         let _expected_utf8 = expected.to_utf8_without_ref();
 
-        // PORT NOTE: Zig passes `actual.byteSlice()` / `expected.byteSlice()` here (the
-        // originals), not the just-computed utf8 slices. Preserved verbatim for behavioral
-        // parity; likely a pre-existing bug in the Zig source.
+        // Intentionally diffs the original byte slices, not the just-computed utf8
+        // slices — preserved verbatim for behavioral parity with the original
+        // implementation, which did the same (likely a pre-existing bug there).
         return diff_chars::<u8>(global, actual.byte_slice(), expected.byte_slice());
     }
 
@@ -93,7 +93,7 @@ where
 {
     let diff: MyersDiff::DiffList<T> = MyersDiff::Differ::<T, false>::diff(actual, expected)
         .map_err(|err| map_diff_error(global, err))?;
-    diff_list_to_js(global, diff)
+    diff_list_to_js(global, &diff)
 }
 
 fn diff_lines<'s, T>(
@@ -116,12 +116,12 @@ where
         MyersDiff::Differ::<&'s [T], false>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     };
-    diff_list_to_js(global, diff)
+    diff_list_to_js(global, &diff)
 }
 
 fn diff_list_to_js<T>(
     global: &JSGlobalObject,
-    diff_list: MyersDiff::DiffList<T>,
+    diff_list: &MyersDiff::DiffList<T>,
 ) -> JsResult<JSValue>
 where
     T: FromAny + Copy,
@@ -132,9 +132,8 @@ where
 }
 
 /// Field reflection for `Diff<T>` so [`JSObject::create_null_proto`] can
-/// marshal it. Mirrors Zig's `inline for` over `@typeInfo(Diff(T))`:
-/// `kind` is a fieldless enum → `jsNumber(@intFromEnum)`; `value` routes
-/// through `JSValue::from_any` per `T`.
+/// marshal it: `kind` is a fieldless enum marshalled as its discriminant;
+/// `value` routes through `JSValue::from_any` per `T`.
 impl<T: FromAny + Copy> PojoFields for Diff<T> {
     const FIELD_COUNT: usize = 2;
     fn put_fields(
@@ -161,11 +160,9 @@ fn map_diff_error(global: &JSGlobalObject, err: MyersDiff::Error) -> JsError {
 }
 
 // Ensure `DiffKind`'s discriminants match the JS-side `DiffType` enum
-// (Insert=0, Delete=1, Equal=2). Zig's `@intFromEnum` uses declaration order.
+// (Insert=0, Delete=1, Equal=2).
 const _: () = {
     assert!(DiffKind::Insert as i32 == 0);
     assert!(DiffKind::Delete as i32 == 1);
     assert!(DiffKind::Equal as i32 == 2);
 };
-
-// ported from: src/runtime/node/node_assert.zig

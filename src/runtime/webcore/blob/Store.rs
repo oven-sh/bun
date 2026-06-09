@@ -7,25 +7,25 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
-use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
+use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
-    S3ListObjectsOptions, S3ListObjectsResult, StorageClass,
+    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
+    S3ListObjectsResult,
 };
 use bun_collections::HashMap;
-use bun_core::{PathString, ZigString, strings};
+use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
-use super::{Blob, SizeType};
+#[cfg(unix)]
+use super::SizeType;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical data types from `bun_jsc`.
@@ -35,8 +35,6 @@ pub use bun_jsc::webcore_types::store::{
     Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
 };
 
-// TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap needs an
-// identity-hasher variant; load factor 80 is the std default in Zig.
 pub type Map = HashMap<u64, *mut Store>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -50,7 +48,7 @@ pub trait StoreExt {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error>
     where
         Self: Sized;
@@ -119,7 +117,7 @@ pub trait BytesExt {
 
 /// Shared mime-sniffing fallback for the `init_*` constructors below: derive a
 /// `MimeType` from the path's extension, returning `None` for empty paths or
-/// unknown extensions (Zig's `brk:` block in `initS3*`/`initFile`).
+/// unknown extensions.
 #[inline]
 fn mime_from_path_ext(sliced: &[u8]) -> Option<MimeType> {
     if sliced.is_empty() {
@@ -144,7 +142,7 @@ impl StoreExt for Store {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike
@@ -208,7 +206,6 @@ impl StoreExt for Store {
 
     /// Adopt an mmap'd region — no copy. The store's `Bytes` payload owns the
     /// mapping; when the refcount drops to zero, `Bytes::drop` calls `munmap`.
-    /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef {
         StoreRef::from(Store::new(Store {
@@ -219,12 +216,7 @@ impl StoreExt for Store {
         }))
     }
 
-    // PORT NOTE: Zig `deinit` body became `impl Drop for Store` below. The manual
-    // `allocator.free(file.pathlike.path.slice())` / `s3.deinit(allocator)` paths are
-    // now handled by the owned types' own `Drop` impls.
-
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         match &self.data {
             Data::File(file) => {
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
@@ -237,8 +229,7 @@ impl StoreExt for Store {
 
                 match &file.pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
-                        // PORT NOTE: Zig `writer.writeStruct(fd)` writes the raw
-                        // bytes of the FD wrapper. `bun_sys::Fd` is
+                        // Write the raw bytes of the FD wrapper. `bun_sys::Fd` is
                         // `#[repr(transparent)]` over an integer (`i32` posix /
                         // `u64` windows), so its native-endian byte image is
                         // exactly the inner field's `to_ne_bytes()`.
@@ -264,8 +255,8 @@ impl StoreExt for Store {
                 writer.write_int_le::<u32>(slice.len() as u32)?;
                 writer.write_all(slice)?;
 
-                writer.write_int_le::<u32>(bytes.stored_name.slice().len() as u32)?;
-                writer.write_all(bytes.stored_name.slice())?;
+                writer.write_int_le::<u32>(bytes.stored_name.len() as u32)?;
+                writer.write_all(&bytes.stored_name)?;
             }
         }
         Ok(())
@@ -280,17 +271,13 @@ impl FileExt for File {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
-                // PORT NOTE: Zig `slice.toOwned()` / `toSliceClone()` are
-                // fallible only on OOM; the Rust ports return the slice
-                // directly (mimalloc aborts on OOM), so no `?`.
                 let encoded_slice = match path_like {
                     PathLike::EncodedSlice(slice) => {
                         bun_core::ZigStringSlice::Owned(slice.slice().to_vec())
                     }
                     _ => ZigString::from_utf8(path_like.slice()).to_slice_clone(),
                 };
-                // Zig passes `undefined` for the `*Binding` arg (it is unused in
-                // `AsyncFSTask::create`).
+                // The `*Binding` arg is unused in `AsyncFSTask::create`.
                 let binding = node_fs::Binding::default();
                 // SAFETY: `bun_vm()` returns the live per-global VM pointer; the
                 // task is created on the JS thread that owns it.
@@ -322,12 +309,10 @@ impl S3Ext for S3 {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions> {
-        // Zig: `S3Credentials.getCredentialsWithOptions(this.getCredentials().*, this.options,
-        // options, this.acl, this.storage_class, this.request_payer, globalObject)`.
-        // The Rust associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
+        // The associated fn (surfaced via `S3CredentialsExt` in `webcore/S3Client.rs`)
         // takes `&S3Credentials` instead of by-value because `S3Credentials` carries a
         // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
-        // internally, matching the Zig `.*` value-copy semantics.
+        // internally.
         use crate::webcore::s3_client::S3CredentialsExt as _;
         S3Credentials::get_credentials_with_options(
             self.get_credentials(),
@@ -387,7 +372,7 @@ impl S3Ext for S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
+        // Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
         // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
         // heap::take + drop in resolve().
 
@@ -412,7 +397,7 @@ impl S3Ext for S3 {
             bun_core::heap::into_raw(Wrapper::new(Wrapper {
                 promise,
                 // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-                // intrusive refcount (Zig: `store.ref()`).
+                // intrusive refcount.
                 store: unsafe { StoreRef::retained(NonNull::from(store)) },
                 global: bun_ptr::BackRef::new(global_this),
             }))
@@ -461,7 +446,6 @@ impl S3Ext for S3 {
                         let list_result_js = match list_result.to_js(global_object) {
                             Ok(v) => v,
                             Err(e) => {
-                                // Zig: `catch return self.promise.reject(global, error.JSError)`
                                 return self_.promise.reject(global_object, Err(e));
                             }
                         };
@@ -483,7 +467,7 @@ impl S3Ext for S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
+        // Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
         // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
         // S3ListObjectsOptions::drop, bun.destroy(self) via heap::take + drop.
 
@@ -503,17 +487,15 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // PORT NOTE: Zig passed `options` by-value to both `bun.S3.listObjects`
-        // and `Wrapper.resolvedlistOptions` (implicit struct copy).
-        // `S3ListObjectsOptions` is not `Clone` in Rust (owns `Utf8Slice`s);
+        // `S3ListObjectsOptions` is not `Clone` (it owns `Utf8Slice`s);
         // box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
         // build the search-params string). The wrapper retains ownership for
-        // `Drop` after the async callback — matching Zig's `deinit()`.
+        // `Drop` after the async callback.
         let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
             promise,
             // SAFETY: `store` is a live heap `Store`; `retained` bumps the
-            // intrusive refcount (Zig: `store.ref()`).
+            // intrusive refcount.
             store: unsafe { StoreRef::retained(NonNull::from(store)) },
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(global_this),
@@ -535,7 +517,6 @@ impl S3Ext for S3 {
 
 impl BytesExt for Bytes {
     /// Adopt an mmap'd region. `Drop` (`allocator.free`) will `munmap` it.
-    /// Mirrors Zig `Store.init(ptr[0..len], .{ .vtable = MmapFreeInterface.vtable })`.
     #[cfg(unix)]
     fn init_mmap(slice: &'static mut [u8]) -> Bytes {
         // Stateless allocator vtable whose `free` munmap's. Same pattern as
@@ -544,9 +525,7 @@ impl BytesExt for Bytes {
         // into `AllocatorVTable::free_only`'s raw fn-pointer slot.
         fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             if let bun_sys::Result::Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
-                bun_core::Output::debug_warn(format_args!(
-                    "Blob mmap-store munmap failed: {err:?}"
-                ));
+                bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
             }
         }
         static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
@@ -568,14 +547,12 @@ impl BytesExt for Bytes {
     }
 
     fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
-        // TODO(port): Zig signature returns `!*Bytes` but body returns `Bytes` by value —
-        // mirroring the by-value return here.
+        // `Bytes` is returned by value — the caller decides where it lives.
         Ok(Bytes::init(list))
     }
 
     fn to_internal_blob(&mut self) -> super::Internal {
-        // Zig built an `array_list.Managed(u8)` over the same allocator and
-        // zeroed self. `Internal.bytes` is `Vec<u8>` (global allocator), so
+        // `Internal.bytes` is `Vec<u8>` (global allocator), so
         // round-trip only when the storage *is* the global allocator; otherwise
         // copy + free through the original allocator (e.g. memfd → munmap).
         let bytes = if self.ptr.is_none() {
@@ -610,7 +587,7 @@ impl BytesExt for Bytes {
     }
 }
 
-/// `array_buffer.zig:BlobArrayBuffer_deallocator` — JSC `ArrayBuffer` external
+/// JSC `ArrayBuffer` external
 /// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
 /// `*mut Store` as the deallocator context; this releases that ref.
 #[unsafe(no_mangle)]

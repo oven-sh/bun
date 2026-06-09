@@ -1,7 +1,6 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
@@ -21,8 +20,7 @@ use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
 
-// PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
-// pointers). We mirror that with raw pointers rather than `&mut` / `&` so that
+// Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
@@ -43,44 +41,45 @@ unsafe impl Send for PrepareCssAstTask {}
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
 // (per-chunk disjoint via `*mut Chunk`). Reads `linker.parse_graph`
-// SoA columns + `linker.graph.ast.css` shared. The impl currently materializes
-// `&mut LinkerContext` (see `prepare_css_asts_for_chunk_impl` signature) —
-// safe only because every CSS chunk is unique and the impl reads `c` /
-// writes `chunk` exclusively; no `c.graph` write occurs. `PrepareCssAstTask`
-// is `Send` by virtue of `LinkerContext: Send` + `Chunk: Send` (both raw-ptr
-// fields point at types with `unsafe impl Send`).
-pub fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
+// SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
+// one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
+// and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
+// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
+// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
+// with `unsafe impl Send`).
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
+/// scheduled by `generate_chunks_in_parallel`. Matches the
+/// `Task::callback: unsafe fn(*mut Task)` contract.
+pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
-    // duration. We only read the two raw-pointer fields, matching Zig's
-    // `*const PrepareCssAstTask`.
+    // duration. We only read the two raw-pointer fields.
     let prepare_css_asts: &PrepareCssAstTask =
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
-    // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
-    // carrying provenance over the full `BundleV2` allocation. Recover the
-    // parent via container_of. `Worker::get` only needs `&BundleV2`, so we
-    // scope the shared borrow before materializing `&mut *linker` below to
-    // avoid aliasing.
     let worker = {
+        // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
+        // carrying provenance over the full `BundleV2` allocation. Recover the
+        // parent via container_of. `Worker::get` only needs `&BundleV2`.
         let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
         ThreadPool::Worker::get(bundle_v2)
     };
     let worker = scopeguard::guard(worker, |w| w.unget());
 
-    // SAFETY: `linker` outlives this task (owned by the bundle); each CSS chunk
-    // gets exactly one `PrepareCssAstTask` (see generateChunksInParallel.rs),
-    // so `&mut *chunk` is unique. `worker.arena` was initialized in
-    // `Worker::create()` and points at the worker's heap arena.
-    prepare_css_asts_for_chunk_impl(
-        unsafe { &mut *linker },
-        unsafe { &mut *chunk },
-        worker.arena(),
-    );
+    // SAFETY: `linker` outlives this task (owned by the bundle) and is shared
+    // across every concurrently-running `PrepareCssAstTask`, so it must be a
+    // shared `&LinkerContext` — never `&mut`, which would alias across worker
+    // threads. Each CSS chunk gets exactly one `PrepareCssAstTask` (see
+    // generateChunksInParallel.rs), so `&mut *chunk` is unique. `worker.arena`
+    // was initialized in `Worker::create()` and points at the worker's heap
+    // arena.
+    prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
 }
 
-fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bump: &Bump) {
+fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
     // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
@@ -90,9 +89,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
     // Remove duplicate rules across files. This must be done in serial, not
     // in parallel, and must be done from the last rule to the first rule.
     {
-        // PORT NOTE: Zig accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
-        // through the union field at each use site while also holding `entry` as a raw
-        // pointer into `imports_in_chunk_in_order`. In Rust, every `chunk.content.css.*`
+        // Every `chunk.content.css.*` access
         // re-enters the `Content` enum and re-borrows `chunk.content` as a whole, which
         // would alias the live `&mut entry`. Destructure the variant once so borrowck
         // can split the disjoint `CssChunk` struct fields (`imports_in_chunk_in_order`
@@ -104,40 +101,48 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
         while i != 0 {
             i -= 1;
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
-            // PORT NOTE: reshaped for borrowck — match on entry.kind while also touching
+            // Reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {
                 CssImportOrderKind::Layers(layers) => {
                     let inner = layers.inner();
                     let len = inner.len();
-                    let mut rules = BundlerCssRuleList::default();
-                    if len > 0 {
-                        // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
-                        // is a bitwise Vec→SmallList header transfer. In Rust the
-                        // `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `ungate_support::bun_css::LayerName { v: Vec<Box<[u8]>> }`,
+                    let rules = if len > 0 {
+                        // The `Chunk::Layers` payload is the lifetime-erased shadow
+                        // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
                         // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
                         // so the layouts differ. Rebuild the real list element-by-element;
                         // segments are arena-owned (`'bump`-laundered to `'static`) so the
                         // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        let mut names = SmallList::<LayerName, 1>::default();
-                        for shadow in inner.slice() {
-                            let mut real = LayerName::default();
-                            for seg in shadow.v.slice() {
-                                // `seg` borrows arena-owned bytes that outlive this
-                                // stylesheet; route through `StoreStr` for the lifetime
-                                // erasure (see layer.rs TODO(port)).
-                                real.v.append(bun_ast::StoreStr::new(seg.as_ref()).slice());
-                            }
-                            names.append(real);
-                        }
-                        rules
-                            .v
-                            .push(BundlerCssRule::LayerStatement(LayerStatementRule {
+                        //
+                        // Both `SmallList` levels go into the arena-backed rule list
+                        // that `CssChunk::Drop` `set_len(0)`s without running element
+                        // destructors, so any global heap spill would leak. Build them
+                        // via `from_arena_iter` so the spill (if any) lives in `bump`.
+                        let names = SmallList::<LayerName, 1>::from_arena_iter(
+                            bump,
+                            inner.slice().iter().map(|shadow| LayerName {
+                                v: SmallList::from_arena_iter(
+                                    bump,
+                                    shadow.v.slice().iter().map(|seg| {
+                                        // `seg` borrows arena-owned bytes that outlive this
+                                        // stylesheet; route through `StoreStr` for the lifetime
+                                        // erasure (see the corresponding note in layer.rs).
+                                        bun_ast::StoreStr::new(seg).slice()
+                                    }),
+                                ),
+                            }),
+                        );
+                        arena_rule_list_one(
+                            bump,
+                            BundlerCssRule::LayerStatement(LayerStatementRule {
                                 names,
                                 loc: Location::dummy(),
-                            }));
-                    }
+                            }),
+                        )
+                    } else {
+                        BundlerCssRuleList::default()
+                    };
                     let mut ast = BundlerStyleSheet {
                         rules,
                         sources: Default::default(),
@@ -151,18 +156,16 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    // PORT NOTE: Zig keeps `conditions: ?*ImportConditions` as a raw
-                    // pointer to index 0 while the `while j != 1` loop reads
-                    // `entry.conditions.len` / `.at(j)`. Taking `&mut` at index 0 here
-                    // would exclusively borrow the whole `entry.conditions` Vec for
-                    // the duration, aliasing those reads. The pointer is not actually
-                    // dereferenced until after the loop (.zig:119), so defer acquiring
-                    // the index-0 borrow until `actual_conditions` is built below.
+                    // Taking `&mut` at index 0 here would exclusively borrow
+                    // the whole `entry.conditions` Vec while the `while j != 1`
+                    // loop below still reads `entry.conditions.len` / `.at(j)`.
+                    // The borrow is not actually needed until after the loop, so
+                    // defer acquiring it until `actual_conditions` is built below.
                     let had_conditions = entry.conditions.len() > 0;
                     if had_conditions {
                         entry.condition_import_records.push(ImportRecord {
                             kind: ImportKind::At,
-                            path: p.clone(),
+                            path: *p,
                             range: Range::default(),
                             tag: ImportRecordTag::None,
                             loader: None,
@@ -184,26 +187,21 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         while j != 1 {
                             j -= 1;
 
-                            // PORT NOTE: Zig has no destructors, so when `ast_import` falls
-                            // out of scope the bitwise-duplicated `ImportConditions` inside
-                            // it (see `ptr::read` below) is simply abandoned. In Rust,
-                            // dropping `ast_import` would run `Drop` on that aliased
+                            // `ast_import` holds a bitwise-duplicated `ImportConditions`
+                            // (see `ptr::read` below);
+                            // dropping it would run `Drop` on that aliased
                             // `ImportConditions` — freeing Global-backed buffers
                             // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
                             // `LayerName.v: SmallList`) that are still owned by
                             // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
-                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the only
-                            // *fresh* allocation this leaks is the 1-element `rules.v` Vec
-                            // buffer — same trade-off documented at the top of
-                            // findImportedFilesInCSSOrder.rs for the `entry.conditions`
-                            // ecosystem.
+                            // `ManuallyDrop` so the duplicate is abandoned instead; the rule
+                            // slab itself is arena-owned so it is reclaimed on arena reset.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
                                 options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
-                                rules: 'rules: {
-                                    let mut rules = BundlerCssRuleList::default();
+                                rules: {
                                     let mut import_rule = ImportRule {
                                         url: p.pretty,
                                         import_record_idx: entry.condition_import_records.len()
@@ -211,14 +209,13 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                         loc: Location::dummy(),
                                         ..Default::default()
                                     };
-                                    // SAFETY: Zig `entry.conditions.at(j).*` — shallow struct
+                                    // SAFETY: shallow struct
                                     // copy. The duplicate is never dropped (`ManuallyDrop`
                                     // above), so the aliased heap stays singly-owned by
                                     // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
-                                    rules.v.push(BundlerCssRule::Import(import_rule));
-                                    break 'rules rules;
+                                    arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),
                                 ..BundlerStyleSheet::empty()
@@ -235,7 +232,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                             let print_result = match ast_import.to_css(
                                 bump,
-                                printer_options,
+                                &printer_options,
                                 Some(ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
@@ -252,7 +249,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),
-                                // `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
+                                // SAFETY: `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
                                 // is `bun_ast::symbol::Map`. Both are
                                 // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
                                 // `repr(transparent)`), so layouts match — bridge by pointer cast.
@@ -277,9 +274,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // PORT NOTE: Zig allocated into the worker arena (`arena`).
                             // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
-                            // copy it into the worker bump so ownership matches Zig (freed
+                            // copy it into the worker bump (freed
                             // at bundle teardown via arena reset). SAFETY: arena outlives
                             // the chunk, so the `'bump → 'static` launder is sound — same
                             // contract as every other CSS slice in this file.
@@ -290,9 +286,8 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     }
 
                     let mut empty_conditions = ImportConditions::default();
-                    // Index 0 is disjoint from every `at(j)` (j>=1) read above; only
-                    // now do we materialize the exclusive borrow that Zig's raw pointer
-                    // held the whole time.
+                    // Index 0 is disjoint from every `at(j)` (j>=1) read above;
+                    // only now do we materialize the exclusive borrow.
                     let actual_conditions: &mut ImportConditions = if had_conditions {
                         entry.conditions.mut_(0)
                     } else {
@@ -301,7 +296,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
 
                     entry.condition_import_records.push(ImportRecord {
                         kind: ImportKind::At,
-                        path: p.clone(),
+                        path: *p,
                         range: Range::NONE,
                         tag: ImportRecordTag::None,
                         loader: None,
@@ -312,17 +307,20 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     });
 
                     css_chunk.asts[i] = BundlerStyleSheet {
-                        rules: 'rules: {
-                            let mut rules = BundlerCssRuleList::default();
+                        rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
                                 p.pretty,
                                 entry.condition_import_records.len() as u32,
                             );
-                            // SAFETY: Zig `actual_conditions.*` — shallow struct copy.
+                            // SAFETY: shallow struct copy. The duplicate lives in an
+                            // `ImportRule` inside the `arena_rule_list_one` slab assigned
+                            // to `css_chunk.asts[i]`, whose elements never run `Drop`
+                            // (`CssChunk::Drop` frees the slab via `set_len(0)`), so
+                            // `entry.conditions[0]` / `empty_conditions` remain the sole
+                            // owners of the interior heap.
                             *import_rule.conditions_mut() =
                                 unsafe { core::ptr::read(actual_conditions) };
-                            rules.v.push(BundlerCssRule::Import(import_rule));
-                            break 'rules rules;
+                            arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),
                         source_map_urls: Default::default(),
@@ -344,7 +342,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             [source_index.get() as usize]
                             .as_deref()
                             .expect("css ast present");
-                        // SAFETY: Zig `original_stylesheet.*` — bitwise shallow copy of the
+                        // SAFETY: bitwise shallow copy of the
                         // stylesheet header. All interior allocations are arena-owned and never
                         // freed via this view, so the duplicated `Vec`/`Vec` headers are
                         // sound for read-only / reslice use below.
@@ -394,24 +392,38 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // so we don't mutate the shared backing array.
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
-                            let mut new_rules = BundlerCssRuleList::default();
+                            let mut new_rules: ArenaVec<BundlerCssRule> =
+                                ArenaVec::with_capacity_in(
+                                    layer_count + (original_rules.len() - prefix_end),
+                                    bump,
+                                );
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
-                                    // SAFETY: Zig by-value copy of arena-backed rule.
-                                    new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                    // SAFETY: bitwise duplicate of a rule. The copy goes into
+                                    // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
+                                    // whose elements never run `Drop` (see `arena_rule_list` /
+                                    // `CssChunk::Drop`), so the rule's interior heap stays
+                                    // singly-owned by the original.
+                                    new_rules.push(unsafe { core::ptr::read(rule) });
                                 }
                             }
                             for rule in &original_rules[prefix_end..] {
-                                // SAFETY: Zig by-value copy of arena-backed rule.
-                                new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                // SAFETY: bitwise duplicate of a rule. The copy goes into
+                                // an `arena_rule_list` slab installed in `css_chunk.asts[i]`,
+                                // whose elements never run `Drop` (see `arena_rule_list` /
+                                // `CssChunk::Drop`), so the rule's interior heap stays
+                                // singly-owned by the original.
+                                new_rules.push(unsafe { core::ptr::read(rule) });
                             }
                             // `ast.rules` is the shallow-copied header aliasing the
                             // source stylesheet's arena buffer (see `ptr::read` above).
                             // Dropping it would `drop_in_place` the aliased rules and
-                            // free the shared backing array. Leak the header (Zig
-                            // semantics: bitwise overwrite) before installing the
-                            // freshly-allocated list.
-                            core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
+                            // free the shared backing array. Leak the header
+                            // before installing the freshly-allocated list.
+                            let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+                                &mut ast.rules,
+                                arena_rule_list(new_rules),
+                            ));
                         }
                     }
 
@@ -421,6 +433,35 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
             }
         }
     }
+}
+
+/// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.
+///
+/// `CssRuleList::v` is a global `Vec`, but every rule slab built here must be
+/// arena-backed: the elements bitwise-alias the source AST and must never run
+/// `Drop`, and the slab itself must outlive the chunk without a side-channel
+/// owner. Reinterpreting the leaked arena slice as a global `Vec` is sound
+/// because the resulting `Vec` is never dropped (`CssChunk::Drop` `forget`s
+/// the `asts` slab) and never grown after this point; the arena reclaims the
+/// storage on `reset`.
+fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
+    let len = rules.len();
+    if len == 0 {
+        return BundlerCssRuleList::default();
+    }
+    let slab = rules.into_bump_slice_mut();
+    BundlerCssRuleList {
+        // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
+        // (see fn doc).
+        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
+    }
+}
+
+/// Single-element shorthand for [`arena_rule_list`].
+fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
+    let mut v: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
+    v.push(rule);
+    arena_rule_list(v)
 }
 
 fn wrap_rules_with_conditions(
@@ -438,7 +479,7 @@ fn wrap_rules_with_conditions(
         // Generate "@layer" wrappers. Note that empty "@layer" rules still have
         // a side effect (they set the layer order) so they cannot be removed.
         if let Some(l) = &item.layer {
-            // SAFETY: Zig `const layer = l.v;` — by-value `?LayerName` copy. The
+            // SAFETY: by-value `?LayerName` copy. The
             // `SmallList<&'static [u8],1>` payload is arena-backed and never
             // freed via this view, so the bitwise duplicate is sound (same as
             // every other `ptr::read` shallow-copy in this file).
@@ -453,16 +494,15 @@ fn wrap_rules_with_conditions(
                     // `ast.rules.v` may be the shallow-copied / offset-resliced
                     // header aliasing the source stylesheet's buffer (see the
                     // `ptr::read` / `Vec::from_raw_parts` above) — dropping it
-                    // would free into another allocation. Zig's `= .{}` is a
-                    // bitwise overwrite; mirror that by leaking the header.
-                    core::mem::forget(core::mem::take(&mut ast.rules.v));
+                    // would free into another allocation; leak the header instead.
+                    let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut ast.rules.v));
                     do_block_rule = false;
                 }
             }
 
-            ast.rules = 'brk: {
-                let mut new_rules = BundlerCssRuleList::default();
-                new_rules.v.push(if do_block_rule {
+            ast.rules = arena_rule_list_one(
+                temp_bump,
+                if do_block_rule {
                     BundlerCssRule::LayerBlock(BundlerLayerBlockRule {
                         name: layer,
                         rules: core::mem::take(&mut ast.rules),
@@ -477,45 +517,39 @@ fn wrap_rules_with_conditions(
                         },
                         loc: Location::dummy(),
                     })
-                });
-
-                break 'brk new_rules;
-            };
+                },
+            );
         }
 
         // Generate "@supports" wrappers. This is not done if the rule block is
         // empty because empty "@supports" rules have no effect.
         if !ast.rules.v.is_empty() {
             if let Some(supports) = &item.supports {
-                ast.rules = 'brk: {
-                    let mut new_rules = BundlerCssRuleList::default();
-                    new_rules
-                        .v
-                        .push(BundlerCssRule::Supports(BundlerSupportsRule {
-                            condition: supports
-                                .clone_with_import_records(temp_bump, &mut dummy_import_records),
-                            rules: core::mem::take(&mut ast.rules),
-                            loc: Location::dummy(),
-                        }));
-                    break 'brk new_rules;
-                };
+                ast.rules = arena_rule_list_one(
+                    temp_bump,
+                    BundlerCssRule::Supports(BundlerSupportsRule {
+                        condition: supports
+                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        rules: core::mem::take(&mut ast.rules),
+                        loc: Location::dummy(),
+                    }),
+                );
             }
         }
 
         // Generate "@media" wrappers. This is not done if the rule block is
         // empty because empty "@media" rules have no effect.
         if !ast.rules.v.is_empty() && !item.media.media_queries.is_empty() {
-            ast.rules = 'brk: {
-                let mut new_rules = BundlerCssRuleList::default();
-                new_rules.v.push(BundlerCssRule::Media(BundlerMediaRule {
+            ast.rules = arena_rule_list_one(
+                temp_bump,
+                BundlerCssRule::Media(BundlerMediaRule {
                     query: item
                         .media
                         .clone_with_import_records(temp_bump, &mut dummy_import_records),
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
-                }));
-                break 'brk new_rules;
-            };
+                }),
+            );
         }
     }
 
@@ -525,5 +559,3 @@ fn wrap_rules_with_conditions(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/prepareCssAstsForChunk.zig

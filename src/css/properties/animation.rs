@@ -38,13 +38,9 @@ pub struct Animation {
 }
 
 impl Animation {
-    // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // metadata consumed by reflection in the shorthand codegen. Replace these with
-    // a derive macro (e.g. #[derive(Shorthand)]) that emits the field→PropertyIdTag
-    // and field→has-vendor-prefix tables.
-    // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
-    // are not yet generated (animation longhands are unparsed-only for now), and
-    // the table was unread comptime metadata. Re-add when the variants land.
+    // PropertyFieldMap omitted: `PropertyIdTag::Animation*` variants are not yet
+    // generated (animation longhands are unparsed-only for now). Re-add the
+    // field→PropertyIdTag table once the variants land.
 
     pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
         ("name", true),
@@ -140,9 +136,8 @@ impl Animation {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: reshaped `inline .ident, .string => |name|` — Zig's inline
-        // switch monomorphized over two payload types; Rust extracts the inner
-        // string slice up front instead.
+        // Extract the inner string slice up front so both the ident and
+        // string variants share one code path.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
@@ -225,7 +220,7 @@ impl Animation {
 }
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
-// PORT NOTE: no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
+// no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
 // carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
 // pointer. Hand-written `eql`/`hash` below compare by content.
 #[derive(Clone, Copy)]
@@ -239,9 +234,9 @@ pub enum AnimationName {
 }
 
 impl AnimationName {
-    // PORT NOTE: hand-written (not `#[derive]`) because `CSSString` is a raw
+    // hand-written (not `#[derive]`) because `CSSString` is a raw
     // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
-    // not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
+    // not raw slices.
     pub fn eql(&self, other: &Self) -> bool {
         match (self, other) {
             (AnimationName::None, AnimationName::None) => true,
@@ -283,21 +278,19 @@ impl AnimationName {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
-        // then `<string>`, else `<custom-ident>`.
+        // `none` keyword, then `<string>`, else `<custom-ident>`.
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
         {
             return Ok(AnimationName::None);
         }
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse (CSSString = &'static [u8]).
-        if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-        {
-            return Ok(AnimationName::String(unsafe { &raw const *s }));
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+            return Ok(AnimationName::String(s));
         }
         let ident = CustomIdent::parse(input)?;
         Ok(AnimationName::Ident(ident))
@@ -316,7 +309,7 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
-                    // PORT NOTE: reshaped for borrowck — capture arena/source_index
+                    // reshaped for borrowck — capture arena/source_index
                     // before borrowing dest.css_module mutably.
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
@@ -330,7 +323,7 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
                 if css_module_animation_enabled {
-                    // PORT NOTE: reshaped for borrowck
+                    // reshaped for borrowck
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
@@ -352,8 +345,6 @@ impl AnimationName {
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
-// TODO(port): css.DeriveParse / css.DeriveToCss were comptime mixins generating
-// parse()/to_css() from variant shape. Implement as #[derive(Parse, ToCss)].
 #[derive(PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
@@ -376,7 +367,7 @@ impl AnimationIterationCount {
     // Port of `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
@@ -400,8 +391,8 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationDirection {
         AnimationDirection::Normal
@@ -418,8 +409,8 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationPlayState {
         AnimationPlayState::Running
@@ -440,8 +431,8 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationFillMode {
         AnimationFillMode::None
@@ -460,8 +451,8 @@ pub enum AnimationComposition {
 }
 
 impl AnimationComposition {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
 }
 
@@ -480,15 +471,10 @@ pub enum AnimationTimeline {
 }
 
 impl AnimationTimeline {
-    // Port of `css.DeriveParse(@This()).parse` — void variants (`auto`, `none`)
-    // declared first → tried first via ident match; payloads follow in
-    // declaration order (`DashedIdent`, `ScrollTimeline`, `ViewTimeline`).
-    // Upstream `ScrollTimeline` / `ViewTimeline` carry no `parse`, so the Zig
-    // `DeriveParse` instantiation is dead code (`generic.parseFor` would
-    // `@compileError` if compiled — `Animation` is unreferenced in
-    // properties_generated.zig). We stop at `DashedIdent` here; if scroll()/
-    // view() ever become live they need real function-syntax parsing, not the
-    // derived field-sequence fallback.
+    // Void variants (`auto`, `none`) are tried first via ident match;
+    // payloads follow in declaration order. We stop at `DashedIdent`; if
+    // scroll()/view() ever become live they need real function-syntax
+    // parsing, not a derived field-sequence fallback.
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let state = input.state();
         if let Ok(ident) = input.expect_ident() {
@@ -505,16 +491,12 @@ impl AnimationTimeline {
         DashedIdent::parse(input).map(AnimationTimeline::DashedIdent)
     }
 
-    // Port of `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             AnimationTimeline::Auto => dest.write_str(b"auto"),
             AnimationTimeline::None => dest.write_str(b"none"),
             AnimationTimeline::DashedIdent(d) => d.to_css(dest),
-            // Upstream Zig `ScrollTimeline` / `ViewTimeline` have no `toCss`;
-            // `DeriveToCss` would delegate to `generic.toCss` → `T.toCss` and
-            // `@compileError` if this arm were ever instantiated. Mirror that:
-            // these variants are currently unconstructible via `parse()`, and
+            // These variants are currently unconstructible via `parse()`, and
             // emitting bare space-separated fields here would be wrong CSS
             // (spec syntax is `scroll(...)` / `view(...)`).
             AnimationTimeline::Scroll(_) | AnimationTimeline::View(_) => {
@@ -532,7 +514,7 @@ impl AnimationTimeline {
     }
 }
 
-// PORT NOTE: hand-written `PartialEq` — `DashedIdent` carries a raw
+// hand-written `PartialEq` — `DashedIdent` carries a raw
 // `*const [u8]` arena pointer; derive would compare by pointer, not content.
 impl PartialEq for AnimationTimeline {
     fn eq(&self, other: &Self) -> bool {
@@ -551,7 +533,7 @@ impl PartialEq for AnimationTimeline {
 }
 
 /// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub struct ScrollTimeline {
     /// Specifies which element to use as the scroll container.
     pub scroller: Scroller,
@@ -580,8 +562,8 @@ pub enum Scroller {
 }
 
 impl Scroller {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> Scroller {
         Scroller::Nearest
@@ -602,8 +584,8 @@ pub enum ScrollAxis {
 }
 
 impl ScrollAxis {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> ScrollAxis {
         ScrollAxis::Block
@@ -660,5 +642,3 @@ pub enum TimelineRangeName {
     /// Represents the range during which the principal box crosses the start border edge.
     ExitCrossing,
 }
-
-// ported from: src/css/properties/animation.zig

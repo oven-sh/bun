@@ -52,8 +52,7 @@ fn format_name(f: codecs::Format) -> &'static str {
 // provided by `#[bun_jsc::JsClass]` codegen (see PORTING.md §JSC types). The
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
 // `generated_classes.rs::js_Image`; re-export that module here so callers use
-// `js::source_js_set_cached` / `js::source_js_get_cached` exactly as the Zig
-// did via `js.sourceJSSetCached`.
+// `js::source_js_set_cached` / `js::source_js_get_cached`.
 pub use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -122,10 +121,10 @@ pub enum Source {
     Blob(Strong),
 }
 
-// `Source::deinit` in Zig only frees owned fields — `Vec<u8>`, `ZString`, and
+// `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// Faithful port of `Image.zig`'s local externs — these C++ helpers are
+// These C++ helpers are
 // Image-specific (they pin/adopt typed-array storage for the off-thread
 // pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
@@ -148,10 +147,12 @@ pub enum Fit {
     Inside,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
-static FIT_MAP: phf::Map<&'static [u8], Fit> = phf::phf_map! {
-    b"fill" => Fit::Fill,
-    b"inside" => Fit::Inside,
-};
+bun_core::comptime_string_map! {
+    static FIT_MAP: Fit = {
+        b"fill" => Fit::Fill,
+        b"inside" => Fit::Inside,
+    };
+}
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
         v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
@@ -232,7 +233,7 @@ impl Default for Modulate {
 /// so the clamp stays in float space.
 ///
 /// Rust `as` already saturates on overflow/NaN, but we keep the explicit
-/// clamp so behaviour matches Zig exactly (NaN → `lo`, not 0).
+/// clamp so NaN maps to `lo`, not 0.
 macro_rules! coerce_int {
     ($T:ty, $x:expr, $lo:expr, $hi:expr) => {{
         let x: f64 = $x;
@@ -254,7 +255,7 @@ const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 impl Image {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
+    // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
     // struct emits the constructor C-ABI shim; the bare attribute would expand
     // to a free-fn call (`constructor(__g, __f)`) that can't resolve in `impl`.
     pub fn constructor(
@@ -306,6 +307,10 @@ impl Image {
         Ok(img.to_js(global))
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         self.this_ref.with_mut(|r| r.finalize());
         // `source` is dropped by Box drop.
@@ -360,7 +365,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = value.to_bun_string(global)?;
+        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -489,7 +494,7 @@ impl Image {
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
         let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
-        let deg: u32 = u32::try_from(((raw % 360) + 360) % 360).unwrap();
+        let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "rotate: only multiples of 90 are supported"
@@ -523,7 +528,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.brightness = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -533,7 +538,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.saturation = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -551,10 +556,13 @@ impl Image {
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
         let mut enc: codecs::EncodeOptions =
-            self.pipeline.get().output.unwrap_or(codecs::EncodeOptions {
-                format: fmt,
-                ..Default::default()
-            });
+            self.pipeline
+                .get()
+                .output
+                .unwrap_or_else(|| codecs::EncodeOptions {
+                    format: fmt,
+                    ..Default::default()
+                });
         enc.format = fmt;
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
@@ -661,8 +669,6 @@ fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue 
 enum PinError {
     #[error("detached")]
     Detached,
-    #[error("out of memory")]
-    OutOfMemory,
 }
 
 impl Image {
@@ -670,16 +676,15 @@ impl Image {
     /// the ArrayBuffer's vector each call so a detach between construction and
     /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
-        // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
-        // not into `self`; may need a different return type.
         match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| {
                     // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
-                    // bytes live in the JS heap, not in `ab`. `this_value`
-                    // keeps the buffer alive for this JS-thread call — see fn
-                    // doc + TODO(port) above re: borrow-into-JS-heap.
+                    // bytes live in the JS heap, not in `ab` — the returned
+                    // slice borrows the JS heap with `&self`'s lifetime, which
+                    // is sound only on the JS thread. `this_value` keeps the
+                    // buffer alive for this JS-thread call — see fn doc above.
                     unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
@@ -694,8 +699,8 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.zig` cropping +
-    /// post-check, `codec_webp.zig` dim re-check. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
+    /// post-check, `codec_webp.rs` dim re-check. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(
@@ -781,18 +786,18 @@ impl Image {
 
 // ───────────────────────── static `Bun.Image.backend` ───────────────────────
 //
-// PORT NOTE: `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
+// `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
 // shim, but these are *static* class accessors (no receiver). The C-ABI shim
 // is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
 // as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
 // exact arity — including the trailing opaque `PropertyName` it threads
-// through but Zig's `getBackend` ignores.
+// through but `get_backend` ignores.
 
 impl Image {
     pub fn get_backend(global: &JSGlobalObject, _: JSValue, _: PropertyName) -> JsResult<JSValue> {
         // `BACKEND` only ever stores a valid `Backend as u8` discriminant
         // (`set_backend` round-trips through `Backend`); any other value is
-        // corruption — trap (matches Zig's safety-checked `@enumFromInt`).
+        // corruption — trap.
         let b = match codecs::BACKEND.load(core::sync::atomic::Ordering::Relaxed) {
             0 => codecs::Backend::System,
             1 => codecs::Backend::Bun,
@@ -828,7 +833,7 @@ impl Image {
     // layer.
 
     pub fn from_clipboard(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        // `comptime codecs.system_backend` → cfg-gated module re-export.
+        // `codecs::system_backend` is a cfg-gated module re-export.
         #[cfg(any(target_os = "macos", windows))]
         {
             use codecs::system_backend;
@@ -1008,7 +1013,7 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = args[0].to_bun_string(global)?;
+            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             if !s.eql_utf8(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
@@ -1038,7 +1043,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = args[0].to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1080,13 +1085,10 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
+            Err(PinError::Detached) => {
                 // `deliver` may own a Strong; the task that would have freed it
                 // in Drop is never created on this branch.
                 drop(deliver);
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
                 return Ok(JSPromise::rejected_promise(
                     global,
                     error_with_code(
@@ -1176,18 +1178,15 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
+            Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
-        // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
+        // The `input` release is hoisted below — `input`
         // moves into `task`, and `run()` is sync with no early returns, so we
         // release via `task.input` after the result is extracted.
-        // PORT NOTE: Zig never calls `PipelineTask.deinit()` on this stack
-        // temporary (only `then()` does — Image.zig:1092). `Drop` here would
+        // Cleanup must not run on this stack
+        // temporary (only `then()` does it). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
             image: std::ptr::from_ref::<Image>(self),
@@ -1201,13 +1200,13 @@ impl Image {
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         task.run();
-        // PORT NOTE: reshaped for borrowck — move `result` out via `replace`
+        // Reshaped for borrowck — move `result` out via `replace`
         // since `task` is behind `ManuallyDrop` deref.
         let result = mem::replace(
             &mut task.result,
             TaskResult::Err(codecs::Error::DecodeFailed),
         );
-        // Zig `defer input.release()` (see PORT NOTE above).
+        // Release `input` (see hoisting note above).
         mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
@@ -1289,13 +1288,12 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
-            .map_err(jsc::JsError::from)?;
+        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
@@ -1341,7 +1339,7 @@ impl<'a> BlobReadChain<'a> {
                 let inner = match image.schedule(global, this_value, kind, deliver) {
                     Ok(v) => v,
                     Err(_) => {
-                        // PORT NOTE: `deliver` was moved into `schedule()`; on
+                        // `deliver` was moved into `schedule()`; on
                         // error it has already been dropped there.
                         let _ = outer.reject(
                             global,
@@ -1367,7 +1365,7 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         // SAFETY: `self` is the `&mut *heap::alloc(chain)` handed to
         // `read_bytes_to_handler` in `start()`; we are the sole consumer on
         // the JS thread. Reconstruct the Box so the body can move fields out
-        // and free the allocation (mirrors Zig `bun.destroy(self)`).
+        // and free the allocation.
         let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
@@ -1407,7 +1405,8 @@ pub struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
-    // TODO(port): lifetime — borrows `image.source.path` (NUL-terminated).
+    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
+    // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
     /// JS value to `unpinArrayBuffer` in `then()`. `.zero` for sources
     /// with no ArrayBuffer to pin (Oversize TA, owned, path, copied).
@@ -1471,7 +1470,6 @@ pub enum Kind {
     Placeholder,
 }
 
-// PORT NOTE: renamed from `Result` to avoid shadowing `core::result::Result`.
 pub enum TaskResult {
     Encoded {
         out: codecs::Encoded,
@@ -1494,7 +1492,7 @@ impl<'a> PipelineTask<'a> {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
-        let mut owned_file: Option<Vec<u8>> = None;
+        let owned_file: Option<Vec<u8>>;
         let input: &[u8] = if let Some(p) = self.input.path {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
@@ -1532,7 +1530,7 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::ISREG(u32::try_from(st.st_mode).expect("int cast") as _) {
+            if !sys::S::ISREG(st.st_mode as _) {
                 self.result = TaskResult::IoErr(sys::Error {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
@@ -1712,7 +1710,7 @@ impl<'a> PipelineTask<'a> {
         // dispatch (`run_from_js` → `destroy`), immediately after this returns.
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
-        // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids
+        // Reshaped for borrowck — `PipelineTask: Drop` forbids
         // moving fields out by destructure; `mem::take`/`mem::replace` the
         // owning fields into locals instead so `Drop` still runs on the husk.
         mem::take(&mut self.input).release();
@@ -1729,7 +1727,7 @@ impl<'a> PipelineTask<'a> {
             }
             _ => {}
         }
-        // PORT NOTE: `Drop` forbids moving out of `self.result`; swap in a
+        // `Drop` forbids moving out of `self.result`; swap in a
         // throwaway sentinel (`Err` is `Copy`) and match the owned local.
         let result = mem::replace(
             &mut self.result,
@@ -1768,19 +1766,24 @@ impl<'a> PipelineTask<'a> {
                     // here by construction, not omission.
                     Deliver::Buffer => promise.resolve(
                         global,
-                        JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        ),
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        },
                     )?,
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
                         // SAFETY: explicit free in lieu of suppressed `Drop`.
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
-                        let mut blob = Blob::init(owned, global);
+                        let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
                         blob.content_type_was_set.set(true);
@@ -1791,7 +1794,6 @@ impl<'a> PipelineTask<'a> {
                         promise.resolve(global, <Blob as bun_jsc::JsClass>::to_js(blob, global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // PERF(port): was comptime tag dispatch — profile if it shows up on a hot path.
                         // This arm copies the bytes out — re-arm `Encoded::drop` so
                         // the codec allocation is freed at scope exit (RAII), not by
                         // a JS finalizer.
@@ -1831,12 +1833,17 @@ impl<'a> PipelineTask<'a> {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        let data = JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        );
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        let data = unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        };
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
@@ -1848,7 +1855,7 @@ impl<'a> PipelineTask<'a> {
                             Ok(p) => p,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         };
-                        // PORT NOTE: `PathOrBlob::Path` owns its `PathOrFileDescriptor`
+                        // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             global,
@@ -1890,7 +1897,7 @@ impl<'a> PipelineTask<'a> {
         let p = &self.pipeline;
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
-            // PORT NOTE: `bun.default_allocator.free(d.rgba)` — assignment drops
+            // Assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
             d.width = next.width;
@@ -1958,11 +1965,11 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     let mut buf = [0u8; thumbhash::MAX_LEN];
     let hash = thumbhash::encode(&mut buf, w, h, pixels);
     let rendered = thumbhash::decode(hash)?;
-    // `defer bun.default_allocator.free(rendered.rgba)` — owned, drops at scope exit.
+    // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.
     let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)?;
-    let _ = owned; // PERF(port): explicit lifetime hint; drops here.
+    let _ = owned; // explicit lifetime hint; drops here.
     Ok(TaskResult::Encoded {
         out,
         format: codecs::Format::Png,
@@ -2026,8 +2033,7 @@ fn apply_orientation(
 impl<'a> Drop for PipelineTask<'a> {
     fn drop(&mut self) {
         // Only reached from `then()` on the JS thread (the `encode_for_body`
-        // stack temporary is wrapped in `ManuallyDrop` — Zig never calls
-        // `deinit()` on that path), so the ref/count touch is safe without
+        // stack temporary is wrapped in `ManuallyDrop`), so the ref/count touch is safe without
         // atomics.
         // `self.deliver.deinit()` — `Strong` Drop on the `WriteDest` arm.
         // SAFETY: `image` is a BACKREF kept alive by the wrapper's Strong
@@ -2041,5 +2047,3 @@ impl<'a> Drop for PipelineTask<'a> {
         // `bun.destroy(this)` — `Box<PipelineTask>` drop is the caller.
     }
 }
-
-// ported from: src/runtime/image/Image.zig

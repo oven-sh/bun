@@ -7,15 +7,15 @@ pub struct CounterStyleRule {
     /// The name of the counter style to declare.
     pub name: CustomIdent,
     /// Declarations in the `@counter-style` rule.
-    // PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
-    // erased to `'static` here per the rules/mod.rs `CssRule<R>` PORT NOTE.
+    // `DeclarationBlock<'bump>` borrows the parser arena; lifetime erased to
+    // `'static` here per the rules/mod.rs `CssRule<R>` lifetime-erasure note.
     pub declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
     pub loc: Location,
 }
 
 impl CounterStyleRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -26,8 +26,7 @@ impl CounterStyleRule {
 }
 
 impl CounterStyleRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -35,5 +34,3 @@ impl CounterStyleRule {
         }
     }
 }
-
-// ported from: src/css/rules/counter_style.zig

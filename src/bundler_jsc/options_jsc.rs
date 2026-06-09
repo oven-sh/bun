@@ -1,12 +1,10 @@
 //! `from_js` bridges for `bun.options.{Target,Format,Loader}` and `CompileTarget`.
 //! Keeps `src/bundler/` free of `JSValue`/`JSGlobalObject` references.
 
-use bun_bundler::options;
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
 use bun_core::ZigString;
 use bun_jsc::ComptimeStringMapExt as _;
-use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
@@ -19,22 +17,6 @@ pub fn target_from_js(
         return Err(global.throw_invalid_arguments(format_args!("target must be a string")));
     }
     bun_ast::Target::MAP.from_js(global, value)
-}
-
-pub fn format_from_js(global: &JSGlobalObject, format: JSValue) -> JsResult<Option<Format>> {
-    if format.is_undefined_or_null() {
-        return Ok(None);
-    }
-
-    if !format.is_string() {
-        return Err(global.throw_invalid_arguments(format_args!("format must be a string")));
-    }
-
-    let Some(v) = Format::MAP.from_js(global, format)? else {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Invalid format - must be esm, cjs, or iife")));
-    };
-    Ok(Some(v))
 }
 
 pub fn loader_from_js(
@@ -98,5 +80,3 @@ pub fn compile_target_from_slice(
 
     Ok(target_parsed)
 }
-
-// ported from: src/bundler_jsc/options_jsc.zig

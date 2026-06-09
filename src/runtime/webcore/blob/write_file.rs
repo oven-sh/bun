@@ -1,14 +1,15 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::AtomicU8;
+#[cfg(not(windows))]
+use core::sync::atomic::Ordering;
 
 use bun_core::Error;
 use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SysErrorJsc, SystemError,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -20,11 +21,13 @@ use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
-// TODO(port): SystemError::Maybe(T) is a tagged { result: T } | { err: SystemError } union;
-// modeled here as a plain Rust enum. Verify layout if it crosses FFI.
+// A tagged result-or-error union. Modeled
+// as a plain Rust enum: it only ever travels through the Rust fn-pointer
+// callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
+// layout is unconstrained.
 pub enum WriteFileResultType {
     Result(SizeType),
-    Err(SystemError),
+    Err(Box<SystemError>),
 }
 
 pub type WriteFileOnWriteFileCallback =
@@ -32,6 +35,11 @@ pub type WriteFileOnWriteFileCallback =
 
 pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
 
+// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
+// cannot be marked `unsafe fn` and the parameter type cannot change, so the
+// lint is unsatisfiable here. The pointers come from the work-pool hand-off
+// and are guaranteed live (see SAFETY notes below).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for WriteFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
@@ -39,7 +47,8 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
         unsafe { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
-        WriteFile::then(this, global)
+        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
+        WriteFile::then(unsafe { bun_core::heap::take(this) }, global)
     }
 }
 
@@ -54,7 +63,7 @@ pub struct WriteFile {
     pub io_task: Option<*mut WriteFileTask>,
     pub io_poll: io::Poll,
     pub io_request: io::Request,
-    pub state: AtomicU8, // std.atomic.Value(ClosingState)
+    pub state: AtomicU8, // ClosingState
 
     pub on_complete_ctx: *mut c_void,
     pub on_complete_callback: WriteFileOnWriteFileCallback,
@@ -69,8 +78,7 @@ bun_threading::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
 
 // ──────────────────────────────────────────────────────────────────────────
-// Zig: `pub const getFd = FileOpener(@This()).getFd;`
-//      `pub const doClose = FileCloser(WriteFile).doClose;`
+// FileOpener / FileCloser
 // ──────────────────────────────────────────────────────────────────────────
 
 impl FileOpener for WriteFile {
@@ -106,8 +114,7 @@ impl FileOpener for WriteFile {
         path: &bun_core::ZStr,
         display_path: &[u8],
     ) -> Retry {
-        // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`
-        mkdir_if_not_exists(self, err, path, display_path)
+        mkdir_if_not_exists(self, &err, path, display_path)
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
@@ -187,7 +194,7 @@ impl FileCloser for WriteFile {
             let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
-        // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
+        // reshaped for borrowck — compute the parent raw pointer
         // before mutably borrowing `io_poll` so the two borrows do not overlap.
         let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
         let fd = this.opened_fd;
@@ -200,6 +207,11 @@ impl FileCloser for WriteFile {
         })
     }
 
+    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+    // the trait method cannot be marked `unsafe fn`, so the lint is
+    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+    // in `on_io_request_closed` and is guaranteed live.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
@@ -231,7 +243,7 @@ impl WriteFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    pub fn on_io_error(this: *mut (), err: sys::Error) {
+    pub fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
@@ -260,7 +272,6 @@ impl WriteFile {
 
     pub fn wait_for_writable(&mut self) {
         self.close_after_io = true;
-        // Zig: `@atomicStore(?*const fn, &self.io_request.callback, &onRequestWritable, .seq_cst)`.
         self.io_request
             .store_callback_seq_cst(Self::on_request_writable);
         if !self.io_request.scheduled {
@@ -296,11 +307,9 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
-        // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
-        // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
+        // No explicit store ref bump: the caller passes a `+1` Blob (via
         // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
-        // `then` runs `StoreRef::drop`, so the explicit ref/deref pair is
+        // `then` runs `StoreRef::drop`, so the ref/deref pair is
         // folded into RAII.
         Ok(write_file)
     }
@@ -312,10 +321,9 @@ impl WriteFile {
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        // PORT NOTE: Zig generated a per-`Type` `Handler.run` thunk that
-        // `@ptrCast` the *anyopaque ctx back. In Rust the caller supplies a
-        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`)
-        // so the thunk collapses to a `.cast()` on `context`.
+        // The caller supplies a
+        // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
+        // so this is just a `.cast()` on `context`.
         WriteFile::create_with_ctx(
             file_blob,
             bytes_blob,
@@ -325,8 +333,7 @@ impl WriteFile {
         )
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig passed `buffer: []const u8` borrowed from
-    // self.bytes_blob alongside &mut self. Take (off, len) here and re-derive the slice
+    // reshaped for borrowck — take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
         let fd = self.opened_fd;
@@ -368,31 +375,22 @@ impl WriteFile {
         true
     }
 
-    pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; we consume it here.
-        let cb;
-        let cb_ctx;
-        let system_error;
-        let total_written;
-        unsafe {
-            cb = (*this).on_complete_callback;
-            cb_ctx = (*this).on_complete_ctx;
-            system_error = (*this).system_error.take();
-            total_written = (*this).total_written;
-            // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
-            //       bun.destroy(this);`
-            // Folded into RAII: `heap::take` runs `WriteFile`'s field-drop
-            // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-            // StoreRef>` → `Store::deref()` — exactly one deref each, same as
-            // the spec. (An earlier explicit `detach()` here was a no-op; the
-            // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-            // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-            // not an unbalanced ref.)
-            drop(bun_core::heap::take(this));
-        }
+    pub fn then(mut this: Box<WriteFile>, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+        let cb = this.on_complete_callback;
+        let cb_ctx = this.on_complete_ctx;
+        let system_error = this.system_error.take();
+        let total_written = this.total_written;
+        // Cleanup is RAII: dropping the `Box` runs `WriteFile`'s field-drop
+        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
+        // StoreRef>` → `Store::deref()` — exactly one deref each.
+        // (An earlier explicit `detach()` here was a no-op; the
+        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
+        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
+        // not an unbalanced ref.)
+        drop(this);
 
         if let Some(err) = system_error {
-            cb(cb_ctx, WriteFileResultType::Err(err))?;
+            cb(cb_ctx, WriteFileResultType::Err(Box::new(err)))?;
             return Ok(());
         }
 
@@ -406,12 +404,17 @@ impl WriteFile {
     pub fn run(&mut self, task: *mut WriteFileTask) {
         #[cfg(windows)]
         {
+            let _ = task;
             panic!("todo");
         }
-        self.io_task = Some(task);
-        self.run_async();
+        #[cfg(not(windows))]
+        {
+            self.io_task = Some(task);
+            self.run_async();
+        }
     }
 
+    #[cfg(not(windows))]
     fn run_async(&mut self) {
         self.get_fd(Self::run_with_fd);
     }
@@ -428,6 +431,7 @@ impl WriteFile {
             .is_path()
     }
 
+    #[cfg(not(windows))]
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
@@ -438,11 +442,12 @@ impl WriteFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                unsafe { bun_jsc::work_task::WorkTask::on_finish(io_task) };
+                bun_jsc::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
             }
         }
     }
 
+    #[cfg(not(windows))]
     fn run_with_fd(&mut self, fd_: Fd) {
         if fd_ == Fd::INVALID || self.errno.is_some() {
             self.on_finish();
@@ -536,9 +541,15 @@ impl WriteFile {
         {
             return; // why
         }
+        #[cfg(not(windows))]
+        self.do_write_loop_posix();
+    }
+
+    #[cfg(not(windows))]
+    fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
-            // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow
+            // reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
 
@@ -597,7 +608,7 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (Zig-style namespace
+    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
     use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
@@ -681,8 +692,7 @@ mod windows_impl {
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
-            // PORT NOTE: Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
-            // are omitted — the Rust caller passes `+1` Blobs via
+            // No explicit store ref bumps — the caller passes `+1` Blobs via
             // `borrowed_view()` and `deinit` releases them via
             // `heap::take → StoreRef::drop`.
             //
@@ -948,14 +958,13 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. In Zig (write_file.zig:486)
-            // `.new(...)` is `bun.TrivialNew`, which yields a raw `*AsyncMkdirp` with no
-            // destructor — the allocation is intentionally leaked here and freed by
-            // `work_pool_callback` after invoking `completion`. In Rust the temporary
+            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. The allocation
+            // is intentionally leaked here and freed by `work_pool_callback`
+            // after invoking `completion`. A temporary
             // `Box` would drop at end-of-statement, freeing the allocation immediately
             // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
             // so the worker thread would dereference freed memory. `Box::leak` hands
-            // ownership to the work-pool/completion path, matching the Zig lifetime.
+            // ownership to the work-pool/completion path.
             Box::leak(crate::node::fs::async_::AsyncMkdirp::new(
                 crate::node::fs::async_::AsyncMkdirp {
                     completion: Self::on_mkdirp_complete_concurrent,
@@ -979,8 +988,8 @@ mod windows_impl {
             // SAFETY: caller contract — `this` is live.
             let err = unsafe { (*this).err.take() };
             if let Some(err_) = err {
-                // PORT NOTE: Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop of
-                // sys::Error.path (owned Box<[u8]>); no explicit free needed.
+                // `sys::Error.path` is an owned `Box<[u8]>` freed by its Drop;
+                // no explicit free needed.
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
@@ -1000,7 +1009,7 @@ mod windows_impl {
 
         /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
         /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
-        /// the inner body already swallows `JSTerminated` per the Zig spec).
+        /// the inner body already swallows `JSTerminated`).
         fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
             // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
@@ -1096,7 +1105,7 @@ mod windows_impl {
             if let Some(err) = unsafe { (*this).to_system_error() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(err)) {
+                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
                     return e.into();
                 }
             } else {
@@ -1238,9 +1247,8 @@ mod windows_impl {
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
-                // PORT NOTE: Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()`
-                // are subsumed by `StoreRef::drop` when the Box is reclaimed below
-                // (paired with the RAII note in `create_with_ctx`).
+                // The store derefs happen via `StoreRef::drop` when the Box is
+                // reclaimed below (paired with the RAII note in `create_with_ctx`).
                 (*this).poll_ref.disable();
                 // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
                 // is safe on a zeroed or previously-used req.
@@ -1258,7 +1266,7 @@ mod windows_impl {
             callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
-            // PORT NOTE: see `WriteFile::create` — caller supplies an erased
+            // see `WriteFile::create` — caller supplies an erased
             // `*mut c_void` callback directly; `context` is just `.cast()`ed.
             WriteFileWindows::create_with_ctx(
                 file_blob,
@@ -1282,7 +1290,8 @@ pub struct WriteFilePromise {
 impl WriteFilePromise {
     pub fn run(handler: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated> {
         let handler = handler.cast::<Self>();
-        // SAFETY: handler is a Box-allocated WriteFilePromise (see Blob.zig:1172); consumed here.
+        // SAFETY: handler is the Box-allocated WriteFilePromise created in
+        // Blob.rs (`heap::into_raw(Box::new(WriteFilePromise { .. }))`); consumed here.
         // `swap()` releases the Strong's handle slot and yields a GC-owned `*mut JSPromise`,
         // which stays valid past `drop(heap::take(handler))`.
         let (promise, global_this): (*mut JSPromise, &JSGlobalObject) = unsafe {
@@ -1325,29 +1334,32 @@ pub struct WriteFileWaitFromLockedValueTask {
 
 impl WriteFileWaitFromLockedValueTask {
     pub fn then_wrap(this: *mut c_void, value: &mut body::Value) {
-        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value);
+        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below.
+        let _ = Self::then(
+            NonNull::new(this.cast::<WriteFileWaitFromLockedValueTask>()).unwrap(),
+            value,
+        );
         // TODO: properly propagate exception upwards
     }
 
+    /// # Safety
+    /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
+    /// On every arm except `body::Value::Locked`, the allocation is consumed.
     pub fn then(
-        this: *mut WriteFileWaitFromLockedValueTask,
+        this: NonNull<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
-        // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
+        let this = this.as_ptr();
+        // SAFETY: this is the Box-allocated task created in Blob.rs
+        // (`heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask { .. }))`).
         let this_ref = unsafe { &mut *this };
         // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
-        // SAFETY: GC-heap allocation (not inside `*this`); sole `&mut` borrow on
-        // the single JS thread. Hoisted once so each match arm calls through it
-        // safely instead of repeating `unsafe { &mut *promise }` per site.
-        let promise: &mut JSPromise = unsafe { &mut *this_ref.promise.get() };
+        let promise: &mut JSPromise = &mut *this_ref.promise.get();
         // Copy the `BackRef` out so the borrow is detached from `this_ref`
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;
         let global_this = global_ref.get();
-        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
-        // bitwise copy — both bindings alias the same `*Store` with no ref
-        // bump, and `bun.destroy(this)` later frees raw memory without running
-        // field destructors. In Rust `heap::take(this)` *does* drop fields,
+        // `heap::take(this)` drops fields,
         // so leaving the `StoreRef` in `this.file_blob` would double-deref it.
         // Move ownership out instead; the `Locked` arm — the only path that
         // keeps `this` alive for a future callback — moves it back so the next
@@ -1400,9 +1412,7 @@ impl WriteFileWaitFromLockedValueTask {
                     }
                 };
 
-                // PORT NOTE: Zig `defer bun.destroy(this); defer this.promise.deinit();
-                // defer file_blob.detach();` — defers run in reverse order at scope
-                // exit. Reclaim the Box now so it drops last; `file_blob` (a local
+                // Reclaim the Box now so it drops last; `file_blob` (a local
                 // declared after) drops first.
                 // SAFETY: `this` was Box-allocated (see Self::new). `this_ref` is dead
                 // past this point — all further field access goes through `_this_box`.
@@ -1433,5 +1443,3 @@ impl WriteFileWaitFromLockedValueTask {
         Ok(())
     }
 }
-
-// ported from: src/runtime/webcore/blob/write_file.zig

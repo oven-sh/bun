@@ -1,14 +1,12 @@
-#![allow(unused_imports, unused_variables, dead_code)]
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
 use core::ptr;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, TaggedPtrUnion};
+use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
 use bun_core::MutableString;
-use bun_core::{Ordinal, Output};
-use bun_paths::PathBuffer;
+use bun_core::Ordinal;
 use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
@@ -43,8 +41,8 @@ impl Default for SavedSourceMap {
 }
 
 impl SavedSourceMap {
-    // TODO(port): in-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
+    // In-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
+    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
         this.write(Self {
             map,
             mutex: Mutex::default(),
@@ -93,8 +91,7 @@ pub type Value = TaggedPtrUnion<ValueTypes>;
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all five live in `bun_sourcemap`), which the coherence checker
-/// rejects from this crate. Tags are `1024 - i` to match Zig's
-/// `TagTypeEnumWithTypeMap` ordering in `SavedSourceMap.zig`.
+/// rejects from this crate. Tags are `1024 - i`.
 pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
@@ -170,8 +167,8 @@ impl SavedSourceMap {
         path: &[u8],
     ) {
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // Note: reshaped for borrowck — explicit unlock paired manually.
+        // `get`+`remove(&key)`: the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
         let map = self.map_mut();
@@ -182,14 +179,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<DevServerSourceProvider>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };
@@ -206,8 +203,8 @@ impl SavedSourceMap {
 
     pub fn remove_zig_source_provider(&mut self, opaque_source_provider: *mut c_void, path: &[u8]) {
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
-        // Zig `getEntry`/`removeByPtr` collapsed to `get`+`remove(&key)`; the std
+        // Note: reshaped for borrowck — explicit unlock paired manually.
+        // `get`+`remove(&key)`: the std
         // backing has no key-slot pointer to hand out, and the key is a u64 hash
         // we already have in hand.
         let map = self.map_mut();
@@ -218,14 +215,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<SourceProviderMap>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };
@@ -236,8 +233,10 @@ impl SavedSourceMap {
     }
 }
 
-// TODO(port): std.HashMap(u64, *anyopaque, bun.IdentityContext(u64), 80) — needs identity (passthrough) hasher and 80% max load.
-pub type HashTable = HashMap<u64, *mut c_void>;
+// Keys are
+// already wyhash u64s, so use the passthrough hasher; `bun_collections`'
+// zig_hash_map uses an 80% max load factor.
+pub type HashTable = HashMap<u64, *mut c_void, IdentityContext<u64>>;
 
 impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     fn on_source_map_chunk(
@@ -249,9 +248,7 @@ impl bun_js_printer::OnSourceMapChunk for SavedSourceMap {
     }
 }
 
-/// Port of `SavedSourceMap.SourceMapHandler` (SavedSourceMap.zig) —
-/// `js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk)`. The Zig
-/// comptime type-generator is replaced by `SourceMapHandler::for_::<SavedSourceMap>`,
+/// `SourceMapHandler::for_::<SavedSourceMap>` is
 /// monomorphized over the `OnSourceMapChunk` impl above.
 pub type SourceMapHandler<'a> = bun_js_printer::SourceMapHandler<'a>;
 
@@ -260,7 +257,6 @@ impl Drop for SavedSourceMap {
         {
             self.lock();
             let map = self.map_mut();
-            // Zig `valueIterator()` → std `values()`.
             for val in map.values() {
                 let value = Value::from(Some(*val));
                 if let Some(source_map) = value.get::<ParsedSourceMap>() {
@@ -282,7 +278,10 @@ impl Drop for SavedSourceMap {
         }
 
         self.map_mut().unlock_pointers();
-        // TODO(port): deinit() on a backref-owned HashMap — ownership lives on VirtualMachine; verify.
+        // The HashTable storage is owned by the sibling `saved_source_map_table`
+        // field on VirtualMachine; `deinit()` resets it to an empty default in
+        // place, so the VM's later (or absent) drop of that field is a no-op —
+        // no double free.
         self.map_mut().deinit();
     }
 }
@@ -293,7 +292,6 @@ impl SavedSourceMap {
         source: &bun_ast::Source,
         mut mappings: MutableString,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // --hot can re-read a file mid-rewrite (truncate + write) and transpile
         // a comment-only prefix into a 0-mapping map. Overwriting a real map
         // with that would make any still-unreported error from the previous
@@ -311,14 +309,12 @@ impl SavedSourceMap {
                 if contains {
                     return Ok(());
                 }
-                // PORT NOTE: reshaped for borrowck — Zig held the lock across the early return; here we
-                // release before returning since no further table access follows.
+                // Note: reshaped for borrowck — the lock is
+                // released before returning since no further table access follows.
             }
         }
 
-        // PORT NOTE: Zig `default_allocator.dupe(u8, mappings.list.items)` —
-        // Zig dups because the printer's `MutableString` is backed by a
-        // recycled buffer it does not own. In Rust every caller MOVES an owned
+        // Note: every caller MOVES an owned
         // `Vec<u8>` here (printer chunk by value, cache hit via `mem::take`),
         // so `into_boxed_slice()` transfers the existing allocation without
         // re-alloc+memcpy (1.38 MB for `_tsc.js`'s cached map). `heap::alloc`
@@ -330,7 +326,7 @@ impl SavedSourceMap {
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,
-            Value::init(blob_ptr.cast::<u8>().cast::<InternalSourceMap>()),
+            Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
         ) {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -344,15 +340,14 @@ impl SavedSourceMap {
     pub fn put_value(&mut self, path: &[u8], value: Value) -> Result<(), bun_core::Error> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
-        // TODO(port): narrow error set
         self.lock();
-        // PORT NOTE: reshaped for borrowck — explicit unlock paired manually.
+        // Note: reshaped for borrowck — explicit unlock paired manually.
 
         self.find_cache.invalidate_all();
         self.last_ism = None;
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
-        // the std `entry()` API is used directly (Zig `getOrPut`).
+        // the std `entry()` API is used directly.
         match self.map_mut().entry(hash(path)) {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
@@ -408,7 +403,7 @@ impl SavedSourceMap {
                 data: tagged.as_unchecked::<InternalSourceMap>() as *const u8,
             };
             // Table holds one strong ref (leaked via `into_raw`); caller gets
-            // the returned `Arc`. Mirrors Zig's intrusive `ref()` pair.
+            // the returned `Arc`.
             let result = Arc::new(ParsedSourceMap::from_internal(ism));
             *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
             self.unlock();
@@ -436,10 +431,9 @@ impl SavedSourceMap {
             // Do not lock the mutex while we're parsing JSON!
             // SAFETY: SourceProviderMap is kept alive by JSC; we did not hold a ref.
             if let Some(parse) = unsafe { (*ptr).get_source_map(path, Default::default(), hint) } {
-                // TODO(port): `.none` enum literal for second arg — verify SourceMap load-hint default.
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    // Leak one strong ref into the table (mirrors Zig `map.ref()`).
+                    // Leak one strong ref into the table.
                     let _ =
                         self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
@@ -554,7 +548,7 @@ impl SavedSourceMap {
 
         let mapping = match parse.mapping {
             Some(m) => m,
-            // Spec SavedSourceMap.zig:343 — pass `line`/`column` straight
+            // Pass `line`/`column` straight
             // through. `SourceMap::Ordinal` is a re-export of `bun_core::Ordinal`;
             // round-tripping via `from_zero_based(x.zero_based())` debug-asserts
             // on the legitimate INVALID (-1) sentinel.
@@ -569,5 +563,3 @@ impl SavedSourceMap {
         })
     }
 }
-
-// ported from: src/jsc/SavedSourceMap.zig

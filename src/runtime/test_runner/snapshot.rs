@@ -1,22 +1,20 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_ulong;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
-use bun_core::{self, Error};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_js_parser::{self as js_parser, lexer as js_lexer};
-use bun_core::printer as js_printer;
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_core::{strings, ZStr};
-use bun_sys::{self, Fd};
+use bun_core::printer as js_printer;
+use bun_core::{self, Error};
+use bun_core::{ZStr, strings};
+use bun_js_parser::{self as js_parser, lexer as js_lexer};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_paths::{self, PathBuffer};
+use bun_sys::{self};
 use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use super::jest::{Jest, TestRunner, FileColumns as _};
+use super::jest::{FileColumns as _, Jest};
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
@@ -31,15 +29,16 @@ pub struct Snapshots<'a> {
     pub failed: usize,
 
     pub file_buf: &'a mut Vec<u8>,
-    // PORT NOTE: LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
-    // Key is u64 to match `bun.hash` (Zig uses IdentityContext(usize) but hash returns u64; avoids narrowing cast).
+    // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
+    // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     pub values: &'a mut HashMap<u64, Box<[u8]>>,
-    // PORT NOTE: LIFETIMES.tsv said `HashMap<String, usize>`; Zig is `bun.StringHashMap(usize)` → byte-keyed wyhash map.
     pub counts: &'a mut StringHashMap<usize>,
     pub _current_file: Option<File>,
-    // TODO(port): lifetime — borrows Jest.runner.files[..].source.path; BACKREF (not owned, never freed).
+    /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
+    /// here, never freed): the runner is process-global and its files are
+    /// never freed mid-run, so the pointee outlives `self`. Only dereferenced
+    /// via `as_ref()` in `get_snapshot_file` (see the SAFETY comments there).
     pub snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
-    // TODO(port): LIFETIMES.tsv says `IndexMap<FileId, Vec<..>>`; PORTING.md prefers `bun_collections::ArrayHashMap`.
     pub inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub last_error_snapshot_name: Option<Box<[u8]>>,
 }
@@ -48,19 +47,15 @@ pub struct Snapshots<'a> {
 pub use bun_collections::ArrayHashMap as IndexMap;
 
 impl<'a> Snapshots<'a> {
-    const FILE_HEADER: &'static [u8] =
-        b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+    const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
 
     #[cfg(windows)]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
-
 }
 
-// std.HashMap(usize, string, bun.IdentityContext(usize), default_max_load_percentage)
-// TODO(perf): IdentityContext — key is its own hash; consider `BuildHasherDefault<IdentityHasher>`.
-// PORT NOTE: hoisted out of `impl Snapshots` — inherent associated types are unstable.
+// hoisted out of `impl Snapshots` — inherent associated types are unstable.
 pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 
 pub struct InlineSnapshotToWrite {
@@ -95,7 +90,6 @@ impl InlineSnapshotToWrite {
 
 pub struct File {
     pub id: FileId,
-    // TODO(port): Zig used `std.fs.File` (via `fd.stdFile()`); std::fs is banned. Using bun_sys::File.
     pub file: bun_sys::File,
 }
 
@@ -108,18 +102,15 @@ impl<'a> Snapshots<'a> {
         }
     }
 
-    pub fn add_count(
-        &mut self,
-        expect: &Expect,
-        hint: &[u8],
-    ) -> Result<(Vec<u8>, usize), Error> {
-        // TODO(port): narrow error set
+    pub fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
-        // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key_ptr/value_ptr together.
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
-        let gop = self.counts.get_or_put(&snapshot_name).map_err(Error::from)?;
+        let gop = self
+            .counts
+            .get_or_put(&snapshot_name)
+            .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {
@@ -135,16 +126,14 @@ impl<'a> Snapshots<'a> {
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
-        // TODO(port): narrow error set
-        let mut buntest_strong = expect
+        let buntest_strong = expect
             .bun_test()
-            .ok_or(bun_core::err!("SnapshotFailed"))?;
-        // defer buntest_strong.deinit() → Drop
+            .ok_or_else(|| bun_core::err!("SnapshotFailed"))?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
-                // PORT NOTE: `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
+                // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
                 // not an enum — match arms require structural-eq; use if-chain instead.
                 return Err(if err.syscall == bun_sys::Tag::mkdir {
                     bun_core::err!("FailedToMakeSnapshotDirectory")
@@ -166,14 +155,12 @@ impl<'a> Snapshots<'a> {
         name_with_counter.extend_from_slice(&name);
         name_with_counter.push(b' ');
         name_with_counter.extend_from_slice(counter_string);
-        // defer free → Drop
 
         let name_hash: u64 = hash(&name_with_counter);
-        // PORT NOTE: reshaped for borrowck — `get` then early-return borrows `*self.values`
+        // reshaped for borrowck — `get` then early-return borrows `*self.values`
         // immutably for the whole fn body (NLL limitation with returned borrows), preventing
         // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
         if self.values.contains_key(&name_hash) {
-            // TODO(port): returning &[u8] borrowing self.values; lifetime tied to &mut self.
             return Ok(Some(&**self.values.get(&name_hash).unwrap()));
         }
 
@@ -182,7 +169,6 @@ impl<'a> Snapshots<'a> {
         if crate::cli::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
-                // (old name dropped automatically on reassign)
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
                 return Err(bun_core::err!("SnapshotCreationNotAllowedInCI"));
             }
@@ -197,18 +183,30 @@ impl<'a> Snapshots<'a> {
         write!(
             self.file_buf,
             "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(&name_with_counter, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
-            strings::format_escapes(target_value, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
+            strings::format_escapes(
+                &name_with_counter,
+                strings::QuoteEscapeFormatFlags {
+                    quote_char: b'`',
+                    ..Default::default()
+                }
+            ),
+            strings::format_escapes(
+                target_value,
+                strings::QuoteEscapeFormatFlags {
+                    quote_char: b'`',
+                    ..Default::default()
+                }
+            ),
         )
         .map_err(|_| bun_core::err!("WriteError"))?;
 
         self.added += 1;
-        self.values.insert(name_hash, Box::<[u8]>::from(target_value));
+        self.values
+            .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
     }
 
     pub fn parse_file(&mut self, file: &File) -> Result<(), Error> {
-        // TODO(port): narrow error set
         if self.file_buf.is_empty() {
             return Ok(());
         }
@@ -217,15 +215,14 @@ impl<'a> Snapshots<'a> {
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
         );
-        // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
-        // since js_parser is bump-allocated in the Rust port.
+        // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
-        // PORT NOTE: do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
+        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
         // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
         // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
         // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
@@ -236,8 +233,9 @@ impl<'a> Snapshots<'a> {
             let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
             &(*p).files.items_source()[file.id as usize]
         };
-        let test_filename = test_file_source.path.name.filename;
-        let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+        let name = test_file_source.path.name();
+        let test_filename = name.filename;
+        let dir_path = name.dir_with_trailing_slash();
 
         let mut snapshot_file_path_buf = PathBuffer::uninit();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
@@ -254,7 +252,10 @@ impl<'a> Snapshots<'a> {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-        let source = bun_ast::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
+        let source = bun_ast::Source::init_path_string(
+            snapshot_file_path.as_bytes(),
+            self.file_buf.as_slice(),
+        );
 
         let parser = js_parser::Parser::init(
             opts,
@@ -269,7 +270,6 @@ impl<'a> Snapshots<'a> {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),
         };
-        // defer ast.deinit() → Drop
 
         if ast.exports_ref.is_empty() {
             return Ok(());
@@ -278,14 +278,14 @@ impl<'a> Snapshots<'a> {
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
-        for part in ast.parts.slice_mut() {
+        for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
                 match &mut stmt.data {
                     bun_ast::StmtData::SExpr(expr) => {
                         if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
-                            // PORT NOTE: deref `StoreRef` once to a plain `&mut E::Binary`
+                            // deref `StoreRef` once to a plain `&mut E::Binary`
                             // so the borrow checker can see `.left`/`.right` as disjoint
                             // field projections (custom `DerefMut` blocks split-borrows
                             // otherwise).
@@ -293,7 +293,7 @@ impl<'a> Snapshots<'a> {
                             if e_binary.op == bun_ast::Op::Code::BinAssign {
                                 let (left, right) = (&mut e_binary.left, &mut e_binary.right);
                                 if let bun_ast::ExprData::EIndex(e_index) = &mut left.data {
-                                    // PORT NOTE: split-borrow `index`/`target` so we can take
+                                    // split-borrow `index`/`target` so we can take
                                     // `&mut` on `index` (EString::slice needs &mut) while reading
                                     // `target` immutably.
                                     let target_is_exports = matches!(
@@ -301,13 +301,14 @@ impl<'a> Snapshots<'a> {
                                         bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
                                     );
                                     if target_is_exports {
-                                        if let bun_ast::ExprData::EString(index) = &mut e_index.index.data {
+                                        if let bun_ast::ExprData::EString(index) =
+                                            &mut e_index.index.data
+                                        {
                                             if let bun_ast::ExprData::EString(value_string) =
                                                 &mut right.data
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                // defer { if !isUTF8 free } → arena drop
                                                 let value_clone: Box<[u8]> =
                                                     Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
@@ -324,14 +325,12 @@ impl<'a> Snapshots<'a> {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig's chained `.data == .x and .data.x.y == ...` becomes nested if-let.
         let _ = &mut ast;
         Ok(())
     }
 
     pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        // TODO(port): narrow error set
-        if let Some(mut file) = self._current_file.take() {
+        if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| bun_core::err!("FailedToWriteSnapshotFile"))?;
@@ -339,11 +338,8 @@ impl<'a> Snapshots<'a> {
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 
-            // values: owned strings dropped by clear()
             self.values.clear();
-            // PERF(port): Zig clearAndFree() also releases capacity; HashMap::clear keeps it.
 
-            // counts: owned key strings dropped by clear()
             self.counts.clear();
         }
         Ok(())
@@ -354,7 +350,6 @@ impl<'a> Snapshots<'a> {
         file_id: FileId,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        // TODO(port): narrow error set
         let list = self
             .inline_snapshots_to_write
             .entry(file_id)
@@ -364,20 +359,16 @@ impl<'a> Snapshots<'a> {
     }
 
     pub fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
-        // TODO(port): narrow error set
-        // PERF(port): was arena bulk-free per iteration — profile if it shows up on a hot path.
-        // TODO(port): js_parser/lexer APIs likely still require `&Bump`; arena threading not done here.
-
-        // PORT NOTE: `success` is a Cell so the per-iteration `defer if (log.errors > 0)` guard
+        // `success` is a Cell so the per-iteration error-check guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
         let vm = VirtualMachine::get().as_mut();
 
-        // PERF(port): was arena bulk-free per iteration — reset() inside the loop.
+        // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
 
-        // PORT NOTE: reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
+        // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
         let file_ids: Vec<FileId> = self.inline_snapshots_to_write.keys().to_vec();
         for file_id in file_ids {
             arena.reset();
@@ -386,11 +377,13 @@ impl<'a> Snapshots<'a> {
                 .get_mut(&file_id)
                 .expect("unreachable");
 
-            // Zig: `defer if (log.errors > 0) { log.print(...); success = false; }`
-            // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
+            // The guard runs on every exit of the loop body (continue,
+            // fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
+                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        bun_output::error_writer(),
+                    ));
                     success.set(false);
                 }
             });
@@ -407,22 +400,20 @@ impl<'a> Snapshots<'a> {
             });
 
             // 2. load file text
-            // PORT NOTE: avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
+            // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
             // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
-            // TODO(port): arena.dupeZ — using owned Vec<u8> with trailing NUL.
             let test_filename: Box<[u8]> = {
                 let mut v = test_file_source.path.text.to_vec();
                 v.push(0);
                 v.into_boxed_slice()
             };
             // SAFETY: NUL appended above
-            let test_filename_z =
-                ZStr::from_slice_with_nul(&test_filename[..]);
+            let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
             let fd = match bun_sys::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
                 bun_sys::Result::Ok(r) => r,
@@ -438,20 +429,15 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — fires on `?` error returns only.
-            // PORT NOTE: Zig never closes on the success path (or `continue`); preserve that by
-            // disarming via `into_inner` on every non-`?` exit below.
-            let mut file = scopeguard::guard(
-                File { id: file_id, file: bun_sys::File::from_fd(fd) },
-                |f| { let _ = bun_sys::close(f.file.handle); },
-            );
+            let file = File {
+                id: file_id,
+                file: bun_sys::File::from_fd(fd),
+            };
 
-            let file_text: Vec<u8> = file
-                .file
-                .read_to_end()
-                .map_err(|e| Error::from(e))?;
+            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
 
-            let source = bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
+            let source =
+                bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
 
             let mut result_text: Vec<u8> = Vec::new();
 
@@ -486,12 +472,9 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
 
-                bun_core::scoped_log!(
-                    inline_snapshot,
-                    "Finding byte for {}/{}",
-                    ils.line,
-                    ils.col
-                );
+                bun_core::scoped_log!(inline_snapshot, "Finding byte for {}/{}", ils.line, ils.col);
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
                 let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
                     u64::from(last_line),
@@ -548,8 +531,8 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    // PORT NOTE: Zig passed `&log` to both `Lexer.initWithoutReading` and
-                    // `TSXParser.init` (aliasing `*Log`). Rust forbids two live `&'a mut Log`;
+                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
+                    // `Log`, but Rust forbids two live `&'a mut Log`;
                     // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
                     // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
                     // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
@@ -559,6 +542,9 @@ impl<'a> Snapshots<'a> {
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
+                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
+                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
+                        // moved into `parser` below.
                         unsafe { &mut *log_ptr },
                         &source,
                         &arena,
@@ -569,14 +555,12 @@ impl<'a> Snapshots<'a> {
                         lexer.step();
                     }
                     lexer.next()?;
-                    // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
-                    // (Zig passed by value-copy).
+                    // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone().into(),
+                        vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
-                    // PORT NOTE: `P::init` takes an out-param (Zig:
-                    // `var p: ParserType = undefined; try ParserType.init(.., &p)`)
+                    // `P::init` takes an out-param
                     // since 9a98701c980c — `P` is ~5 KiB and the previous
                     // `let p = P::init(..)?` shape forced 2-3 by-value moves.
                     // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
@@ -623,9 +607,7 @@ impl<'a> Snapshots<'a> {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
-                            format_args!(
-                                "Failed to update inline snapshot: Spread is not allowed"
-                            ),
+                            format_args!("Failed to update inline snapshot: Spread is not allowed"),
                         );
                         continue 'ils;
                     }
@@ -666,9 +648,7 @@ impl<'a> Snapshots<'a> {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
-                            format_args!(
-                                "Failed to update inline snapshot: Spread is not allowed"
-                            ),
+                            format_args!("Failed to update inline snapshot: Spread is not allowed"),
                         );
                         continue 'ils;
                     }
@@ -718,7 +698,8 @@ impl<'a> Snapshots<'a> {
                     final_end_usize
                 );
 
-                if final_end_usize < final_start_usize || final_start_usize < uncommitted_segment_end
+                if final_end_usize < final_start_usize
+                    || final_start_usize < uncommitted_segment_end
                 {
                     log.add_error_fmt(
                         &source,
@@ -738,13 +719,11 @@ impl<'a> Snapshots<'a> {
                     Some(s) => s,
                     None => 'd: {
                         let source_until_final_start = &source.contents[..final_start_usize];
-                        let line_start = match source_until_final_start
-                            .iter()
-                            .rposition(|&b| b == b'\n')
-                        {
-                            Some(newline_loc) => newline_loc + 1,
-                            None => 0,
-                        };
+                        let line_start =
+                            match source_until_final_start.iter().rposition(|&b| b == b'\n') {
+                                Some(newline_loc) => newline_loc + 1,
+                                None => 0,
+                            };
                         let tail = &source_until_final_start[line_start..];
                         let indent_count = tail
                             .iter()
@@ -783,9 +762,8 @@ impl<'a> Snapshots<'a> {
                         re_indented_source = &re_indented_source[next_newline..];
                     }
                     // indent before backtick
-                    re_indented_string.extend_from_slice(
-                        ils.end_indent.as_deref().unwrap_or(start_indent),
-                    );
+                    re_indented_string
+                        .extend_from_slice(ils.end_indent.as_deref().unwrap_or(start_indent));
                     &re_indented_string
                 } else {
                     &ils.value
@@ -806,8 +784,7 @@ impl<'a> Snapshots<'a> {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    // PORT NOTE: Zig spec does `Jest.runner.?.snapshots.added += 1` (snapshot.zig:461),
-                    // but `runner.snapshots` *is* `*self`. Going back through `Jest::runner()` would
+                    // `runner.snapshots` *is* `*self`: going back through `Jest::runner()` would
                     // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
                     self.added += 1;
                 }
@@ -818,7 +795,6 @@ impl<'a> Snapshots<'a> {
 
             if log.errors > 0 {
                 // skip writing the file if there were errors — `log` guard prints on drop.
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -832,7 +808,6 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -845,36 +820,30 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
             if result_text.len() < file_text.len() {
                 if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
-                    panic!(
-                        "Failed to update inline snapshot: File was left in an invalid state"
-                    );
+                    panic!("Failed to update inline snapshot: File was left in an invalid state");
                 }
             }
-
-            // disarm errdefer (success path) — Zig never closes on success.
-            let _ = scopeguard::ScopeGuard::into_inner(file);
         }
         Ok(success.get())
     }
 
     fn get_snapshot_file(&mut self, file_id: FileId) -> Result<bun_sys::Result<()>, Error> {
-        // TODO(port): narrow error set
         if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
             self.write_snapshot_file()?;
 
-            // PORT NOTE: avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
+            // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
             // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
-            let test_filename = test_file_source.path.name.filename;
-            let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+            let name = test_file_source.path.name();
+            let test_filename = name.filename;
+            let dir_path = name.dir_with_trailing_slash();
 
             let mut snapshot_file_path_buf = PathBuffer::uninit();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
@@ -931,11 +900,6 @@ impl<'a> Snapshots<'a> {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
-            // PORT NOTE: `errdefer file.file.close()` — close fd on `?` early-return.
-            // Guard the `Fd` (Copy) directly so we don't need to move out of `bun_sys::File`.
-            let guard = scopeguard::guard(fd, |fd| {
-                let _ = bun_sys::close(fd);
-            });
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
@@ -951,18 +915,13 @@ impl<'a> Snapshots<'a> {
                         file.file.seek_to(0).map_err(Error::from)?;
                     }
                     self.file_buf.extend_from_slice(&tmp);
-                    // tmp dropped here (was: allocator.free(buf))
                 }
             }
 
-            // errdefer stays armed across parse_file — if it errors, guard closes the fd.
             self.parse_file(&file)?;
-            scopeguard::ScopeGuard::into_inner(guard);
             self._current_file = Some(file);
         }
 
         Ok(bun_sys::Result::Ok(()))
     }
 }
-
-// ported from: src/test_runner/snapshot.zig

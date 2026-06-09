@@ -1,11 +1,7 @@
-use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsError};
+use crate::{Exception, JSGlobalObject, JSValue, JsError};
 
-// TODO(port): move to <jsc>_sys
-//
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
 // are opaque `UnsafeCell`-backed ZST handles, so `&VM` is ABI-identical to a
@@ -66,11 +62,10 @@ pub enum HeapType {
 }
 
 impl VM {
-    // PORT NOTE: `JSC__VM__create` was removed from bindings.cpp (Bun creates
+    // Note: `JSC__VM__create` was removed from bindings.cpp (Bun creates
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
-    // The Zig `VM.create` wrapper is dead code; do not port it.
 
-    // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
+    // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
     pub fn deinit(&self, global_object: &JSGlobalObject) {
         JSC__VM__deinit(self, global_object)
     }
@@ -99,19 +94,17 @@ impl VM {
         Lock { vm: self }
     }
 
-    // PORT NOTE: `JSC__VM__deferGC` was removed from bindings.cpp in the
-    // WebKit-bump that introduced `JSC::DeferGC` RAII; the Zig `deferGC`
-    // wrapper is dead code. Callers should use `holdAPILock`/`DeferGC` on the
-    // C++ side instead.
+    // Note: `JSC__VM__deferGC` was removed from bindings.cpp in the
+    // WebKit-bump that introduced `JSC::DeferGC` RAII. Callers should use
+    // `holdAPILock`/`DeferGC` on the C++ side instead.
 
     pub fn report_extra_memory(&self, size: usize) {
         crate::mark_binding!();
         JSC__VM__reportExtraMemory(self, size)
     }
 
-    /// Alias retained for parity with the Zig comment naming this the
-    /// "deprecated" GC accounting hook (the underlying C++ is
-    /// `Heap::deprecatedReportExtraMemory`). Forward to [`report_extra_memory`].
+    /// Alias for the "deprecated" GC accounting hook (the underlying C++ is
+    /// `Heap::deprecatedReportExtraMemory`). Forwards to [`report_extra_memory`].
     #[inline]
     pub fn deprecated_report_extra_memory(&self, size: usize) {
         self.report_extra_memory(size);
@@ -224,14 +217,13 @@ impl VM {
     }
 }
 
-/// RAII JSLockHolder returned by [`VM::get_api_lock`]. Mirrors Zig
-/// `JSC.VM.Lock` (`defer api_lock.release()` → `Drop`).
+/// RAII JSLockHolder returned by [`VM::get_api_lock`]. Released on `Drop`.
 pub struct Lock<'a> {
     vm: &'a VM,
 }
 
 impl<'a> Lock<'a> {
-    /// Explicit release (Zig spelling). Equivalent to `drop(self)`.
+    /// Explicit release. Equivalent to `drop(self)`.
     #[inline]
     pub fn release(self) {}
 }
@@ -241,5 +233,3 @@ impl Drop for Lock<'_> {
         JSC__VM__releaseAPILock(self.vm)
     }
 }
-
-// ported from: src/jsc/VM.zig

@@ -1,7 +1,7 @@
-//! `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — moved UP from
-//! `bun_jsc::JSGlobalObject` because the body inspects `Response`/`Body`/
+//! `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — lives here rather
+//! than in `bun_jsc::JSGlobalObject` because the body inspects `Response`/`Body`/
 //! `Blob`/`ReadableStream`, which are `bun_runtime` types (forward-dep of
-//! `bun_jsc`). The Zig original lives in `src/jsc/JSGlobalObject.zig:871`.
+//! `bun_jsc`).
 //!
 //! C++ calls this via `jsc.host_fn.wrap3` — i.e. plain C ABI with the three
 //! original arguments, returning a possibly-empty `JSValue` (empty == thrown).
@@ -26,16 +26,15 @@ unsafe extern "C" {
     );
 }
 
-/// Spec `JSGlobalObject.zig:871 getBodyStreamOrBytesForWasmStreaming`.
-pub fn get_body_stream_or_bytes_for_wasm_streaming(
+pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
     this: &JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JsResult<JSValue> {
-    // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
-    // the cell stays live for the duration of this host call (rooted on the
-    // C++ caller's stack).
     let response: &mut Response = match response::from_js(response_value) {
+        // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
+        // the cell stays live for the duration of this host call (rooted on the
+        // C++ caller's stack).
         Some(r) => unsafe { &mut *r },
         None => {
             return Err(this.throw_invalid_argument_type_value2(
@@ -64,7 +63,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
                 )
                 .throw());
         }
-        // `content_type_slice` drops here (Zig: `ZigString` is a borrow, no deinit needed).
+        // `content_type_slice` drops here.
     }
 
     if !response.is_ok() {
@@ -88,9 +87,9 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `body = response.getBodyValue()` as
-    // a single live pointer through `getBodyReadableStream`; in Rust that overlaps two
-    // `&mut` borrows of `response`, so we re-borrow per use and capture scalars.
+    // Holding `body = response.get_body_value()` as a single live pointer
+    // through `getBodyReadableStream` would overlap two `&mut` borrows
+    // of `response`, so we re-borrow per use and capture scalars.
     {
         let body = response.get_body_value();
         if let BodyValue::Error(err) = body {
@@ -108,7 +107,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     }
 
     let body = response.get_body_value();
-    let mut any_blob: AnyBlob = match body {
+    let any_blob: AnyBlob = match body {
         BodyValue::Locked(_) => match body.try_use_as_any_blob() {
             Some(b) => b,
             None => return body.to_readable_stream(this),
@@ -126,12 +125,11 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
         // (using any_blob.slice() would return a bogus empty slice)
 
         // Logic from JSC.WebCore.Body.Value.toReadableStream
-        // Zig: `var blob = any_blob.Blob;` — the union payload, by value.
         let AnyBlob::Blob(blob) = any_blob else {
             unreachable!("Any::store() returned Some, so this is the Blob variant");
         };
         // `defer blob.detach()` — RAII via scopeguard.
-        let mut blob = scopeguard::guard(blob, |mut b: Blob| b.detach());
+        let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
         return ReadableStream::from_blob_copy_ref(this, &blob, size);
@@ -150,11 +148,14 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     Ok(JSValue::NULL)
 }
 
-/// `jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming)` — plain C ABI
-/// shim: returns `.zero` on thrown exception (matches `wrapN` semantics in
-/// `src/jsc/host_fn.zig`).
+/// Plain C ABI
+/// shim: returns `.zero` on thrown exception.
+///
+/// # Safety
+/// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
+/// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+pub(crate) unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

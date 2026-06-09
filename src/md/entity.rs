@@ -5,15 +5,14 @@ use core::cmp::Ordering;
 
 /// HTML named entity lookup.
 /// Sorted array of entity names (including & and ;) mapped to Unicode codepoint(s).
-pub struct Entity {
+pub(crate) struct Entity {
     pub name: &'static [u8],
-    // PORT NOTE: Zig `u21` (Unicode codepoint) → `u32`.
     pub codepoints: [u32; 2],
 }
 
 /// Look up an HTML entity by name (including & prefix and ; suffix).
 /// Uses binary search on the sorted entity map.
-pub fn lookup(name: &[u8]) -> Option<[u32; 2]> {
+pub(crate) fn lookup(name: &[u8]) -> Option<[u32; 2]> {
     let mut low: usize = 0;
     let mut high: usize = ENTITY_MAP.len();
     while low < high {
@@ -2158,5 +2157,3 @@ static ENTITY_MAP: &[Entity] = &[
     Entity { name: b"&zwj;", codepoints: [8205, 0] },
     Entity { name: b"&zwnj;", codepoints: [8204, 0] },
 ];
-
-// ported from: src/md/entity.zig

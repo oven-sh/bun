@@ -1,5 +1,4 @@
 use core::ffi::c_int;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSValue, VM};
 use bun_core::{self as bstr, ZigString};
@@ -9,15 +8,12 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; `ZigString`/`c_int`
 // out-params are plain `#[repr(C)]` PODs whose `&mut` is exclusive for the
 // call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
-    // These two are referenced via `bun.cpp.*` in the Zig source.
     safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
     safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
 }
@@ -36,7 +32,9 @@ bun_core::named_error_set!(ToFileSystemPathError);
 
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
-        // TODO(port): lifetime — DOMURL is a GC-owned C++ cell; no Rust-expressible lifetime.
+        // DOMURL is a GC-owned C++ cell; the returned reference is only valid
+        // while `value` stays alive (e.g. stack-rooted for the conservative GC
+        // scan) — the borrow on `vm` does not capture that.
         // `DOMURL` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
         // centralised non-null-ZST deref proof (zero-byte `&mut` cannot alias).
         let p = WebCore__DOMURL__cast_(value, vm);
@@ -84,5 +82,3 @@ impl DOMURL {
         out
     }
 }
-
-// ported from: src/jsc/DOMURL.zig

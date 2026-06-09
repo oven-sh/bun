@@ -13,12 +13,12 @@ use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
 
+// The scope registry keys on name, so the two visibilities (.hidden +
+// .visible) are split into two scope names.
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
-// TODO(port): Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
-// Rust scope registry keys on name; pick one visibility or split scope names.
 
 /// SSL context cache keyed by interned SSLConfig pointer.
 /// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
@@ -29,7 +29,7 @@ struct SslContextCacheEntry {
     ctx: NonNull<NewHttpContext<true>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
-    config_ref: ssl_config::SharedPtr,
+    _config_ref: ssl_config::SharedPtr,
 }
 
 impl SslContextCacheEntry {
@@ -61,7 +61,7 @@ impl SslContextCacheEntry {
     }
 }
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
-const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 * std.time.ns_per_min
+const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 minutes
 
 // PORTING.md §Global mutable state: only ever accessed from the single HTTP
 // client thread after `on_start`. RacyCell — thread affinity is the contract.
@@ -85,9 +85,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
-    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread
-    /// (Zig: `bun.http.http_thread.loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`,
-    /// HTTPThread.zig:228+235).
+    /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
     pub loop_: *const MiniEventLoop<'static>,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
@@ -125,10 +123,12 @@ pub struct HttpThread {
     pub queued_shutdowns: Vec<ShutdownMessage>,
     pub queued_writes: Vec<WriteMessage>,
     pub queued_response_body_drains: Vec<DrainMessage>,
+    pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
     pub queued_response_body_drains_lock: Mutex,
+    pub queued_cert_check_resumes_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
@@ -136,13 +136,21 @@ pub struct HttpThread {
     pub timer: Instant,
     pub lazy_libdeflater: Option<Box<LibdeflateState>>,
     pub lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
+
+    /// Every `ThreadlocalAsyncHTTP` box currently in flight on this thread.
+    /// Inserted by [`start_queued_task`] right after `heap::release`; removed
+    /// by `AsyncHTTP::on_async_http_callback_raw` immediately before its
+    /// `std::alloc::dealloc`. HTTP-thread-only. Exists so
+    /// [`shutdown_for_exit`] can reclaim each clone-owned box at process exit
+    /// — the request socket never reaches a terminal state once the JS thread
+    /// stops driving the world, so the box would otherwise strand.
+    pub in_flight: Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
 }
 
 impl HttpThread {
-    /// Mirror of Zig `initOnce`'s `bun.http.http_thread = .{ ... }` field-init
-    /// list (HTTPThread.zig:195-206). `loop_`/`uws_loop` are filled in by
+    /// `loop_`/`uws_loop` are filled in by
     /// `on_start` on the spawned thread; `timer` is started on the calling
-    /// thread per spec.
+    /// thread.
     fn new() -> Self {
         Self {
             loop_: core::ptr::null(),
@@ -170,32 +178,33 @@ impl HttpThread {
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
             queued_response_body_drains: Vec::new(),
+            queued_cert_check_resumes: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
             queued_response_body_drains_lock: Mutex::new(),
+            queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
             lazy_libdeflater: None,
             lazy_request_body_buffer: None,
+            in_flight: Vec::new(),
         }
     }
 }
 
 pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
-    // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —
-    // self-referential. Use bun_alloc::FixedBufferAllocator or just a cursor.
+    // Plain write cursor into `buffer`.
     pub cursor: usize,
 }
 
+// SAFETY: `[u8; N]` and `usize` are both valid at the all-zero bit pattern.
+unsafe impl bun_core::Zeroable for HeapRequestBodyBuffer {}
+
 impl HeapRequestBodyBuffer {
     pub fn init() -> Box<Self> {
-        // TODO(port): self-referential init; FixedBufferAllocator borrows this.buffer.
-        Box::new(HeapRequestBodyBuffer {
-            buffer: [0u8; 512 * 1024],
-            cursor: 0,
-        })
+        bun_core::boxed_zeroed()
     }
 
     pub fn put(mut self: Box<Self>) {
@@ -214,8 +223,7 @@ impl HeapRequestBodyBuffer {
 pub enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
-    // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
-    // TODO(port): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
+    // Inline stack buffer with a heap fallback.
     Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
 }
 
@@ -230,18 +238,17 @@ impl Drop for RequestBodyBuffer {
 }
 
 impl RequestBodyBuffer {
-    pub fn allocated_slice(&mut self) -> &mut [u8] {
+    pub(crate) fn allocated_slice(&mut self) -> &mut [u8] {
         match self {
             Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
             Self::Stack(stack) => &mut stack[..],
         }
     }
 
-    pub fn to_array_list(&mut self) -> Vec<u8> {
-        // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
-        // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
-        // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
-        // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).
+    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
+        // A `Vec` cannot adopt a foreign allocator+buffer, so this
+        // allocates a fresh Vec of the same capacity.
+        // Callers that can should write into allocated_slice() directly instead.
         let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
         arraylist.clear();
         arraylist
@@ -253,7 +260,7 @@ pub struct WriteMessage {
     pub kind: WriteMessageType,
 }
 
-#[repr(u8)] // Zig: enum(u2)
+#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum WriteMessageType {
     Data = 0,
@@ -268,10 +275,19 @@ pub struct ShutdownMessage {
     pub async_http_id: u32,
 }
 
+/// The JS thread's `checkServerIdentity` callback approved the peer
+/// certificate; un-park the connection so the request is written.
+pub struct CertCheckResumeMessage {
+    pub async_http_id: u32,
+}
+
 pub struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
 }
+
+// SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
+unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
     /// Mutable access to the libdeflate decompressor handle.
@@ -284,7 +300,9 @@ impl LibdeflateState {
     /// raw `&mut *deflater.decompressor` upgrade repeated at every
     /// `decompress` call site.
     #[inline]
-    pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor_mut<'a>(
+        &self,
+    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.decompressor }
     }
@@ -292,15 +310,15 @@ impl LibdeflateState {
 
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
-// TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode the field offset.
-pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
+pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
-// caller-owned config (Zig `[]stringZ`), not heap we free. The `Vec` itself
+// caller-owned config, not heap we free. The `Vec` itself
 // deep-clones its slot list.
 #[derive(Clone)]
 pub struct InitOpts {
-    // TODO(port): lifetime — Zig `[]stringZ` borrowed from caller config; copied into spawned thread.
+    // NUL-terminated C strings borrowed from caller config; the pointers are
+    // copied into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
     pub abs_ca_file_name: &'static [u8],
     pub for_install: bool,
@@ -308,8 +326,8 @@ pub struct InitOpts {
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
 
-// SAFETY: `ca` holds borrowed `[*:0]const u8` C-string pointers from caller
-// config (Zig `[]stringZ`). They are copied into the spawned HTTP thread and
+// SAFETY: `ca` holds borrowed NUL-terminated C-string pointers from caller
+// config. They are copied into the spawned HTTP thread and
 // only read there; no shared mutable state crosses the thread boundary.
 unsafe impl Send for InitOpts {}
 
@@ -327,7 +345,7 @@ impl Default for InitOpts {
 fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
     match err {
         InitError::LoadCAFile => {
-            // SAFETY: `abs_ca_file_name` is Zig `stringZ` (`[:0]const u8`) by
+            // SAFETY: `abs_ca_file_name` is NUL-terminated by
             // contract — already passed as a C string to BoringSSL via
             // `init_with_thread_opts`, so `ptr[len] == 0` holds.
             let path = unsafe {
@@ -389,8 +407,8 @@ impl HttpThread {
         unsafe { &mut *self.uws_loop }
     }
 
-    /// Zig `timer.read()` returns u64 ns directly; Rust `Instant::elapsed().as_nanos()` is u128.
-    /// Checked narrow — overflows only after ~584 years of process uptime.
+    /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
+    /// overflows only after ~584 years of process uptime.
     #[inline]
     fn timer_read(&self) -> u64 {
         u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
@@ -410,7 +428,6 @@ impl HttpThread {
 
             return RequestBodyBuffer::Heap(self.lazy_request_body_buffer.take());
         }
-        // PERF(port): was std.heap.stackFallback(REQUEST_BODY_SEND_STACK_BUFFER_SIZE, default_allocator)
         RequestBodyBuffer::Stack(Box::new([0u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]))
     }
 
@@ -420,17 +437,16 @@ impl HttpThread {
             if decompressor.is_null() {
                 bun_core::out_of_memory();
             }
-            self.lazy_libdeflater = Some(Box::new(LibdeflateState {
-                decompressor,
-                shared_buffer: [0u8; 512 * 1024],
-            }));
+            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
+            state.decompressor = decompressor;
+            self.lazy_libdeflater = Some(state);
         }
 
         self.lazy_libdeflater.as_deref_mut().unwrap()
     }
 
     pub fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // PORT NOTE: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
+        // Note: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
         // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
         // differently. Route through a raw-pointer `.cast()` (identity).
         if IS_SSL {
@@ -445,28 +461,25 @@ impl HttpThread {
     /// One-shot lazy init of the default HTTPS context. See
     /// [`HttpThread::lazy_https_init`] for rationale. Called on the HTTP
     /// thread from [`HttpThread::connect`]`::<true>` only; the `Option::take`
-    /// is the once-guard. On failure, `on_init_error` diverges (matching the
-    /// eager-init crash semantics from Zig `onStart`).
+    /// is the once-guard. On failure, `on_init_error` diverges.
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {
-            self.init_https_context_cold(opts);
+            self.init_https_context_cold(&opts);
         }
     }
 
     #[cold]
-    fn init_https_context_cold(&mut self, opts: InitOpts) {
-        if let Err(err) = self.https_context.init_with_thread_opts(&opts) {
-            (opts.on_init_error)(err, &opts);
+    fn init_https_context_cold(&mut self, opts: &InitOpts) {
+        if let Err(err) = self.https_context.init_with_thread_opts(opts) {
+            (opts.on_init_error)(err, opts);
         }
     }
 
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
-    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
-// TODO(port): narrow error set
-    {
+    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error> {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -474,7 +487,7 @@ impl HttpThread {
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
+        // Note: borrowck — `slice()` borrows `client`; capture into a
         // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
         // `connect_socket`. Backing storage is `client.unix_socket_path`, which
@@ -512,12 +525,11 @@ impl HttpThread {
                         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                         ctx.connect(client, hn, pt)
                     }
-                    // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
+                    // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                     .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
                 }
 
                 // Cache miss - create new SSL context
-                // TODO(port): Zig used allocator.create + manual destroy on error.
                 let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
                     pending_sockets: bun_collections::HiveArray::init(),
@@ -527,9 +539,8 @@ impl HttpThread {
                     pending_h2_connects: Vec::new(),
                 }));
                 if let Err(err) = custom_context.init_with_client_config(client) {
-                    // Spec HTTPThread.zig:277 raw-frees without `deinit` here
-                    // because `initWithOpts` fails before `group.init()` runs.
-                    // `impl Drop for HTTPContext` now tolerates an
+                    // `init_with_client_config` fails before `group.init()` runs.
+                    // `impl Drop for HTTPContext` tolerates an
                     // uninitialized group (skips close_all/destroy when
                     // `group.loop_` is null), so reclaiming the Box is safe.
                     // SAFETY: custom_context was just Box::leak'd above and
@@ -556,7 +567,7 @@ impl HttpThread {
                         ctx: ctx_nn,
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
-                        config_ref: tls,
+                        _config_ref: tls,
                     },
                 );
 
@@ -580,7 +591,7 @@ impl HttpThread {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                     custom_context.connect(client, hn, pt)
                 };
-                // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
+                // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                 return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
         }
@@ -762,6 +773,51 @@ impl HttpThread {
         }
     }
 
+    fn drain_queued_cert_check_resumes(&mut self) {
+        loop {
+            let queued_cert_check_resumes = {
+                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
+                core::mem::take(&mut self.queued_cert_check_resumes)
+            };
+            for resume in &queued_cert_check_resumes {
+                // Both arms are required: an HTTPS target behind a plaintext
+                // proxy parks behind a SocketTcp tracker entry.
+                if let Some(socket_ptr) = abort_tracker().get(&resume.async_http_id) {
+                    match *socket_ptr {
+                        uws::AnySocket::SocketTls(socket) => {
+                            if socket.is_closed() || socket.is_shutdown() {
+                                continue;
+                            }
+                            let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                // May synchronously reach close_and_fail →
+                                // dispatch_result_and_reset; do not touch
+                                // `client` after this call.
+                                client.resume_after_cert_check::<true>(socket);
+                            }
+                        }
+                        uws::AnySocket::SocketTcp(socket) => {
+                            if socket.is_closed() || socket.is_shutdown() {
+                                continue;
+                            }
+                            let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
+                            if let Some(client) = tagged.client_mut() {
+                                // See Tls arm.
+                                client.resume_after_cert_check::<false>(socket);
+                            }
+                        }
+                    }
+                }
+            }
+            let len = queued_cert_check_resumes.len();
+            drop(queued_cert_check_resumes);
+            if len == 0 {
+                break;
+            }
+            bun_core::scoped_log!(HTTPThread, "drained {} queued cert check resumes", len);
+        }
+    }
+
     fn drain_queued_http_response_body_drains(&mut self) {
         loop {
             // socket.close() can potentially be slow
@@ -809,6 +865,10 @@ impl HttpThread {
         self.drain_queued_http_response_body_drains();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
+        // After shutdowns: an abort or cert-rejection scheduled in the same JS
+        // turn removes the abort-tracker entry first, so the resume becomes a
+        // no-op and the request is never transmitted after a same-tick abort.
+        self.drain_queued_cert_check_resumes();
         h3::PendingConnect::drain_resolved();
 
         for http in self.queued_threadlocal_proxy_derefs.drain(..) {
@@ -863,7 +923,7 @@ impl HttpThread {
                     .signals
                     .get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    start_queued_task(http.as_ptr());
+                    start_queued_task(http.as_ptr(), &mut self.in_flight);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -892,7 +952,7 @@ impl HttpThread {
                 self.deferred_tasks.push(http);
                 continue;
             }
-            start_queued_task(http.as_ptr());
+            start_queued_task(http.as_ptr(), &mut self.in_flight);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -924,6 +984,17 @@ impl HttpThread {
         self.wakeup();
     }
 
+    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+        bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
+        {
+            let _guard = self.queued_cert_check_resumes_lock.lock_guard();
+            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
+                async_http_id: http.async_http_id,
+            });
+        }
+        self.wakeup();
+    }
+
     pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
         {
             let _guard = self.queued_writes_lock.lock_guard();
@@ -939,6 +1010,62 @@ impl HttpThread {
         // this is always called on the http thread,
         self.queued_threadlocal_proxy_derefs.push(proxy);
         self.wakeup();
+    }
+
+    /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
+    /// `SHUTDOWN_REQUESTED` is observed. Reclaims every clone-owned
+    /// `ThreadlocalAsyncHTTP` box by mirroring the teardown
+    /// `on_async_http_callback_raw` performs (drop the clone-only fields,
+    /// then raw-dealloc the storage — NOT `Box::drop`, since the remaining
+    /// fields are bitwise-shared with the JS-thread original). The full
+    /// result callback is not invoked (the JS thread is parked in
+    /// `global_exit()` waiting on us and will not process the completion);
+    /// only `release_at_shutdown` runs so the owner can drop the ref it
+    /// took for the in-flight callback — without it the `ctx` ⇄
+    /// `Box<AsyncHTTP>` cycle is unreachable from any root and LSan reports
+    /// the whole chain as indirect leaks.
+    fn dealloc_in_flight_for_exit(&mut self) {
+        bun_core::scoped_log!(
+            HTTPThread,
+            "dealloc_in_flight_for_exit: in_flight={} deferred={}",
+            self.in_flight.len(),
+            self.deferred_tasks.len()
+        );
+        for nn in core::mem::take(&mut self.in_flight) {
+            // SAFETY: every entry is the `heap::release` allocation pushed by
+            // `start_queued_task`; HTTP-thread-only and removed at the
+            // callback dealloc site, so each is still live and uniquely
+            // accessed here. The connecting socket's ext may still alias
+            // `client`, but the loop below never ticks again (we park
+            // forever after this returns).
+            unsafe {
+                // Snapshot before tearing down `client` — `release_at_shutdown`
+                // must run after the clone-only fields drop (it may park `ctx`
+                // for JS-thread `deinit`, which frees the original
+                // `Box<AsyncHTTP>` whose bitwise-shared fields those clone
+                // fields alias) but before the raw `dealloc` (so `ctx` is
+                // observed once per in-flight entry).
+                let release = (*nn.as_ptr()).async_http.result_callback;
+                let client = &mut (*nn.as_ptr()).async_http.client;
+                drop(core::mem::take(&mut client.redirect));
+                drop(core::mem::take(&mut client.prev_redirect));
+                if let Some(tunnel) = client.proxy_tunnel.take() {
+                    (*tunnel.as_ptr()).detach_socket();
+                    tunnel.deref();
+                }
+                if let Some(ctx) = client.custom_ssl_ctx.take() {
+                    ctx.deref();
+                }
+                drop(core::mem::take(&mut client.state));
+                if let Some(f) = release.release_at_shutdown {
+                    f(release.ctx);
+                }
+                std::alloc::dealloc(
+                    nn.as_ptr().cast::<u8>(),
+                    std::alloc::Layout::new::<crate::ThreadlocalAsyncHttp<'static>>(),
+                );
+            }
+        }
     }
 
     pub fn wakeup(&self) {
@@ -993,6 +1120,8 @@ impl HttpThread {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp =
                     unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
+                // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
+                let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
                 this.queued_tasks.push(http);
             }
         }
@@ -1018,13 +1147,17 @@ fn evict_oldest_ssl_context() {
     entry.release();
 }
 
-fn start_queued_task(http: *mut AsyncHttp) {
+fn start_queued_task(
+    http: *mut AsyncHttp,
+    in_flight: &mut Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
+) {
     // SAFETY: http points to a live AsyncHttp queued by the caller thread.
     let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
-    // PORT NOTE: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
+    // Note: AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
     let cloned = bun_core::heap::release(cloned);
+    in_flight.push(NonNull::from(&*cloned).cast::<crate::ThreadlocalAsyncHttp<'static>>());
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback
@@ -1045,22 +1178,18 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
 use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// init / on_start / process_events — depends on `bun_event_loop::MiniEventLoop`
-// (higher-tier) for `loop_.loop_.{tick,inc,dec,num_polls}`. The wakeup path
-// above uses the raw `*mut uws::Loop` directly so the rest of the thread
-// machinery compiles; the actual event-loop drive stays gated until the tier
-// boundary is resolved.
-// TODO(port): MiniEventLoop is in bun_event_loop (not in bun_http deps).
+// init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
+// for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
+// `mini_event_loop::init_global` and drives the thread's event loop). The
+// wakeup path above still uses the raw `*mut uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {
     use super::*;
-    use bun_core::Global;
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
-    // PORT NOTE: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
-    // heap. Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
+    // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
     // thread's TLS, which LSAN does not scan as a root — so when the main
@@ -1068,7 +1197,7 @@ mod _event_loop_draft {
     // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
     // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
     // a process-lifetime static so the Arc is always reachable from a global
-    // root, matching the Zig semantics of "detach" without the false positive.
+    // root, keeping detach semantics without the false positive.
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
 
@@ -1077,7 +1206,7 @@ mod _event_loop_draft {
     }
 
     fn init_once(opts: &InitOpts) {
-        // Spec HTTPThread.zig:195-206 — initialize the global (with timer
+        // Initialize the global (with timer
         // started on the calling thread) BEFORE spawning, so `on_start`'s
         // `crate::http_thread_mut()` finds `Some(..)` and can fill in
         // `loop_`/`uws_loop`/contexts.
@@ -1103,7 +1232,6 @@ mod _event_loop_draft {
 
     pub(super) fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
-        // PERF(port): was MimallocArena bulk-free for bun.http.default_allocator.
 
         // uSockets' long-timeout counter is `% 240` minutes (see
         // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
@@ -1127,8 +1255,7 @@ mod _event_loop_draft {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        // Zig: `const loop = bun.jsc.MiniEventLoop.initGlobal(null, null)`
-        // (HTTPThread.zig:228). Critical side effect: `init_global` calls
+        // Critical side effect: `init_global` calls
         // `internal_loop_data.set_parent_raw(2 /* mini */, mini_ptr)` on this
         // thread's uSockets loop. Without it, the macOS DNS cache-miss path
         // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
@@ -1149,14 +1276,13 @@ mod _event_loop_draft {
             // `GetEnvironmentVariableW`, which expects a NUL-terminated LPCWSTR.
             // `bun_core::w!` does NOT append a sentinel on its own (see
             // src/sys/windows/mod.rs WATCHER_CHILD_ENV_Z note), so embed `\0`
-            // in the literal — Zig's `bun.strings.w("SystemRoot")` returns
-            // `[:0]const u16`, this matches that spec (HTTPThread.zig:231).
+            // in the literal.
             if bun_sys::windows::getenv_w(bun_core::w!("SystemRoot\0")).is_none() {
                 Output::err_generic(
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),
                 );
-                Global::crash();
+                bun_core::Global::crash();
             }
         }
 
@@ -1206,6 +1332,20 @@ mod _event_loop_draft {
             }
 
             loop {
+                if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                    self.dealloc_in_flight_for_exit();
+                    {
+                        let mut done = SHUTDOWN_DONE.0.lock();
+                        *done = true;
+                        SHUTDOWN_DONE.1.notify_all();
+                    }
+                    // The JS thread is in `global_exit()` and will call
+                    // `Global::exit()` after we ack. Park forever so the loop
+                    // never ticks the (now partially-freed) sockets again.
+                    loop {
+                        std::thread::park();
+                    }
+                }
                 self.drain_events();
                 Output::flush();
 
@@ -1222,6 +1362,93 @@ mod _event_loop_draft {
     }
 }
 
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
+    bun_threading::Guarded::new(false),
+    bun_threading::Condvar::new(),
+);
+
+struct ShutdownReclaim {
+    ctx: *mut c_void,
+    drop_fn: unsafe fn(*mut c_void),
+}
+// SAFETY: pushed from the HTTP thread, drained from the JS thread once the
+// HTTP thread is parked; `ctx` is an exclusive heap allocation handed off
+// between the two.
+unsafe impl Send for ShutdownReclaim {}
+
+static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
+/// thread out of its loop. The drop is applied on the JS thread once the
+/// daemon is parked, so callers can hand off allocations whose teardown is
+/// not safe while a `tick()` is still on the HTTP-thread stack.
+pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
+    SHUTDOWN_RECLAIMS
+        .lock()
+        .push(ShutdownReclaim { ctx, drop_fn });
+}
+
+/// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,
+/// before `~VM`. Asks the HTTP daemon thread to reclaim every in-flight
+/// `ThreadlocalAsyncHTTP` box and waits (with a short timeout) for it to ack.
+/// No-op if the HTTP thread was never started.
+pub fn shutdown_for_exit() {
+    if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
+        return;
+    }
+    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
+    // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
+    // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
+    // materialised — `process_events(&mut self)` is live on the HTTP thread,
+    // so a `&mut` here would alias. Same shape as `schedule()` above.
+    let thread = unsafe {
+        bun_ptr::ParentRef::<HttpThread>::from_raw(
+            (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),
+        )
+    };
+    if !thread.has_awoken.load(Ordering::Acquire) {
+        // `on_start` hasn't published the loop yet — no `start_queued_task`
+        // can have run, so no boxes exist.
+        return;
+    }
+    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+    thread.wakeup();
+    let mut done = SHUTDOWN_DONE.0.lock();
+    // 1s upper bound: a stuck HTTP thread shouldn't deadlock process exit.
+    let deadline = Instant::now() + std::time::Duration::from_secs(1);
+    while !*done {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        if SHUTDOWN_DONE
+            .1
+            .timed_wait_guarded(&mut done, remaining.as_nanos() as u64)
+            .is_err()
+        {
+            break;
+        }
+    }
+    let acked = *done;
+    drop(done);
+    if !acked {
+        // Timed out without an ack: the HTTP thread may still be inside
+        // `tick()` and could touch parked allocations. Leak them — the
+        // process is exiting and a leak beats a use-after-free.
+        return;
+    }
+
+    // The daemon is parked; no further callbacks will fire. Reclaim boxes
+    // that result-callback handlers parked here while the calling stack
+    // still aliased their contents.
+    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock()) {
+        // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
+        // each entry is pushed exactly once and drained exactly once here.
+        unsafe { (r.drop_fn)(r.ctx) };
+    }
+}
+
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
@@ -1232,5 +1459,3 @@ mod _event_loop_draft {
 pub fn init(opts: &InitOpts) {
     _event_loop_draft::init(opts)
 }
-
-// ported from: src/http/HTTPThread.zig

@@ -10,7 +10,6 @@ use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_ast::Msg;
-use bun_collections::MultiArrayList;
 use bun_core::MutableString;
 use bun_paths::SEP_STR;
 use bun_paths::strings;
@@ -22,13 +21,17 @@ use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
 
-// PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
+// NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
 // without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
 pub struct SideEffectsData {
-    pub source: Option<NonNull<bun_ast::Source>>, // TODO(port): lifetime — never instantiated
+    // Modeled as
+    // `Option<NonNull>`: no constructor ever
+    // populates the field, so `None` stands in for the
+    // never-written pointer until lifetime modeling is actually needed.
+    pub source: Option<NonNull<bun_ast::Source>>,
     pub range: bun_ast::Range,
 
     // If true, "sideEffects" was an array. If false, "sideEffects" was false.
@@ -49,16 +52,19 @@ impl Default for PathPair {
     }
 }
 
-pub struct PathPairIter<'a> {
-    index: u8, // u2 in Zig
+pub(crate) struct PathPairIter<'a> {
+    index: u8,
     ctx: &'a mut PathPair,
 }
 
 impl<'a> PathPairIter<'a> {
-    pub fn next(&mut self) -> Option<&mut Path> {
+    pub(crate) fn next(&mut self) -> Option<&mut Path> {
         if let Some(path_) = self.next_() {
-            // SAFETY: reshaped for borrowck — recurse via raw ptr to avoid double &mut.
             let p: *mut Path = path_;
+            // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
+            // coerced to a raw pointer so `self` can be re-borrowed for the
+            // recursive call; `p` is not dereferenced after that call, so no two
+            // live `&mut` into `self.ctx` overlap.
             unsafe {
                 if (*p).is_disabled {
                     return self.next();
@@ -91,8 +97,8 @@ impl PathPair {
 }
 
 // Re-export of `bun_ast::SideEffects`.
-// Spec: options.zig:884 `Loader.sideEffects()` returns `bun.resolver.SideEffects`
-// — the SAME type stored in `Result.primary_side_effects_data`. Re-export so
+// `Loader.sideEffects()` returns
+// the SAME type stored in `Result.primary_side_effects_data`. Re-export so
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
@@ -135,7 +141,7 @@ impl Default for Result {
             debug_meta: None,
             dirname_fd: FD::INVALID,
             file_fd: FD::INVALID,
-            import_kind: ast::ImportKind::Stmt, // Zig: undefined
+            import_kind: ast::ImportKind::Stmt,
             flags: ResultFlags::default(),
         }
     }
@@ -159,10 +165,10 @@ bitflags::bitflags! {
     }
 }
 
-// Convenience accessors mirroring the Zig packed-struct field syntax.
+// Convenience accessors with field-style names.
 impl ResultFlags {
     #[inline]
-    pub fn is_external(&self) -> bool {
+    pub fn is_external(self) -> bool {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
@@ -170,7 +176,7 @@ impl ResultFlags {
         self.set(Self::IS_EXTERNAL, v)
     }
     #[inline]
-    pub fn is_external_and_rewrite_import_path(&self) -> bool {
+    pub fn is_external_and_rewrite_import_path(self) -> bool {
         self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
     }
     #[inline]
@@ -178,11 +184,11 @@ impl ResultFlags {
         self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
     }
     #[inline]
-    pub fn is_standalone_module(&self) -> bool {
+    pub fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
     }
     #[inline]
-    pub fn is_from_node_modules(&self) -> bool {
+    pub fn is_from_node_modules(self) -> bool {
         self.contains(Self::IS_FROM_NODE_MODULES)
     }
     #[inline]
@@ -190,7 +196,7 @@ impl ResultFlags {
         self.set(Self::IS_FROM_NODE_MODULES, v)
     }
     #[inline]
-    pub fn emit_decorator_metadata(&self) -> bool {
+    pub fn emit_decorator_metadata(self) -> bool {
         self.contains(Self::EMIT_DECORATOR_METADATA)
     }
     #[inline]
@@ -198,7 +204,7 @@ impl ResultFlags {
         self.set(Self::EMIT_DECORATOR_METADATA, v)
     }
     #[inline]
-    pub fn experimental_decorators(&self) -> bool {
+    pub fn experimental_decorators(self) -> bool {
         self.contains(Self::EXPERIMENTAL_DECORATORS)
     }
     #[inline]
@@ -315,7 +321,7 @@ pub struct DebugMeta {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SuggestionRange {
+pub(crate) enum SuggestionRange {
     Full,
     End,
 }
@@ -337,7 +343,7 @@ impl DebugMeta {
         r: bun_ast::Range,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+        // Uses the broad `bun_core::Error` per repo-wide convention.
         if source.is_some() && !self.suggestion_message.is_empty() {
             let suggestion_range = if self.suggestion_range == SuggestionRange::End {
                 bun_ast::Range {
@@ -350,10 +356,8 @@ impl DebugMeta {
                 r
             };
             let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
-            // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
-            // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
-            // `logErrorMsg` is uncalled in the Zig source so the field access is never
-            // type-checked under lazy compilation. Mirror the effective behavior (no-op).
+            // NOTE: `logger.Location` has no `suggestion` field, so
+            // `suggestion_text` is intentionally unused (no-op).
             let _ = &self.suggestion_text;
             self.notes.push(data);
         }
@@ -372,7 +376,7 @@ impl DebugMeta {
 
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
-    // PORT NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
+    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
     // threadlocal `dir_info_uncached_path` buffer and are consumed before
     // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
@@ -437,7 +441,7 @@ impl DebugLogs {
         })
     }
 
-    // deinit → Drop (only frees `notes`; `indent` deinit was commented out in Zig)
+    // deinit → Drop (only frees `notes`)
 
     #[cold]
     pub fn increase_indent(&mut self) {
@@ -503,11 +507,24 @@ impl Default for MatchResult {
     }
 }
 
-pub enum MatchResultUnion {
+/// Discriminant-only return for the resolver call chain. The `MatchResult`
+/// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
+/// instead of being moved by value through every nested level. **`out` is only
+/// valid to read when the returned status is `Success`**; on `NotFound` /
+/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// attempt and must be ignored.
+pub enum MatchStatus {
     NotFound,
-    Success(MatchResult),
-    Pending(PendingResolution),
+    Success,
+    Pending(Box<PendingResolution>),
     Failure(bun_core::Error),
+}
+
+impl MatchStatus {
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        matches!(self, MatchStatus::Success)
+    }
 }
 
 pub struct PendingResolution {
@@ -534,11 +551,9 @@ impl Default for PendingResolution {
     }
 }
 
-pub type PendingResolutionList = MultiArrayList<PendingResolution>;
-
 impl PendingResolution {
-    // PORT NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
-    // (Zig body only freed `dependency` + `string_buf` per item; both are owned fields with Drop.)
+    // NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
+    // (`dependency` + `string_buf` are owned fields with Drop.)
 
     // deinit → Drop (frees dependency + string_buf; both have Drop)
 
@@ -547,9 +562,7 @@ impl PendingResolution {
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        // PORT NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
-        // / `tag` defaulted; that fn was never compiled (Zig lazy-analyzes unreferenced
-        // fns). `Package::copy` is the count→allocate→clone Builder dance the live
+        // NOTE: `Package::copy` is the count→allocate→clone Builder dance the live
         // call sites open-code, so thread the freshly-allocated buffer into
         // `string_buf` here so `Drop` frees what backs the cloned `esm` strings.
         let (esm, string_buf) = esm.copy()?;
@@ -571,7 +584,9 @@ pub enum PendingResolutionTag {
 }
 
 pub struct LoadResult {
-    pub path: &'static [u8], // TODO(port): lifetime — interned in dirname_store
+    /// Interned in `DirnameStore`/`FilenameStore` (process-lifetime singletons),
+    /// so the `'static` borrow is genuine.
+    pub path: &'static [u8],
     pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dirname_fd: FD,
     pub file_fd: FD,

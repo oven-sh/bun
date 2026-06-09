@@ -37,7 +37,13 @@ struct Brace {
 }
 type BraceStack = BoundedArray<Brace, 10>;
 
-// PORT NOTE: made `pub` — Zig leaks this private type through `pub fn match`; Rust forbids private-in-public.
+/// Upper bound on brace-branch alternatives explored per `match` call. Sequential
+/// brace groups multiply (`{a,b}{c,d}` = 4 alternatives), so without a cap an
+/// adversarial pattern of ten sequential 10-way groups would explore 10^10
+/// alternatives. Patterns that exceed this budget fail to match.
+const BRACE_BRANCH_BUDGET: u32 = 10_000;
+
+// `pub` because it appears in the signature of `pub fn match` (private-in-public is forbidden).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MatchResult {
     NoMatch,
@@ -139,9 +145,16 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
         state.glob_index += 1;
     }
 
-    // PORT NOTE: `BraceStack.init(0) catch unreachable` — zero-length init cannot fail.
     let mut brace_stack = BraceStack::default();
-    let matched = glob_match_impl(&mut state, glob, 0, path, &mut brace_stack);
+    let mut brace_budget = BRACE_BRANCH_BUDGET;
+    let matched = glob_match_impl(
+        &mut state,
+        glob,
+        0,
+        path,
+        &mut brace_stack,
+        &mut brace_budget,
+    );
 
     // TODO: consider just returning a bool
     // return matched != negated;
@@ -163,13 +176,14 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
-// PERF(port): Zig `inline fn` on a fn that recurses through match_brace_branch — profile if hot.
+// PERF: `inline(always)` on a fn that recurses through match_brace_branch — profile if hot.
 fn glob_match_impl(
     state: &mut State,
     glob: &[u8],
     glob_start: u32,
     path: &[u8],
     brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
 ) -> bool {
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
@@ -348,7 +362,7 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
                             }
-                            return match_brace(state, glob, path, brace_stack);
+                            return match_brace(state, glob, path, brace_stack, brace_budget);
                         }
                         b',' => {
                             if state.brace_depth > 0 {
@@ -382,7 +396,9 @@ fn glob_match_impl(
                         let pi = state.path_index as usize;
                         let gi = state.glob_index as usize;
                         let n = cc_len as usize;
-                        pi + n <= path.len() && path[pi..pi + n] == glob[gi..gi + n]
+                        pi + n <= path.len()
+                            && gi + n <= glob.len()
+                            && path[pi..pi + n] == glob[gi..gi + n]
                     } else {
                         path[state.path_index as usize] == cc
                     };
@@ -412,7 +428,13 @@ fn glob_match_impl(
     true
 }
 
-fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut BraceStack) -> bool {
+fn match_brace(
+    state: &mut State,
+    glob: &[u8],
+    path: &[u8],
+    brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
+) -> bool {
     let mut brace_depth: i16 = 0;
     let mut in_brackets = false;
 
@@ -441,6 +463,7 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                             open_brace_index,
                             branch_index,
                             brace_stack,
+                            brace_budget,
                         ) {
                             return true;
                         }
@@ -449,7 +472,10 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                 }
             }
             b',' => {
-                if brace_depth == 1 {
+                // A comma inside a `[...]` character class is a class member,
+                // not a branch separator — same `!in_brackets` guard as the
+                // `{`/`}` arms above.
+                if brace_depth == 1 && !in_brackets {
                     if match_brace_branch(
                         state,
                         glob,
@@ -457,6 +483,7 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                         open_brace_index,
                         branch_index,
                         brace_stack,
+                        brace_budget,
                     ) {
                         return true;
                     }
@@ -485,7 +512,13 @@ fn match_brace_branch(
     open_brace_index: u32,
     branch_index: u32,
     brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
 ) -> bool {
+    if *brace_budget == 0 {
+        return false;
+    }
+    *brace_budget -= 1;
+
     // exceeded brace depth
     let Ok(()) = brace_stack.push(Brace {
         open_brace_idx: open_brace_index,
@@ -499,7 +532,14 @@ fn match_brace_branch(
     branch_state.glob_index = branch_index;
     branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
-    let matched = glob_match_impl(&mut branch_state, glob, branch_index, path, brace_stack);
+    let matched = glob_match_impl(
+        &mut branch_state,
+        glob,
+        branch_index,
+        path,
+        brace_stack,
+        brace_budget,
+    );
 
     let _ = brace_stack.pop();
 
@@ -562,15 +602,13 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
 }
 
 /// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
-///
-/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`).
 #[inline(always)]
 fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     let len = strings::wtf8_byte_sequence_length(bytes[idx]);
     let mut buf = [0u8; 4];
     let n = (bytes.len() - idx).min(4);
     buf[..n].copy_from_slice(&bytes[idx..idx + n]);
-    let cp = strings::decode_wtf8_rune_t::<u32>(&buf, len, 0xFFFD);
+    let cp = strings::decode_wtf8_rune_t::<u32>(buf, len, 0xFFFD);
     (cp, len)
 }
 
@@ -585,8 +623,7 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
     debug_assert!(*clen == 1);
     const BACKSLASH: u32 = b'\\' as u32;
     match *c {
-        // ascii range excluding backslash
-        // PORT NOTE: Zig `0x0...('\\'-1), '\\'+1...0x7F` — 0x5C is '\\'
+        // ascii range excluding backslash (0x5C)
         0x00..=0x5B | 0x5D..=0x7F => {
             return true;
         }
@@ -638,11 +675,3 @@ fn skip_globstars(glob: &[u8], glob_index: &mut u32) {
 
     *glob_index -= 2;
 }
-
-#[derive(Copy, Clone, Default)]
-struct BraceIndex {
-    start: u32,
-    end: u32,
-}
-
-// ported from: src/glob/matcher.zig

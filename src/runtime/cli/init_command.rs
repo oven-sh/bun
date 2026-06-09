@@ -1,16 +1,13 @@
-//! Port of src/cli/init_command.zig
-
-use core::ffi::c_char;
+//! `bun init`: scaffolds a new project in the current directory
+//! (package.json, tsconfig.json, entry file, README, .gitignore).
 
 use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
-use bun_collections::bit_set::Range as BitRange;
 use bun_core::{self as bun, Environment, Error, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
-use bun_js_parser as js_ast;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, path_buffer_pool};
+use bun_paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -18,12 +15,10 @@ use crate::cli as CLI;
 use bun_bundler::options;
 
 // ──────────────────────────────────────────────────────────────────────────
-// RadioChoice trait — replaces Zig's comptime enum reflection in
-// `processRadioButton`. In Zig the function takes `comptime Choices: type`
-// and uses `bun.meta.EnumFields(Choices)` + `@enumFromInt` + the `fmt()`
-// method; in Rust the choice enums implement this trait by hand.
+// RadioChoice trait — the choice enums used by `process_radio_button`
+// implement this trait by hand.
 // ──────────────────────────────────────────────────────────────────────────
-pub trait RadioChoice: Copy + Sized {
+pub(crate) trait RadioChoice: Copy + Sized {
     const COUNT: usize;
     const DEFAULT: Self;
     fn fmt(self) -> &'static str;
@@ -31,19 +26,15 @@ pub trait RadioChoice: Copy + Sized {
     fn to_index(self) -> usize;
 }
 
-pub struct InitCommand;
+pub(crate) struct InitCommand;
 
 impl InitCommand {
-    pub fn prompt(
-        // TODO(port): narrow error set
-        label: &'static str,
-        default: &[u8],
-    ) -> Result<Vec<u8>, Error> {
-        // TODO(port): Zig returns `[:0]const u8` (NUL-terminated, length-carrying).
-        // We return `Vec<u8>` here and NUL-terminate at the call sites that need it.
+    pub(crate) fn prompt(label: &'static str, default: &[u8]) -> Result<Vec<u8>, Error> {
+        #[allow(clippy::disallowed_methods)]
+        // label is a runtime parameter that may contain <tag> markup
         Output::pretty(format_args!("{}", label));
         if !default.is_empty() {
-            Output::pretty(format_args!("<d>({}):<r> ", bstr::BStr::new(default)));
+            bun_core::pretty!("<d>({}):<r> ", bstr::BStr::new(default));
         }
 
         Output::flush();
@@ -58,15 +49,13 @@ impl InitCommand {
             });
 
         let mut input: Vec<u8> = Vec::new();
-        // TODO(port): bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024)
         Output::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;
 
         if strings::ends_with_char(&input, b'\r') {
             let _ = input.pop();
         }
         if !input.is_empty() {
-            // Zig appends a NUL and returns the slice without it; callers that need
-            // a C string can push a NUL themselves.
+            // Callers that need a C string can push a NUL themselves.
             Ok(input)
         } else {
             input.clear();
@@ -77,20 +66,21 @@ impl InitCommand {
 
     fn process_radio_button<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         let colors = Output::enable_ansi_colors_stdout();
-        // PERF(port): Zig builds `choices` at comptime via `bun.meta.EnumFields` +
-        // `Output.prettyFmt(e.fmt(), colors_comptime)`. We build it at runtime once.
+        // PERF: built at runtime once.
         let choices: Vec<Output::PrettyBuf> = (0..C::COUNT)
             .map(|i| {
                 let e = C::from_index(i);
+                #[allow(clippy::disallowed_methods)]
+                // template selected at runtime per enum variant
                 Output::pretty_fmt_rt(e.fmt(), colors)
             })
             .collect();
 
         // Print the question prompt
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><cyan>?<r> {}<d> - Press return to submit.<r>",
             bstr::BStr::new(label),
-        ));
+        );
 
         if colors {
             Output::print(format_args!("\x1b[?25l")); // hide cursor
@@ -105,13 +95,10 @@ impl InitCommand {
         let mut initial_draw = true;
         let mut reprint_menu = true;
 
-        // Zig: `std.fs.File.stdin().readerStreaming(&stdin_b)` then `takeByte()`.
         let mut stdin = bun_core::output::stdin_reader();
 
-        // The Zig has `errdefer reprint_menu = false;` followed by a `defer { ... }`
-        // that uses `reprint_menu`. We model both with a single guard whose state we
-        // mutate, and flip `reprint_menu = false` on the error paths before returning.
-        // PORT NOTE: reshaped for borrowck — can't both borrow `selected`/`initial_draw`
+        // `reprint_menu` is flipped to false on the error paths before returning.
+        // Shaped for borrowck — can't both borrow `selected`/`initial_draw`
         // in a scopeguard closure and mutate them in the loop. Instead inline the
         // cleanup at every return point.
         macro_rules! finish {
@@ -124,11 +111,11 @@ impl InitCommand {
                 Output::clear_to_end();
                 if $reprint {
                     // Print final selection
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><green>✓<r> {}<d>:<r> {}<r>",
                         bstr::BStr::new(label),
                         &choices[$sel.to_index()],
-                    ));
+                    );
                 }
             }};
         }
@@ -141,13 +128,12 @@ impl InitCommand {
             initial_draw = false;
 
             // Print options vertically
-            // PERF(port): was `inline for`.
             for (i, option) in choices.iter().enumerate() {
                 if i == selected.to_index() {
                     if colors {
-                        Output::pretty(format_args!("<r><cyan>❯<r>   "));
+                        bun_core::pretty!("<r><cyan>❯<r>   ");
                     } else {
-                        Output::pretty(format_args!("<r><cyan>><r>   "));
+                        bun_core::pretty!("<r><cyan>><r>   ");
                     }
                     if colors {
                         Output::print(format_args!("\x1B[4m{}\x1B[24m\x1B[0K\n", option));
@@ -185,9 +171,9 @@ impl InitCommand {
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
                     if choice < choices.len() {
-                        // PORT NOTE: Zig's `defer` reads `selected`, which is NOT updated
-                        // before `return @enumFromInt(choice)` — so Zig prints the previously
-                        // highlighted option, not the one just picked. Matching Zig verbatim.
+                        // `selected` is intentionally NOT updated before returning,
+                        // so the reprinted menu shows the previously highlighted
+                        // option, not the one just picked (long-standing behavior).
                         finish!(reprint_menu, selected);
                         return Ok(C::from_index(choice));
                     }
@@ -257,8 +243,8 @@ impl InitCommand {
         }
     }
 
-    /// `Choices` must implement `RadioChoice` (Zig: enum with `fmt` method).
-    pub fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
+    /// `Choices` must implement `RadioChoice`.
+    pub(crate) fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
         // Set raw mode to read single characters without echo
         #[cfg(windows)]
         let _restore =
@@ -278,7 +264,7 @@ impl InitCommand {
             Err(e) if e == bun_core::err!("EndOfStream") => {
                 Output::flush();
                 // Add an "x" cancelled
-                Output::prettyln(format_args!("\n<r><red>x<r> Cancelled"));
+                bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                 Global::exit(0);
             }
             Err(e) => return Err(e),
@@ -317,7 +303,7 @@ impl InitCommand {
         Ok(new)
     }
 
-    pub fn exec(init_args: &[&ZStr]) -> Result<(), Error> {
+    pub(crate) fn exec(init_args: &[&ZStr]) -> Result<(), Error> {
         // --minimal is a special preset to create only empty package.json + tsconfig.json
         let mut minimal = false;
         let mut auto_yes = false;
@@ -376,13 +362,12 @@ impl InitCommand {
         }
 
         if let Some(ifdir) = initialize_in_folder {
-            // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
-            if let Err(err) = bun_sys::make_path(bun_sys::Dir::cwd(), ifdir) {
-                Output::pretty_errorln(format_args!(
+            if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
+                bun_core::pretty_errorln!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
                     err.name(),
-                ));
+                );
                 Global::exit(1);
             }
             let mut ifdir_z = ifdir.to_vec();
@@ -390,11 +375,11 @@ impl InitCommand {
             // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Failed to change directory to {}: {}",
                     bstr::BStr::new(ifdir),
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 Global::exit(1);
             }
         }
@@ -402,17 +387,15 @@ impl InitCommand {
         let _ = Fs::FileSystem::init(None)?;
         let pathname =
             Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
-        // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();
 
-        // TODO(port): destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
-        // Arena for JSON parse / Expr building (Zig used the AST store).
+        // Arena for JSON parse / Expr building.
         let bump = bun_alloc::Arena::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
@@ -443,7 +426,6 @@ impl InitCommand {
 
                 package_json_contents =
                     MutableString::init(usize::try_from(size).expect("int cast"))?;
-                // Zig: list_mut().expand_to_capacity()
                 package_json_contents
                     .list
                     .resize(usize::try_from(size).expect("int cast"), 0);
@@ -482,14 +464,9 @@ impl InitCommand {
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = bun_ast::Log::init();
-                // PORT NOTE: bun_parsers::json builds the T2
-                // (bun_ast::js_ast) value tree to avoid a T2->T4 dep
-                // cycle; lift to the full T4 (bun_js_parser) tree here so
-                // the rest of exec can use E::Object::{put,put_string,
-                // get_or_put_object,...} which only exist at T4.
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
-                        Ok(e) => bun_ast::Expr::from(e),
+                        Ok(e) => e,
                         Err(_) => {
                             package_json_file = None;
                             break 'process_package_json;
@@ -514,7 +491,6 @@ impl InitCommand {
                     .or_else(|| package_json_expr.get(b"main"))
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
-                        // TODO(port): asStringZ returns NUL-terminated; we store bytes only
                         fields.entry_point = str_.to_vec();
                     }
                 }
@@ -550,14 +526,12 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                // Zig: std.fs.cwd().openDir(".", .{ .iterate = true })
                 let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
                     break 'infer;
                 };
                 let _close = scopeguard::guard(dir, |d| {
                     let _ = bun_sys::close(d);
                 });
-                // Zig: bun.DirIterator.iterate(.fromStdDir(dir), .u8)
                 let mut it = bun_sys::iterate_dir(dir);
                 while let Some(file) = it.next().map_err(bun_core::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
@@ -586,7 +560,7 @@ impl InitCommand {
 
         if !auto_yes {
             if !did_load_package_json {
-                Output::pretty(format_args!("\n"));
+                bun_core::pretty!("\n");
 
                 let selected = Self::radio::<ProjectTemplateChoice>(b"Select a project template")?;
                 match selected {
@@ -623,14 +597,13 @@ impl InitCommand {
                 Output::print(format_args!("\n"));
                 Output::flush();
             } else {
-                Output::note("package.json already exists, configuring existing project");
+                bun_core::note!("package.json already exists, configuring existing project");
                 template = Template::Blank;
             }
         }
 
         match template {
             Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn => {
-                // PERF(port): Zig used `inline ... => |t|` to monomorphize per template.
                 template.write_files_and_run_bun_dev()?;
                 return Ok(());
             }
@@ -639,13 +612,11 @@ impl InitCommand {
 
         struct Steps {
             write_gitignore: bool,
-            write_package_json: bool,
             write_tsconfig: bool,
             write_readme: bool,
         }
 
         let mut steps = Steps {
-            write_package_json: true,
             write_tsconfig: true,
             write_gitignore: !minimal,
             write_readme: !minimal,
@@ -698,7 +669,7 @@ impl InitCommand {
             }
         }
 
-        let mut need_run_bun_install = !did_load_package_json;
+        let need_run_bun_install;
         {
             let all_dependencies = template.dependencies();
             let dependencies = all_dependencies.dependencies;
@@ -809,14 +780,16 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            // TODO(port): bun.FD.fromStdFile(package_json_file orelse try std.fs.cwd().createFileZ(...))
-            let fd: Fd = match package_json_file.as_ref() {
-                Some(f) => f.handle(),
-                None => bun_sys::File::create(Fd::cwd(), b"package.json", true)?.handle(),
+            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
+                .as_ref()
+            {
+                Some(f) => (f.handle(), None),
+                None => {
+                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
+                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                }
             };
-            let _close = scopeguard::guard(fd, |fd: Fd| {
-                let _ = bun_sys::close(fd);
-            });
+            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -835,29 +808,29 @@ impl InitCommand {
                 },
             );
             if let Err(err) = print_result {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     err.name(),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::from_fd(fd).write_all(written) {
-                Output::pretty_errorln(format_args!(
+            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
             if let Err(err) =
                 bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
             {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
@@ -875,7 +848,7 @@ impl InitCommand {
                 }
 
                 if package_json_file.is_some() && !did_load_package_json {
-                    Output::prettyln(format_args!(" + <r><d>package.json<r>"));
+                    bun_core::prettyln!(" + <r><d>package.json<r>");
                     Output::flush();
                 }
 
@@ -885,11 +858,10 @@ impl InitCommand {
                 {
                     if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
                         if dirname != b"." {
-                            let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+                            let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
-                    // TODO(port): entry_point must be NUL-terminated for createNew
                     let mut ep_z = fields.entry_point.clone();
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
@@ -937,26 +909,25 @@ impl InitCommand {
                 }
 
                 if !fields.entry_point.is_empty() && !did_load_package_json {
-                    Output::pretty(format_args!("\nTo get started, run:\n\n    "));
+                    bun_core::pretty!("\nTo get started, run:\n\n    ");
 
                     if strings::index_of_any(&fields.entry_point, b" \"'").is_some() {
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "<cyan>bun run {}<r>\n\n",
                             bun_fmt::format_json_string_latin1(&fields.entry_point),
-                        ));
+                        );
                     } else {
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "<cyan>bun run {}<r>\n\n",
                             bstr::BStr::new(&fields.entry_point),
-                        ));
+                        );
                     }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
-                    Output::prettyln(format_args!(""));
-                    // Zig: std.process.Child .{stderr,stdin,stdout}=.Inherit → spawnAndWait
+                    bun_core::prettyln!("");
                     let self_exe = bun::self_exe_path()?;
                     let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
                 }
@@ -984,8 +955,7 @@ impl Assets {
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
     ///
-    /// PORT NOTE: Zig looked up `asset_name` via `@hasDecl`/`@field` reflection.
-    /// Rust takes the asset bytes directly; `asset_name` is the filename.
+    /// Takes the asset bytes directly; `asset_name` is the filename.
     fn create(
         asset_name: &[u8],
         asset: &'static [u8],
@@ -1004,7 +974,7 @@ impl Assets {
         Self::create_full_with_contents(asset_name, contents, "", is_template, args)
     }
 
-    /// Substitutes Zig-style named placeholders `{[key]s}` in `template` with the
+    /// Substitutes named placeholders `{[key]s}` in `template` with the
     /// corresponding value from `args`.
     fn substitute(template: &[u8], args: &[(&[u8], &[u8])]) -> Vec<u8> {
         let mut out = Vec::with_capacity(template.len());
@@ -1031,10 +1001,10 @@ impl Assets {
     }
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
-        // Zig: bun.sys.File.makeOpen — creates parent dirs then opens.
+        // Create parent dirs then open.
         if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
-                let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dir);
+                let _ = bun_sys::Dir::cwd().make_path(dir);
             }
         }
         let file = bun_sys::File::openat(
@@ -1043,22 +1013,16 @@ impl Assets {
             bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::WRONLY,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         file.write_all(contents)?;
 
-        Output::prettyln(format_args!(
-            " + <r><d>{}<r>",
-            bstr::BStr::new(filename.as_bytes()),
-        ));
+        bun_core::prettyln!(" + <r><d>{}<r>", bstr::BStr::new(filename.as_bytes()));
         Output::flush();
         Ok(())
     }
 
     fn create_full(
-        // content of known asset (Zig looked this up by name via `@field`)
+        // content of known asset
         asset: &'static [u8],
         // name of asset file to create
         filename: &[u8],
@@ -1083,9 +1047,6 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         // Write contents of known assets to the new file. Template assets get formatted.
         if is_template {
@@ -1094,11 +1055,11 @@ impl Assets {
         } else {
             file.write_all(asset)?;
         }
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
             message_suffix,
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -1120,9 +1081,6 @@ impl Assets {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o666,
         )?;
-        let _close = scopeguard::guard(file.handle(), |fd| {
-            let _ = bun_sys::close(fd);
-        });
 
         if is_template {
             let buf = Self::substitute(contents, args);
@@ -1131,11 +1089,11 @@ impl Assets {
             file.write_all(contents)?;
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
             message_suffix,
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -1150,8 +1108,6 @@ pub struct PackageJSONFields {
     pub type_: &'static [u8],
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
-    // TODO(port): Zig type was `[:0]const u8`; we drop the NUL sentinel and
-    // re-terminate at FFI boundaries.
     pub entry_point: Vec<u8>,
     pub private: bool,
 }
@@ -1169,7 +1125,7 @@ impl Default for PackageJSONFields {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Radio choice enums (anonymous in Zig, named here)
+// Radio choice enums
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1239,18 +1195,18 @@ impl RadioChoice for ReactTemplateChoice {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-pub struct DependencyNeeded {
+pub(crate) struct DependencyNeeded {
     pub name: &'static [u8],
     pub version: &'static [u8],
 }
 
-pub struct DependencyGroup {
+pub(crate) struct DependencyGroup {
     pub dependencies: &'static [DependencyNeeded],
     pub dev_dependencies: &'static [DependencyNeeded],
 }
 
 impl DependencyGroup {
-    pub const BLANK: DependencyGroup = DependencyGroup {
+    pub(crate) const BLANK: DependencyGroup = DependencyGroup {
         dependencies: &[],
         dev_dependencies: &[DependencyNeeded {
             name: b"@types/bun",
@@ -1258,9 +1214,8 @@ impl DependencyGroup {
         }],
     };
 
-    // PORT NOTE: Zig used comptime array concatenation (`++ blank.devDependencies[0..1].*`).
-    // Rust `const` cannot concat slices; the lists are hand-expanded below.
-    pub const REACT: DependencyGroup = DependencyGroup {
+    // `const` cannot concat slices; the lists are hand-expanded below.
+    pub(crate) const REACT: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"react",
@@ -1288,7 +1243,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub const TAILWIND: DependencyGroup = DependencyGroup {
+    pub(crate) const TAILWIND: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"tailwindcss",
@@ -1325,7 +1280,7 @@ impl DependencyGroup {
         ],
     };
 
-    pub const SHADCN: DependencyGroup = DependencyGroup {
+    pub(crate) const SHADCN: DependencyGroup = DependencyGroup {
         dependencies: &[
             DependencyNeeded {
                 name: b"class-variance-authority",
@@ -1433,29 +1388,21 @@ impl TemplateFile {
 }
 
 impl Template {
-    pub fn should_use_source_file_project_generator(self) -> bool {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => false,
-            _ => true,
-        }
+    pub(crate) fn is_react(self) -> bool {
+        matches!(
+            self,
+            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
+        )
     }
 
-    pub fn is_react(self) -> bool {
-        match self {
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn => true,
-            _ => false,
-        }
-    }
-
-    pub fn write_to_package_json(
+    pub(crate) fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
         type Rope = bun_ast::E::Rope;
         fields.name = self.name().to_vec();
-        // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
-        // never frees; allocate in the process-lifetime CLI arena instead.
+        // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
             next: core::ptr::null_mut(),
@@ -1479,7 +1426,7 @@ impl Template {
         Ok(())
     }
 
-    pub fn dependencies(self) -> &'static DependencyGroup {
+    pub(crate) fn dependencies(self) -> &'static DependencyGroup {
         match self {
             Template::Blank => &DependencyGroup::BLANK,
             Template::ReactBlank => &DependencyGroup::REACT,
@@ -1489,7 +1436,7 @@ impl Template {
         }
     }
 
-    pub fn name(self) -> &'static [u8] {
+    pub(crate) fn name(self) -> &'static [u8] {
         match self {
             Template::Blank => b"bun-blank-template",
             Template::TypescriptLibrary => b"bun-typescript-library-template",
@@ -1499,7 +1446,7 @@ impl Template {
         }
     }
 
-    pub fn scripts(self) -> &'static [&'static [u8]] {
+    pub(crate) fn scripts(self) -> &'static [&'static [u8]] {
         match self {
             Template::Blank | Template::TypescriptLibrary => &[],
             Template::ReactTailwind | Template::ReactTailwindShadcn => &[
@@ -1518,16 +1465,15 @@ impl Template {
     }
 
     const AGENT_RULE: &'static [u8] = include_bytes!("./init/rule.md");
-    // TODO(port): Zig `[:0]const u8` literal — Rust byte literals are not NUL-terminated.
     const CURSOR_RULE: TemplateFile = TemplateFile::new(
         b".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc",
         Self::AGENT_RULE,
     );
+    #[cfg(not(windows))]
     const CURSOR_RULE_PATH_TO_CLAUDE_MD: &'static [u8] = b"../../CLAUDE.md";
 
     fn is_claude_code_installed() -> bool {
-        #[cfg(windows)]
-        {
+        if cfg!(windows) {
             // Claude code is not available on Windows, at the time of writing.
             return false;
         }
@@ -1551,14 +1497,12 @@ impl Template {
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
-    pub fn create_agent_rule() {
+    pub(crate) fn create_agent_rule() {
         let mut create_claude_md = Self::is_claude_code_installed()
             // Never overwrite CLAUDE.md
             && !exists(b"CLAUDE.md");
 
         if let Some(template_file) = Self::get_cursor_rule() {
-            let mut did_create_agent_rule = false;
-
             // If both Cursor & Claude is installed, make the cursor rule a
             // symlink to ../../CLAUDE.md
             let asset_path: &[u8] = if create_claude_md {
@@ -1566,7 +1510,6 @@ impl Template {
             } else {
                 template_file.path
             };
-            // TODO(port): asset_path / template_file.path need NUL termination for create_new
             let asset_path_z = {
                 let mut v = asset_path.to_vec();
                 v.push(0);
@@ -1577,9 +1520,7 @@ impl Template {
                 // SAFETY: asset_path_z[len-1] == 0 written above
                 template_file.contents,
             );
-            did_create_agent_rule = true;
             if result.is_err() {
-                did_create_agent_rule = false;
                 if create_claude_md {
                     create_claude_md = false;
                     // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
@@ -1600,10 +1541,10 @@ impl Template {
                 // sync if you change it locally. we use a symlink for the cursor
                 // rule in this case so that the github UI for CLAUDE.md (which may
                 // appear prominently in repos) doesn't show a file path.
-                if did_create_agent_rule && create_claude_md {
+                if result.is_ok() && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
-                        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), b".cursor/rules");
+                        let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");
                         // bun_sys::symlinkat takes &ZStr; build NUL-terminated copies.
                         let mut target_z = Self::CURSOR_RULE_PATH_TO_CLAUDE_MD.to_vec();
                         target_z.push(0);
@@ -1616,11 +1557,11 @@ impl Template {
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
                         }
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             " + <r><d>{} -\\> {}<r>",
                             bstr::BStr::new(template_file.path),
                             bstr::BStr::new(asset_path),
-                        ));
+                        );
                         Output::flush();
                     }
                 }
@@ -1665,26 +1606,18 @@ impl Template {
 
         #[cfg(windows)]
         {
-            // Zig: `bun.getenvZAnyCase("USER")` walks `std.os.environ` (bun.zig:913).
-            // `bun_core::getenv_z_any_case` is a TODO stub on Windows that always
-            // returns None (bun_core/util.rs), so calling it here makes the probe
-            // dead code. Use `std::env::var`, which on Windows goes through
-            // `GetEnvironmentVariableW` (inherently case-insensitive) — matching
-            // the Zig any-case semantics.
-            if let Ok(user) = std::env::var("USER") {
+            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
                 let mut pathbuf = path_buffer_pool::get();
-                // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
-                // fallible on overflow, do not panic.
+                // Fallible on overflow, do not panic.
                 let path: &ZStr = {
                     use std::io::Write as _;
                     let total = pathbuf.len();
                     let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor
-                        .write_fmt(format_args!(
-                            "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-                            user
-                        ))
-                        .is_err()
+                    if cursor.write_all(b"C:\\Users\\").is_err()
+                        || cursor.write_all(user).is_err()
+                        || cursor
+                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
+                            .is_err()
                     {
                         return false;
                     }
@@ -1714,23 +1647,18 @@ impl Template {
         None
     }
 
-    pub fn files(self) -> &'static [TemplateFile] {
+    pub(crate) fn files(self) -> &'static [TemplateFile] {
         match self {
             Template::ReactBlank => REACT_BLANK_FILES,
             Template::ReactTailwind => REACT_TAILWIND_FILES,
             Template::ReactTailwindShadcn => REACT_SHADCN_FILES,
-            // TODO(port): Zig `else => &.{.{ &.{}, &.{} }}` constructs a single
-            // bogus TemplateFile; preserved as an empty slice here since the
-            // branch is unreachable in practice.
             _ => &[],
         }
     }
 
-    pub fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
+    pub(crate) fn write_files_and_run_bun_dev(self) -> Result<(), Error> {
         Self::create_agent_rule();
 
-        // PERF(port): Zig used `inline for (comptime this.files())` to unroll per
-        // template; we iterate the runtime slice.
         for file in self.files() {
             let path = file.path;
             let contents = file.contents;
@@ -1745,7 +1673,6 @@ impl Template {
                     ],
                 )
             } else {
-                // TODO(port): path needs NUL termination for create_new
                 let mut p = path.to_vec();
                 p.push(0);
                 Assets::create_new(
@@ -1756,10 +1683,10 @@ impl Template {
             };
             if let Err(err) = result {
                 if err == bun_core::err!("EEXIST") {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),
-                    ));
+                    );
                     Output::flush();
                 } else {
                     Output::err(
@@ -1772,16 +1699,13 @@ impl Template {
             }
         }
 
-        Output::pretty(format_args!("\n"));
+        bun_core::pretty!("\n");
         Output::flush();
 
-        // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait
-        // TODO(port): spawn_sync_inherit inherits stdin too; full bun.spawnSync
-        // (with Ignore stdin) lives in bun_runtime::api::process::sync.
         let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n\
              ✨ New project configured!\n\
              \n\
@@ -1798,7 +1722,7 @@ impl Template {
              \x20   <green><b>bun start<r>\n\
              \n\
              <blue>Happy bunning! 🐇<r>\n",
-        ));
+        );
 
         Output::flush();
         Ok(())
@@ -1806,8 +1730,7 @@ impl Template {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Template file lists (Zig: nested `ReactBlank`/`ReactTailwind`/`ReactShadcn`
-// structs containing `files` consts)
+// Template file lists
 // ──────────────────────────────────────────────────────────────────────────
 
 static REACT_BLANK_FILES: &[TemplateFile] = &[
@@ -2011,7 +1934,7 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 ];
 
 // ──────────────────────────────────────────────────────────────────────────
-// Helpers (Zig: `const exists = bun.sys.exists; const existsZ = bun.sys.existsZ;`)
+// Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
@@ -2031,9 +1954,5 @@ fn is_safe_entry_point_path(path: &[u8]) -> bool {
 
 #[inline]
 fn exists_z(path: &[u8]) -> bool {
-    // TODO(port): Zig `existsZ` takes `[:0]const u8`; here we accept `&[u8]` and
-    // let bun_sys handle termination via the non-Z `exists` (copies into a buffer).
     bun_sys::exists(path)
 }
-
-// ported from: src/cli/init_command.zig

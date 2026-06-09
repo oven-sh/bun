@@ -1,5 +1,6 @@
-use core::ffi::{CStr, c_char};
+use core::ffi::c_char;
 use core::mem::size_of;
+use core::ptr::NonNull;
 
 use bun_core::{self, err, slice_as_bytes};
 
@@ -16,7 +17,7 @@ use bun_core::{self, err, slice_as_bytes};
 // the print boundary.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_js_printer::analyze_transpiled_module::{
-    FetchParameters, ModuleInfo, StringID, VarKind,
+    FetchParameters, ModuleInfo, ModulePhase, StringID, VarKind,
 };
 
 /// Downstream name for `FetchParameters` — mirrors how
@@ -24,26 +25,28 @@ pub use bun_js_printer::analyze_transpiled_module::{
 /// `bundler_jsc::analyze_jsc::to_js_module_record`.
 pub type RequestedModuleValue = FetchParameters;
 
-/// Legacy name used by `linker_context::postProcessJSChunk` — the Zig side
+/// Legacy name used by `linker_context::postProcessJSChunk` — the type was
 /// renamed `ImportAttributes` → `FetchParameters` but the bundler call site
 /// still spells `ImportAttributes::None`.
-pub type ImportAttributes = FetchParameters;
+pub(crate) type ImportAttributes = FetchParameters;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RecordKind
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive `enum(u8)` in Zig — any byte value is representable, so model
+/// Any byte value is representable, so model
 /// as a transparent newtype with associated consts (a `#[repr(u8)] enum` would
 /// be UB for unknown discriminants read out of the serialized buffer).
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
 // SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
-// a valid `u8` (Zig modeled this as a non-exhaustive `enum(u8)`). `Pod` lets
+// a valid `u8`. `Pod` lets
 // `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
 // printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
 unsafe impl bytemuck::Zeroable for RecordKind {}
+// SAFETY: see above — `#[repr(transparent)]` over `u8`, so no padding and every
+// bit pattern is valid; `RecordKind` is `Copy + 'static` with no interior refs.
 unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
@@ -65,6 +68,8 @@ impl RecordKind {
     pub const EXPORT_INFO_NAMESPACE: Self = Self(7);
     /// module_name
     pub const EXPORT_INFO_STAR: Self = Self(8);
+    /// module_name, import_name = '*', local_name (ModulePhase::Defer)
+    pub const IMPORT_INFO_NAMESPACE_DEFER: Self = Self(9);
 
     // PascalCase aliases — `bundler_jsc::analyze_jsc` pattern-matches on these
     // (the SCREAMING_CASE consts above are kept for intra-crate use).
@@ -73,6 +78,7 @@ impl RecordKind {
     pub const ImportInfoSingle: Self = Self::IMPORT_INFO_SINGLE;
     pub const ImportInfoSingleTypeScript: Self = Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT;
     pub const ImportInfoNamespace: Self = Self::IMPORT_INFO_NAMESPACE;
+    pub const ImportInfoNamespaceDefer: Self = Self::IMPORT_INFO_NAMESPACE_DEFER;
     pub const ExportInfoIndirect: Self = Self::EXPORT_INFO_INDIRECT;
     pub const ExportInfoLocal: Self = Self::EXPORT_INFO_LOCAL;
     pub const ExportInfoNamespace: Self = Self::EXPORT_INFO_NAMESPACE;
@@ -84,6 +90,7 @@ impl RecordKind {
             Self::IMPORT_INFO_SINGLE => Ok(3),
             Self::IMPORT_INFO_SINGLE_TYPE_SCRIPT => Ok(3),
             Self::IMPORT_INFO_NAMESPACE => Ok(3),
+            Self::IMPORT_INFO_NAMESPACE_DEFER => Ok(3),
             Self::EXPORT_INFO_INDIRECT => Ok(3),
             Self::EXPORT_INFO_LOCAL => Ok(3),
             Self::EXPORT_INFO_NAMESPACE => Ok(2),
@@ -109,19 +116,17 @@ bitflags::bitflags! {
 }
 
 impl Flags {
-    /// Zig: `Flags.contains_import_meta` packed-struct field. Exposed as a
+    /// Exposed as a
     /// method so downstream callers (e.g. `bundler_jsc::analyze_jsc`) can read
     /// the bit without depending on the bitflags const name.
     #[inline]
     pub const fn contains_import_meta(self) -> bool {
         self.contains(Flags::CONTAINS_IMPORT_META)
     }
-    /// Zig: `Flags.is_typescript` packed-struct field.
     #[inline]
     pub const fn is_typescript(self) -> bool {
         self.contains(Flags::IS_TYPESCRIPT)
     }
-    /// Zig: `Flags.has_tla` packed-struct field.
     #[inline]
     pub const fn has_tla(self) -> bool {
         self.contains(Flags::HAS_TLA)
@@ -147,13 +152,13 @@ bun_core::named_error_set!(ModuleInfoError);
 /// Alignment: the on-disk format pads every multi-byte field to a 4-byte
 /// offset, and [`Self::create`] allocates the backing buffer with 4-byte
 /// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
-/// aligned for `T` and `.slice()` is sound. (Zig used `[]align(1) const T`
-/// because its allocator didn't guarantee the base; we do instead.)
+/// aligned for `T` and `.slice()` is sound.
 pub struct ModuleInfoDeserialized {
     pub strings_buf: bun_ptr::RawSlice<u8>,
     pub strings_lens: bun_ptr::RawSlice<u32>,
     pub requested_modules_keys: bun_ptr::RawSlice<StringID>,
     pub requested_modules_values: bun_ptr::RawSlice<FetchParameters>,
+    pub requested_modules_phases: bun_ptr::RawSlice<u8>,
     pub buffer: bun_ptr::RawSlice<StringID>,
     pub record_kinds: bun_ptr::RawSlice<RecordKind>,
     pub flags: Flags,
@@ -200,6 +205,10 @@ impl ModuleInfoDeserialized {
         self.requested_modules_values.slice()
     }
     #[inline]
+    pub fn requested_modules_phases(&self) -> &[u8] {
+        self.requested_modules_phases.slice()
+    }
+    #[inline]
     pub fn buffer(&self) -> &[StringID] {
         self.buffer.slice()
     }
@@ -220,9 +229,7 @@ impl ModuleInfoDeserialized {
         unsafe {
             match (*this).owner {
                 Owner::ModuleInfo(mi) => {
-                    // PORT NOTE: Zig recovered the parent via
-                    // `@fieldParentPtr("_deserialized", self)`. The Rust port
-                    // stores the `*mut ModuleInfo` directly because the printer
+                    // The `*mut ModuleInfo` is stored directly because the printer
                     // crate's `ModuleInfo` no longer embeds this struct.
                     drop(bun_core::heap::take(mi));
                     drop(bun_core::heap::take(this));
@@ -260,7 +267,12 @@ impl ModuleInfoDeserialized {
         // properly aligned for `&[T]` materialisation.
         let duped_raw: *mut [u8] = dupe_aligned(source);
         // On error, reclaim the allocation.
-        let guard = scopeguard::guard(duped_raw, |p| unsafe { free_aligned_dup(p) });
+        let guard = scopeguard::guard(duped_raw, |p| {
+            // SAFETY: `p` is the `dupe_aligned` result captured above and has
+            // not been freed — this guard only fires on the error path, before
+            // `ScopeGuard::into_inner` transfers ownership into `owner`.
+            unsafe { free_aligned_dup(p) }
+        });
 
         // SAFETY: `duped_raw` is a valid, exclusively-owned allocation.
         let mut rem: &[u8] = unsafe { &*duped_raw };
@@ -287,6 +299,8 @@ impl ModuleInfoDeserialized {
             &mut rem,
             requested_modules_len as usize * size_of::<FetchParameters>(),
         )?)?;
+        let requested_modules_phases = Self::eat(&mut rem, requested_modules_len as usize)?;
+        let _ = Self::eat(&mut rem, ((4 - (requested_modules_len % 4)) % 4) as usize)?; // alignment padding
 
         let flags = Flags::from_bits_retain(Self::eat_c::<1>(&mut rem)?[0]);
         let _ = Self::eat(&mut rem, 3)?; // alignment padding
@@ -301,7 +315,7 @@ impl ModuleInfoDeserialized {
         // Disarm the errdefer: ownership moves into the result.
         let duped_raw = scopeguard::ScopeGuard::into_inner(guard);
 
-        // All six views borrow `duped_raw` (the boxed allocation moved into
+        // All seven views borrow `duped_raw` (the boxed allocation moved into
         // `owner` below); they stay valid and at a stable address for the
         // lifetime of every `RawSlice` copied from this struct. `RawSlice::new`
         // erases the borrow lifetime — the structural invariant is upheld by
@@ -311,6 +325,7 @@ impl ModuleInfoDeserialized {
             strings_lens: bun_ptr::RawSlice::new(strings_lens),
             requested_modules_keys: bun_ptr::RawSlice::new(requested_modules_keys),
             requested_modules_values: bun_ptr::RawSlice::new(requested_modules_values),
+            requested_modules_phases: bun_ptr::RawSlice::new(requested_modules_phases),
             buffer: bun_ptr::RawSlice::new(buffer),
             record_kinds: bun_ptr::RawSlice::new(record_kinds),
             flags,
@@ -322,17 +337,12 @@ impl ModuleInfoDeserialized {
     /// cache or standalone module graph). Returns `None` instead of panicking on
     /// corrupt/truncated data.
     pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        // PORT NOTE: Zig matched on error.OutOfMemory → bun.outOfMemory(); in
-        // Rust, allocation failure aborts via the global arena, so only
+        // Allocation failure aborts via the global arena, so only
         // BadModuleInfo remains.
-        match Self::create(source) {
-            Ok(v) => Some(v),
-            Err(ModuleInfoError::BadModuleInfo) => None,
-        }
+        Self::create(source).ok()
     }
 
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let record_kinds = self.record_kinds();
         writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(record_kinds))?;
@@ -347,6 +357,11 @@ impl ModuleInfoDeserialized {
         writer.write_all(&(rm_keys.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(rm_keys))?;
         writer.write_all(slice_as_bytes(self.requested_modules_values()))?;
+        let rm_phases = self.requested_modules_phases();
+        debug_assert_eq!(rm_phases.len(), rm_keys.len());
+        writer.write_all(rm_phases)?;
+        let pad = (4 - (rm_keys.len() % 4)) % 4;
+        writer.write_all(&[0u8; 4][..pad])?; // alignment padding
 
         writer.write_all(&[self.flags.bits()])?;
         writer.write_all(&[0u8; 3])?; // alignment padding
@@ -405,7 +420,7 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
     // allocated with this exact layout.
     unsafe {
         std::alloc::dealloc(
-            slice as *mut u8,
+            slice.cast::<u8>(),
             std::alloc::Layout::from_size_align_unchecked(len, MODULE_INFO_ALIGN),
         );
     }
@@ -416,9 +431,7 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
 /// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
 /// internal padding was violated).
 ///
-/// (Zig used `std.mem.bytesAsSlice` → `[]align(1) const T`; Rust has no
-/// under-aligned reference type, so we guarantee alignment instead via
-/// `bytemuck::try_cast_slice`, which checks both alignment and size.)
+/// (`bytemuck::try_cast_slice` checks both alignment and size.)
 #[inline]
 fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
     bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
@@ -431,7 +444,7 @@ fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], Modu
 /// Extension constructor: `StringID::from_raw(u32)` — used by
 /// `linker_context::generateChunksInParallel` when rewriting cross-chunk
 /// specifier IDs.
-pub trait StringIDExt {
+pub(crate) trait StringIDExt {
     fn from_raw(raw: u32) -> StringID;
 }
 impl StringIDExt for StringID {
@@ -448,8 +461,7 @@ pub trait ModuleInfoExt {
     /// `this` must originate from `heap::alloc(ModuleInfo::create(..))`.
     unsafe fn destroy_raw(this: *mut ModuleInfo);
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
-    /// ownership of `self`. Replaces the Zig pattern of writing into the
-    /// embedded `_deserialized` field and handing out a `&mut` to it.
+    /// ownership of `self`.
     fn into_deserialized(self: Box<Self>) -> Box<ModuleInfoDeserialized>;
 }
 
@@ -460,22 +472,25 @@ impl ModuleInfoExt for ModuleInfo {
         drop(unsafe { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
-        // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
-        // exposes a borrowed `as_deserialized()` instead; here we materialise the
+        // The printer-crate `ModuleInfo`
+        // exposes a borrowed `as_deserialized()`; here we materialise the
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         if !self.finalized {
             let _ = self.finalize();
         }
-        // PORT NOTE: reshaped for borrowck — capture lifetime-erased `RawSlice`
+        // Reshaped for borrowck — capture lifetime-erased `RawSlice`
         // views before `heap::into_raw(self)` consumes the box.
-        let (strings_buf, strings_lens, rm_keys, rm_values, buffer, record_kinds, flags);
+        let (strings_buf, strings_lens, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
         {
             let view = self.as_deserialized();
             strings_buf = bun_ptr::RawSlice::new(view.strings_buf);
             strings_lens = bun_ptr::RawSlice::new(view.strings_lens);
             rm_keys = bun_ptr::RawSlice::new(view.requested_modules_keys);
             rm_values = bun_ptr::RawSlice::new(view.requested_modules_values);
+            // Printer's `ModulePhase` is `#[repr(u8)] NoUninit` — safe to view as `&[u8]`.
+            rm_phases = bun_ptr::RawSlice::new(bytemuck::cast_slice::<_, u8>(
+                view.requested_modules_phases,
+            ));
             buffer = bun_ptr::RawSlice::new(view.buffer);
             // Printer's `RecordKind` is `#[repr(u8)] NoUninit` with the same
             // discriminant layout as this crate's `#[repr(transparent)] u8`
@@ -488,7 +503,7 @@ impl ModuleInfoExt for ModuleInfo {
             f.set(Flags::HAS_TLA, view.flags.has_tla);
             flags = f;
         }
-        // All six views point into the `Box<ModuleInfo>`'s vectors, moved into
+        // All seven views point into the `Box<ModuleInfo>`'s vectors, moved into
         // `owner` below; they stay valid and stable for the lifetime of every
         // `RawSlice` copied from this struct.
         Box::new(ModuleInfoDeserialized {
@@ -496,6 +511,7 @@ impl ModuleInfoExt for ModuleInfo {
             strings_lens,
             requested_modules_keys: rm_keys,
             requested_modules_values: rm_values,
+            requested_modules_phases: rm_phases,
             buffer,
             record_kinds,
             flags,
@@ -506,27 +522,29 @@ impl ModuleInfoExt for ModuleInfo {
 
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
-// (Zig `comptime { _ = @import }` force-reference dropped per porting guide.)
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
-    // SAFETY: C++ caller passes a pointer obtained from `ModuleInfo::create`.
-    drop(unsafe { bun_core::heap::take(info) });
+pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
+    // SAFETY: C++ caller passes a non-null pointer obtained from `ModuleInfo::create`.
+    let info = unsafe { NonNull::new(info).unwrap_unchecked() };
+    // SAFETY: `info` came from `bun_core::heap::into_raw` and ownership is transferred back here.
+    drop(unsafe { bun_core::heap::take(info.as_ptr()) });
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
-    // SAFETY: C++ caller passes a pointer obtained from `create` or
+pub(crate) extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
+    // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
     // `ModuleInfoExt::into_deserialized`.
-    unsafe { ModuleInfoDeserialized::deinit(info) }
+    let info = unsafe { NonNull::new(info).unwrap_unchecked() };
+    // SAFETY: `info` is a valid, exclusively-owned pointer; `deinit` is its only destructor.
+    unsafe { ModuleInfoDeserialized::deinit(info.as_ptr()) }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig_log(msg: *const c_char) {
-    // SAFETY: caller passes a NUL-terminated C string.
-    let bytes = unsafe { bun_core::ffi::cstr(msg) }.to_bytes();
-    // Zig: `Output.errorWriter().print("{s}\n", .{bytes}) catch {}`.
+pub(crate) extern "C" fn zig_log(msg: *const c_char) {
+    // SAFETY: C++ caller passes a non-null, NUL-terminated C string.
+    let msg = unsafe { NonNull::new(msg.cast_mut()).unwrap_unchecked() };
+    // SAFETY: `msg` is non-null and points to a NUL-terminated C string per the contract above.
+    let bytes = unsafe { bun_core::ffi::cstr(msg.as_ptr()) }.to_bytes();
     bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }
-
-// ported from: src/bundler/analyze_transpiled_module.zig

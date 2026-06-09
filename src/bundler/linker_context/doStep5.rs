@@ -1,29 +1,27 @@
-//! Port of `src/bundler/linker_context/doStep5.zig`.
-//!
-//! PORT NOTE: like `scanImportsAndExports.rs`, the Zig body holds many
+//! Like `scanImportsAndExports.rs`, this step needs many
 //! overlapping `&mut` column slices out of `LinkerGraph.{ast,meta}` while also
 //! calling `&self` methods. The SoA columns are physically disjoint and never
 //! reallocate during this step, so we cache raw column pointers and deref at
 //! each use site.
 
 use crate::mal_prelude::*;
-use core::mem::{MaybeUninit, offset_of};
+use core::mem::MaybeUninit;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::Loc;
-use bun_collections::{ArrayHashMap, HashMap, VecExt};
+use bun_collections::{HashMap, VecExt};
 use bun_core::strings;
 
-use crate::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
+use crate::bundled_ast::Flags as AstFlags;
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{
-    self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
-    PartSymbolUseMap, Ref, S, Stmt,
+    Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part, PartSymbolUseMap,
+    Ref, S, Stmt,
 };
 
 use crate::options::Format;
-use crate::ungate_support::perf;
+use crate::perf;
 use crate::{BundleV2, Index, LinkerContext, RefImportData, ResolvedExports, js_meta};
 
 pub use crate::ThreadPool;
@@ -51,7 +49,7 @@ impl LinkerContext<'_> {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        // Shared-ref view for all read-only access. Multiple worker threads may
+        // SAFETY: shared-ref view for all read-only access. Multiple worker threads may
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
@@ -68,8 +66,8 @@ impl LinkerContext<'_> {
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
         let worker = ThreadPool::Worker::get(bundle_v2);
-        // Zig: `defer worker.unget()`. `Worker::get` returns the thread-local worker
-        // (not RAII), so balance explicitly via scopeguard.
+        // `Worker::get` returns the thread-local worker
+        // (not RAII), so balance with `unget` explicitly via scopeguard.
         let worker = scopeguard::guard(worker, |w| w.unget());
 
         // we must use this arena here
@@ -89,21 +87,23 @@ impl LinkerContext<'_> {
             ($col:expr, $ty:ty, $i:expr) => {{
                 // SAFETY: `$col: *mut [$ty]` from `split_raw()`; `$i < len`
                 // (guarded above for `meta`, and `ast.len == meta.len`). The
-                // `as *mut $ty` fat→thin cast preserves the raw provenance
+                // `.cast::<$ty>()` fat→thin cast preserves the raw provenance
                 // from `split_raw()`.
-                unsafe { &mut *(($col as *mut $ty).add($i as usize)) }
+                unsafe { &mut *($col.cast::<$ty>().add($i as usize)) }
             }};
         }
 
-        let resolved_exports: *mut ResolvedExports =
-            (meta.resolved_exports as *mut ResolvedExports).wrapping_add(id as usize);
+        let resolved_exports: *mut ResolvedExports = meta
+            .resolved_exports
+            .cast::<ResolvedExports>()
+            .wrapping_add(id as usize);
         // Read-only columns (never written during step 5) — whole-column
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
         // no task mutates `imports_to_bind` / `probably_typescript_type`.
         let (imports_to_bind, probably_typescript_type): (
             &[RefImportData],
-            &[ArrayHashMap<Ref, ()>],
+            &[js_meta::ProbablyTypescriptType],
         ) = unsafe { (&*meta.imports_to_bind, &*meta.probably_typescript_type) };
 
         // Now that all exports have been resolved, sort and filter them to create
@@ -158,7 +158,6 @@ impl LinkerContext<'_> {
                 re_exports_count += inner_count;
 
                 aliases.push(alias);
-                // PERF(port): was appendAssumeCapacity
             }
         }
         // TODO: can this be u32 instead of a string?
@@ -166,11 +165,15 @@ impl LinkerContext<'_> {
         // and only store a count instead of an array
         strings::sort_desc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
-        *row_mut!(meta.sorted_and_filtered_export_aliases, Box<[Box<[u8]>]>, id) =
-            // PORT NOTE: SoA column is `Box<[Box<[u8]>]>`; the worker arena slices
-            // are `&'bump [u8]`. Re-own into `Box` for now — once `JSMeta` grows
-            // an `'arena` lifetime this collapses to a borrowing slice. PERF(port).
-            export_aliases.iter().map(|s| (*s).to_vec().into_boxed_slice()).collect();
+        *row_mut!(
+            meta.sorted_and_filtered_export_aliases,
+            js_meta::SortedAndFilteredExportAliases,
+            id
+        ) = bun_alloc::AstAlloc::vec_from_iter(
+            export_aliases
+                .iter()
+                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+        );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
@@ -197,22 +200,24 @@ impl LinkerContext<'_> {
         // Each part tracks the other parts it depends on within this file
         let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
 
-        // PORT NOTE: reshaped for borrowck — multiple `&mut` into graph SoA;
+        // Multiple `&mut` into graph SoA are needed here;
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
-        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).slice_mut();
-        let named_imports: *mut crate::bundled_ast::NamedImports =
-            (ast.named_imports as *mut crate::bundled_ast::NamedImports).wrapping_add(id as usize);
+        let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
+        let named_imports: *mut crate::bundled_ast::NamedImports = ast
+            .named_imports
+            .cast::<crate::bundled_ast::NamedImports>()
+            .wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).
         let named_imports_is_empty = unsafe { (*named_imports).is_empty() };
 
-        // PERF(port): hoist this file's two `top_level_symbols_to_parts`
-        // sub-maps. The Zig version reaches them through
-        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use, which is fine
-        // when the underlying ArrayHashMap has its index_header (O(1) get).
-        // In the port, perf showed `find_hash` falling through to the linear
+        // PERF: hoist this file's two `top_level_symbols_to_parts`
+        // sub-maps rather than going through
+        // `c.topLevelSymbolsToParts(id, ref)` per symbol-use — that is fine
+        // when the underlying ArrayHashMap has its index_header (O(1) get),
+        // but perf showed `find_hash` falling through to the linear
         // scan branch here (≈87% of step5 self-time on three.js), so we (a)
         // hoist the per-file column pointer math out of the J×K inner loop
         // and (b) ensure the accelerator index is built on the large
@@ -241,9 +246,9 @@ impl LinkerContext<'_> {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
-            // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while
-            // holding a mutable getPtr into part.symbol_uses; collect refs first.
-            // PERF(port): the property-use map is empty for the overwhelming
+            // We cannot iterate keys()/values() while
+            // holding a mutable pointer into part.symbol_uses; collect refs first.
+            // PERF: the property-use map is empty for the overwhelming
             // majority of parts (it only fills for `import * as ns`/enum
             // property accesses); skip the `to_vec()` alloc-round-trip in
             // that case.
@@ -296,50 +301,12 @@ impl LinkerContext<'_> {
             // TODO: inline function calls here
 
             // TODO: Inline cross-module constants
-            // if (c.graph.const_values.count() > 0) {
-            //     // First, find any symbol usage that points to a constant value.
-            //     // This will be pretty rare.
-            //     const first_constant_i: ?usize = brk: {
-            //         for (part.symbol_uses.keys(), 0..) |ref, j| {
-            //             if (c.graph.const_values.contains(ref)) {
-            //                 break :brk j;
-            //             }
-            //         }
-            //
-            //         break :brk null;
-            //     };
-            //     if (first_constant_i) |j| {
-            //         var end_i: usize = 0;
-            //         // symbol_uses is an array
-            //         var keys = part.symbol_uses.keys()[j..];
-            //         var values = part.symbol_uses.values()[j..];
-            //         for (keys, values) |ref, val| {
-            //             if (c.graph.const_values.contains(ref)) {
-            //                 continue;
-            //             }
-            //
-            //             keys[end_i] = ref;
-            //             values[end_i] = val;
-            //             end_i += 1;
-            //         }
-            //         part.symbol_uses.entries.len = end_i + j;
-            //
-            //         if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
-            //             part.tag = .dead_due_to_inlining;
-            //             part.dependencies.len = 0;
-            //             continue :outer;
-            //         }
-            //
-            //         part.symbol_uses.reIndex(arena) catch unreachable;
-            //     }
-            // }
             if false {
                 break 'outer;
-            } // this `if` is here to preserve the unused
-            //                          block label from the above commented code.
+            } // this `if` preserves the otherwise-unused block label.
 
             // Now that we know this, we can determine cross-part dependencies
-            // PERF(port): iterate the keys slice directly (the index-based
+            // PERF: iterate the keys slice directly (the index-based
             // form re-loaded `keys.len()` and bounds-checked each access).
             let part_index_u32 = part_index as u32;
             let dependencies = &mut part.dependencies;
@@ -391,12 +358,10 @@ impl LinkerContext<'_> {
         }
     }
 
-    /// Spec: `linker_context/doStep5.zig:createExportsForFile`.
-    ///
     /// WARNING: This method is run in parallel over all files. Do not mutate data
     /// for other files within this method or you will create a data race.
     ///
-    /// PORT NOTE: takes `&self` (read-only) plus the three SoA row cells it
+    /// Takes `&self` (read-only) plus the three SoA row cells it
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
@@ -412,10 +377,17 @@ impl LinkerContext<'_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). `Disabler::scope()`
-        // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
-        // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
+        // `Stmt.Disabler`/`Expr.Disabler` are debug-only guards
+        // around the global thread-local block store. `Disabler::scope()`
+        // calls `disable()` and re-`enable()`s on drop. In debug builds the
+        // disabler only fires when `Store::append` falls through to that
+        // global slab — i.e. when no `ASTMemoryAllocator` scope is installed.
+        // Bundler workers always install one (`Worker::get` pushes
+        // `ast_memory_store`), so appends in this step — including
+        // `Stmt::assign` below — route to the worker allocator and bypass the
+        // check entirely. The guard
+        // exists to catch accidental global-slab use if this code ever runs
+        // without that allocator installed.
         let _stmt_guard = bun_ast::stmt::Disabler::scope();
         let _expr_guard = bun_ast::expr::Disabler::scope();
 
@@ -443,8 +415,8 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // PORT NOTE: Zig used `Stmt.Batcher` (preallocated arena slice +
-        // cursor). `Batcher::<T>::init` requires `T: Default` which `Stmt`
+        // `Batcher::<T>::init` (preallocated arena slice + cursor) requires
+        // `T: Default` which `Stmt`
         // doesn't satisfy, so we hand-roll the same shape: one arena slab of
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
         // becomes a `write` + sub-slice carve. The slab is held as a safe
@@ -464,7 +436,7 @@ impl LinkerContext<'_> {
         }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
-        let mut ns_export_dependencies = Vec::<Dependency>::init_capacity(re_exports_count);
+        let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
@@ -531,7 +503,6 @@ impl LinkerContext<'_> {
                 )),
                 ..Default::default()
             });
-            // PERF(port): was appendAssumeCapacity
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 
@@ -554,7 +525,7 @@ impl LinkerContext<'_> {
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
-        // PORT NOTE: the trailing `all_export_stmts_len` slots of `stmts_slab`
+        // The trailing `all_export_stmts_len` slots of `stmts_slab`
         // (after the per-export `eat1`s above) are filled below in the order
         // {var exports={}, __export(...), module.exports=__toCommonJS(...)}.
         let all_export_stmts_base = stmts_head;
@@ -594,9 +565,9 @@ impl LinkerContext<'_> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             export_ref = self.runtime_function(b"__export");
-            // PORT NOTE: `bumpalo::Vec` → `Vec` via the global heap;
+            // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
-            // arena-backed `move_from_list`, so re-own. PERF(port).
+            // arena-backed `move_from_list`, so re-own.
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());
             owned_props.extend(properties.drain(..));
             emit_export_stmt!(Stmt::allocate(
@@ -681,7 +652,7 @@ impl LinkerContext<'_> {
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
-            ast_parts.slice_mut()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
+            ast_parts.as_mut_slice()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
                     let init = &mut stmts_slab[all_export_stmts_base..stmts_head];
                     debug_assert_eq!(init.len(), all_export_stmts_len);
@@ -691,7 +662,7 @@ impl LinkerContext<'_> {
                     // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
                     // outlives the link pass.
                     bun_ast::StoreSlice::new_mut(unsafe {
-                        &mut *(init as *mut [MaybeUninit<Stmt>] as *mut [Stmt])
+                        &mut *(std::ptr::from_mut::<[MaybeUninit<Stmt>]>(init) as *mut [Stmt])
                     })
                 } else {
                     bun_ast::StoreSlice::EMPTY
@@ -716,5 +687,3 @@ impl LinkerContext<'_> {
         }
     }
 }
-
-// ported from: src/bundler/linker_context/doStep5.zig

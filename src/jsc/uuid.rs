@@ -57,7 +57,6 @@ impl UUID {
             return Err(UuidError::InvalidUUID);
         }
 
-        // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
         for (j, &i) in ENCODED_POS.iter().enumerate() {
             uuid.bytes[j] = bun_core::fmt::hex_pair_value(buf[i as usize], buf[i as usize + 1])
                 .ok_or(UuidError::InvalidUUID)?;
@@ -93,10 +92,9 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     buf[13] = b'-';
     buf[18] = b'-';
     buf[23] = b'-';
-    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
-        buf[i as usize + 0] = hi;
+        buf[i as usize] = hi;
         buf[i as usize + 1] = lo;
     }
 }
@@ -124,7 +122,7 @@ impl UUID7 {
         UUID_V7_COUNTER.fetch_add(1, Ordering::Relaxed) % 4096
     }
 
-    pub fn init(timestamp: u64, random: &[u8; 8]) -> UUID7 {
+    pub fn init(timestamp: u64, random: [u8; 8]) -> UUID7 {
         let count = Self::get_count(timestamp);
 
         let mut bytes = [0u8; 16];
@@ -179,12 +177,11 @@ pub struct UUID5 {
     pub bytes: [u8; 16],
 }
 
-// PORT NOTE: Zig nested `pub const namespaces = struct { ... }` used as a namespace;
-// Rust cannot nest a module inside an `impl`, so it lives adjacent to `UUID5`.
+/// Well-known UUID v5 namespaces (RFC 4122 Appendix C).
 pub mod namespaces {
     use super::*;
 
-    pub const DNS: &[u8; 16] = &[
+    pub(crate) const DNS: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -192,11 +189,11 @@ pub mod namespaces {
         0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const OID: &[u8; 16] = &[
+    pub(crate) const OID: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const X500: &[u8; 16] = &[
+    pub(crate) const X500: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -259,5 +256,3 @@ impl fmt::Display for UUID5 {
         self.to_uuid().fmt(f)
     }
 }
-
-// ported from: src/jsc/uuid.zig

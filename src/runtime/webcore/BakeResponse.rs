@@ -46,7 +46,7 @@ pub enum SSRKind {
 /// `this` must be a valid heap-allocated `Response` whose ownership is being
 /// transferred to the JS GC. After this call the caller must not free or
 /// dereference `this`.
-pub unsafe fn to_js_for_ssr(
+pub(crate) unsafe fn to_js_for_ssr(
     this: *mut Response,
     global_object: &JSGlobalObject,
     kind: SSRKind,
@@ -59,7 +59,7 @@ pub unsafe fn to_js_for_ssr(
 // C++ side declares `extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES` (SYSV_ABI on win-x64).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructForSSR(
+    pub(crate) unsafe fn BakeResponseClass__constructForSSR(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
         bake_ssr_has_jsx: *mut c_int,
@@ -79,7 +79,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn constructor(
+pub(crate) fn constructor(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
     bake_ssr_has_jsx: &mut c_int,
@@ -112,7 +112,7 @@ pub fn constructor(
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructRedirect(
+    pub(crate) unsafe fn BakeResponseClass__constructRedirect(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
@@ -120,7 +120,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub fn construct_redirect(
+pub(crate) fn construct_redirect(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -148,17 +148,19 @@ pub fn construct_redirect(
 // C++ side declares `extern "C" SYSV_ABI ... JSC_HOST_CALL_ATTRIBUTES`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn BakeResponseClass__constructRender(
+    pub(crate) unsafe fn BakeResponseClass__constructRender(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JSValue {
-        // PERF(port): was @call(bun.callmod_inline, ...).
         bun_jsc::to_js_host_call(global_object, || construct_render(global_object, call_frame))
     }
 }
 
 /// This function is only available on JSBakeResponse
-pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn construct_render(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments: [JSValue; 2] = callframe.arguments_as_array::<2>();
     let vm = global_this.bun_vm().as_mut();
 
@@ -172,8 +174,7 @@ pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
     assert_streaming_disabled(global_this, async_local_storage, b"Response.render")?;
 
     // Validate arguments
-    // PORT NOTE: `arguments` is a fixed [JSValue; 2] so `.len() < 1` is
-    // comptime-false in Zig too; kept for structural fidelity.
+    // `arguments` is a fixed [JSValue; 2] so `.len() < 1` is always false.
     #[allow(clippy::len_zero)]
     if arguments.len() < 1 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -188,8 +189,7 @@ pub fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
     }
 
     // Get the path string
-    let path_str = path_arg.to_bun_string(global_this)?;
-    // `defer path_str.deref()` → handled by Drop on bun_core::String
+    let path_str = bun_core::OwnedString::new(path_arg.to_bun_string(global_this)?);
 
     let path_utf8 = path_str.to_utf8();
     // `defer path_utf8.deinit()` → handled by Drop on the UTF-8 slice guard
@@ -255,5 +255,3 @@ fn assert_streaming_disabled(
     }
     Ok(())
 }
-
-// ported from: src/runtime/webcore/BakeResponse.zig

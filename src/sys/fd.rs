@@ -1,22 +1,22 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
+#[cfg(windows)]
+use core::ffi::c_void;
 use core::fmt;
 
-use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional as Optional, Stdio, fd};
 /// Platform-native fd integer (`c_int` on POSIX, `HANDLE` on Windows). Alias
-/// for callers porting Zig's `std.posix.fd_t` / `bun.FD.native()`.
+/// for callers that want the `bun.FD.native()` shape.
 pub type RawFd = FdNative;
 #[cfg(windows)]
 pub use bun_core::DecodeWindows;
 
 use crate as sys;
 
-// `log` in the Zig is `bun.sys.syslog`
 bun_core::define_scoped_log!(log, SYS, visible);
 
-/// `std.posix.fd_t` — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
+/// Native fd backing int — `c_int` on POSIX, `HANDLE` on Windows. Same as `FdNative`.
 pub type FdT = FdNative;
 /// `bun.windows.libuv.uv_file` (c-runtime file descriptor); on POSIX this is also `c_int`.
 pub type UvFile = c_int;
@@ -37,8 +37,7 @@ bun_core::named_error_set!(MakeLibUvOwnedError);
 // ──────────────────────────────────────────────────────────────────────────
 // FdExt — syscall-touching methods on `bun_core::Fd`.
 //
-// In Zig these were inherent methods on `bun.FD` (Zig allows `pub const close
-// = bun.sys.close` aliasing). Rust can't impl inherent methods on a foreign
+// Rust can't impl inherent methods on a foreign
 // type, so they live behind an extension trait. Import via
 // `use bun_sys::FdExt;` at call sites; or call `bun_sys::close(fd)` directly.
 // ──────────────────────────────────────────────────────────────────────────
@@ -101,7 +100,7 @@ impl FdExt for Fd {
         let mut fd_fmt_buf = [0u8; 1050];
         #[cfg(debug_assertions)]
         let fd_fmt: &[u8] = {
-            // Zig: `std.fmt.bufPrint(&buf, "{f}", .{fd})` — stack slice, no heap.
+            // Stack slice, no heap.
             use std::io::Write as _;
             let mut cursor = std::io::Cursor::new(&mut fd_fmt_buf[..]);
             let _ = write!(cursor, "{}", self);
@@ -114,7 +113,7 @@ impl FdExt for Fd {
             {
                 debug_assert!(self.native() >= 0);
                 // Raw `SYS_close` via rustix — no glibc wrapper (which is a
-                // pthread cancellation point). fd.zig:266: never retry on EINTR.
+                // pthread cancellation point). Never retry on EINTR.
                 match sys::linux_syscall::close(self.native()) {
                     Err(e) if e == libc::EBADF => Some(sys::Error {
                         errno: sys::E::EBADF as _,
@@ -162,7 +161,7 @@ impl FdExt for Fd {
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
-                        // Zig: `defer req.deinit();` — fs_t has no Drop impl, so cleanup
+                        // fs_t has no Drop impl, so cleanup
                         // must be explicit (uv_fs_req_cleanup).
                         req.deinit();
                         if let Some(errno) = rc.errno() {
@@ -205,10 +204,10 @@ impl FdExt for Fd {
         {
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {
-                    Output::debug_warn(&format_args!(
+                    bun_core::debug_warn!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),
-                    ));
+                    );
                     bun_core::dump_current_stack_trace(
                         return_address,
                         bun_core::DumpStackTraceOptions {
@@ -251,7 +250,6 @@ impl FdExt for Fd {
 
     fn make_lib_uv_owned_for_syscall(
         self,
-        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path
         syscall_tag: sys::Tag,
         error_case: ErrorCase,
     ) -> sys::Result<Fd> {
@@ -284,13 +282,14 @@ impl FdExt for Fd {
     }
 
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
-        sys::Dir::from_fd(self).delete_tree(subpath)
+        // Non-owning view: `self` is the caller's fd; we must not close it.
+        sys::Dir::borrow(&self).delete_tree(subpath)
     }
 
     #[inline]
     fn as_socket_fd(self) -> sys::SocketT {
         #[cfg(windows)]
-        // SAFETY: HANDLE → SOCKET pointer reinterpretation; matches Zig @ptrCast.
+        // SAFETY: HANDLE → SOCKET pointer reinterpretation; both are pointer-sized.
         {
             self.native() as sys::SocketT
         }
@@ -318,13 +317,12 @@ impl FdOptionalExt for Optional {
 // `*_jsc` aliases — deleted per PORTING.md; they live as extension-trait
 // methods in `bun_sys_jsc`.
 
-// `fromStdFile` / `fromStdDir` / `stdFile` / `stdDir` wrap `std.fs.File`/`Dir`.
-// TODO(port): no Rust equivalent (std::fs is banned). Callers use
+// There are deliberately no `std::fs::File`/`Dir` conversion helpers
+// (std::fs is banned). Callers use
 // `Fd::from_native(handle)` / `fd.native()` directly.
 
 // The following functions are from bun.sys but with the 'f' prefix dropped
-// where it is relevant. In Zig they are aliased onto `FD` as inherent methods.
-// In Rust, callers use the free fns in `bun_sys` directly:
+// where it is relevant. Callers use the free fns in `bun_sys` directly:
 //   chmod→fchmod, chmodat→fchmodat, chown→fchown, directoryExistsAt, dup,
 //   dupWithFlags, existsAt, existsAtType, fcntl, getFcntlFlags, getFileSize,
 //   linkat, linkatTmpfile, lseek, mkdirat, mkdiratA, mkdiratW, mkdiratZ,
@@ -334,10 +332,10 @@ impl FdOptionalExt for Optional {
 //   unlinkat, updateNonblocking, write, writeNonblocking, writev,
 //   getFdPath, getFdPathW, getFdPathZ.
 // TODO: move these methods defined in bun.sys.File to bun.sys, then delete
-// bun.sys.File. (Zig comment carried over.)
+// bun.sys.File.
 
 // ──────────────────────────────────────────────────────────────────────────
-// HashMapContext — identity hash for Fd keys (matches Zig).
+// HashMapContext — identity hash for Fd keys.
 // ──────────────────────────────────────────────────────────────────────────
 pub struct HashMapContext;
 impl HashMapContext {
@@ -376,7 +374,6 @@ impl Prehashed {
         if fd == self.input {
             return self.value;
         }
-        // Zig: `return fd;` — implicit coercion of FD (packed struct) to u64.
         HashMapContext::hash(fd)
     }
     #[inline]
@@ -501,9 +498,8 @@ unsafe extern "C" {
 }
 
 #[cfg(windows)]
-pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
-    let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
+pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
+    let out = bun_core::fd::uv_open_osfhandle(in_);
     debug_assert!(out >= -1);
     if out == -1 {
         return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);
@@ -515,5 +511,3 @@ pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError>
 // only; PORTING.md "move storage down"). `bun_sys` keeps the richer
 // `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
 // `bun_sys::Error` with a syscall tag.
-
-// ported from: src/sys/fd.zig

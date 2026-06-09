@@ -3,21 +3,22 @@ use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
-// PORT NOTE: Zig threaded the parser-input lifetime (`[]const u8` slices borrow
-// the source). Currently uses `&'static [u8]` per PORTING.md §AST crates;
+// String payloads borrow the parser input/arena; currently `&'static [u8]`
+// per the rules/mod.rs lifetime-erasure note.
 // TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
-    Not(Box<SupportsCondition>),
+    Not(Box<SupportsCondition, ArenaPtr>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition>),
+    And(Vec<SupportsCondition, ArenaPtr>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition>),
+    Or(Vec<SupportsCondition, ArenaPtr>),
 
     /// A declaration to evaluate.
     Declaration(Declaration),
@@ -29,8 +30,8 @@ pub enum SupportsCondition {
     Unknown(&'static [u8]),
 }
 
-// PORT NOTE: Zig used an anonymous inline struct for the `.declaration` payload;
-// hoisted to a named type because Rust enum variants cannot carry inherent methods.
+// Named payload type for `SupportsCondition::Declaration` (enum variants
+// cannot carry inherent methods).
 pub struct Declaration {
     /// The property id for the declaration.
     pub property_id: PropertyId,
@@ -42,10 +43,8 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `PropertyId` is `Copy`;
-        // `value: &'static [u8]` is an arena-owned slice → identity copy
-        // (generics.zig "const strings" rule).
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        // `PropertyId` is `Copy`; `value` is an arena-owned slice → identity copy.
         Self {
             property_id: self.property_id,
             value: self.value,
@@ -54,8 +53,7 @@ impl Declaration {
 }
 
 impl Declaration {
-    pub fn eql(&self, other: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` field-walk, hand-expanded.
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
         // byte-slice equality.
@@ -73,18 +71,29 @@ impl SupportsCondition {
     }
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> SupportsCondition {
-        // PORT NOTE: `css.implementDeepClone` variant-walk (hand-rolled —
+        // Hand-rolled variant-walk —
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
         // with a fresh `'__bump`).
+        let alloc = ArenaPtr::new(bump);
         match self {
-            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),
-            Self::Or(v) => Self::Or(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
+            Self::And(v) => Self::And(Self::clone_vec_in(v, bump, alloc)),
+            Self::Or(v) => Self::Or(Self::clone_vec_in(v, bump, alloc)),
             Self::Declaration(d) => Self::Declaration(d.deep_clone(bump)),
             Self::Selector(s) => Self::Selector(s),
             Self::Unknown(s) => Self::Unknown(s),
         }
+    }
+
+    fn clone_vec_in(
+        v: &[SupportsCondition],
+        bump: &bun_alloc::Arena,
+        alloc: ArenaPtr,
+    ) -> Vec<SupportsCondition, ArenaPtr> {
+        let mut out = Vec::with_capacity_in(v.len(), alloc);
+        out.extend(v.iter().map(|c| c.deep_clone(bump)));
+        out
     }
 }
 
@@ -95,10 +104,9 @@ impl SupportsCondition {
     // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
 
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` variant-walk, hand-expanded because
-        // `#[derive(CssHash)]` would require `PropertyId: CssHash` (it only
-        // provides `core::hash::Hash`). Semantics match the Zig reflection:
-        // hash the discriminant, then field-wise structural hash.
+        // Hand-expanded because `#[derive(CssHash)]` would require
+        // `PropertyId: CssHash` (it only provides `core::hash::Hash`).
+        // Hash the discriminant, then field-wise structural hash.
         use core::hash::{Hash, Hasher};
         core::mem::discriminant(self).hash(hasher);
         match self {
@@ -118,10 +126,9 @@ impl SupportsCondition {
     }
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // PORT NOTE: Zig `css.implementEql` variant-walk, hand-expanded because
-        // `#[derive(CssEql)]` would require `PropertyId: CssEql` (it only
-        // provides the custom tag+prefix `PartialEq`). Semantics match the Zig
-        // reflection: tag mismatch → false, then field-wise structural eq.
+        // Hand-expanded because `#[derive(CssEql)]` would require
+        // `PropertyId: CssEql` (it only provides the custom tag+prefix
+        // `PartialEq`). Tag mismatch → false, then field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -143,10 +150,6 @@ impl crate::generics::CssEql for SupportsCondition {
 }
 
 impl SupportsCondition {
-    // PORT NOTE: `pub fn deinit` dropped — body only freed Box/Vec payloads which Rust
-    // drops automatically. Input-slice variants (`Declaration`/`Selector`/`Unknown`)
-    // were no-ops in Zig as well (arena/input-owned).
-
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
@@ -221,11 +224,8 @@ impl SupportsCondition {
         }
 
         let name = property_id.name();
-        // PORT NOTE: `inline for (css.VendorPrefix.FIELDS) |field| { if @field(prefix, field) ... }`
-        // iterates the packed-struct bool fields at comptime. VendorPrefix ports to
-        // bitflags!; iterate the ordered single-bit table directly (same pattern as
-        // rules/style.rs). The Zig also builds `var p = VendorPrefix{}; @field(p, field) = true;`
-        // but never reads it — dead store dropped.
+        // Iterate the ordered single-bit VendorPrefix table directly (same
+        // pattern as rules/style.rs).
         dest.write_separated(
             css::VendorPrefix::FIELDS
                 .iter()
@@ -261,21 +261,22 @@ impl SupportsCondition {
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
-            return Ok(SupportsCondition::Not(Box::new(in_parens)));
+            return Ok(SupportsCondition::Not(Box::new_in(
+                in_parens,
+                ArenaPtr::new(input.arena()),
+            )));
         }
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // PERF(port): was arena-backed ArrayListUnmanaged — profile if it shows up on a hot path
-        let mut conditions: Vec<SupportsCondition> = Vec::new();
-        // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
-        // SeenDeclKey below carries equivalent Hash/Eq impls.
+        let mut conditions: Vec<SupportsCondition, ArenaPtr> =
+            Vec::new_in(ArenaPtr::new(input.arena()));
+        // `SeenDeclKey` below carries the custom Hash/Eq impls for this map.
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
 
         loop {
-            // PORT NOTE: reshaped for borrowck — Zig threaded `*?i32` through a
-            // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
-            // capturing `&mut expected_type` is the direct equivalent.
+            // A closure capturing `&mut expected_type` threads the expected
+            // type through the parse attempt.
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
@@ -300,7 +301,6 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.arena() — profile if it shows up on a hot path
                         conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
@@ -392,8 +392,7 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res =
-                    input.try_parse(|i| i.parse_nested_block(|i2| SupportsCondition::parse(i2)));
+                let res = input.try_parse(|i| i.parse_nested_block(SupportsCondition::parse));
                 if res.is_ok() {
                     return res;
                 }
@@ -408,16 +407,14 @@ impl SupportsCondition {
     }
 }
 
-// PORT NOTE: Zig `SeenDeclKey` was a tuple struct with an inline hash-map context
-// providing custom hash/eql. Ported as a tuple struct with manual Hash/PartialEq
-// matching the Zig context exactly (wrapping_add of string hash and enum int).
+// Dedup key for `@supports` declaration conditions; manual Hash/PartialEq
+// (wrapping_add of string hash and enum int).
 struct SeenDeclKey(PropertyId, &'static [u8]);
 
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // TODO(port): Zig used std.array_hash_map.hashString (wyhash, 32-bit) +% @intFromEnum.
-        // bun_collections::ArrayHashMap is wyhash-backed; confirm hasher parity.
-        // PORT NOTE: hash_string returns u32 directly (mirrors Zig hashString) — no narrowing cast.
+        // wyhash of the value bytes +% the property-id tag.
+        // `hash_string` returns u32 directly — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));
     }
@@ -425,7 +422,7 @@ impl core::hash::Hash for SeenDeclKey {
 
 impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
-        // Zig: tag-only equality + slice byte equality.
+        // Tag-only equality + slice byte equality.
         self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
     }
 }
@@ -446,12 +443,19 @@ impl<R> SupportsRule<R> {
         &mut self,
         context: &mut MinifyContext,
         parent_is_unused: bool,
-    ) -> core::result::Result<(), MinifyErr> {
-        let _ = self;
-        let _ = context;
-        let _ = parent_is_unused;
-        // TODO: Implement this
-        Ok(())
+    ) -> core::result::Result<(), MinifyErr>
+    where
+        R: for<'b> crate::generics::DeepClone<'b>,
+    {
+        // The condition-merge/dedup port is still pending, but the nested rules
+        // must be minified so compiling nesting away for the targets stays
+        // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
+        // resolution context at print time (`to_css` below recurses into
+        // `self.rules` without clearing `dest.ctx`), so style rules nested
+        // behind it multiply against the enclosing nesting levels exactly like
+        // plain nested rules — leaving them unvisited here lets the printer
+        // expand them exponentially.
+        self.rules.minify(context, parent_is_unused)
     }
 }
 
@@ -474,7 +478,6 @@ impl<R> SupportsRule<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             condition: self.condition.deep_clone(bump),
             rules: self.rules.deep_clone(bump),
@@ -482,5 +485,3 @@ impl<R> SupportsRule<R> {
         }
     }
 }
-
-// ported from: src/css/rules/supports.zig

@@ -13,16 +13,14 @@ use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
-// `Hashers` = src/sha_hmac/sha.zig (re-exported via bun_sha_hmac::sha::evp::*).
 use bun_sha_hmac::sha as hashers;
 
-// `std.crypto.hash.{sha3,blake2}` — pure-Zig stdlib algos with no BoringSSL
-// streaming context. Per docs/PORTING.md ("prefer a well-tested crates.io dep
-// over hand-porting bit-twiddling"), wire RustCrypto's `sha3`/`blake2` into the
+// sha3/blake2 algorithms with no BoringSSL streaming context:
+// RustCrypto's `sha3`/`blake2` crates are wired into the
 // `ZigHashAlgo` trait below.
 use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
 
-// Zig: `const Digest = EVP.Digest;` → `[u8; EVP_MAX_MD_SIZE]`
+// `[u8; EVP_MAX_MD_SIZE]`
 type Digest = evp::Digest;
 
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
@@ -68,7 +66,8 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 pub enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(JsCell<Option<Box<HMAC>>>),
-    Evp(JsCell<EVP>),
+    // EVP_CTX is ~280 bytes; box it so the enum stays small.
+    Evp(Box<JsCell<EVP>>),
     Zig(JsCell<CryptoHasherZig>),
 }
 
@@ -80,7 +79,6 @@ impl CryptoHasher {
     }
 
     // ── Extern: For using only CryptoHasherZig in c++ ──────────────────────
-    // TODO(port): move to <runtime>_sys (these are exported C ABI fns)
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__CryptoHasherExtern__getByName(
@@ -95,9 +93,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
         }
 
-        let Some(algorithm) = evp::lookup(name) else {
-            return None;
-        };
+        let algorithm = evp::lookup(name)?;
 
         match algorithm {
             evp::Algorithm::Ripemd160
@@ -108,13 +104,13 @@ impl CryptoHasher {
                     // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(
+                    return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
                         EVP::init(
                             algorithm,
                             md.cast::<boring_ssl::EVP_MD>(),
                             boring_engine(global),
                         ),
-                    ))));
+                    )))));
                 }
             }
             _ => {
@@ -140,17 +136,23 @@ impl CryptoHasher {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
-                Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(evp))))
+                Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
+                    evp,
+                )))))
             }
             _ => None,
         }
     }
 
+    /// # Safety
+    /// `handle` must be a `Box<CryptoHasher>` raw pointer previously returned by
+    /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
+    /// being returned to Rust (not yet destroyed).
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: `handle` was produced by heap::alloc via getByName/getFromOther
-        // and ownership is being returned to us.
-        CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
+    pub unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
+        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
+        // pointer previously returned to C++ (see `# Safety` above).
+        drop(unsafe { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -194,6 +196,17 @@ impl CryptoHasher {
         }
     }
 
+    #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
+    pub fn extern_is_xof(&self) -> bool {
+        match self {
+            CryptoHasher::Zig(inner) => matches!(
+                inner.get().algorithm,
+                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+            ),
+            _ => false,
+        }
+    }
+
     // ── JS host fns ────────────────────────────────────────────────────────
 
     /// `pub const digest = jsc.host_fn.wrapInstanceMethod(CryptoHasher, "digest_", false);`
@@ -226,10 +239,8 @@ impl CryptoHasher {
         Self::digest_(this, global, output)
     }
 
-    /// `pub const hash = jsc.host_fn.wrapStaticMethod(CryptoHasher, "hash_", false);`
-    ///
-    /// Hand-expanded `wrapStaticMethod` decode for the parameter list
-    /// `(*JSGlobalObject, ZigString, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
+    /// Hand-expanded static-method argument decode for the parameter list
+    /// `(algorithm string, input, optional output buffer/encoding)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         let mut i = 0usize;
@@ -243,7 +254,6 @@ impl CryptoHasher {
             }
         };
 
-        // ZigString
         let algorithm = {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
@@ -286,7 +296,7 @@ impl CryptoHasher {
             None => None,
         };
 
-        Self::hash_(global, algorithm, input, output)
+        Self::hash_(global, algorithm, &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -309,7 +319,6 @@ impl CryptoHasher {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig: `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
         let tag: &'static [u8] = match this {
             CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
@@ -321,7 +330,7 @@ impl CryptoHasher {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The shim
     // for this static prop getter is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn get_algorithms(
@@ -335,13 +344,13 @@ impl CryptoHasher {
     fn hash_to_encoding(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -364,14 +373,14 @@ impl CryptoHasher {
     fn hash_to_bytes(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -386,7 +395,6 @@ impl CryptoHasher {
                     size
                 )));
             }
-            // PORT NOTE: reshaped for borrowck — Zig rebinds the slice into the output buffer.
             // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
             // (`bytes_len >= size` checked above; not detached since len > 0);
             // borrowed for this frame only. Build the `&mut` directly from the
@@ -412,7 +420,7 @@ impl CryptoHasher {
     pub fn hash_(
         global: &JSGlobalObject,
         algorithm: ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         let mut evp = match EVP::by_name(&algorithm, global) {
@@ -455,7 +463,7 @@ impl CryptoHasher {
     }
 
     // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(
@@ -498,7 +506,7 @@ impl CryptoHasher {
             if let Some(key) = &hmac_key {
                 // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
                 // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup` instead of a `phf::Map`.
+                // length-gated `evp::lookup` directly.
                 let chosen_algorithm: evp::Algorithm = {
                     let slice = algorithm_name.to_slice(global)?;
                     match evp::lookup(slice.slice()) {
@@ -534,18 +542,20 @@ impl CryptoHasher {
                 )));
             }
 
-            break 'brk CryptoHasher::Evp(JsCell::new(match EVP::by_name(&algorithm, global) {
-                Some(e) => e,
-                None => match CryptoHasherZig::constructor(&algorithm) {
-                    Some(h) => return Ok(h),
-                    None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Unsupported algorithm {}",
-                            algorithm
-                        )));
-                    }
+            break 'brk CryptoHasher::Evp(Box::new(JsCell::new(
+                match EVP::by_name(&algorithm, global) {
+                    Some(e) => e,
+                    None => match CryptoHasherZig::constructor(&algorithm) {
+                        Some(h) => return Ok(h),
+                        None => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Unsupported algorithm {}",
+                                algorithm
+                            )));
+                        }
+                    },
                 },
-            }));
+            )));
         };
         Ok(CryptoHasher::new(init))
     }
@@ -625,16 +635,16 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(method)]
     pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
-            CryptoHasher::Evp(inner) => CryptoHasher::Evp(JsCell::new(
+            CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
                 inner
                     .get()
                     .copy(boring_engine(global))
                     // bun.handleOom → unwrap (abort on OOM)
                     .expect("OOM"),
-            )),
+            ))),
             CryptoHasher::Hmac(inner) => 'brk: {
-                // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
-                // legacy signature). Project a short `&mut` via `with_mut`;
+                // R-2: `HMAC::copy` takes `&mut self` but writes nothing
+                // (legacy signature). Project a short `&mut` via `with_mut`;
                 // no JS re-entry inside (HMAC_CTX_copy is a pure FFI call).
                 let copy_result = inner.with_mut(|opt| opt.as_mut().map(|h| h.copy()));
                 let Some(result) = copy_result else {
@@ -700,7 +710,7 @@ impl CryptoHasher {
                     boring_ssl::EVP_MAX_MD_SIZE
                 )));
             }
-            // PORT NOTE: reshaped for borrowck.
+            // Reshaped for borrowck.
             // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
             // is the JSC-owned writable backing store, outliving this frame. Build
             // the `&mut` directly from the raw `*mut u8` field — never via
@@ -708,7 +718,6 @@ impl CryptoHasher {
             output_digest_slice =
                 unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, bytes_len) };
         } else {
-            // Zig: `output_digest_buf = std.mem.zeroes(EVP.Digest);` — already zeroed above.
             output_digest_slice = &mut output_digest_buf;
         }
 
@@ -752,7 +761,7 @@ impl CryptoHasher {
                     return Err(Self::throw_hmac_consumed(global));
                 };
                 // `this.hmac = null; defer hmac.deinit();` — `replace(None)` + Drop on `hmac`.
-                // PORT NOTE: `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
+                // `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
                 // returns a subslice of `out`, not `self`, so dropping `hmac` at scope end
                 // does not invalidate the returned borrow.
                 break 'brk Ok(hmac.r#final(output_digest_slice));
@@ -768,22 +777,10 @@ impl CryptoHasher {
         }
     }
 
-    /// `.classes.ts` finalize — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        match *self {
-            CryptoHasher::Evp(_inner) => {
-                // https://github.com/oven-sh/bun/issues/3250
-                // `inner.deinit()` — handled by Drop on EVP.
-            }
-            CryptoHasher::Zig(_inner) => {
-                // `inner.deinit()` — handled by Drop on CryptoHasherZig.
-            }
-            CryptoHasher::Hmac(_inner) => {
-                // `if (inner) |hmac| hmac.deinit();` — handled by Drop on Option<Box<HMAC>>.
-            }
-        }
-        // `bun.destroy(this)` — handled by Drop on Box at scope end.
-    }
+    // `.classes.ts` finalize — runs on mutator thread during lazy sweep. Each
+    // variant's cleanup is handled by `Drop` on the
+    // variant payloads, so the `JsFinalize` trait default (`drop(self)`) is
+    // exactly what's needed; no inherent override.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -796,13 +793,12 @@ pub struct CryptoHasherZig {
     pub digest_length: u8,
 }
 
-/// Trait for the Zig-std hash algorithms used by `CryptoHasherZig`.
-/// Replaces the comptime `(string, type)` table + `@typeInfo` introspection.
+/// Trait for the non-BoringSSL hash algorithms used by `CryptoHasherZig`.
 /// Implemented for each algo in `zig_crypto_algos` below.
 pub trait ZigHashAlgo: Default + Clone + 'static {
     const NAME: &'static [u8];
     const ALGORITHM: evp::Algorithm;
-    /// Replaces `digestLength(Algorithm)` (Shake128→16, Shake256→32, else `T.digest_length`).
+    /// Shake128→16, Shake256→32, else the algorithm's digest length.
     const DIGEST_LENGTH: u8;
     fn init() -> Self {
         Self::default()
@@ -811,24 +807,23 @@ pub trait ZigHashAlgo: Default + Clone + 'static {
     fn final_(&mut self, out: &mut [u8]);
 }
 
-/// Hash-state types for the Zig-stdlib algorithms (`std.crypto.hash.{sha3,blake2}`)
-/// that BoringSSL does not expose as a streaming context. Backed by RustCrypto's
-/// `sha3`/`blake2` crates (same Keccak-p[1600,24] permutation and BLAKE2s as
-/// Zig's `std.crypto`).
+/// Hash-state types for the algorithms that BoringSSL does not expose as a
+/// streaming context. Backed by RustCrypto's `sha3`/`blake2` crates
+/// (Keccak-p[1600,24] permutation and BLAKE2s).
 mod zig_crypto_algos {
     use super::{ZigHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
-    pub type Sha3_224 = sha3::Sha3_224;
-    pub type Sha3_256 = sha3::Sha3_256;
-    pub type Sha3_384 = sha3::Sha3_384;
-    pub type Sha3_512 = sha3::Sha3_512;
-    pub type Shake128 = sha3::Shake128;
-    pub type Shake256 = sha3::Shake256;
-    pub type Blake2s256 = blake2::Blake2s256;
+    pub(super) type Sha3_224 = sha3::Sha3_224;
+    pub(super) type Sha3_256 = sha3::Sha3_256;
+    pub(super) type Sha3_384 = sha3::Sha3_384;
+    pub(super) type Sha3_512 = sha3::Sha3_512;
+    pub(super) type Shake128 = sha3::Shake128;
+    pub(super) type Shake256 = sha3::Shake256;
+    pub(super) type Blake2s256 = blake2::Blake2s256;
 
-    /// Fixed-digest Keccak/BLAKE2 — Zig `T.final(state, *[digest_length]u8)`
-    /// writes exactly `digest_length` bytes; mirror via `FixedOutputReset`.
+    /// Fixed-digest Keccak/BLAKE2 — `final_` writes exactly `DIGEST_LENGTH`
+    /// bytes via `FixedOutputReset`.
     macro_rules! impl_fixed {
         ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
             impl ZigHashAlgo for $ty {
@@ -849,8 +844,8 @@ mod zig_crypto_algos {
         };
     }
 
-    /// SHAKE XOF — Zig `digestLength(Shake128) = 16` / `Shake256 = 32` (the
-    /// Zig stdlib's `Shake.final` squeezes exactly `out.len` bytes).
+    /// SHAKE XOF — default digest lengths: Shake128 = 16, Shake256 = 32;
+    /// `final_` squeezes exactly `out.len` bytes.
     macro_rules! impl_xof {
         ($ty:ty, $name:literal, $variant:ident, $len:expr) => {
             impl ZigHashAlgo for $ty {
@@ -861,8 +856,8 @@ mod zig_crypto_algos {
                     Update::update(self, bytes);
                 }
                 fn final_(&mut self, out: &mut [u8]) {
-                    // Zig `Shake.final(out: []u8)` squeezes exactly `out.len`
-                    // bytes — fill the full slice, not just `DIGEST_LENGTH`.
+                    // Squeeze exactly `out.len` bytes — fill the
+                    // full slice, not just `DIGEST_LENGTH`.
                     ExtendableOutputReset::finalize_xof_reset_into(self, out);
                 }
             }
@@ -878,8 +873,7 @@ mod zig_crypto_algos {
     impl_fixed!(Blake2s256, b"blake2s256", Blake2s256, 32);
 }
 
-/// Expands `$body` once per `(name_literal, Type)` pair from the Zig `algo_map`.
-/// Heterogeneous-type `inline for` → `macro_rules!` per PORTING.md.
+/// Expands the macro once per supported `(name_literal, Type)` pair.
 macro_rules! for_each_zig_algo {
     ($mac:ident $(, $($args:tt)*)?) => {
         $mac!(b"sha3-224",   Sha3_224   $(, $($args)*)?);
@@ -896,12 +890,12 @@ impl CryptoHasherZig {
     pub fn hash_by_name(
         global: &JSGlobalObject,
         algorithm: &ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out)?));
                 }
             };
@@ -912,7 +906,7 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
@@ -943,12 +937,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -957,7 +951,7 @@ impl CryptoHasherZig {
         let mut h = A::init();
         h.update(input.slice());
 
-        // PORT NOTE: const-generic array length from trait assoc const requires
+        // Const-generic array length from trait assoc const requires
         // `feature(generic_const_exprs)` — use a stack buffer of EVP_MAX_MD_SIZE
         // sliced to A::DIGEST_LENGTH instead.
         let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
@@ -969,12 +963,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1014,7 +1008,7 @@ impl CryptoHasherZig {
     fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
                         CryptoHasherZig {
                             algorithm: <$ty as ZigHashAlgo>::ALGORITHM,
@@ -1106,9 +1100,8 @@ impl CryptoHasherZig {
 // StaticCryptoHasher
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Trait for `Hashers.*` (src/sha_hmac/sha.zig) — replaces the comptime `Hasher`
-/// type param. `HAS_ENGINE` replaces the Zig `@typeInfo(@TypeOf(Hasher.hash)).fn.params.len == 3`
-/// reflection: when true, `hash()` takes a BoringSSL ENGINE*.
+/// Trait abstracting over the `bun_sha_hmac::sha::evp::*` hasher types.
+/// When `HAS_ENGINE` is true, `hash()` takes a BoringSSL ENGINE*.
 pub trait StaticHasher: 'static {
     const NAME: &'static str;
     const DIGEST: usize;
@@ -1119,17 +1112,18 @@ pub trait StaticHasher: 'static {
     fn new_digest() -> Self::Digest;
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut Self::Digest);
-    fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
-    /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
-    /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the Zig
-    /// `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm binds
-    /// to the typed wrapper exported by `js_class_module!` for its concrete name.
+    /// # Safety
+    /// `engine` must be null (default engine) or a live `ENGINE*`.
+    unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
+    /// Per-monomorphization codegen module (`bun_jsc::generated::JS${NAME}`);
+    /// each `impl_static_hasher!` arm binds to the typed wrapper exported by
+    /// `js_class_module!` for its concrete name.
     fn get_constructor(global: &JSGlobalObject) -> JSValue;
 }
 
 /// Local impls of `StaticHasher` for the upstream `bun_sha_hmac::sha::evp::*`
 /// hasher types. Those types live in another crate so we cannot add inherent
-/// methods; the trait bridges the comptime-style API.
+/// methods; the trait provides the common interface.
 macro_rules! impl_static_hasher {
     ($ty:ty, $name:literal, $js_mod:ident, $len:expr) => {
         impl StaticHasher for $ty {
@@ -1155,10 +1149,11 @@ macro_rules! impl_static_hasher {
                 <$ty>::r#final(self, out)
             }
             #[inline]
-            fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
+            unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
                 // so the VM-owned engine pointer threads through without a cast.
-                <$ty>::hash(input, out, engine)
+                // SAFETY: caller upholds `engine` validity (forwarded).
+                unsafe { <$ty>::hash(input, out, engine) }
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -1177,10 +1172,9 @@ impl_static_hasher!(hashers::SHA384, "SHA384", JSSHA384, 48);
 impl_static_hasher!(hashers::SHA512, "SHA512", JSSHA512, 64);
 impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 
-// PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
-// `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`
-// instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
-// `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
+// `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
+// `*mut StaticCryptoHasher` without `<H>`), so `JsClass` must be applied to
+// each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
 // generic/alias support.
 // The per-monomorphization `JsClass` impl + extern shims live in
 // `build/*/codegen/generated_classes.rs` (one block per `pub type` alias below);
@@ -1283,7 +1277,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             None => None,
         };
 
-        Self::hash_(global, input, output)
+        Self::hash_(global, &input, output)
     }
 
     pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
@@ -1307,10 +1301,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             )));
         }
 
-        if H::HAS_ENGINE {
-            H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
-        } else {
-            H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
+        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
+        // process) or null; the else arm passes null.
+        unsafe {
+            if H::HAS_ENGINE {
+                H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
+            } else {
+                H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
+            }
         }
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
@@ -1322,12 +1320,10 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        // PORT NOTE: reshaped for borrowck — Zig used `*Hasher.Digest` rebound into output buffer.
         let output_digest_slice: &mut H::Digest;
         if let Some(output_buf) = &output {
             let bytes_len = output_buf.byte_slice().len();
             if bytes_len < H::DIGEST {
-                // Zig `comptimePrint` → runtime `format_args!`; observable string is identical.
                 return Err(global.throw_invalid_arguments(format_args!(
                     "TypedArray must be at least {} bytes",
                     H::DIGEST
@@ -1342,10 +1338,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        if H::HAS_ENGINE {
-            H::hash(input.slice(), output_digest_slice, boring_engine(global));
-        } else {
-            H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
+        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
+        // process) or null; the else arm passes null.
+        unsafe {
+            if H::HAS_ENGINE {
+                H::hash(input.slice(), output_digest_slice, boring_engine(global));
+            } else {
+                H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
+            }
         }
 
         if let Some(output_buf) = output {
@@ -1357,12 +1357,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     pub fn hash_(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1371,7 +1371,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
                 let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, &input, Some(ab));
+                return Self::hash_to_bytes(global, input, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -1385,13 +1385,13 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     .throw());
             };
 
-            Self::hash_to_encoding(global, &input, encoding)
+            Self::hash_to_encoding(global, input, encoding)
         } else {
-            Self::hash_to_bytes(global, &input, None)
+            Self::hash_to_bytes(global, input, None)
         }
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by per-monomorphization `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {
@@ -1502,7 +1502,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             // `&[u8].as_ptr()` (Stacked-Borrows UB).
             output_digest_slice = unsafe { &mut *output_buf.ptr.cast::<H::Digest>() };
         } else {
-            // Zig: `output_digest_buf = std.mem.zeroes(Hasher.Digest);` — Default already zeroes.
             output_digest_slice = &mut output_digest_buf;
         }
 
@@ -1517,7 +1516,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     }
 
     fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
-        // Zig comptime zero-init loop → new_digest (zeroed [u8; N]).
         let mut output_digest_buf: H::Digest = H::new_digest();
 
         let output_digest_slice: &mut H::Digest = &mut output_digest_buf;
@@ -1537,5 +1535,3 @@ pub type SHA256 = StaticCryptoHasher<hashers::SHA256>;
 pub type SHA384 = StaticCryptoHasher<hashers::SHA384>;
 pub type SHA512 = StaticCryptoHasher<hashers::SHA512>;
 pub type SHA512_256 = StaticCryptoHasher<hashers::SHA512_256>;
-
-// ported from: src/runtime/crypto/CryptoHasher.zig

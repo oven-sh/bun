@@ -33,24 +33,20 @@ impl HashedString {
         }
     }
 
-    // TODO(port): Zig `eql` took `other: anytype` and switched on `@TypeOf(other)`:
-    //   - HashedString / *HashedString / *const HashedString → compare hash/ptr/len
-    //   - else (slice-like with .len and indexing)           → rehash bytes and compare
-    // Rust has no type-switch; split into `eql` (HashedString) and `eql_bytes` (&[u8]).
     pub fn eql(&self, other: &HashedString) -> bool {
         ((self.hash.max(other.hash) > 0 && self.hash == other.hash) || (self.ptr == other.ptr))
             && self.len == other.len
     }
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
-        (self.len as usize) == other.len() && (hash(other) as u32) == self.hash
+        (self.len as usize) == other.len()
+            && (hash(other) as u32) == self.hash
+            && self.str() == other
     }
 
     pub fn str(&self) -> &[u8] {
         // SAFETY: ptr and len were set together from a valid slice in `init`/`init_no_hash`;
-        // caller is responsible for keeping the backing buffer alive (same invariant as Zig).
+        // caller is responsible for keeping the backing buffer alive.
         unsafe { core::slice::from_raw_parts(self.ptr, self.len as usize) }
     }
 }
-
-// ported from: src/string/HashedString.zig

@@ -12,11 +12,11 @@ pub struct S3Stat {
 }
 
 impl S3Stat {
-    pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
+    pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
         Err(global.throw_illegal_constructor("S3Stat"))
     }
 
-    pub fn init(
+    pub(crate) fn init(
         size: u64,
         etag: &[u8],
         content_type: &[u8],
@@ -24,7 +24,7 @@ impl S3Stat {
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
         // `bun_core::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
-        // Zig `defer date_str.deref()` runs on both the `Ok` and `?`-error paths.
+        // string is deref'd on both the `Ok` and `?`-error paths.
         let mut date_str = OwnedString::new(BunString::init(last_modified));
         let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
 
@@ -37,33 +37,34 @@ impl S3Stat {
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_number(self.size as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_etag(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.etag.to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_content_type(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.content_type.to_js(global)
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
         JSValue::from_date_number(global, self.last_modified)
     }
+}
 
-    pub fn finalize(self: Box<Self>) {
+impl Drop for S3Stat {
+    fn drop(&mut self) {
         // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
-        // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
+        // explicitly.
+        // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
         self.etag.deref();
         self.content_type.deref();
     }
 }
-
-// ported from: src/runtime/webcore/S3Stat.zig

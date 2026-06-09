@@ -18,7 +18,7 @@ use super::codecs;
 /// prefixed sub-blocks (≤255 bytes each, terminated by a 0 block), and
 /// codes are LSB-first across byte boundaries — so this pulls one byte at
 /// a time from the sub-block stream into a 32-bit accumulator.
-// PORT NOTE: stack-local helper; `'a` borrows the input byte slice for the
+// Stack-local helper; `'a` borrows the input byte slice for the
 // duration of the decode call.
 struct Bits<'a> {
     src: &'a [u8],
@@ -27,7 +27,6 @@ struct Bits<'a> {
     /// Bytes remaining in the current sub-block. 0 ⇒ need to read a length.
     block: usize,
     acc: u32,
-    // Zig: u5
     nbits: u8,
     /// We hit the 0-length terminator or ran off the end — every subsequent
     /// `read` returns 0 so the LZW loop sees an EOI-shaped value and stops
@@ -217,7 +216,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 if i >= bytes.len() {
                     return Err(codecs::Error::DecodeFailed);
                 }
-                let min_code: u8 = bytes[i].max(2).min(11);
+                let min_code: u8 = bytes[i].clamp(2, 11);
                 i += 1;
                 return decode_frame(bytes, i, w, h, interlace, ct, min_code, trns);
             }
@@ -248,11 +247,11 @@ fn decode_frame(
     let mut avail: u16 = eoi + 1;
     let mut prev: Option<u16> = None;
 
-    // PERF(port): Zig left this uninitialized; zero-init here for safety.
+    // PERF: zero-init for safety; uninitialized would be faster if hot.
     let mut dict: Box<Dict> = bun_core::boxed_zeroed();
     let mut scratch = [0u8; 4096];
 
-    // PERF(port): Zig left this uninitialized; zero-init here for safety.
+    // PERF: zero-init for safety; uninitialized would be faster if hot.
     let mut idx = vec![0u8; npix];
     let mut written: usize = 0;
 
@@ -383,5 +382,3 @@ fn expand_row(idx: &[u8], out: &mut [u8], pal: &[[u8; 4]; 256]) {
         out[x * 4..][..4].copy_from_slice(&pal[c as usize]);
     }
 }
-
-// ported from: src/runtime/image/codec_gif.zig

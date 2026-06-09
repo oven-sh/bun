@@ -1,7 +1,7 @@
 use crate as css;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 use crate::css_values::length::LengthPercentage;
-use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber};
 use crate::{Parser, PrintErr, Printer, SmallList};
 
 use bun_collections::VecExt;
@@ -9,7 +9,6 @@ use bun_core::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 pub enum TrackSizing {
     /// No explicit grid tracks.
     None,
@@ -34,17 +33,13 @@ impl TrackList {
         let mut items = Vec::<TrackListItem>::default();
 
         loop {
-            let line_name = input
-                .try_parse(parse_line_names)
-                .ok()
-                .unwrap_or_else(CustomIdentList::default);
+            let line_name = input.try_parse(parse_line_names).ok().unwrap_or_default();
             line_names.push(line_name);
 
-            if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
+            if let Ok(track_size) = input.try_parse(TrackSize::parse) {
                 // TODO: error handling
-                // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
-            } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
+            } else if let Ok(repeat) = input.try_parse(TrackRepeat::parse) {
                 // TODO: error handling
                 items.push(TrackListItem::TrackRepeat(repeat));
             } else {
@@ -69,7 +64,7 @@ impl TrackList {
             }
 
             if items_index < self.items.len() {
-                let item = self.items.at(items_index as usize);
+                let item = self.items.at(items_index);
                 items_index += 1;
 
                 // Whitespace is required if there are no line names.
@@ -127,7 +122,7 @@ impl Default for TrackSize {
 
 impl TrackSize {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Some(breadth) = input.try_parse(TrackBreadth::parse).ok() {
+        if let Ok(breadth) = input.try_parse(TrackBreadth::parse) {
             return Ok(TrackSize::TrackBreadth(breadth));
         }
 
@@ -145,7 +140,6 @@ impl TrackSize {
 
         input.expect_function_matching(b"fit-content")?;
 
-        // TODO(port): css.voidWrap(LengthPercentage, LengthPercentage.parse) — wraps a parse fn for parseNestedBlock; using a closure directly
         let len = input.parse_nested_block(|i: &mut Parser| LengthPercentage::parse(i))?;
 
         Ok(TrackSize::FitContent(len))
@@ -178,7 +172,7 @@ pub struct TrackSizeList {
 impl TrackSizeList {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut res = SmallList::<TrackSize, 1>::default();
-        while let Some(size) = input.try_parse(TrackSize::parse).ok() {
+        while let Ok(size) = input.try_parse(TrackSize::parse) {
             res.append(size);
         }
 
@@ -226,12 +220,12 @@ impl TrackBreadth {
     }
 
     fn parse_internal(input: &mut Parser, allow_flex: bool) -> css::Result<Self> {
-        if let Some(len) = input.try_parse(LengthPercentage::parse).ok() {
+        if let Ok(len) = input.try_parse(LengthPercentage::parse) {
             return Ok(TrackBreadth::Length(len));
         }
 
         if allow_flex {
-            if let Some(flex) = input.try_parse(TrackBreadth::parse_flex).ok() {
+            if let Ok(flex) = input.try_parse(TrackBreadth::parse_flex) {
                 return Ok(TrackBreadth::Flex(flex));
             }
         }
@@ -292,13 +286,10 @@ impl TrackRepeat {
         input.expect_function_matching(b"repeat")?;
 
         input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackRepeat> {
-            // TODO(port): Zig uses `@call(.auto, @field(RepeatCount, "parse"), .{i})` — direct call here
             let count = RepeatCount::parse(i)?;
 
             i.expect_comma()?;
 
-            // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.Vec(T).init(i.arena)` — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 
@@ -308,8 +299,8 @@ impl TrackRepeat {
                     .unwrap_or_else(|_| CustomIdentList::default());
                 line_names.push(line_name);
 
-                // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
-                if let Some(track_size) = i.try_parse(TrackSize::parse).ok() {
+                // Use the nested parser `i`, not the outer `input`.
+                if let Ok(track_size) = i.try_parse(TrackSize::parse) {
                     // TODO: error handling
                     track_sizes.push(track_size);
                 } else {
@@ -338,7 +329,7 @@ impl TrackRepeat {
             }
 
             if track_sizes_index < self.track_sizes.len() {
-                let size = self.track_sizes.at(track_sizes_index as usize);
+                let size = self.track_sizes.at(track_sizes_index);
                 track_sizes_index += 1;
 
                 if !names.is_empty() {
@@ -394,8 +385,8 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
     input.parse_nested_block(|i: &mut Parser| -> css::Result<CustomIdentList> {
         let mut values = CustomIdentList::default();
 
-        // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
-        while let Some(ident) = i.try_parse(CustomIdent::parse).ok() {
+        // Use the nested parser `i`, not the outer `input`.
+        while let Ok(ident) = i.try_parse(CustomIdent::parse) {
             values.append(ident);
         }
 
@@ -407,8 +398,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
 /// used in the `repeat()` function.
 ///
 /// See [TrackRepeat](TrackRepeat).
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum RepeatCount {
     /// The number of times to repeat.
     Number(CSSInteger),
@@ -419,8 +409,8 @@ pub enum RepeatCount {
 }
 
 impl RepeatCount {
-    // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
-    // order (Number → keyword `auto-fill` → keyword `auto-fit`).
+    // Variants tried in declaration order (Number → keyword `auto-fill` →
+    // keyword `auto-fit`).
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(n) = input.try_parse(CSSIntegerFns::parse) {
             return Ok(RepeatCount::Number(n));
@@ -436,10 +426,9 @@ impl RepeatCount {
         Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
     }
 
-    // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            RepeatCount::Number(n) => CSSIntegerFns::to_css(n, dest),
+            RepeatCount::Number(n) => CSSIntegerFns::to_css(*n, dest),
             RepeatCount::AutoFill => dest.write_str("auto-fill"),
             RepeatCount::AutoFit => dest.write_str("auto-fit"),
         }
@@ -457,7 +446,7 @@ pub enum GridTemplateAreas {
         columns: u32,
         /// A flattened list of grid area names.
         /// Unnamed areas specified by the `.` token are represented as null.
-        // TODO(port): arena-owned slice lifetime — Zig `?[]const u8` in CSS arena
+        // TODO: arena-owned slice lifetime — should be `Option<&'bump [u8]>`
         areas: SmallList<Option<*const [u8]>, 1>,
     },
 }
@@ -475,19 +464,21 @@ impl GridTemplateAreas {
         let mut row: u32 = 0;
         let mut columns: u32 = 0;
 
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
-        if let Some(s) = input
-            .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-            .ok()
-        {
+        //
+        // NOTE: only one row string is consumed (`if let`, not `while let` as
+        // upstream); must become a loop when this is wired into the typed
+        // property table.
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+            // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
+            // parser's input arena and remains valid for the duration of this parse.
             let s = unsafe { crate::arena_str(s) };
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {
-                    // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)
                     return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
                 }
             };
@@ -499,6 +490,9 @@ impl GridTemplateAreas {
             }
 
             row += 1;
+            // The final `row += 1` is dead on the last iteration but read on
+            // the next; `unused_assignments` can't see that. Touch it.
+            let _ = row;
         }
 
         Ok(GridTemplateAreas::Areas {
@@ -530,17 +524,11 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                let idx = 'idx: {
-                    for (i, c) in rest.iter().enumerate() {
-                        if *c != b'.' {
-                            break 'idx i;
-                        }
-                    }
-                    rest.len()
-                };
+                // A run of `.` characters is a single null-cell token (CSS Grid 2 §7.3).
+                let idx = rest.iter().position(|&c| c != b'.').unwrap_or(rest.len());
+                tokens.append(None);
                 string = &rest[idx..];
-                // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
-                // is supposed to push None and continue). Mirroring Zig control flow exactly.
+                continue;
             }
 
             let starts_with_name_codepoint = 'brk: {
@@ -563,7 +551,7 @@ impl GridTemplateAreas {
                 rest.len()
             };
             let token = &rest[..token_len];
-            // TODO(port): arena-owned slice — Zig stores borrowed slice into SmallList; using raw ptr here
+            // TODO: arena-owned slice — should store a borrowed slice into SmallList; using raw ptr here
             let _ = bump;
             tokens.append(Some(std::ptr::from_ref::<[u8]>(token)));
             string = &rest[token_len..];
@@ -585,4 +573,95 @@ fn is_name_codepoint(c: u8) -> bool {
 
 crate::css_eql_partialeq!(TrackSize, RepeatCount);
 
-// ported from: src/css/properties/grid.zig
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse one row string; cells are `None` for `.` null-cell tokens.
+    fn parse_areas(s: &'static [u8]) -> Result<(u32, Vec<Option<&'static [u8]>>), ()> {
+        let bump = bun_alloc::Arena::new();
+        let mut tokens = SmallList::<Option<*const [u8]>, 1>::default();
+        let columns = GridTemplateAreas::parse_string(&bump, s, &mut tokens)?;
+        let cells = tokens
+            .slice()
+            .iter()
+            .map(|t| {
+                t.map(|p| {
+                    // SAFETY: `p` is a subslice of the `'static` input `s`.
+                    unsafe { &*p }
+                })
+            })
+            .collect();
+        Ok((columns, cells))
+    }
+
+    #[test]
+    fn named_areas_only() {
+        let (columns, cells) = parse_areas(b"a b c").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![
+                Some(b"a".as_slice()),
+                Some(b"b".as_slice()),
+                Some(b"c".as_slice())
+            ]
+        );
+    }
+
+    #[test]
+    fn single_dot_null_cell() {
+        let (columns, cells) = parse_areas(b"a . b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn multi_dot_run_is_one_null_cell() {
+        let (columns, cells) = parse_areas(b"a ... b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_null_cells() {
+        let (columns, cells) = parse_areas(b". c .").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(cells, vec![None, Some(b"c".as_slice()), None]);
+    }
+
+    #[test]
+    fn all_null_cells() {
+        let (columns, cells) = parse_areas(b".. ..").unwrap();
+        assert_eq!(columns, 2);
+        assert_eq!(cells, vec![None, None]);
+    }
+
+    #[test]
+    fn dot_run_directly_followed_by_name() {
+        // `..a` is a null cell followed by the named area `a`.
+        let (columns, cells) = parse_areas(b"..a b").unwrap();
+        assert_eq!(columns, 3);
+        assert_eq!(
+            cells,
+            vec![None, Some(b"a".as_slice()), Some(b"b".as_slice())]
+        );
+    }
+
+    #[test]
+    fn empty_string_is_error() {
+        assert_eq!(parse_areas(b""), Err(()));
+        assert_eq!(parse_areas(b" \t\n"), Err(()));
+    }
+
+    #[test]
+    fn invalid_codepoint_is_error() {
+        assert_eq!(parse_areas(b"a !b"), Err(()));
+    }
+}

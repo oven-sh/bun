@@ -3,6 +3,8 @@ import fs from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 
+setDefaultTimeout(1000 * 60 * 5);
+
 let cwd = tmpdirSync();
 
 function validate(packageName: string, version: string, realPackageName?: string) {
@@ -35,7 +37,6 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 

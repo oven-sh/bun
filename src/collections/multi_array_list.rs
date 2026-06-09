@@ -1,9 +1,7 @@
-//! Port of `std.MultiArrayList` with the following Bun-specific additions:
+//! A struct-of-arrays `MultiArrayList` with the following Bun-specific additions:
 //!
 //! * `zero` method to zero-initialize memory.
 //! * `memory_cost` method, which returns the memory usage in bytes.
-//!
-//! Synchronized with std as of Zig 0.14.1.
 //!
 //! A MultiArrayList stores a list of a struct type. Instead of storing a
 //! single list of items, MultiArrayList stores separate lists for each field
@@ -41,7 +39,7 @@
 //! | [`MultiArrayList::free_allocated_bytes`] | `Allocator::deallocate` |
 //! | [`__mal_split_mut_impl`] macro  | N-way disjoint `from_raw_parts_mut` |
 //!
-//! plus `unsafe impl Send`/`Sync` and the `pub unsafe fn` caller-contract
+//! plus `unsafe impl Send` and the `pub unsafe fn` caller-contract
 //! signatures on [`set_len`](MultiArrayList::set_len) and
 //! [`column_bytes_mut`](Slice::column_bytes_mut). All row-level mutations
 //! (insert/remove/swap/append/grow/clone) are rebuilt on safe
@@ -58,7 +56,7 @@ use std::alloc::{Allocator, Global};
 use bun_alloc::AllocError;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
-/// element struct, mirroring Zig's `list.items(.field)` calling convention.
+/// element struct.
 ///
 /// ```ignore
 /// multi_array_columns! {
@@ -246,7 +244,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub const MAX_FIELDS: usize = 32;
+pub(crate) const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -270,7 +268,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub const fn field_count<T>() -> usize {
+pub(crate) const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
@@ -361,7 +359,7 @@ impl<T> Reflected<T> {
         out
     };
 
-    /// Zig `sizes`: `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
+    /// `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
     /// alignment descending, paired with the original field index at each
     /// sorted position. Stable sort so equal-alignment fields keep order.
     const SIZES: ([usize; MAX_FIELDS], [usize; MAX_FIELDS]) = {
@@ -423,6 +421,7 @@ impl<T> Reflected<T> {
     };
 
     /// Field index for `NAME`; const-panics if no such field.
+    #[cfg(test)]
     const fn index_of<const NAME: &'static str>() -> usize {
         let fields = fields_of::<T>();
         let mut i = 0;
@@ -538,7 +537,6 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
-/// Zig: `ctx: anytype` with `fn lessThan(ctx, a_index: usize, b_index: usize) bool`.
 pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
@@ -554,7 +552,10 @@ pub struct MultiArrayList<T, A: Allocator = Global> {
 
 // SAFETY: `bytes` is uniquely owned; the only shared state is the allocator.
 unsafe impl<T: Send, A: Allocator + Send> Send for MultiArrayList<T, A> {}
-unsafe impl<T: Sync, A: Allocator + Sync> Sync for MultiArrayList<T, A> {}
+// NOTE: deliberately not `Sync`. `slice(&self)` hands out an owned, `Copy`
+// `Slice<T>` whose safe `items_mut`/`set` mutate the shared backing buffer, so
+// two threads holding `&MultiArrayList` could race through `slice()`. Revisit
+// once `Slice<T>` no longer exposes mutation from a shared-derived handle.
 
 /// A `MultiArrayList::Slice` contains cached start pointers for each field in
 /// the list. These pointers are not normally stored to reduce the size of the
@@ -711,8 +712,7 @@ impl<T> Slice<T> {
     /// The returned value is a **bitwise copy** — the SoA storage retains
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
-    /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
-    /// by-value copy is harmless there.
+    /// so it is wrapped in `ManuallyDrop`.
     pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
@@ -852,13 +852,19 @@ impl<T> Slice<T> {
             out.assume_init()
         }
     }
+
+    /// Frees the slab backing a `Slice` from [`MultiArrayList::to_owned_slice`].
+    /// Per-element destructors do not run. `Slice` is `Copy`: call exactly once.
+    pub fn deinit_owned(self) {
+        drop(self.to_multi_array_list());
+    }
 }
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T> Default for MultiArrayList<T, Global> {
+impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     fn default() -> Self {
-        Self::new_in(Global)
+        Self::new_in(A::default())
     }
 }
 
@@ -903,15 +909,13 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// The caller owns the returned memory. Empties this MultiArrayList.
     /// Only available with the global allocator (the returned `Slice` carries
-    /// no allocator handle).
+    /// no allocator handle). `Slice` has no `Drop`; call [`Slice::deinit_owned`].
     pub fn to_owned_slice(&mut self) -> Slice<T>
     where
         A: Default,
     {
-        let old = core::mem::replace(self, Self::new_in(A::default()));
-        let result = old.slice();
-        core::mem::forget(old);
-        result
+        let old = ManuallyDrop::new(core::mem::replace(self, Self::new_in(A::default())));
+        old.slice()
     }
 
     /// Compute pointers to the start of each field of the array.
@@ -977,7 +981,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(())
     }
 
-    /// Alias for [`push`] (Zig: `append`).
+    /// Alias for [`push`].
     #[inline]
     pub fn append(&mut self, elem: T) -> Result<(), AllocError> {
         self.push(elem)
@@ -1188,7 +1192,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: C) {
+    fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: &C) {
         let mut slice = self.slice();
         let swap = |ai: usize, bi: usize| slice.swap_rows(ai, bi);
         let less = |ai: usize, bi: usize| ctx.less_than(ai, bi);
@@ -1200,22 +1204,22 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Stable sort by index-based context.
-    pub fn sort<C: SortContext>(&mut self, ctx: C) {
+    pub fn sort<C: SortContext>(&mut self, ctx: &C) {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
     /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
         self.sort_internal::<C, true>(a, b, ctx);
     }
 
     /// Unstable sort by index-based context.
-    pub fn sort_unstable<C: SortContext>(&mut self, ctx: C) {
+    pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
         self.sort_internal::<C, false>(0, self.len, ctx);
     }
 
     /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: C) {
+    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
         self.sort_internal::<C, false>(a, b, ctx);
     }
 
@@ -1270,9 +1274,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
 impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
     fn drop(&mut self) {
-        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())` — slab
-        // only, no per-element destructors. This is **intentionally preserved**:
-        // [`clone`] is a bitwise SoA memcpy (Zig semantics), so two live lists
+        // Frees the slab only — no per-element destructors. This is
+        // **intentionally preserved**:
+        // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
         // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
@@ -1288,7 +1292,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// `std.atomic.cache_line` — **128** on x86_64 and aarch64, all native targets.
+/// Conservative cache-line size — **128** on x86_64 and aarch64, all native targets.
 const CACHE_LINE: usize = 128;
 
 const fn init_capacity<T>() -> usize {
@@ -1475,6 +1479,10 @@ mod tests {
         assert_eq!(list.len(), 3);
     }
 
+    // Fields are read via the `items::<"name", _>()` const-generic field-name
+    // API (which goes through the __mal! macro's offset table), not by direct
+    // access — `dead_code` can't see that.
+    #[allow(dead_code)]
     struct Borrowed<'a> {
         name: &'a [u8],
         n: u32,
@@ -1548,10 +1556,8 @@ mod tests {
                 unsafe { *self.a.add(ai) < *self.a.add(bi) }
             }
         }
-        list.sort(Ctx { a: raw, len });
+        list.sort(&Ctx { a: raw, len });
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
 }
-
-// ported from: src/collections/multi_array_list.zig

@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::fmt;
 use core::sync::atomic::AtomicU32;
 
-use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
+use crate::Ordinal;
 
 use crate::mapping;
 use crate::vlq::VLQ;
@@ -20,10 +20,11 @@ pub struct ParsedSourceMap {
 
     pub input_line_count: usize,
     pub mappings: mapping::List,
-    /// Set when this map's mappings are backed by an InternalSourceMap blob (e.g.
-    /// embedded in a `bun build --compile` executable) instead of a materialized
-    /// `Mapping.List`. The blob's bytes are borrowed (they live in the standalone
-    /// module graph's section), so `deinit` does not free them.
+    /// Set when this map's mappings are backed by an InternalSourceMap blob
+    /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
+    /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
+    /// bytes live in the embedded `bun build --compile` section and are
+    /// borrowed.
     pub internal: Option<InternalSourceMap>,
 
     /// If this is empty, this implies that the source code is a single file
@@ -44,6 +45,26 @@ pub struct ParsedSourceMap {
     pub is_standalone_module_graph: bool,
 }
 
+impl Drop for ParsedSourceMap {
+    fn drop(&mut self) {
+        // When the mappings are backed
+        // by an `InternalSourceMap` blob the blob is *owned* (allocated by
+        // `SavedSourceMap::put_mappings`) unless this is the
+        // standalone-module-graph case where the bytes live in the embedded
+        // section. The doc on the `internal` field only describes that latter
+        // borrowed case; the owned case is the runtime-transpiler upgrade in
+        // `SavedSourceMap::get_with_content`, which previously stranded the
+        // blob and showed up as the `print_ast` LSan suppression.
+        //
+        // `mappings`/`external_source_names` free via their own `Drop`.
+        if let Some(ism) = self.internal.take() {
+            if !self.is_standalone_module_graph {
+                ism.free_owned();
+            }
+        }
+    }
+}
+
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
@@ -58,7 +79,7 @@ impl Default for ParsedSourceMap {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; packed into SourceContentPtr by shift below
+#[repr(u8)] // packed into 2 bits of SourceContentPtr by shift below
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum SourceProviderKind {
     Zig = 0,
@@ -94,9 +115,15 @@ impl AnySourceProvider {
             AnySourceProvider::Zig(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: pointer originates from SourceContentPtr::from_bake_provider; the
+            // BakeSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
+            // so it is valid for the duration of this call.
             AnySourceProvider::Bake(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: pointer originates from SourceContentPtr::from_dev_server_provider; the
+            // DevServerSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
+            // so it is valid for the duration of this call.
             AnySourceProvider::DevServer(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
@@ -104,8 +131,7 @@ impl AnySourceProvider {
     }
 }
 
-/// Zig: `packed struct(u64) { load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u60 }`
-/// Field order is low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
+/// Bit-packed, low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SourceContentPtr(u64);
@@ -191,8 +217,8 @@ impl SourceContentPtr {
     }
 
     pub fn provider(self) -> Option<AnySourceProvider> {
-        // Zig returns `?AnySourceProvider` but every match arm yields a value; the
-        // optionality is implicit (data == 0 ⇒ null pointer). Preserve that here.
+        // Every match arm yields a value; the
+        // optionality is implicit (data == 0 ⇒ null pointer).
         let data = self.data() as usize;
         match self.kind() {
             SourceProviderKind::Zig => Some(AnySourceProvider::Zig(data as *mut SourceProviderMap)),
@@ -207,18 +233,17 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    /// Thread-safe ref-count helpers.
     ///
-    /// PORT NOTE: Zig uses an *intrusive* count (`bun.new` + embedded
-    /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
-    /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
+    /// Every
+    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
     /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
     /// header *before* the data pointer. Reconstituting that pointer with
     /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::{increment,decrement}_strong_count` instead — same observable
-    /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that
+    /// `ref()`/`deref()` semantics, with the allocator that
     /// actually owns the bytes. The embedded `ref_count` field is kept for
     /// layout/ABI parity but is NOT the live counter.
     ///
@@ -245,16 +270,18 @@ impl ParsedSourceMap {
     /// Construct a `ParsedSourceMap` whose mappings are backed by an
     /// `InternalSourceMap` blob (e.g. one embedded in a `bun build --compile`
     /// executable's standalone module graph) instead of a materialized
-    /// `mapping::List`. The blob's bytes are *borrowed* — `internal` is not
-    /// freed on drop (see PORT NOTE on conditional Drop below).
-    ///
-    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
-    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
+    /// `mapping::List`. Ownership of the blob transfers to the returned value
+    /// (freed in `Drop`) unless the caller subsequently sets
+    /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
+            ref_count: AtomicU32::new(1),
             input_line_count: internal.input_line_count(),
+            mappings: mapping::List::default(),
             internal: Some(internal),
-            ..Default::default()
+            external_source_names: Vec::new(),
+            underlying_provider: SourceContentPtr::NONE,
+            is_standalone_module_graph: false,
         }
     }
 
@@ -343,15 +370,6 @@ impl ParsedSourceMap {
     }
 }
 
-// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
-// `is_standalone_module_graph` (the blob borrows bytes from the standalone
-// module graph section). The current `InternalSourceMap` stub has no Drop, so
-// the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
-// the field to `Option<core::mem::ManuallyDrop<InternalSourceMap>>` and drop
-// it explicitly only when `!is_standalone_module_graph` — do NOT use
-// `mem::forget` (PORTING.md §Forbidden).
-// `mappings` and `external_source_names` are dropped automatically.
-
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
 impl<'a> fmt::Display for VlqsFmt<'a> {
@@ -360,5 +378,3 @@ impl<'a> fmt::Display for VlqsFmt<'a> {
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }
-
-// ported from: src/sourcemap/ParsedSourceMap.zig

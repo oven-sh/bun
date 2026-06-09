@@ -26,7 +26,7 @@ enum WaitKind {
 }
 
 impl Pwd {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
@@ -61,13 +61,13 @@ impl Pwd {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if err.is_some() {
+        if let Some(_err) = err {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
@@ -79,5 +79,3 @@ impl Pwd {
         Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
     }
 }
-
-// ported from: src/shell/builtin/pwd.zig

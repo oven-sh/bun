@@ -15,10 +15,9 @@ use core::f32::consts::PI;
 
 /// Maximum hash length: 5-byte header + (has_alpha ? 1 : 0) + ceil((L+P+Q+A
 /// AC counts)/2). Worst case (has_alpha, square) is 5+1+ceil((14+5+5+14)/2)=25.
-pub const MAX_LEN: usize = 25;
+pub(crate) const MAX_LEN: usize = 25;
 
-pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
-    // PORT NOTE: Zig returns `out[0..n]`; mirrored here as a mut sub-slice borrow of `out`.
+pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
     debug_assert!(w > 0 && w <= 100 && h > 0 && h <= 100);
     debug_assert!(rgba.len() == (w as usize) * (h as usize) * 4);
 
@@ -27,14 +26,13 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     let mut i: usize = 0;
     while i < rgba.len() {
         let a: f32 = rgba[i + 3] as f32 / 255.0;
-        avg[0] += a / 255.0 * rgba[i + 0] as f32;
+        avg[0] += a / 255.0 * rgba[i] as f32;
         avg[1] += a / 255.0 * rgba[i + 1] as f32;
         avg[2] += a / 255.0 * rgba[i + 2] as f32;
         avg[3] += a;
         i += 4;
     }
     if avg[3] > 0.0 {
-        // PORT NOTE: reshaped for borrowck — Zig indexed avg[3] inside the loop body.
         let a3 = avg[3];
         for c in &mut avg[0..3] {
             *c /= a3;
@@ -49,16 +47,16 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
 
     // RGBA → LPQA, compositing transparent pixels onto the average so the DCT
     // doesn't see a black fringe.
-    // PERF(port): was `undefined` stack arrays — profile if it shows up on a hot path.
-    let mut l = [0.0f32; 100 * 100];
-    let mut p = [0.0f32; 100 * 100];
-    let mut q = [0.0f32; 100 * 100];
-    let mut a = [0.0f32; 100 * 100];
+    // PERF: heap-allocates the working buffers — profile if it shows up on a hot path.
+    let mut l = vec![0.0f32; 100 * 100];
+    let mut p = vec![0.0f32; 100 * 100];
+    let mut q = vec![0.0f32; 100 * 100];
+    let mut a = vec![0.0f32; 100 * 100];
     i = 0;
     let mut px: usize = 0;
     while i < rgba.len() {
         let al: f32 = rgba[i + 3] as f32 / 255.0;
-        let r = avg[0] * (1.0 - al) + al / 255.0 * rgba[i + 0] as f32;
+        let r = avg[0] * (1.0 - al) + al / 255.0 * rgba[i] as f32;
         let g = avg[1] * (1.0 - al) + al / 255.0 * rgba[i + 1] as f32;
         let b = avg[2] * (1.0 - al) + al / 255.0 * rgba[i + 2] as f32;
         l[px] = (r + g + b) / 3.0;
@@ -104,7 +102,6 @@ pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'
     }
 
     let mut odd = false;
-    // PORT NOTE: Zig `inline for` over tuple of &Channel — all same type, plain loop.
     for ch in [&lc, &pc, &qc, &ac] {
         for &f in &ch.ac[0..ch.n] {
             let u: u8 = (15.0 * f).round() as u8;
@@ -144,7 +141,6 @@ impl Default for Channel {
 /// the per-channel max so 4-bit packing is uniform across channels.
 fn dct(chan: &[f32], w: u32, h: u32, nx: u32, ny: u32) -> Channel {
     let mut c = Channel::default();
-    // PERF(port): was `undefined` stack array — profile if it shows up on a hot path.
     let mut fx = [0.0f32; 100];
     let mut cy: u32 = 0;
     while cy < ny {
@@ -241,7 +237,6 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
         i: off,
         hi: false,
     };
-    // PERF(port): was `undefined` stack arrays — profile if it shows up on a hot path.
     let mut l_ac = [0.0f32; 49];
     let mut p_ac = [0.0f32; 5];
     let mut q_ac = [0.0f32; 5];
@@ -268,9 +263,7 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
     } else {
         32
     };
-    // PORT NOTE: `bun.default_allocator.alloc` → boxed slice (global mimalloc); aborts on OOM.
     let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4].into_boxed_slice();
-    // errdefer free → dropped; Box<[u8]> Drop handles it.
 
     let mut fx = [0.0f32; 7];
     let mut fy = [0.0f32; 7];
@@ -297,7 +290,7 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
             let r = (3.0 * lv - b + qv) / 2.0;
             let g = r - qv;
             let o = (y * w as usize + x) * 4;
-            rgba[o + 0] = clamp8(r);
+            rgba[o] = clamp8(r);
             rgba[o + 1] = clamp8(g);
             rgba[o + 2] = clamp8(b);
             rgba[o + 3] = clamp8(av);
@@ -324,7 +317,6 @@ fn idct(ac: &[f32], nx: u32, ny: u32, fx: &[f32; 7], fy: &[f32; 7]) -> f32 {
     v
 }
 
-// PORT NOTE: local borrow-param view; lifetime is fn-scoped to `decode`.
 struct NibbleReader<'a> {
     src: &'a [u8],
     i: usize,
@@ -374,5 +366,3 @@ impl<'a> NibbleReader<'a> {
 fn clamp8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0) as u8
 }
-
-// ported from: src/runtime/image/thumbhash.zig

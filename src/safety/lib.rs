@@ -1,6 +1,4 @@
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 pub mod alloc;
 
 #[path = "CriticalSection.rs"]
@@ -21,8 +19,7 @@ pub mod thread_id;
 // `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`)
 // directly. Instead of an erased fn-ptr hook, those crates push their
 // `&'static AllocatorVTable` addresses here at init; `alloc::has_ptr` then
-// does a plain pointer-equality scan. This is the same predicate Zig's
-// `is_instance` checks compute (vtable identity), just with the *data* moved
+// does a plain pointer-equality scan (vtable identity), with the *data* moved
 // down rather than the *code* called up.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -34,9 +31,8 @@ use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 /// crates at startup via [`register_alloc_vtable`].
 ///
 /// Lock-free fixed-capacity array: writes happen once at init, reads sit on
-/// `has_ptr()` (called from `CheckedAllocator` on debug paths). The Zig spec
-/// is a chain of inline `ptr_eq` against compile-time-known vtable addresses,
-/// so a Relaxed scan over ≤16 words matches that cost profile.
+/// `has_ptr()` (called from `CheckedAllocator` on debug paths); a Relaxed
+/// scan over ≤16 words keeps the check cheap.
 const KNOWN_ALLOC_CAP: usize = 16;
 static KNOWN_ALLOC_VTABLES: [AtomicPtr<()>; KNOWN_ALLOC_CAP] =
     [const { AtomicPtr::new(null_mut()) }; KNOWN_ALLOC_CAP];
@@ -56,7 +52,7 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 /// `fetch_add → slot.store` window would see a null slot, which is a harmless
 /// no-match (`needle` is always a non-null vtable address).
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
-    let p = vtable as *const _ as *mut ();
+    let p = std::ptr::from_ref(vtable) as *mut ();
     let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
     debug_assert!(
         i < KNOWN_ALLOC_CAP,
@@ -69,7 +65,7 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
 
 #[inline]
 pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
-    let needle = alloc.vtable as *const _ as *mut ();
+    let needle = std::ptr::from_ref(alloc.vtable) as *mut ();
     let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
     KNOWN_ALLOC_VTABLES[..n]
         .iter()
@@ -78,6 +74,7 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
 
 /// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
 /// (no registry needed for this one).
+#[cfg(debug_assertions)]
 #[inline]
 pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
     bun_alloc::MimallocArena::is_instance(&alloc)
@@ -97,5 +94,3 @@ pub fn dump_stored_trace(trace: &bun_core::StoredTrace) {
         },
     );
 }
-
-// ported from: src/safety/safety.zig

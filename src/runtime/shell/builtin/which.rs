@@ -4,8 +4,6 @@
 //! is not found, exit code becomes 1, but continues execution until all args
 //! are processed.
 
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};
@@ -32,7 +30,7 @@ pub enum State {
 }
 
 impl Which {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
@@ -88,7 +86,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let (arg_idx, had_not_found) = match &Self::state_mut(interp, cmd).state {
             State::MultiArgs {
@@ -176,7 +174,7 @@ impl Which {
         Self::next(interp, cmd)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -197,10 +195,15 @@ impl Which {
     /// Look up `$PATH` from the export env and the cwd from the shell env.
     fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
         let shell = Builtin::shell(interp, cmd);
+        // `EnvMap::get` refs the returned string; balance it.
         let path = shell
             .export_env
             .get(EnvStr::init_slice(b"PATH"))
-            .map(|s| s.slice().to_vec())
+            .map(|s| {
+                let v = s.slice().to_vec();
+                s.deref();
+                v
+            })
             .unwrap_or_default();
         (path, shell.cwd().to_vec())
     }
@@ -209,11 +212,8 @@ impl Which {
         Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
     }
 
-    /// Spec: which.zig — `bun.which(path_buf, PATH, cwd, arg)`.
     fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }
 }
-
-// ported from: src/shell/builtin/which.zig

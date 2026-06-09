@@ -3,11 +3,11 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
 use bun_core::{String as BunString, ZigString};
-use bun_js_parser::{self as ast, lexer};
+use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
         &[
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -86,9 +86,9 @@ struct Stringifier {
     builder: wtf::StringBuilder,
     indent: usize,
     space: Space,
-    // PORT NOTE: `JSValue` keys live on the heap here, but every entry is also
+    // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
-    // conservative GC scan keeps them alive. Matches the Zig.
+    // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
 }
 
@@ -113,13 +113,13 @@ enum Space {
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
             // toInt32() wraps large values and Infinity to 0, which is wrong.
             let num_f = space.as_number();
-            if !(num_f >= 1.0) {
+            if num_f.is_nan() || num_f < 1.0 {
                 // handles NaN, -Infinity, 0, negatives
                 return Ok(Space::Minified);
             }
@@ -137,10 +137,10 @@ impl Space {
     }
 }
 
-// PORT NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
+// NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
 
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -150,10 +150,10 @@ impl Stringifier {
         })
     }
 
-    // PORT NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
+    // NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
     // free via `Drop`.
 
-    pub fn stringify_value(
+    pub(crate) fn stringify_value(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -203,21 +203,27 @@ impl Stringifier {
         }
 
         if unwrapped.is_string() {
-            let str = unwrapped.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(unwrapped.to_bun_string(global)?);
             self.append_quoted_string(&str);
             return Ok(());
         }
 
-        // Object or array — check for circular references
-        // TODO(port): narrow error set — `try_insert`/`get_or_put` OOM maps to JsError::OutOfMemory
-        let was_present = self.visiting.insert(unwrapped, ()).is_some();
+        // Object or array — check for circular references.
+        // The call site is wired for fallible
+        // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
+        // allocates infallibly and aborts on OOM, so the Err arm only becomes live
+        // once the collections-side grow is made fallible.
+        let was_present = self
+            .visiting
+            .get_or_put(unwrapped)
+            .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
+            .found_existing;
         if was_present {
             return Err(global
                 .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
-        // PORT NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
-        // a scopeguard here would hold `&mut self.visiting` across the recursive
+        // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
         let result = if unwrapped.is_array() {
             self.stringify_array(global, unwrapped)
@@ -427,9 +433,8 @@ impl Stringifier {
 }
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
+    // NOTE: the JSON5 parser never builds ropes, so the simple slice → JS
+    // path is sufficient.
     if str.is_utf16 {
         let zig = ZigString::init_utf16(str.slice16());
         let bun_s = BunString::init(zig);
@@ -440,6 +445,17 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
 }
 
 fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
+    expr_to_js_with_check(expr, global, StackCheck::init())
+}
+
+fn expr_to_js_with_check(
+    expr: Expr,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> JsResult<JSValue> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
     match expr.data {
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
@@ -447,16 +463,20 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::EString(str) => estring_to_js(str.get(), global),
         ExprData::EArray(arr) => {
             JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js(*item, global)
+                expr_to_js_with_check(*item, global, stack_check)
             })
         }
         ExprData::EObject(obj) => {
             let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
             for prop in obj.properties.slice() {
                 let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
-                let key_js = expr_to_js(key_expr, global)?;
-                let key_str = key_js.to_bun_string(global)?;
+                let value = expr_to_js_with_check(
+                    prop.value.expect("infallible: prop has value"),
+                    global,
+                    stack_check,
+                )?;
+                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
+                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
                 js_obj.put_may_be_index(global, &key_str, value)?;
             }
             Ok(js_obj)
@@ -464,5 +484,3 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         _ => Ok(JSValue::UNDEFINED),
     }
 }
-
-// ported from: src/runtime/api/JSON5Object.zig

@@ -8,6 +8,7 @@ use crate::mysql::mysql_types::FieldType;
 
 bun_core::declare_scope!(PreparedStatement, hidden);
 
+#[derive(Default)]
 pub struct PrepareOK {
     pub status: u8,
     pub statement_id: u32,
@@ -16,27 +17,14 @@ pub struct PrepareOK {
     pub warning_count: u16,
 }
 
-impl Default for PrepareOK {
-    fn default() -> Self {
-        Self {
-            status: 0,
-            statement_id: 0,
-            num_columns: 0,
-            num_params: 0,
-            warning_count: 0,
-        }
-    }
-}
-
 impl PrepareOK {
-    // TODO(port): narrow error set
     pub fn decode_internal<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), any_mysql_error::Error> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
-            return Err(bun_core::err!("InvalidPrepareOKPacket"));
+            return Err(any_mysql_error::Error::InvalidPrepareOKPacket);
         }
 
         self.statement_id = reader.int::<u32>()?;
@@ -47,17 +35,14 @@ impl PrepareOK {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), any_mysql_error::Error> {
         self.decode_internal(reader)
     }
 }
 
-// TODO(port): lifetime — Execute is a transient builder borrowing params/param_types
-// from the caller for one write() call (BORROW_PARAM, matches Query::Execute<'a>).
 pub struct Execute<'a> {
     /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE
     pub statement_id: u32,
@@ -73,13 +58,11 @@ pub struct Execute<'a> {
     pub params: ExecuteParams<'a>,
 }
 
-/// Stand-in for the `params: []Value` field while `Value` lives in the
-/// higher-tier `bun_sql_jsc` crate. Carries the borrowed slice as raw bytes so
-/// `len()` is real; encoding goes through the `is_null` / `to_data` hooks
-/// which the jsc-side caller fills in. TODO(refactor): replace this with a trait
-/// or move `Execute` itself up-tier (matches the Query::Execute precedent of
-/// taking `&mut [Data]`).
-// TODO(port): bun_sql_jsc::mysql::mysql_value::Value
+/// `Value` (`bun_sql_jsc::mysql::mysql_value::Value`) lives in the
+/// higher-tier `bun_sql_jsc` crate, which this crate cannot depend on. The
+/// borrowed slice is carried behind a context pointer so `len` is real;
+/// encoding goes through the `is_null` / `to_data` hooks the jsc-side caller
+/// fills in.
 pub struct ExecuteParams<'a> {
     pub len: usize,
     pub ctx: *mut core::ffi::c_void,
@@ -94,7 +77,6 @@ pub struct ExecuteParams<'a> {
     pub _marker: core::marker::PhantomData<&'a ()>,
 }
 
-// PORT NOTE: Zig `deinit` freed `params` (and each Value inside) via default_allocator.
 // Ownership of params stays with the caller (borrowed slice) — no Drop here.
 
 impl<'a> Execute<'a> {
@@ -105,7 +87,7 @@ impl<'a> Execute<'a> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
-        let bitmap_bytes = (self.params.len + 7) / 8;
+        let bitmap_bytes = self.params.len.div_ceil(8);
         let null_bitmap = &mut null_bitmap_buf[0..bitmap_bytes];
         null_bitmap.fill(0);
 
@@ -159,7 +141,6 @@ impl<'a> Execute<'a> {
                 }
 
                 let value = (self.params.to_data)(self.params.ctx, i, param_type.r#type)?;
-                // PORT NOTE: Zig `defer value.deinit()` — handled by Drop on `value`.
                 if param_type.r#type.is_binary_format_supported() {
                     writer.write(value.slice())?;
                 } else {
@@ -170,7 +151,6 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
@@ -178,5 +158,3 @@ impl<'a> Execute<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/mysql/protocol/PreparedStatement.zig

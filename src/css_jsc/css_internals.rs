@@ -1,33 +1,31 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_collections::VecExt;
 use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
-// PORTING.md §Dispatch: Zig used `comptime test_kind: enum {...}` — Rust
-// `adt_const_params` is unstable, so the enum is passed as a runtime value
-// (the bodies branch on it anyway; no codegen difference for this fn).
+// `adt_const_params` is unstable, so the test kind is passed as a runtime
+// value (the bodies branch on it anyway; no codegen difference for this fn).
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum TestKind {
+pub(crate) enum TestKind {
     Normal,
     Minify,
     Prefix,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum TestCategory {
+pub(crate) enum TestCategory {
     /// arg is browsers
     Normal,
     /// arg is parser options
     ParserOptions,
 }
 
-// `#[bun_jsc::host_fn]` proc-macro not yet available; wrappers are plain fns
-// for now and re-gain the attribute when bun_jsc::host_fn lands.
-// TODO(port): bun_jsc::host_fn (proc-macro attribute)
+// These test-only wrappers are consumed as plain safe fns through
+// `dispatch_js2native.rs` re-exports, so they don't use the
+// `#[bun_jsc::host_fn]` C-ABI shim.
 
 pub fn minify_error_test_with_options(
     global: &JSGlobalObject,
@@ -86,7 +84,7 @@ fn eat_string_arg(
     Ok(OwnedString::new(arg.to_bun_string(global)?))
 }
 
-pub fn testing_impl(
+pub(crate) fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
     test_kind: TestKind,
@@ -100,11 +98,11 @@ pub fn testing_impl(
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — CSS parser allocates into this bump
+    // The CSS parser allocates into this bump arena; freed when it drops.
     //
     // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
-    // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
-    // NOTE on `'bump` threading). The arena strictly outlives every value parsed
+    // because the rule tree stores lifetime-erased refs (see the css_parser.rs
+    // notes on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
@@ -139,7 +137,10 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref = unsafe { &mut *(&raw mut log) };
+    let log_ptr: *mut Log = &raw mut log;
+    // SAFETY: `log` is a stack-local that outlives the parsed stylesheet and
+    // is not aliased for the duration of the parse.
+    let log_ref = unsafe { &mut *log_ptr };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
@@ -191,7 +192,7 @@ pub fn testing_impl(
             let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify: match test_kind {
                         TestKind::Minify => true,
                         TestKind::Normal => false,
@@ -238,7 +239,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // Zig: `defer bunstr.deref()` — release the +1 ref each iteration.
+                // `OwnedString` releases the +1 ref at the end of each iteration.
                 let bunstr = OwnedString::new(item.to_bun_string(global)?);
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
@@ -272,9 +273,8 @@ fn parser_options_from_js(
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
     let mut targets = Browsers::default();
 
-    // Zig spec (css_internals.zig:188-256) unrolls this 9×; collapse to a
-    // table-driven loop. Key order preserved so JS getter/exception ordering
-    // matches the spec exactly.
+    // Table-driven loop. Key order matters: it determines JS getter/exception
+    // ordering.
     for (key, slot) in [
         ("android", &mut targets.android),
         ("chrome", &mut targets.chrome),
@@ -289,7 +289,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
         if let Some(val) = jsobj.get_truthy(global, key)? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
-                    // note: Rust `as` saturates on overflow/NaN where Zig is UB
+                    // `as` saturates on overflow/NaN
                     *slot = Some(value as u32);
                 }
             }
@@ -307,12 +307,12 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
+    // StyleAttribute::parse allocates its
     // AST into this bump; freed when `arena` drops at end of scope.
     //
     // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
-    // erased crate-wide until 'bump threads through the rule tree — see
-    // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
+    // erased crate-wide until 'bump threads through the rule tree — see the
+    // css_parser.rs notes). The arena strictly outlives the parsed
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
@@ -346,19 +346,21 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     match StyleAttribute::parse(
         alloc,
         source.slice(),
-        parser_options,
+        &parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
     ) {
         Ok(stylesheet_) => {
             let mut stylesheet = stylesheet_;
-            let mut minify_options = MinifyOptions::default();
-            minify_options.targets = targets;
+            let minify_options = MinifyOptions {
+                targets,
+                ..Default::default()
+            };
             stylesheet.minify(minify_options);
 
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify,
                     targets,
                     ..Default::default()
@@ -369,8 +371,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             ) {
                 Ok(r) => r,
                 Err(_e) => {
-                    // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                    // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
+                    // The error is intentionally swallowed here.
                     return Ok(JSValue::UNDEFINED);
                 }
             };
@@ -385,5 +386,3 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
     }
 }
-
-// ported from: src/css_jsc/css_internals.zig

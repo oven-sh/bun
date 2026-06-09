@@ -10,9 +10,8 @@ use bun_core::{Environment, Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
-use bun_http::HeaderBuilder;
 use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
@@ -50,9 +49,9 @@ fn json_get_string_cloned<'b>(
 }
 
 use crate::Command;
-use crate::cli::pack_command::{self as pack, PackCommand as Pack};
+use crate::cli::pack_command::{self as pack};
 
-pub struct ReadmeInfo {
+pub(crate) struct ReadmeInfo {
     pub filename: Vec<u8>,
     pub contents: Vec<u8>,
 }
@@ -85,16 +84,13 @@ use crate::cli::init_command::InitCommand;
 use crate::cli::open;
 use crate::run_command::RunCommand as Run;
 
-// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
-// `inherent_associated_types`; mirror pack_command.rs and spell the array out.
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
-pub struct PublishCommand;
+pub(crate) struct PublishCommand;
 
-// TODO(port): Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
-// and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
-// cannot vary field types; we keep them as Option<> in both instantiations and rely on
+// Const generics cannot vary field types; the script fields and script_env are
+// kept as Option<> in both instantiations and we rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
 pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
     pub manager: &'a mut PackageManager,
@@ -138,9 +134,7 @@ pub enum FromTarballError {
 }
 bun_core::oom_from_alloc!(FromTarballError);
 
-// TODO(port): Zig defined this as a nested type alias on the Context struct;
-// inherent associated types are unstable (rust#8995) so hoist to module scope.
-pub type FromWorkspaceError = pack::PackError<true>;
+pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
@@ -177,7 +171,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     "{}: {}",
                     (
                         bstr::BStr::new(message),
-                        bstr::BStr::new(Archive::error_string(archive)),
+                        // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();
@@ -197,7 +192,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         "{}: {}",
                         (
                             bstr::BStr::new(message),
-                            bstr::BStr::new(Archive::error_string(archive)),
+                            // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                            bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                         ),
                     );
                     Global::crash();
@@ -225,7 +221,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -234,7 +230,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
-                ));
+                );
 
                 if next.kind != FileKind::File {
                     continue;
@@ -247,13 +243,19 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     if maybe_package_json_contents.is_none()
                         && strings::eql_case_insensitive_t(filename, b"package.json")
                     {
-                        maybe_package_json_contents = match next.read_entry_data(iter.archive)? {
+                        // SAFETY: `iter.archive` is the live `read_new()` handle this iterator
+                        // was constructed from; `next` is the entry it just yielded.
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
+                        maybe_package_json_contents = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
                                     "{}: {}",
                                     (
                                         bstr::BStr::new(message),
-                                        bstr::BStr::new(Archive::error_string(archive)),
+                                        // SAFETY: `archive` is the same live handle returned in the Err arm.
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -262,13 +264,18 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         };
                     } else if maybe_readme.is_none() && is_readme_os_path(filename) {
                         // First matching README wins — libarchive iteration is one-shot.
-                        let bytes = match next.read_entry_data(iter.archive)? {
+                        // SAFETY: same as the package.json arm above.
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
+                        let bytes = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
                                     "{}: {}",
                                     (
                                         bstr::BStr::new(message),
-                                        bstr::BStr::new(Archive::error_string(archive)),
+                                        // SAFETY: `archive` is the same live handle returned in the Err arm.
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -286,7 +293,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     }
                 }
             } else {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -295,7 +302,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
-                ));
+                );
             }
         }
 
@@ -305,7 +312,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     "{}: {}",
                     (
                         bstr::BStr::new(message),
-                        bstr::BStr::new(Archive::error_string(archive)),
+                        // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();
@@ -316,9 +324,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let package_json_contents =
             maybe_package_json_contents.ok_or(FromTarballError::MissingPackageJSON)?;
 
-        // PORT NOTE: adopt `package_json_contents` (already an owned `Box<[u8]>`)
+        // Note: adopt `package_json_contents` (already an owned `Box<[u8]>`)
         // into the process-lifetime side-table so the `Source` borrow stays
-        // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
+        // alive across `normalized_package`. Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
@@ -346,7 +354,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             if let Some(config) = json.get(b"publishConfig") {
                 if manager.options.publish_config.tag.is_empty() {
                     if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
-                        // PORT NOTE: `PublishConfig.tag` is `&'static [u8]`; dupe the
+                        // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
                         // bump-owned slice into the process-lifetime CLI arena.
                         manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
                     }
@@ -404,14 +412,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha512.r#final(&mut integrity);
         drop(sha512);
 
-        // `json_mod::parse_package_json_utf8` returns the value-shaped
-        // `bun_ast::Expr`; `normalized_package` (and `print_json`)
-        // operate on the full parser-shaped `bun_ast::Expr`. Lift via the
-        // documented `From<bun_ast::Expr>` bridge — same conversion
-        // `WorkspacePackageJSONCache::get_with_path` applies before stashing
-        // `MapEntry.root`. The thread-local `data::Store` has already been
-        // initialised by `PackageManager::init`.
-        let mut json: Expr = Expr::from(json);
+        let mut json = json;
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -454,11 +455,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
-    // PORT NOTE: Zig declares this on the comptime-generic `Context(directory_publish)`
-    // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
-    // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
-    // `false` branch. Rust type-checks all monomorphisations, so pin the return
-    // type to the only valid shape. `'static` matches `pack::pack`'s return —
+    // Note: the return type is pinned to `Context<'static, true>`, the only
+    // valid shape. `'static` matches `pack::pack`'s return —
     // the embedded `&mut PackageManager` / `Command::Context` are process-
     // lifetime singletons reborrowed through raw pointers there.
     pub fn from_workspace(
@@ -468,6 +466,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
+        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
+        // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
+        // never touches memory the live `log` borrow covers.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
@@ -504,7 +505,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             }
         };
 
-        // PORT NOTE: capture the package.json path before constructing
+        // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
         // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
         let abs_pkg_json = bun_core::ZBox::from_bytes(
@@ -514,9 +515,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         );
 
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`; the
-            // overlapping borrow with `lockfile_ref` mirrors Zig's freely-
-            // aliased `*PackageManager`.
+            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
+            // `lockfile_ref` borrows the local `lockfile`, not the manager,
+            // so the re-derived `&mut` is the only live manager borrow.
             manager: unsafe { &mut *manager_ptr },
             command_ctx: ctx,
             lockfile: lockfile_ref,
@@ -531,12 +532,11 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 }
 
 impl PublishCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), Error> {
-        // TODO(port): narrow error set
-        Output::prettyln(format_args!(
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
+        bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
@@ -561,7 +561,7 @@ impl PublishCommand {
             let context = match Context::<false>::from_tarball_path(
                 ctx,
                 manager,
-                &cli.positionals[1],
+                cli.positionals[1],
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -619,7 +619,7 @@ impl PublishCommand {
                 }
             }
 
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -628,7 +628,7 @@ impl PublishCommand {
                 } else {
                     ""
                 },
-            ));
+            );
 
             return Ok(());
         }
@@ -684,7 +684,7 @@ impl PublishCommand {
             }
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -693,7 +693,7 @@ impl PublishCommand {
             } else {
                 ""
             },
-        ));
+        );
 
         if PackageManager::get()
             .options
@@ -714,10 +714,9 @@ impl PublishCommand {
                 .put(b"npm_command", b"publish")
                 .map_err(|_| err!(OutOfMemory))?;
 
-            // PORT NOTE: reshaped for borrowck — `command_ctx: &mut ContextData`
+            // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer (mirrors
-            // Zig's freely-aliased `Command.Context`).
+            // `&mut ContextData` too. Re-derive from the raw pointer.
             let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
 
             if let Some(publish_script) = &context.publish_script {
@@ -793,9 +792,8 @@ impl PublishCommand {
             return false;
         }
 
-        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
-        // arena so the URL outlives the local Vec (mirrors `allocPrint`
-        // ownership in the Zig spec).
+        // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // arena so the URL outlives the local Vec.
         let package_url = URL::parse(crate::cli::cli_dupe(&url_buf));
 
         let Ok(mut response_buf) = MutableString::init(1024) else {
@@ -875,7 +873,7 @@ impl PublishCommand {
         false
     }
 
-    pub fn publish<const DIRECTORY_PUBLISH: bool>(
+    pub(crate) fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
@@ -897,16 +895,16 @@ impl PublishCommand {
             );
 
             if package_exists {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "Registry already knows about version {}; skipping.",
                     bstr::BStr::new(version_without_build_tag),
-                ));
+                );
                 return Ok(());
             }
         }
 
         // continues from `printSummary`
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
@@ -919,15 +917,15 @@ impl PublishCommand {
                 "default"
             },
             bstr::BStr::new(registry.url.href()),
-        ));
+        );
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
             return Ok(());
         }
 
-        // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
+        // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
+        // request body. Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
@@ -958,9 +956,8 @@ impl PublishCommand {
             bun_fmt::dependency_url(&ctx.package_name),
         )
         .map_err(|_| AllocError)?;
-        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
-        // arena so the URL outlives `print_buf.clear()` below (Zig's
-        // `allocPrint` owned its buffer).
+        // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
 
@@ -1039,7 +1036,7 @@ impl PublishCommand {
                     .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
-                    Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                    bun_core::note!("{}", bstr::BStr::new(notice));
                     Output::flush();
                 }
 
@@ -1101,7 +1098,7 @@ impl PublishCommand {
                             .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
-                            Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                            bun_core::note!("{}", bstr::BStr::new(notice));
                             Output::flush();
                         }
                     }
@@ -1124,8 +1121,8 @@ impl PublishCommand {
             });
 
         loop {
-            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded
-            // access here mirrors Zig's `Output.buffered_stdin().reader()`.
+            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
+            // loop is the only accessor while it runs (single-threaded CLI path).
             match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
@@ -1133,8 +1130,6 @@ impl PublishCommand {
             }
         }
 
-        // PORT NOTE: Zig used `std.process.Child.init(&.{Open.opener, auth_url})
-        // .spawnAndWait()`. Route through `bun.spawnSync` (PORTING.md §Spawning).
         let _ = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
             envp: None,
@@ -1172,7 +1167,7 @@ impl PublishCommand {
                 let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
                     break 'try_web;
                 };
-                // PORT NOTE: bump-owned `&[u8]` — dupe into the process-lifetime
+                // Note: bump-owned `&[u8]` — dupe into the process-lifetime
                 // CLI arena so the spawned thread (which outlives `bump`) can
                 // borrow it `'static`.
                 let auth_url_str: &'static ZStr = {
@@ -1191,11 +1186,10 @@ impl PublishCommand {
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
 
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                ));
+                );
 
-                const OFFSET: usize = 0;
                 const PADDING: usize = 1;
 
                 let horizontal = if Output::enable_ansi_colors_stdout() {
@@ -1231,34 +1225,22 @@ impl PublishCommand {
 
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", top_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
                 }
                 Output::print(format_args!("{}\n", top_right));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", vertical));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
-                Output::pretty(format_args!(
-                    "<b>{}<r>",
-                    bstr::BStr::new(auth_url_str.as_bytes())
-                ));
+                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
                 Output::print(format_args!("{}\n", vertical));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", bottom_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
@@ -1267,7 +1249,6 @@ impl PublishCommand {
                 Output::flush();
 
                 // on another thread because pressing enter is not required
-                // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
                 match std::thread::Builder::new()
                     .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
                 {
@@ -1294,8 +1275,8 @@ impl PublishCommand {
                 loop {
                     response_buf.reset();
 
-                    // PORT NOTE: Zig copied `done_url`/`auth_headers.entries` by value each
-                    // loop turn; in Rust both move into `init_sync`, so re-clone per iteration.
+                    // Note: `done_url`/`auth_headers.entries` move into
+                    // `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
                         done_url.clone(),
@@ -1327,8 +1308,7 @@ impl PublishCommand {
                                     'default: {
                                         let trimmed =
                                             strings::trim(retry, &strings::WHITESPACE_CHARS);
-                                        // PORT NOTE: std.fmt.parseInt(u32, _, 10) — header value is bytes,
-                                        // not UTF-8; use the byte-slice parser per PORTING.md.
+                                        // Header value is bytes, not UTF-8; use the byte-slice parser.
                                         let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10)
                                         else {
                                             break 'default;
@@ -1383,7 +1363,7 @@ impl PublishCommand {
                                 .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
-                                Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                                bun_core::note!("{}", bstr::BStr::new(notice));
                                 Output::flush();
                             }
 
@@ -1418,7 +1398,7 @@ impl PublishCommand {
         }
     }
 
-    pub fn normalized_package(
+    pub(crate) fn normalized_package(
         manager: &mut PackageManager,
         package_name: &[u8],
         package_version: &[u8],
@@ -1431,7 +1411,7 @@ impl PublishCommand {
         debug_assert!(json.is_object());
 
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: `E::String` stores `&'static [u8]` (lifetime erased per the
+        // Note: `E::String` stores `&'static [u8]` (lifetime erased per the
         // parser's Str convention); dupe formatted buffers into the
         // process-lifetime CLI arena so they outlive the AST nodes through printing.
         macro_rules! leak {
@@ -1603,7 +1583,7 @@ impl PublishCommand {
     /// Searches `abs_workspace_path` for a README, matching `npm publish`. Returns
     /// the first match from `readdir` (same ordering npm's glob walks, in practice),
     /// or `None` if none is present.
-    pub fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
+    pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
         let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
         let _close = scopeguard::guard(workspace_dir, |d| {
             let _ = d.close();
@@ -1614,7 +1594,7 @@ impl PublishCommand {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
             }
-            // Zig: `DirIterator.iterate(dir, .u8)` — entry names are UTF-8 on every platform.
+            // Entry names are UTF-8 on every platform.
             let name = entry.name.slice_u8();
             if !is_readme_filename(name) {
                 continue;
@@ -1638,7 +1618,7 @@ impl PublishCommand {
         package_name: &[u8],
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
-        // PORT NOTE: see `normalized_package` — `E::String` stores
+        // Note: see `normalized_package` — `E::String` stores
         // `&'static [u8]` (lifetime erased per the parser's Str convention);
         // dupe into the process-lifetime CLI arena for buffers that flow into AST nodes.
         macro_rules! leak {
@@ -1659,10 +1639,10 @@ impl PublishCommand {
                         b"./",
                     );
                     if !bun_sys::exists_at(workspace_root, normalized) {
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "bin '{}' does not exist",
                             bstr::BStr::new(normalized.as_bytes()),
-                        ));
+                        );
                     }
 
                     bin_props.push(G::Property {
@@ -1677,7 +1657,6 @@ impl PublishCommand {
                         ..Default::default()
                     });
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1744,10 +1723,10 @@ impl PublishCommand {
                         }
 
                         if !bun_sys::exists_at(workspace_root, &value) {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),
-                            ));
+                            );
                         }
 
                         bin_props.push(G::Property {
@@ -1763,7 +1742,6 @@ impl PublishCommand {
                         });
                     }
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1805,10 +1783,10 @@ impl PublishCommand {
                     Ok(fd) => fd,
                     Err(e) => {
                         if e.get_errno() == bun_sys::E::ENOENT {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            ));
+                            );
                             return Ok(());
                         } else {
                             Output::err(
@@ -1821,7 +1799,6 @@ impl PublishCommand {
                     }
                 };
 
-                // TODO(port): Zig used std.fs.Dir here for openDirZ — using bun_sys::Fd instead
                 let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
 
                 dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
@@ -1837,7 +1814,7 @@ impl PublishCommand {
                     let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
-                            // Zig: `DirIterator.iterate(dir, .u8)` — UTF-8 entry name on every platform.
+                            // Entry names are UTF-8 on every platform.
                             let name = entry.name.slice_u8();
                             let mut join: Vec<u8> = Vec::new();
                             write!(
@@ -1851,11 +1828,10 @@ impl PublishCommand {
                             .map_err(|_| AllocError)?;
                             join.push(0);
                             let join_len = join.len() - 1;
-                            // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
-                            let join_z = ZStr::from_buf(&interned[..], join_len);
+                            let join_z = ZStr::from_buf(interned, join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
                             let name_z = unsafe {
@@ -1888,7 +1864,6 @@ impl PublishCommand {
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
-                            // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;
@@ -2099,13 +2074,12 @@ impl PublishCommand {
         {
             write!(
                 &mut buf,
-                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
+                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"application/octet-stream\",\"data\":\"",
                 pack::fmt_tarball_filename(
                     &ctx.package_name,
                     &ctx.package_version,
                     pack::TarballNameStyle::Raw
                 ),
-                "application/octet-stream",
             )
             .ok();
 
@@ -2129,7 +2103,7 @@ impl PublishCommand {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum PublishError {
+pub(crate) enum PublishError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("NeedAuth")]
@@ -2138,7 +2112,7 @@ pub enum PublishError {
 bun_core::oom_from_alloc!(PublishError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum GetOTPError {
+pub(crate) enum GetOTPError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -2148,5 +2122,3 @@ impl From<GetOTPError> for PublishError {
         PublishError::OutOfMemory
     }
 }
-
-// ported from: src/cli/publish_command.zig

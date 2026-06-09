@@ -10,11 +10,8 @@
 //! `bun_core`, so the expansion paths (`$crate::output::ScopedLogger`,
 //! `$crate::pretty_fmt!`) continue to work unchanged.
 
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
 // ── scoped logging (the requested symbol) ────────────────────────────────
-//
-// Zig: `bun.Output.scoped(.X, .visible)` → Rust:
 //
 //     bun_output::declare_scope!(X, visible);
 //     bun_output::scoped_log!(X, "fmt {} {}", a, b);
@@ -23,7 +20,6 @@
 // gates arg evaluation behind `cfg!(feature = "debug_logs")` so release
 // builds pay zero cost (see PORTING.md — args MUST sit inside the dead
 // branch).
-#![warn(unreachable_pub)]
 pub use bun_core::declare_scope;
 pub use bun_core::define_scoped_log;
 pub use bun_core::scoped_log;
@@ -45,8 +41,7 @@ pub use bun_core::{
 };
 
 /// `bun_output::scope_is_visible!(X)` — sugar for `X.is_visible()` on a
-/// `declare_scope!`-produced static. Mirrors Zig
-/// `Output.isScopeVisible(.X)`. Kept as a macro (not a fn) so the scope
+/// `declare_scope!`-produced static. Kept as a macro (not a fn) so the scope
 /// ident resolves at the call site without an import.
 #[macro_export]
 macro_rules! scope_is_visible {

@@ -2,12 +2,8 @@ use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
-// Zig: `context: anytype` + `comptime forEach: fn(@TypeOf(context), u32, ?*Data) AnyPostgresError!bool`
-// Opaque-context pattern (PORTING.md §anytype): unbounded `<C>`; context is forwarded by value
-// to the callback each iteration, so require `C: Copy`.
-// `comptime ContextType: type, reader: NewReader(ContextType)` is the paired-param spelling of a
-// generic reader → `reader: &mut NewReader<R>`.
-// `comptime forEach: fn(...)` → `impl FnMut` (monomorphized, matches Zig comptime).
+// The opaque context is forwarded by value to the callback each iteration,
+// so require `C: Copy`.
 pub fn decode<C: Copy, R: ReaderContext>(
     context: C,
     reader: &mut NewReader<R>,
@@ -16,7 +12,7 @@ pub fn decode<C: Copy, R: ReaderContext>(
     let mut _remaining_bytes = reader.length()?;
     _remaining_bytes = _remaining_bytes.saturating_sub(4);
 
-    let remaining_fields: usize = usize::try_from(reader.short()?.max(0)).expect("int cast");
+    let remaining_fields: usize = usize::from(reader.short()?);
 
     for index in 0..remaining_fields {
         let byte_length = reader.int4()?;
@@ -51,6 +47,4 @@ pub fn decode<C: Copy, R: ReaderContext>(
     Ok(())
 }
 
-pub const NULL_INT4: u32 = 4294967295;
-
-// ported from: src/sql/postgres/protocol/DataRow.zig
+pub(crate) const NULL_INT4: u32 = 4294967295;

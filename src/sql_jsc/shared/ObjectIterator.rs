@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 
-// PORT NOTE: this iterator holds bare `JSValue` fields and a borrowed
+// Note: this iterator holds bare `JSValue` fields and a borrowed
 // `&JSGlobalObject`; it is only sound when constructed on the stack for the
 // duration of a single bind/iteration pass (conservative GC stack scan keeps
 // `array`/`columns`/`current_row` alive). Never `Box` this.
@@ -50,9 +50,8 @@ impl<'a> ObjectIterator<'a> {
             }
         }
 
-        // PORT NOTE: Zig `defer { if (cell_i >= columns_count) { ... } }` is
-        // lowered to a labeled block whose result is computed first, then the
-        // deferred bookkeeping runs exactly once before returning.
+        // The labeled block computes the result first, then the bookkeeping
+        // below runs exactly once before returning.
         let result: JsResult<Option<JSValue>> = 'out: {
             let property = match JSObject::get_index(self.columns, global_object, cell_i) {
                 Ok(v) => v,
@@ -68,10 +67,11 @@ impl<'a> ObjectIterator<'a> {
                 )));
             }
 
-            // TODO(port): verify `get_own_by_value` return type — Zig site treats it
-            // as `?JSValue` (compares against `.zero` and `null` separately).
+            // `get_own_by_value` maps the C++ empty (zero) return to `None`,
+            // so the `Some(JSValue::ZERO)` comparison below is defensively dead
+            // (an unwrapped value is never zero).
             let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
-            if value == Some(JSValue::ZERO) || value.map_or(false, |v| v.is_undefined()) {
+            if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
                 if !global_object.has_exception() {
                     break 'out Err(global_object.throw(format_args!(
                         "Expected a value at index {} in row {}",
@@ -93,5 +93,3 @@ impl<'a> ObjectIterator<'a> {
         result
     }
 }
-
-// ported from: src/sql_jsc/shared/ObjectIterator.zig

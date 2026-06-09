@@ -1,42 +1,40 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::strings;
 
-use crate::css_properties::{Property, PropertyId, PropertyIdTag};
+use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::prefixes;
 use crate::{
-    DeclarationList, Parser, PrintErr, Printer, PrinterOptions, PropertyHandlerContext, Result,
-    Token, VendorPrefix,
+    DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// PORT NOTE: was `BumpVec<'bump, Transform>`; downgraded to `Vec` so the
-// `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
-// `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
+// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
+// the `Property` enum (properties_generated.rs) stays lifetime-free.
+// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
+// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub v: Vec<Transform>,
 }
 
-// PORT NOTE: split out of the parse/to_css `impl TransformList` below —
+// Split out of the parse/to_css `impl TransformList` below —
 // `TransformHandler` only needs deep_clone/eql.
 impl TransformList {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
-        // are `Clone`-via-derive (Vec + POD payloads); an arena-aware DeepClone
-        // trait should land crate-wide.
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `Transform`/`TransformList` deep-clone via `#[derive(Clone)]`: payloads
+        // with heap variants (`LengthPercentage`/`Length` `Calc(Box<..>)`) clone
+        // deeply onto the global heap.
         self.clone()
     }
 }
 
 impl TransformList {
-    pub fn parse(input: &mut Parser<'_>) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser<'_>) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -59,17 +57,14 @@ impl TransformList {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.v.is_empty() {
             return dest.write_str("none");
         }
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
-        // buffer then `dest.writeStr(base)` — observably identical to writing
-        // directly into `dest` while `dest.minify` is set (the original
-        // lightningcss size-comparison was already disabled upstream). Collapsed.
+        // (The original lightningcss size-comparison was already disabled upstream.)
         self.to_css_base(dest)
     }
 
@@ -148,11 +143,9 @@ pub enum Transform {
 }
 
 impl Transform {
-    pub fn parse(input: &mut Parser) -> Result<Transform> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function_cloned()?;
 
-        // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
-        // parseNestedBlock; Rust closures capture `function` directly.
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
             crate::match_ignore_ascii_case! { function, {
@@ -244,8 +237,7 @@ impl Transform {
                         let y = NumberOrPercentage::parse(i)?;
                         Ok(Transform::Scale { x, y })
                     } else {
-                        // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
-                        // is POD; `clone()` is exact.
+                        // `NumberOrPercentage` is POD.
                         let y = x.clone();
                         Ok(Transform::Scale { x, y })
                     }
@@ -322,7 +314,7 @@ impl Transform {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Transform::Translate { x, y } => {
                 if dest.minify && x.is_zero() && !y.is_zero() {
@@ -387,33 +379,33 @@ impl Transform {
                 let y: f32 = sy.into_f32();
                 if dest.minify && x == 1.0 && y != 1.0 {
                     dest.write_str("scaleY(")?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else if dest.minify && x != 1.0 && y == 1.0 {
                     dest.write_str("scaleX(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     if y != x {
                         dest.delim(b',', false)?;
-                        CSSNumberFns::to_css(&y, dest)?;
+                        CSSNumberFns::to_css(y, dest)?;
                     }
                 }
                 dest.write_char(b')')?;
             }
             Transform::ScaleX(x) => {
                 dest.write_str("scaleX(")?;
-                CSSNumberFns::to_css(&x.into_f32(), dest)?;
+                CSSNumberFns::to_css(x.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::ScaleY(y) => {
                 dest.write_str("scaleY(")?;
-                CSSNumberFns::to_css(&y.into_f32(), dest)?;
+                CSSNumberFns::to_css(y.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::ScaleZ(z) => {
                 dest.write_str("scaleZ(")?;
-                CSSNumberFns::to_css(&z.into_f32(), dest)?;
+                CSSNumberFns::to_css(z.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Scale3d {
@@ -426,28 +418,28 @@ impl Transform {
                 let z: f32 = sz.into_f32();
                 if dest.minify && z == 1.0 && x == y {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else if dest.minify && x != 1.0 && y == 1.0 && z == 1.0 {
                     dest.write_str("scaleX(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else if dest.minify && x == 1.0 && y != 1.0 && z == 1.0 {
                     dest.write_str("scaleY(")?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else if dest.minify && x == 1.0 && y == 1.0 && z != 1.0 {
                     dest.write_str("scaleZ(")?;
-                    CSSNumberFns::to_css(&z, dest)?;
+                    CSSNumberFns::to_css(z, dest)?;
                 } else if dest.minify && z == 1.0 {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else {
                     dest.write_str("scale3d(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&z, dest)?;
+                    CSSNumberFns::to_css(z, dest)?;
                 }
                 dest.write_char(b')')?;
             }
@@ -483,11 +475,11 @@ impl Transform {
                     angle.to_css_with_unitless_zero(dest)?;
                 } else {
                     dest.write_str("rotate3d(")?;
-                    CSSNumberFns::to_css(x, dest)?;
+                    CSSNumberFns::to_css(*x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(y, dest)?;
+                    CSSNumberFns::to_css(*y, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(z, dest)?;
+                    CSSNumberFns::to_css(*z, dest)?;
                     dest.delim(b',', false)?;
                     angle.to_css_with_unitless_zero(dest)?;
                 }
@@ -524,66 +516,68 @@ impl Transform {
             }
             Transform::Matrix(m) => {
                 dest.write_str("matrix(")?;
-                CSSNumberFns::to_css(&m.a, dest)?;
+                CSSNumberFns::to_css(m.a, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.b, dest)?;
+                CSSNumberFns::to_css(m.b, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.c, dest)?;
+                CSSNumberFns::to_css(m.c, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.d, dest)?;
+                CSSNumberFns::to_css(m.d, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.e, dest)?;
+                CSSNumberFns::to_css(m.e, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.f, dest)?;
+                CSSNumberFns::to_css(m.f, dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Matrix3d(m) => {
                 dest.write_str("matrix3d(")?;
-                CSSNumberFns::to_css(&m.m11, dest)?;
+                CSSNumberFns::to_css(m.m11, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m12, dest)?;
+                CSSNumberFns::to_css(m.m12, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m13, dest)?;
+                CSSNumberFns::to_css(m.m13, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m14, dest)?;
+                CSSNumberFns::to_css(m.m14, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m21, dest)?;
+                CSSNumberFns::to_css(m.m21, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m22, dest)?;
+                CSSNumberFns::to_css(m.m22, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m23, dest)?;
+                CSSNumberFns::to_css(m.m23, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m24, dest)?;
+                CSSNumberFns::to_css(m.m24, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m31, dest)?;
+                CSSNumberFns::to_css(m.m31, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m32, dest)?;
+                CSSNumberFns::to_css(m.m32, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m33, dest)?;
+                CSSNumberFns::to_css(m.m33, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m34, dest)?;
+                CSSNumberFns::to_css(m.m34, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m41, dest)?;
+                CSSNumberFns::to_css(m.m41, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m42, dest)?;
+                CSSNumberFns::to_css(m.m42, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m43, dest)?;
+                CSSNumberFns::to_css(m.m43, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m44, dest)?;
+                CSSNumberFns::to_css(m.m44, dest)?;
                 dest.write_char(b')')?;
             }
         }
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — payload types may need bump-aware clone
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // All payload types deep-clone via `#[derive(Clone)]` — `Calc` variants
+        // of `LengthPercentage`/`Length` are `Box`ed and clone deeply onto the
+        // global heap.
         self.clone()
     }
 }
 
 /// A 2D matrix.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix<T> {
     pub a: T,
     pub b: T,
@@ -593,21 +587,8 @@ pub struct Matrix<T> {
     pub f: T,
 }
 
-impl<T: Clone> Matrix<T> {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        self.clone()
-    }
-
-    pub fn eql(&self, rhs: &Self) -> bool
-    where
-        T: PartialEq,
-    {
-        self == rhs
-    }
-}
-
 /// A 3D matrix.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix3d<T> {
     pub m11: T,
     pub m12: T,
@@ -627,15 +608,7 @@ pub struct Matrix3d<T> {
     pub m44: T,
 }
 
-impl<T: PartialEq> Matrix3d<T> {
-    pub fn eql(&self, rhs: &Self) -> bool {
-        self == rhs
-    }
-}
-
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
-// TODO(port): css.DefineEnumProperty reflection → crate-wide #[derive(EnumProperty)] providing
-// parse/to_css/eql/hash/deep_clone from kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum TransformStyle {
     #[css("flat")]
@@ -683,7 +656,7 @@ pub enum Perspective {
 }
 
 impl Perspective {
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -706,7 +679,7 @@ pub enum Translate {
 }
 
 impl Translate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -724,12 +697,12 @@ impl Translate {
 
         Ok(Translate::Xyz {
             x,
-            y: y.unwrap_or(LengthPercentage::zero()),
-            z: z.unwrap_or(Length::zero()),
+            y: y.unwrap_or_else(|_| LengthPercentage::zero()),
+            z: z.unwrap_or_else(Length::zero),
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Translate::None => dest.write_str("none")?,
             Translate::Xyz { x, y, z } => {
@@ -748,10 +721,10 @@ impl Translate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Translate` above — these
-// don't depend on Parser/Printer surface and are needed by `TransformHandler`.
+// Split out of the parse/to_css `impl Translate` above — these don't depend
+// on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Translate::None => Transform::Translate3d {
                 x: LengthPercentage::zero(),
@@ -761,19 +734,19 @@ impl Translate {
             Translate::Xyz { x, y, z } => Transform::Translate3d {
                 x: x.clone(),
                 y: y.clone(),
-                z: z.clone(),
+                z: *z,
             },
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — arena-aware clone for LengthPercentage
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
     }
 }
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Rotate {
     /// Rotation around the x axis.
     pub x: f32,
@@ -786,7 +759,7 @@ pub struct Rotate {
 }
 
 impl Rotate {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -845,7 +818,7 @@ impl Rotate {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if self.x == 0.0 && self.y == 0.0 && self.z == 1.0 && self.angle.is_zero() {
             dest.write_str("none")?;
             return Ok(());
@@ -856,11 +829,11 @@ impl Rotate {
         } else if self.x == 0.0 && self.y == 1.0 && self.z == 0.0 {
             dest.write_str("y ")?;
         } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
-            CSSNumberFns::to_css(&self.x, dest)?;
+            CSSNumberFns::to_css(self.x, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(&self.y, dest)?;
+            CSSNumberFns::to_css(self.y, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(&self.z, dest)?;
+            CSSNumberFns::to_css(self.z, dest)?;
             dest.write_char(b' ')?;
         }
 
@@ -868,11 +841,11 @@ impl Rotate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Rotate` above — needed by
+// Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
     /// Converts the rotation to a transform function.
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         Transform::Rotate3d {
             x: self.x,
             y: self.y,
@@ -881,8 +854,8 @@ impl Rotate {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        self.clone()
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        *self
     }
 }
 
@@ -904,7 +877,7 @@ pub enum Scale {
 }
 
 impl Scale {
-    pub fn parse(input: &mut Parser) -> Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
             .is_ok()
@@ -932,7 +905,7 @@ impl Scale {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             Scale::None => dest.write_str("none")?,
             Scale::Xyz { x, y, z } => {
@@ -952,10 +925,10 @@ impl Scale {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Scale` above — needed by
+// Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
-    pub fn to_transform(&self, _bump: &Bump) -> Transform {
+    pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
             Scale::None => Transform::Scale3d {
                 x: NumberOrPercentage::Number(1.0),
@@ -970,7 +943,7 @@ impl Scale {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         self.clone()
     }
 }
@@ -984,9 +957,10 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
-// `Property` enum is lifetime-free (see TransformList above), so the handler
-// is too. Re-thread `'bump` crate-wide in a later pass.
+// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
+// port iteration; the `Property` enum is lifetime-free (see TransformList
+// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
+// work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
     pub transform: Option<(TransformList, VendorPrefix)>,
@@ -996,17 +970,16 @@ pub struct TransformHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext, so the
-// arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+// `context.arena` does not exist on PropertyHandlerContext; the arena is
+// recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
-        // PORT NOTE: Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
@@ -1026,8 +999,8 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
-                // self.flush(); compute the predicate first, then act.
+                // Compute the predicate first, then act, so no borrow of
+                // self.transform is held across self.flush().
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
                 } else {
@@ -1064,12 +1037,11 @@ impl TransformHandler {
                     let prop = if unparsed.property_id.tag() == PropertyIdTag::Transform {
                         Property::Unparsed(unparsed.get_prefixed(
                             bump,
-                            context.targets,
+                            &context.targets,
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // PORT NOTE: Zig pushed `property.deepClone(arena)`; the
-                        // matched payload is `Unparsed`, so reconstruct directly.
+                        // The matched payload is `Unparsed`, so reconstruct directly.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);
@@ -1083,7 +1055,11 @@ impl TransformHandler {
         true
     }
 
-    pub fn finalize(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    pub(crate) fn finalize(
+        &mut self,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
+    ) {
         self.flush(dest, context);
     }
 
@@ -1117,5 +1093,3 @@ impl TransformHandler {
         }
     }
 }
-
-// ported from: src/css/properties/transform.zig

@@ -1,4 +1,4 @@
-//! Pure enum/struct option types extracted from `bundler/options.zig` so
+//! Pure enum/struct bundler option types, kept here so
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 //!
@@ -9,7 +9,6 @@
 use crate::schema::api;
 use bun_ast::{Loader, LoaderOptional, Target};
 use bun_collections;
-use phf;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -54,7 +53,18 @@ impl Format {
         self == Format::Esm
     }
 
-    pub const MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
+    pub const MAP: __ComptimeStringMap_FORMAT_MAP = __ComptimeStringMap_FORMAT_MAP(());
+
+    // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.
+
+    pub fn from_string(slice: &[u8]) -> Option<Format> {
+        Self::MAP.get(slice).copied()
+    }
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static FORMAT_MAP: Format = {
         b"esm" => Format::Esm,
         b"cjs" => Format::Cjs,
         b"iife" => Format::Iife,
@@ -62,22 +72,11 @@ impl Format {
         // TODO: Disable this outside of debug builds
         b"internal_bake_dev" => Format::InternalBakeDev,
     };
-
-    // `fromJS` alias to `bundler_jsc/options_jsc.zig` deleted — see PORTING.md
-    // (`to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate).
-
-    pub fn from_string(slice: &[u8]) -> Option<Format> {
-        // Zig: Map.getWithEql(slice, bun.strings.eqlComptime) — eqlComptime is
-        // exact byte equality, which is phf's default lookup.
-        Self::MAP.get(slice).copied()
-    }
 }
 
 #[derive(Default)]
 pub struct WindowsOptions {
     pub hide_console: bool,
-    // TODO(port): lifetime — Zig `?[]const u8` fields with no `deinit` in this
-    // file; conservatively owned as Box<[u8]> here.
     pub icon: Option<Box<[u8]>>,
     pub title: Option<Box<[u8]>>,
     pub publisher: Option<Box<[u8]>>,
@@ -93,15 +92,10 @@ pub enum BundlePackage {
     Never,
 }
 
-// Zig: `bun.StringArrayHashMapUnmanaged(BundlePackage)` — insertion-ordered,
-// string-keyed. Maps to bun_collections per PORTING.md §Collections.
-// (E0658: inherent assoc types are nightly-only; lifted to module scope.)
 pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
-/// `bundler/options.zig:1815` `BundleOptions.ForceNodeEnv`.
-///
 /// Set by the process environment to override the JSX configuration. When
 /// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
 /// "react-jsx-dev-runtime".
@@ -114,7 +108,7 @@ pub enum ForceNodeEnv {
     Production,
 }
 
-/// `bundler/options.zig` `ModuleType` — package.json `"type"` field.
+/// package.json `"type"` field.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum ModuleType {
@@ -125,7 +119,12 @@ pub enum ModuleType {
 }
 
 impl ModuleType {
-    pub const LIST: phf::Map<&'static [u8], ModuleType> = phf::phf_map! {
+    pub const LIST: __ComptimeStringMap_MODULE_TYPE_LIST = __ComptimeStringMap_MODULE_TYPE_LIST(());
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static MODULE_TYPE_LIST: ModuleType = {
         b"commonjs" => ModuleType::Cjs,
         b"module" => ModuleType::Esm,
     };
@@ -171,7 +170,8 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
+bun_core::comptime_string_map! {
+pub static LOADER_API_NAMES: api::Loader = {
     b"js" => api::Loader::js,
     b"mjs" => api::Loader::js,
     b"cjs" => api::Loader::js,
@@ -199,6 +199,7 @@ pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map!
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
 };
+}
 
 /// `schema::api`-coupled methods on [`bun_ast::Loader`].
 pub trait LoaderExt: sealed::Sealed {
@@ -255,7 +256,6 @@ impl LoaderExt for Loader {
             api::Loader::sqlite => Loader::Sqlite,
             api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
             api::Loader::md => Loader::Md,
-            _ => Loader::File,
         }
     }
 }
@@ -285,9 +285,6 @@ pub trait ImportKindExt: sealed::Sealed {
 impl ImportKindExt for bun_ast::ImportKind {
     fn to_api(self) -> api::ImportKind {
         use bun_ast::ImportKind;
-        // TODO(port): source Zig references `ImportKind.entry_point` which is not a declared variant
-        // (only entry_point_run / entry_point_build exist). This compiles in Zig only because the
-        // function is never analyzed. Mapping both entry-point variants to api::ImportKind::entry_point.
         match self {
             ImportKind::EntryPointRun | ImportKind::EntryPointBuild => api::ImportKind::entry_point,
             ImportKind::Stmt => api::ImportKind::stmt,
@@ -303,12 +300,11 @@ impl ImportKindExt for bun_ast::ImportKind {
 
 // ─── move-in: TYPE_ONLY from bun_runtime::bake::framework ──────────────────────────
 
-/// `bake/bake.zig` `Framework.BuiltInModule` — virtual module backing for a
+/// Virtual module backing for a
 /// framework-declared built-in: either an import path to redirect to, or
 /// inline source code.
 #[derive(Clone, Debug)]
 pub enum BuiltInModule {
-    // TODO(port): lifetime — Zig `[]const u8`; arena-owned in bake.UserOptions.
     Import(Box<[u8]>),
     Code(Box<[u8]>),
 }
@@ -327,5 +323,3 @@ impl From<bun_ast::ExportsKind> for ModuleType {
         }
     }
 }
-
-// ported from: src/options_types/BundleEnums.zig

@@ -4,74 +4,48 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
+#[cfg(not(windows))]
+use crate::E;
+use crate::Fd;
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
-use crate::{E, Fd};
 
-// PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
-// correct env-var tag and a non-colliding static name.
-// TODO(port): `scoped_log!` stringifies its scope ident for the `[tag]`
-// prefix, so log lines show `[debug]` instead of `[copy_file]`; fix when
-// `scoped_log!` grows a path/expr arm.
+// correct env-var tag and a non-colliding static name. (`scoped_log!` reads
+// the `[tag]` prefix from `ScopedLogger::tagname` at runtime, so log lines
+// still show `[copy_file]`.)
 static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CopyFileRangeError {
-    #[error("FileTooBig")]
-    FileTooBig,
-    #[error("InputOutput")]
-    InputOutput,
-    /// `in` is not open for reading; or `out` is not open  for  writing;
-    /// or the  `O.APPEND`  flag  is  set  for `out`.
-    #[error("FilesOpenedWithWrongFlags")]
-    FilesOpenedWithWrongFlags,
-    #[error("IsDir")]
-    IsDir,
-    #[error("OutOfMemory")]
-    OutOfMemory,
-    #[error("NoSpaceLeft")]
-    NoSpaceLeft,
-    #[error("Unseekable")]
-    Unseekable,
-    #[error("PermissionDenied")]
-    PermissionDenied,
-    #[error("FileBusy")]
-    FileBusy,
-    // TODO(port): Zig unioned `posix.PReadError || posix.PWriteError || posix.UnexpectedError`
-    // here; in Rust those collapse into `bun_core::Error` via `From`.
-}
-bun_core::named_error_set!(CopyFileRangeError);
 
 #[cfg(windows)]
 pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
 pub type InputType<'a> = Fd;
-// PORT NOTE: lifetime param is unused on posix (Fd is Copy); kept so callers
+// lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
-/// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
-///
-/// The intended order here is:
-/// 1. ioctl_ficlone
-/// 2. copy_file_range
-/// 3. sendfile()
-/// 4. read() write() loop
-///
-/// copy_file_range is supposed to do all the fast ways. It might be unnecessary
-/// to do ioctl_ficlone.
-///
-/// sendfile() is a good fallback to avoid the read-write loops. sendfile() improves
-/// performance by moving the copying step to the kernel.
-///
-/// On Linux, sendfile() can work between any two file descriptors which can be mmap'd.
-/// This means that it cannot work with TTYs and some special devices
-/// But it can work with two ordinary files
-///
-/// on macOS and other platforms, sendfile() only works when one of the ends is a socket
-/// and in general on macOS, it doesn't seem to have much performance impact.
-// PORT NOTE: `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
+// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
+//
+// The intended order here is:
+// 1. ioctl_ficlone
+// 2. copy_file_range
+// 3. sendfile()
+// 4. read() write() loop
+//
+// copy_file_range is supposed to do all the fast ways. It might be unnecessary
+// to do ioctl_ficlone.
+//
+// sendfile() is a good fallback to avoid the read-write loops. sendfile() improves
+// performance by moving the copying step to the kernel.
+//
+// On Linux, sendfile() can work between any two file descriptors which can be mmap'd.
+// This means that it cannot work with TTYs and some special devices
+// But it can work with two ordinary files
+//
+// on macOS and other platforms, sendfile() only works when one of the ends is a socket
+// and in general on macOS, it doesn't seem to have much performance impact.
+// `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
 // reshaped to `.contains()`/`.insert()` below.
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,12 +77,13 @@ pub type CopyFileState = EmptyCopyFileState;
 
 type CopyFileReturnType = crate::Result<()>;
 
-#[allow(unused_variables)]
 pub fn copy_file_with_state(
     in_: InputType<'_>,
     out: InputType<'_>,
     copy_file_state: &mut CopyFileState,
 ) -> CopyFileReturnType {
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
@@ -154,7 +129,7 @@ pub fn copy_file_with_state(
                 // Don't worry about EINTR here.
                 E::EINTR => {}
 
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // On Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
                     bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");
                     CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
@@ -174,16 +149,13 @@ pub fn copy_file_with_state(
             // The kernel checks the u64 value `offset+count` for overflow, use
             // a 32 bit value so that the syscall won't return EINVAL except for
             // impossibly large files (> 2^64-1 - 2^32-1).
-            let amt = match copy_file_range(
+            let amt = copy_file_range(
                 in_.native(),
                 out.native(),
                 (i32::MAX - 1) as usize,
                 0,
                 copy_file_state,
-            ) {
-                Ok(a) => a,
-                Err(err) => return Err(err),
-            };
+            )?;
             // Terminate when no data was copied
             if amt == 0 {
                 break 'cfr_loop;
@@ -246,12 +218,11 @@ pub fn copy_file_with_state(
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
         loop {
-            match copy_file_read_write_loop(in_.native(), out.native(), (i32::MAX - 1) as usize) {
-                Err(err) => return Err(err),
-                Ok(amt) => {
-                    if amt == 0 {
-                        break;
-                    }
+            {
+                let amt =
+                    copy_file_read_write_loop(in_.native(), out.native(), (i32::MAX - 1) as usize)?;
+                if amt == 0 {
+                    break;
                 }
             }
         }
@@ -293,7 +264,6 @@ pub fn can_use_copy_file_range_syscall() -> bool {
             return false;
         }
 
-        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
         if kernel_at_least(4, 5) {
             bun_core::scoped_log!(debug, "copy_file_range is supported");
             CAN_USE_COPY_FILE_RANGE.store(1, Ordering::Relaxed);
@@ -336,7 +306,6 @@ pub fn can_use_ioctl_ficlone() -> bool {
             return false;
         }
 
-        // Zig: `kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)`
         if kernel_at_least(4, 5) {
             bun_core::scoped_log!(debug, "ioctl_ficlonerange is supported");
             CAN_USE_IOCTL_FICLONE_.store(1, Ordering::Relaxed);
@@ -351,7 +320,7 @@ pub fn can_use_ioctl_ficlone() -> bool {
     result == 1
 }
 
-// TODO(port): `fd_t` is `std.posix.fd_t` (c_int on posix, HANDLE on windows). Only the
+// Only the
 // posix paths call the fns below, so c_int is sufficient here.
 #[allow(non_camel_case_types)]
 type fd_t = core::ffi::c_int;
@@ -369,7 +338,6 @@ pub fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
         loop {
-            // TODO(port): raw syscall binding `std.os.linux.copy_file_range`
             // SAFETY: raw syscall; fds valid, offset ptrs null
             let rc = unsafe {
                 crate::linux::copy_file_range(
@@ -395,7 +363,7 @@ pub fn copy_file_range(
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
                 // syscall added in Linux 4.5, use fallback
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // On Linux EOPNOTSUPP == ENOTSUP.
                 E::ENOTSUP | E::ENOSYS => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                     bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
@@ -412,7 +380,6 @@ pub fn copy_file_range(
     }
 
     while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
-        // TODO(port): raw syscall binding `std.os.linux.sendfile`
         // SAFETY: raw syscall; fds valid, offset ptr null
         let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);
@@ -429,7 +396,7 @@ pub fn copy_file_range(
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             // they might not support it
-            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+            // On Linux EOPNOTSUPP == ENOTSUP.
             E::ENOTSUP | E::ENOSYS => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
@@ -445,7 +412,7 @@ pub fn copy_file_range(
 }
 
 pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Result<usize> {
-    // PERF(port): Zig used `undefined` (uninitialized) 32 KiB stack buffer — profile if it shows up on a hot path
+    // PERF: 32 KiB stack buffer is zero-initialized — profile if it shows up on a hot path
     let mut buf = [0u8; 8 * 4096];
     let adjusted_count = buf.len().min(len);
     match crate::read(Fd::from_native(in_ as _), &mut buf[0..adjusted_count]) {
@@ -456,15 +423,14 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
             }
 
             while amt_written < amt_read {
-                match crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read]) {
-                    Ok(wrote) => {
-                        if wrote == 0 {
-                            return Ok(amt_written);
-                        }
-
-                        amt_written += wrote;
+                {
+                    let wrote =
+                        crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read])?;
+                    if wrote == 0 {
+                        return Ok(amt_written);
                     }
-                    Err(err) => return Err(err),
+
+                    amt_written += wrote;
                 }
             }
             if amt_read == 0 {
@@ -477,21 +443,13 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
 }
 
 /// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// PORT NOTE: `bun_analytics::generate_header::Platform` (T6) is the canonical
+/// `bun_analytics::generate_header::Platform` (T6) is the canonical
 /// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
-/// move-down) so this crate stays leaf. Compare matches Zig
-/// `std.SemanticVersion.orderWithoutTag` (lexicographic on major→minor→patch,
-/// patch defaults to 0 in the comparand).
+/// move-down) so this crate stays leaf. Compare is
+/// lexicographic on major→minor→patch,
+/// with patch defaulting to 0 in the comparand.
 #[inline]
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();
     (v.major, v.minor, v.patch) >= (major, minor, 0)
 }
-
-/// Map a raw `copy_file`-path errno to `bun_core::Error`.
-#[inline]
-pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error {
-    e.into()
-}
-
-// ported from: src/sys/copy_file.zig

@@ -4,7 +4,7 @@
 
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_collections::VecExt;
-use bun_core::{String as BunString, strings};
+use bun_core::{StackCheck, String as BunString, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
@@ -45,9 +45,20 @@ impl ExprJsc for ExprData {
 }
 
 pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    data_to_js_with_check(this, global, StackCheck::init())
+}
+
+fn data_to_js_with_check(
+    this: &ExprData,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
+    if !stack_check.is_safe_to_recurse() {
+        return Err(js_err(global.throw_stack_overflow()));
+    }
     match this {
-        ExprData::EArray(e) => array_to_js(e, global),
-        ExprData::EObject(e) => object_to_js(e, global),
+        ExprData::EArray(e) => array_to_js(e, global, stack_check),
+        ExprData::EObject(e) => object_to_js(e, global, stack_check),
         ExprData::EString(e) => string_to_js(e, global),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
@@ -56,9 +67,11 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
         } else {
             JSValue::FALSE
         }),
-        ExprData::ENumber(e) => Ok(number_to_js(e)),
+        ExprData::ENumber(e) => Ok(number_to_js(*e)),
         // ExprData::EBigInt(e) => e.to_js(ctx, exception),
-        ExprData::EInlinedEnum(inlined) => data_to_js(&inlined.value.data, global),
+        ExprData::EInlinedEnum(inlined) => {
+            data_to_js_with_check(&inlined.value.data, global, stack_check)
+        }
 
         ExprData::EIdentifier(_)
         | ExprData::EImportIdentifier(_)
@@ -69,37 +82,36 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
     }
 }
 
-pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+pub(crate) fn array_to_js(
+    this: &E::Array,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
     let items = this.items.slice();
     let array = JSValue::create_empty_array(global, items.len()).map_err(js_err)?;
     let _guard = array.protected();
     for (j, expr) in items.iter().enumerate() {
         array
-            .put_index(global, j as u32, data_to_js(&expr.data, global)?)
+            .put_index(
+                global,
+                j as u32,
+                data_to_js_with_check(&expr.data, global, stack_check)?,
+            )
             .map_err(js_err)?;
     }
 
     Ok(array)
 }
 
-pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
-    // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
-    // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
-    // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
-    // FFI hop. Callers needing a raw ref can `.as_ref()` on the result.
-    JSValue::js_boolean(this.value)
-}
-
-pub fn number_to_js(this: &E::Number) -> JSValue {
+pub(crate) fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value)
 }
 
-pub fn big_int_to_js(_: &E::BigInt) -> JSValue {
-    // TODO:
-    JSValue::js_number(0.0)
-}
-
-pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+pub(crate) fn object_to_js(
+    this: &E::Object,
+    global: &JSGlobalObject,
+    stack_check: StackCheck,
+) -> Result<JSValue, ToJSError> {
     let obj = JSValue::create_empty_object(global, this.properties.len_u32() as usize);
     let _guard = obj.protected();
     let props: &[G::Property] = this.properties.slice();
@@ -111,13 +123,19 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
         {
             return Err(ToJSError::CannotConvertArgumentTypeToJS);
         }
-        let key = data_to_js(
+        let key = data_to_js_with_check(
             &prop.key.as_ref().expect("infallible: prop has key").data,
             global,
+            stack_check,
         )?;
-        let value = expr_to_js(
-            prop.value.as_ref().expect("infallible: prop has value"),
+        let value = data_to_js_with_check(
+            &prop
+                .value
+                .as_ref()
+                .expect("infallible: prop has value")
+                .data,
             global,
+            stack_check,
         )?;
         JSValue::put_to_property_key(obj, global, key, value).map_err(js_err)?;
     }
@@ -125,8 +143,23 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
     Ok(obj)
 }
 
-/// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
-///
+/// Serialize UTF-8 bytes to a JS string, transcoding to UTF-16 only when the
+/// bytes are not pure ASCII (`to_utf16_alloc` returns `Ok(None)` for
+/// pure-ASCII, in which case the 8-bit Latin-1 form is kept).
+fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    let utf16 = strings::to_utf16_alloc(bytes, false, false).map_err(|_| ToJSError::OutOfMemory)?;
+    if let Some(utf16) = utf16 {
+        let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
+        chars.copy_from_slice(&utf16);
+        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+    } else {
+        let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
+        chars.copy_from_slice(bytes);
+        bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
+    }
+}
+
+/// `E.String` → JS string conversion.
 /// Stamps the body for both `EString` nominal types: the full T4
 /// `bun_ast::E::String` (used by `data_to_js` / macros) and the
 /// value-subset T2 `bun_ast::E::EString` (used by the YAML / JSON5
@@ -136,34 +169,29 @@ pub fn object_to_js(this: &E::Object, global: &JSGlobalObject) -> Result<JSValue
 macro_rules! impl_string_to_js {
     ($name:ident, $ty:ty) => {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-            // TODO(port): Zig mutates `s` via `resolveRopeIfNeeded(allocator)`;
-            // callers only have `&` and there is no bump arena in scope here.
-            // Either thread a bump arena + interior-mut rope or resolve ropes
-            // before reaching here. For now, assert non-rope (current callers
-            // feed resolved literals).
-            debug_assert!(
-                s.next.is_none(),
-                "string_to_js: rope EString reached without resolveRopeIfNeeded; thread a bump arena"
-            );
+            // Callers here only have `&s` and no bump arena, so flatten the
+            // rope into a temporary heap buffer and serialize from that
+            // instead. Ropes are only ever built from UTF-8 parts
+            // (`resolve_rope_if_needed` is a no-op for UTF-16).
+            if s.next.is_some() && s.is_utf8() {
+                let mut bytes: Vec<u8> = Vec::with_capacity(s.rope_len as usize);
+                bytes.extend_from_slice(s.slice8());
+                let mut next = s.next;
+                while let Some(part) = next {
+                    let part = part.get();
+                    bytes.extend_from_slice(&part.data);
+                    next = part.next;
+                }
+                return utf8_bytes_to_js(&bytes, global);
+            }
+
             if !s.is_present() {
                 let emp = BunString::EMPTY;
                 return bun_string_jsc::to_js(&emp, global).map_err(js_err);
             }
 
             if s.is_utf8() {
-                // `to_utf16_alloc` returns `Ok(None)` for pure-ASCII (keep 8-bit form).
-                let utf16 = strings::to_utf16_alloc(s.slice8(), false, false)
-                    .map_err(|_| ToJSError::OutOfMemory)?;
-                if let Some(utf16) = utf16 {
-                    let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-                    chars.copy_from_slice(&utf16);
-                    bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-                } else {
-                    let bytes = s.slice8();
-                    let (mut out, chars) = BunString::create_uninitialized_latin1(bytes.len());
-                    chars.copy_from_slice(bytes);
-                    bun_string_jsc::transfer_to_js(&mut out, global).map_err(js_err)
-                }
+                utf8_bytes_to_js(s.slice8(), global)
             } else {
                 let utf16 = s.slice16();
                 let (mut out, chars) = BunString::create_uninitialized_utf16(utf16.len());
@@ -175,5 +203,3 @@ macro_rules! impl_string_to_js {
 }
 impl_string_to_js!(string_to_js, E::String);
 impl_string_to_js!(value_string_to_js, bun_ast::E::EString);
-
-// ported from: src/js_parser_jsc/expr_jsc.zig

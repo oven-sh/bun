@@ -4,14 +4,15 @@
 // (like the container port proxy) accepts the TCP connection and closes it
 // with no data. Bun previously reported both as a generic
 // ERR_POSTGRES_CONNECTION_CLOSED "Connection closed", which is misleading —
-// the connection was never established. Both are now reported as
-// ERR_*_CONNECTION_FAILED with a message saying what actually happened, and
-// the pool retries them with backoff until connectionTimeout elapses while
-// queries are waiting — so a server that becomes ready mid-startup is
-// invisible to the application. Real server errors (e.g. 57P03 "the database
-// system is starting up") and closes of established connections keep their
-// existing reporting and are not retried.
-// See https://github.com/oven-sh/bun/issues/16691.
+// the connection was never established. Refused connections are reported as
+// ERR_*_CONNECTION_REFUSED and fail fast (nothing is listening; probes and
+// healthchecks rely on the immediate error). Pre-handshake closes are
+// reported as ERR_*_CONNECTION_FAILED and the pool retries them with backoff
+// until connectionTimeout elapses while queries are waiting — so a server
+// that becomes ready mid-startup is invisible to the application. Real
+// server errors (e.g. 57P03 "the database system is starting up") and closes
+// of established connections keep their existing reporting and are not
+// retried. See https://github.com/oven-sh/bun/issues/16691.
 //
 // Uses plain TCP servers / closed ports so the tests run without Docker.
 
@@ -59,11 +60,14 @@ function postgresAuthOkAndReady(socket: net.Socket) {
   socket.write(Buffer.concat([authOk, ready]));
 }
 
-test("postgres: connection refused is reported as a connect failure, not a closed connection", async () => {
+test("postgres: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
+  const start = Date.now();
   const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
   expect(err.message).toBe("Failed to connect");
-  expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+  expect(err.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
+  // refused is not retried: nothing is listening, fail well inside the budget
+  expect(Date.now() - start).toBeLessThan(900);
 });
 
 test("postgres: connection closed before handshake completes is a connect failure", async () => {
@@ -187,11 +191,14 @@ test("postgres: established connection that closes keeps the plain message", asy
   }
 });
 
-test("mysql: connection refused is reported as a connect failure, not a closed connection", async () => {
+test("mysql: connection refused is reported distinctly and fails fast", async () => {
   const port = await closedPort();
+  const start = Date.now();
   const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
   expect(err.message).toBe("Failed to connect");
-  expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+  expect(err.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
+  // refused is not retried: nothing is listening, fail well inside the budget
+  expect(Date.now() - start).toBeLessThan(900);
 });
 
 test("mysql: connection closed before handshake completes is a connect failure", async () => {

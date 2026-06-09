@@ -2290,9 +2290,7 @@ if (isDockerEnabled()) {
     test("Connection errors are caught using begin()", async () => {
       let error;
       try {
-        // connectionTimeout bounds the connect-retry budget; keep it short
-        // so the failure surfaces quickly
-        const sql = postgres({ host: "localhost", port: 1, connectionTimeout: 1 });
+        const sql = postgres({ host: "localhost", port: 1 });
 
         await sql.begin(async sql => {
           await sql`insert into test (label, value) values (${1}, ${2})`;
@@ -2302,7 +2300,7 @@ if (isDockerEnabled()) {
       }
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
     });
 
     test("dynamic table name", async () => {

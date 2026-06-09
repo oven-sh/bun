@@ -645,11 +645,14 @@ class PooledPostgresConnection {
     );
   }
 
-  /// Connect failures (ERR_POSTGRES_CONNECTION_FAILED) mean the server never
-  /// accepted the connection — typically it is still starting up, or an
-  /// intermediary (like a container port proxy) is up before the database
-  /// is. Those are retried until connectionTimeout elapses, as long as
-  /// queries are waiting on the pool. Real server errors (authentication,
+  /// Connect failures (ERR_POSTGRES_CONNECTION_FAILED) mean the server
+  /// accepted the TCP connection but closed it before the handshake
+  /// completed — typically it is still starting up, or an intermediary
+  /// (like a container port proxy) is up before the database is. Those are
+  /// retried until connectionTimeout elapses, as long as queries are
+  /// waiting on the pool. Refused connections
+  /// (ERR_POSTGRES_CONNECTION_REFUSED) fail fast: nothing is listening,
+  /// and probes/healthchecks rely on the immediate error. Real server errors (authentication,
   /// ErrorResponse during startup) and closes of established connections are
   /// not retried here.
   #shouldRetryConnecting(err: Error | null): boolean {

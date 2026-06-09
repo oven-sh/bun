@@ -1084,9 +1084,7 @@ if (isDockerEnabled()) {
         test("Connection errors are caught using begin()", async () => {
           let error;
           try {
-            // connectionTimeout bounds the connect-retry budget; keep it
-            // short so the failure surfaces quickly
-            const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql", connectionTimeout: 1 });
+            const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
 
             await sql.begin(async sql => {
               await sql`insert into test_connection_errors (label, value) values (${1}, ${2})`;
@@ -1094,7 +1092,7 @@ if (isDockerEnabled()) {
           } catch (err) {
             error = err;
           }
-          expect(error.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+          expect(error.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
         });
 
         test("dynamic table name", async () => {

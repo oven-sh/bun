@@ -109,8 +109,11 @@ describe.concurrent("napi", () => {
             if (process.platform !== "win32") {
               expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
             } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
+              // On Windows the extracted file can't be deleted while the
+              // module is loaded, so it stays behind (elevated processes mark
+              // it for deletion on reboot). This at least proves the
+              // extraction went to BUN_TMPDIR.
+              expect(readdirSync(tmpdir), "extraction should use BUN_TMPDIR").not.toBeEmpty();
             }
           },
           10 * 1000,
@@ -149,6 +152,43 @@ describe.concurrent("napi", () => {
         }
       });
     });
+  });
+
+  it("cleans up the extracted .node file when dlopen fails in a compiled executable", async () => {
+    const dir = tempDirWithFiles("dlopen-fail-compile", {
+      "package.json": JSON.stringify({ name: "dlopen-fail", version: "1.0.0" }),
+      "main.js": `try {
+        require("./invalid.node");
+        console.log("unexpected: dlopen succeeded");
+      } catch (err) {
+        console.log("code: " + err.code);
+      }`,
+      "invalid.node": "this is not a native addon",
+    });
+
+    const build = spawnSync({
+      cmd: [bunExe(), "build", "--compile", join(dir, "main.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    expect(build.success).toBeTrue();
+
+    const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+    const tmpdir = tempDirWithFiles("dlopen-fail-tmpdir", {});
+    const result = spawnSync({
+      cmd: [exe],
+      env: { ...bunEnv, BUN_TMPDIR: tmpdir },
+      stdin: "inherit",
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    expect(result.stdout.toString().trim()).toBe("code: ERR_DLOPEN_FAILED");
+    expect(result.success).toBeTrue();
+    // Nothing keeps the extracted copy open after dlopen fails, so it must be
+    // deleted immediately, on Windows too (no reliance on delete-on-reboot).
+    expect(readdirSync(tmpdir), "bun should clean up the extracted .node file").toBeEmpty();
   });
 
   describe("issue_7685", () => {

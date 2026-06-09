@@ -1,8 +1,9 @@
 'use strict';
 
-// Instrumented copy of test-http2-compat-serverrequest-pipe.js to diagnose a
-// darwin-aarch64-only timeout. Logs every lifecycle event and dumps stream
-// state from a watchdog before the runner's 20s kill.
+// Instrumented, looped copy of test-http2-compat-serverrequest-pipe.js to
+// diagnose a darwin-aarch64-only timeout that reproduces under full-suite
+// load but not in single runs. Repeats the scenario until a soft deadline;
+// any iteration stalling >4s dumps state and exits 7.
 
 const common = require('../common');
 if (!common.hasCrypto)
@@ -12,98 +13,118 @@ const assert = require('assert');
 const http2 = require('http2');
 const fs = require('fs');
 
-const t0 = Date.now();
-const log = m => console.error(`[+${Date.now() - t0}ms] ${m}`);
-
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
 const loc = fixtures.path('person-large.jpg');
-const fn = tmpdir.resolve('http2-url-tests.js');
-log(`src size = ${fs.statSync(loc).size}`);
+const SOFT_DEADLINE_MS = 14_000;
+const STALL_MS = 4_000;
+const start = Date.now();
+let iteration = 0;
 
-const server = http2.createServer();
-let serverReq, serverRes, serverDest, clientReq, clientStr, clientSession;
+function log(m) {
+  console.error(`[iter ${iteration} +${Date.now() - start}ms] ${m}`);
+}
 
-server.on('request', (req, res) => {
-  serverReq = req;
-  serverRes = res;
-  log('server: request received');
-  let bytes = 0;
-  req.on('data', c => { bytes += c.length; });
-  req.on('end', () => log(`server: req end (bytes=${bytes})`));
-  req.on('aborted', () => log('server: req aborted'));
-  req.on('error', e => log(`server: req error ${e}`));
-  req.on('close', () => log('server: req close'));
-  res.on('close', () => log('server: res close'));
-  const dest = (serverDest = req.pipe(fs.createWriteStream(fn)));
-  dest.on('error', e => log(`server: dest error ${e}`));
-  dest.on('finish', () => {
-    log('server: dest finish');
-    assert.strictEqual(req.complete, true);
-    assert.strictEqual(fs.readFileSync(loc).length, fs.readFileSync(fn).length);
-    fs.unlinkSync(fn);
-    res.end();
-    log('server: res.end() called');
-  });
-});
-
-server.listen(0, () => {
-  const port = server.address().port;
-  log(`server listening on ${port}`);
-  const client = (clientSession = http2.connect(`http://localhost:${port}`));
-  client.on('error', e => log(`client: session error ${e}`));
-  client.on('goaway', (code, last) => log(`client: session goaway code=${code} last=${last}`));
-  client.on('close', () => log('client: session close'));
-
-  let remaining = 2;
-  function maybeClose() {
-    log(`maybeClose remaining=${remaining - 1}`);
-    if (--remaining === 0) {
-      server.close(() => log('server.close() completed'));
-      client.close(() => log('client.close() completed'));
-      log('server.close() + client.close() called');
-    }
+function dump(name, s) {
+  if (!s) return log(`  ${name}: <unset>`);
+  const pick = {};
+  for (const k of [
+    'readable', 'readableEnded', 'readableFlowing', 'readableLength',
+    'writable', 'writableEnded', 'writableFinished', 'writableLength', 'writableNeedDrain',
+    'destroyed', 'closed', 'complete', 'aborted', 'rstCode', 'pending', 'bytesWritten',
+  ]) {
+    try {
+      const v = s[k];
+      if (v !== undefined) pick[k] = v;
+    } catch {}
   }
+  log(`  ${name}: ${JSON.stringify(pick)}`);
+}
 
-  const req = (clientReq = client.request({ ':method': 'POST' }));
-  req.on('response', () => log('client: response'));
-  req.resume();
-  req.on('end', () => { log('client: req end'); maybeClose(); });
-  req.on('close', () => log('client: req close'));
-  req.on('error', e => log(`client: req error ${e}`));
-  const str = (clientStr = fs.createReadStream(loc));
-  str.on('end', () => { log('client: str end'); maybeClose(); });
-  str.on('error', e => log(`client: str error ${e}`));
-  str.pipe(req);
-  log('client: str.pipe(req) started');
-});
+function runOnce() {
+  iteration++;
+  const fn = tmpdir.resolve(`http2-pipe-${iteration}.bin`);
+  const events = [];
+  const ev = m => events.push(`+${Date.now() - start}ms ${m}`);
 
-const watchdog = setTimeout(() => {
-  log('WATCHDOG: still alive after 15s, dumping state');
-  const dump = (name, s) => {
-    if (!s) return log(`  ${name}: <unset>`);
-    const pick = {};
-    for (const k of [
-      'readable', 'readableEnded', 'readableFlowing', 'readableLength',
-      'writable', 'writableEnded', 'writableFinished', 'writableLength', 'writableNeedDrain',
-      'destroyed', 'closed', 'complete', 'aborted', 'rstCode', 'pending', 'bytesWritten',
-    ]) {
+  const state = {};
+  const server = http2.createServer();
+
+  server.on('request', (req, res) => {
+    state.serverReq = req;
+    state.serverRes = res;
+    ev('server: request');
+    req.on('end', () => ev('server: req end'));
+    req.on('error', e => ev(`server: req error ${e}`));
+    const dest = (state.serverDest = req.pipe(fs.createWriteStream(fn)));
+    dest.on('error', e => ev(`server: dest error ${e}`));
+    dest.on('finish', () => {
+      ev('server: dest finish');
+      assert.strictEqual(req.complete, true);
+      assert.strictEqual(fs.readFileSync(loc).length, fs.readFileSync(fn).length);
+      fs.unlinkSync(fn);
+      res.end();
+      ev('server: res.end()');
+    });
+  });
+
+  return new Promise(resolve => {
+    const stall = setTimeout(() => {
+      log('STALL detected, event trail:');
+      for (const e of events) log(`  ${e}`);
+      dump('serverReq', state.serverReq);
+      dump('serverRes', state.serverRes);
+      dump('serverDest', state.serverDest);
+      dump('clientReq', state.clientReq);
+      dump('clientStr', state.clientStr);
+      dump('clientSession', state.clientSession);
       try {
-        const v = s[k];
-        if (v !== undefined) pick[k] = v;
+        log(`  clientSession.state: ${JSON.stringify(state.clientSession?.state)}`);
       } catch {}
-    }
-    log(`  ${name}: ${JSON.stringify(pick)}`);
-  };
-  dump('serverReq', serverReq);
-  dump('serverRes', serverRes);
-  dump('serverDest', serverDest);
-  dump('clientReq', clientReq);
-  dump('clientStr', clientStr);
-  dump('clientSession', clientSession);
-  try {
-    log(`  clientSession.state: ${JSON.stringify(clientSession?.state)}`);
-  } catch {}
-  process.exit(7);
-}, 15000);
-watchdog.unref();
+      process.exit(7);
+    }, STALL_MS);
+    stall.unref();
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const client = (state.clientSession = http2.connect(`http://localhost:${port}`));
+      client.on('error', e => ev(`client: session error ${e}`));
+      client.on('goaway', (code, last) => ev(`client: goaway code=${code} last=${last}`));
+      client.on('close', () => ev('client: session close'));
+
+      let remaining = 2;
+      let closesPending = 2;
+      function closed() {
+        if (--closesPending === 0) {
+          clearTimeout(stall);
+          resolve();
+        }
+      }
+      function maybeClose() {
+        ev(`maybeClose remaining=${remaining - 1}`);
+        if (--remaining === 0) {
+          server.close(() => { ev('server.close() completed'); closed(); });
+          client.close(() => { ev('client.close() completed'); closed(); });
+        }
+      }
+
+      const req = (state.clientReq = client.request({ ':method': 'POST' }));
+      req.on('response', () => ev('client: response'));
+      req.resume();
+      req.on('end', () => { ev('client: req end'); maybeClose(); });
+      req.on('error', e => ev(`client: req error ${e}`));
+      const str = (state.clientStr = fs.createReadStream(loc));
+      str.on('end', () => { ev('client: str end'); maybeClose(); });
+      str.on('error', e => ev(`client: str error ${e}`));
+      str.pipe(req);
+      ev('client: pipe started');
+    });
+  });
+}
+
+(async () => {
+  while (Date.now() - start < SOFT_DEADLINE_MS) {
+    await Promise.all([runOnce(), runOnce(), runOnce()]);
+  }
+  console.error(`completed ${iteration} iterations without a stall`);
+})();

@@ -1800,13 +1800,21 @@ impl PostgresSQLConnection {
             && self.pipelined_requests.get() == 0
     }
 
-    /// Process pending requests and flush. Called from the enqueue path when
-    /// unnamed prepared statements with params skip writeQuery+Sync and need
-    /// advance() to send everything atomically on an idle connection.
+    /// Process pending requests and flush. Called from the enqueue path so
+    /// newly queued requests are written as soon as ordering allows: prepared
+    /// statements pipeline behind in-flight pipelined requests, unnamed
+    /// prepared statements with params get Parse+Bind+Execute sent atomically
+    /// on an idle connection, and requests that must wait (simple queries,
+    /// statements that still need preparing) stay queued until advance()
+    /// reaches them in FIFO order.
+    ///
+    /// Gated on WAITING_TO_PREPARE because advance() skips over requests whose
+    /// statement is still Parsing; entering it with a Parse outstanding could
+    /// write a later request ahead of an earlier unwritten one.
     pub fn advance_and_flush(&self) {
         let flags = self.flags.get();
         if !flags.contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && flags.contains(ConnectionFlags::IS_READY_FOR_QUERY)
+            && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE)
         {
             self.advance();
             self.flush_data();

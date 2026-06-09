@@ -950,4 +950,44 @@ mod tests {
         // SAFETY: queued (SCHEDULED) task on the consumer thread.
         unsafe { release_with::<TestSchedule>(this) };
     }
+
+    #[test]
+    fn consuming_wake_from_foreign_thread_transfers_its_reference() {
+        let _guard = SerialGuard::acquire();
+        drain_enqueued();
+
+        let waker_out = Rc::new(Cell::new(None));
+        let this = test_spawn(Park {
+            waker_out: Rc::clone(&waker_out),
+        });
+        // SAFETY: freshly spawned SCHEDULED task.
+        unsafe { TestSchedule::enqueue_local(this) };
+        drain_enqueued();
+        // SAFETY: queued task, single consumer.
+        unsafe { poll_with::<TestSchedule>(this) };
+        let waker = waker_out.take().expect("stored");
+        // SAFETY: test owns the task ref.
+        let before = unsafe { refs_of(this) };
+
+        // Consuming wake from a FOREIGN thread: must take the concurrent
+        // path and transfer the waker's reference into the queue slot.
+        std::thread::scope(|scope| {
+            scope.spawn(move || waker.wake());
+        });
+        let enqueued = drain_enqueued();
+        assert_eq!(enqueued.len(), 1);
+        assert!(
+            !enqueued[0].1,
+            "foreign-thread wake takes the concurrent path"
+        );
+        // SAFETY: test owns the task ref.
+        assert_eq!(
+            unsafe { refs_of(this) },
+            before,
+            "waker ref transferred to the queue slot - no net refcount change"
+        );
+
+        // SAFETY: queued (SCHEDULED) task on the consumer thread.
+        unsafe { release_with::<TestSchedule>(this) };
+    }
 }

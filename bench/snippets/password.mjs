@@ -19,8 +19,10 @@ bench("password.hash argon2id x32 concurrent", async () => {
 });
 
 // Promise stacking: N pending password promises in flight at once, settled
-// together. bcrypt cost=4 keeps per-op compute small (~0.67 ms) so queue,
-// wake, and completion machinery dominate as N grows.
+// together. bcrypt cost=4 keeps per-op compute small (~0.67 ms) so the
+// completion path is a visible slice of each op; totals scale with
+// N / pool-threads (compute saturates the pool), so the series measures
+// completion-path throughput at increasing in-flight counts.
 for (const n of [8, 32, 128, 512]) {
   bench(`bcrypt x${n} Promise.all`, async () => {
     await Promise.all(

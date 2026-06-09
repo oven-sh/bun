@@ -252,6 +252,33 @@ struct Oneshot<T> {
 // `T: Send` is required by [`run`]'s bounds.
 unsafe impl<T: Send> Sync for Oneshot<T> {}
 
+impl<T: Send> Oneshot<T> {
+    /// Deliver the value and wake the registered waker, if any. Sole
+    /// completion entry point; called exactly once, from the pool thread.
+    fn complete(&self, value: T) {
+        // SAFETY: the completing thread is the only writer of `value`; the
+        // poller reads it only after acquiring `done`.
+        unsafe { *self.value.get() = Some(value) };
+        // Publish the value BEFORE the wake hand-off (state change precedes
+        // wake): a poller that misses the hand-off still observes `done`
+        // after registering.
+        self.done.store(true, Ordering::Release);
+        // Take the cell lock to wake. If the poller is mid-register, leave
+        // `WAKING` set and return — its unlock CAS fails, it reclaims its
+        // waker and reads `done`. Nobody spins.
+        if self.waker_state.fetch_or(WAKING, Ordering::AcqRel) == WAITING {
+            // SAFETY: we hold the cell lock (`WAKING`, was WAITING); a
+            // registrant cannot enter until the store below.
+            let waker = unsafe { (*self.waker.get()).take() };
+            let prev = self.waker_state.swap(WAITING, Ordering::Release);
+            debug_assert_eq!(prev, WAKING);
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+}
+
 /// Run `f` on the global [`WorkPool`] and await its result.
 ///
 /// Lazy: nothing is scheduled until the first poll (a future that is never
@@ -304,27 +331,7 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
                 F: FnOnce() -> T + Send + 'static,
                 T: Send + 'static,
             {
-                let value = job();
-                // SAFETY: the pool thread is the only writer of `value`; the
-                // poller reads it only after acquiring `done`.
-                unsafe { *shared.value.get() = Some(value) };
-                // Publish the value BEFORE the wake hand-off (state change
-                // precedes wake): a poller that misses the hand-off still
-                // observes `done` after registering.
-                shared.done.store(true, Ordering::Release);
-                // Take the cell lock to wake. If the poller is mid-register,
-                // leave `WAKING` set and return — its unlock CAS fails, it
-                // reclaims its waker and reads `done`. Nobody spins.
-                if shared.waker_state.fetch_or(WAKING, Ordering::AcqRel) == WAITING {
-                    // SAFETY: we hold the cell lock (`WAKING`, was WAITING);
-                    // a registrant cannot enter until the store below.
-                    let waker = unsafe { (*shared.waker.get()).take() };
-                    let prev = shared.waker_state.swap(WAITING, Ordering::Release);
-                    debug_assert_eq!(prev, WAKING);
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
-                }
+                shared.complete(job());
             }
 
             let shared = Arc::clone(&this.shared);
@@ -380,5 +387,139 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
             return Poll::Ready(value.expect("RunOnWorkPool polled after completion"));
         }
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod oneshot_tests {
+    use super::*;
+    use core::sync::atomic::AtomicUsize;
+    use core::task::{Context, RawWaker, RawWakerVTable};
+
+    /// Per-test counting waker: `data` points at a leaked `WakeCounter`, so
+    /// tests are isolated without serialization.
+    struct WakeCounter {
+        wakes: AtomicUsize,
+        clones: AtomicUsize,
+    }
+
+    unsafe fn cw_clone(d: *const ()) -> RawWaker {
+        // SAFETY: `d` is the leaked WakeCounter installed below.
+        unsafe { &*d.cast::<WakeCounter>() }
+            .clones
+            .fetch_add(1, Ordering::Relaxed);
+        RawWaker::new(d, &CW_VT)
+    }
+    unsafe fn cw_wake(d: *const ()) {
+        // SAFETY: as above.
+        unsafe { &*d.cast::<WakeCounter>() }
+            .wakes
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    unsafe fn cw_wake_by_ref(d: *const ()) {
+        // SAFETY: as above.
+        unsafe { &*d.cast::<WakeCounter>() }
+            .wakes
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    unsafe fn cw_drop(_d: *const ()) {}
+    static CW_VT: RawWakerVTable = RawWakerVTable::new(cw_clone, cw_wake, cw_wake_by_ref, cw_drop);
+
+    /// The returned `Box` must outlive every clone of the waker that can
+    /// still be WOKEN (drops are no-ops and never dereference).
+    fn counting_waker() -> (Box<WakeCounter>, Waker) {
+        let c = Box::new(WakeCounter {
+            wakes: AtomicUsize::new(0),
+            clones: AtomicUsize::new(0),
+        });
+        let waker =
+            // SAFETY: vtable fns only touch the counter, which the caller
+            // keeps alive for the duration of the test.
+            unsafe { Waker::from_raw(RawWaker::new(core::ptr::from_ref(&*c).cast::<()>(), &CW_VT)) };
+        (c, waker)
+    }
+
+    fn fresh() -> Arc<Oneshot<i32>> {
+        Arc::new(Oneshot {
+            waker_state: AtomicU8::new(WAITING),
+            done: AtomicBool::new(false),
+            value: UnsafeCell::new(None),
+            waker: UnsafeCell::new(None),
+        })
+    }
+
+    /// A future past its first poll (job already handed off).
+    fn pending(shared: Arc<Oneshot<i32>>) -> RunOnWorkPool<i32, fn() -> i32> {
+        RunOnWorkPool { shared, job: None }
+    }
+
+    #[test]
+    fn complete_before_register_is_ready_without_a_wake() {
+        let shared = fresh();
+        shared.complete(7);
+        let (c, waker) = counting_waker();
+        let mut fut = pending(Arc::clone(&shared));
+        let mut cx = Context::from_waker(&waker);
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Ready(7));
+        assert_eq!(c.wakes.load(Ordering::Relaxed), 0, "nobody to wake");
+    }
+
+    #[test]
+    fn register_then_complete_wakes_exactly_once() {
+        let shared = fresh();
+        let (c, waker) = counting_waker();
+        let mut fut = pending(Arc::clone(&shared));
+        let mut cx = Context::from_waker(&waker);
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Pending);
+        assert_eq!(c.clones.load(Ordering::Relaxed), 1, "waker stored");
+        shared.complete(9);
+        assert_eq!(c.wakes.load(Ordering::Relaxed), 1, "stored waker woken");
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Ready(9));
+    }
+
+    #[test]
+    fn repoll_with_equivalent_waker_skips_the_clone() {
+        let shared = fresh();
+        let (c, waker) = counting_waker();
+        let mut fut = pending(Arc::clone(&shared));
+        let mut cx = Context::from_waker(&waker);
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Pending);
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Pending);
+        assert_eq!(
+            c.clones.load(Ordering::Relaxed),
+            1,
+            "will_wake dedup keeps the stored waker"
+        );
+        shared.complete(3);
+        assert_eq!(Pin::new(&mut fut).poll(&mut cx), Poll::Ready(3));
+    }
+
+    #[test]
+    fn stress_register_racing_complete_never_strands_the_poller() {
+        let rounds: i32 = if cfg!(miri) { 25 } else { 1000 };
+        for i in 0..rounds {
+            let shared = fresh();
+            let (_c, waker) = counting_waker();
+            let completer = Arc::clone(&shared);
+            std::thread::scope(|scope| {
+                scope.spawn(move || completer.complete(i));
+                let mut fut = pending(Arc::clone(&shared));
+                let mut cx = Context::from_waker(&waker);
+                let mut spins = 0u64;
+                loop {
+                    match Pin::new(&mut fut).poll(&mut cx) {
+                        Poll::Ready(v) => {
+                            assert_eq!(v, i);
+                            break;
+                        }
+                        Poll::Pending => {
+                            spins += 1;
+                            assert!(spins < 50_000_000, "poller stranded: lost wakeup");
+                            std::thread::yield_now();
+                        }
+                    }
+                }
+            });
+        }
     }
 }

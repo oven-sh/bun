@@ -990,8 +990,21 @@ impl MarkedArrayBuffer {
     /// Take ownership of a default-allocator `Box<[u8]>` and wrap it as an
     /// owning `MarkedArrayBuffer`. The buffer is freed exactly once: either by
     /// [`MarkedArrayBuffer::destroy`] or by the deallocator installed when the
-    /// buffer is handed to JSC (`to_js` / `to_node_buffer` — the handoff
-    /// clears `owns_buffer`, so a later `destroy()` is a no-op).
+    /// buffer is handed to JSC (`to_js` / `to_node_buffer` take the buffer out
+    /// of `self`, so a later `destroy()` is a no-op).
+    ///
+    /// Requiring `Box<[u8]>` makes the ownership transfer a type-system
+    /// invariant. There is deliberately no constructor that adopts a borrowed
+    /// slice as owned storage: the former `from_bytes(&mut [u8], _)` let safe
+    /// code free a stack buffer (issue #31969). This must not compile:
+    ///
+    /// ```compile_fail,E0599
+    /// use bun_jsc::{JSType, MarkedArrayBuffer};
+    ///
+    /// let mut bytes = [0u8; 1];
+    /// let mut buffer = MarkedArrayBuffer::from_bytes(&mut bytes, JSType::Uint8Array);
+    /// buffer.destroy(); // would free the stack address
+    /// ```
     pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
@@ -1035,13 +1048,13 @@ impl MarkedArrayBuffer {
 
     pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JSValue {
         // `create_buffer` installs `MarkedArrayBuffer_deallocator` over
-        // non-empty bytes, making JSC the owner; clear `owns_buffer` so a
-        // later `destroy()` cannot free the allocation a second time.
+        // non-empty bytes, making JSC the owner; take the buffer out of `self`
+        // so neither a later `destroy()` nor a repeated handoff can release
+        // the allocation a second time.
         self.owns_buffer = false;
-        // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
-        // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
-        // copy the descriptor and project a mutable slice.
-        let mut buf = self.buffer;
+        // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to
+        // JSC via the deallocator).
+        let mut buf = core::mem::replace(&mut self.buffer, ArrayBuffer::EMPTY);
         JSValue::create_buffer(global, buf.byte_slice_mut())
     }
 
@@ -1050,18 +1063,20 @@ impl MarkedArrayBuffer {
             return Ok(self.buffer.value);
         }
         // Both paths below hand the bytes to JSC (the non-empty one installs
-        // `MarkedArrayBuffer_deallocator`, making JSC the owner). Clear
-        // `owns_buffer` before the fallible FFI call so a later `destroy()`
-        // cannot double-free: if the call throws, the bytes may leak, which
-        // is the safe direction.
+        // `MarkedArrayBuffer_deallocator`, making JSC the owner). Take the
+        // buffer out of `self` before the fallible FFI call so neither a
+        // later `destroy()` nor a repeated handoff can release the allocation
+        // a second time; if the call throws, the bytes may leak, which is the
+        // safe direction.
         self.owns_buffer = false;
-        if self.buffer.byte_len == 0 {
+        let buffer = core::mem::replace(&mut self.buffer, ArrayBuffer::EMPTY);
+        if buffer.byte_len == 0 {
             // SAFETY: null `ptr` with `len == 0` and no deallocator — every
             // obligation of the callee's contract holds trivially.
             return unsafe {
                 make_typed_array_with_bytes_no_copy(
                     global,
-                    self.buffer.typed_array_type.to_typed_array_type(),
+                    buffer.typed_array_type.to_typed_array_type(),
                     ptr::null_mut(),
                     0,
                     None,
@@ -1070,17 +1085,18 @@ impl MarkedArrayBuffer {
             };
         }
         // SAFETY: this type's contract: `buffer.ptr` is the live backing
-        // allocation of `byte_len` bytes, mimalloc-owned (`from_string`/
-        // `from_bytes`); ownership moves to JSC, which frees it exactly once
-        // via `MarkedArrayBuffer_deallocator` (`mi_free`, ctx ignored).
+        // allocation of `byte_len` bytes, owned by the default allocator
+        // (`from_string`/`from_owned_bytes`); ownership moves to JSC, which
+        // frees it exactly once via `MarkedArrayBuffer_deallocator`
+        // (`default_alloc::free`, ctx ignored).
         unsafe {
             make_typed_array_with_bytes_no_copy(
                 global,
-                self.buffer.typed_array_type.to_typed_array_type(),
-                self.buffer.ptr.cast(),
-                self.buffer.byte_len,
+                buffer.typed_array_type.to_typed_array_type(),
+                buffer.ptr.cast(),
+                buffer.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                self.buffer.ptr.cast(),
+                buffer.ptr.cast(),
             )
         }
     }

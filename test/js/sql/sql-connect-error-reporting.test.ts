@@ -5,9 +5,12 @@
 // with no data. Bun previously reported both as a generic
 // ERR_POSTGRES_CONNECTION_CLOSED "Connection closed", which is misleading —
 // the connection was never established. Both are now reported as
-// ERR_*_CONNECTION_FAILED with a message saying what actually happened, while
-// real server errors (e.g. 57P03 "the database system is starting up") and
-// closes of established connections keep their existing reporting.
+// ERR_*_CONNECTION_FAILED with a message saying what actually happened, and
+// the pool retries them with backoff until connectionTimeout elapses while
+// queries are waiting — so a server that becomes ready mid-startup is
+// invisible to the application. Real server errors (e.g. 57P03 "the database
+// system is starting up") and closes of established connections keep their
+// existing reporting and are not retried.
 // See https://github.com/oven-sh/bun/issues/16691.
 //
 // Uses plain TCP servers / closed ports so the tests run without Docker.
@@ -30,8 +33,10 @@ async function closedPort(): Promise<number> {
   return port;
 }
 
+// connectionTimeout (seconds) bounds the connect-retry budget; keep it short
+// in tests that expect the failure to surface.
 async function connectError(url: string): Promise<any> {
-  const db = new SQL({ url, max: 1 });
+  const db = new SQL({ url, max: 1, connectionTimeout: 1 });
   try {
     await db.connect();
     throw new Error("expected connect() to reject");
@@ -74,11 +79,50 @@ test("postgres: connection closed before handshake completes is a connect failur
   }
 });
 
+test("postgres: connect failures are retried while queries wait", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  try {
+    const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
+    expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+    expect(connections).toBeGreaterThanOrEqual(3);
+  } finally {
+    server.close();
+  }
+});
+
+test("postgres: a server that becomes ready during the retry window is invisible to the application", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    if (connections <= 2) {
+      // still starting up: accept and close with no data
+      socket.destroy();
+      return;
+    }
+    socket.on("data", () => postgresAuthOkAndReady(socket));
+  });
+  const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1 });
+  try {
+    await db.connect();
+    expect(connections).toBeGreaterThanOrEqual(3);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
 test("postgres: server ErrorResponse during startup is still surfaced (57P03)", async () => {
   // A real postgres that is up but still starting replies to the startup
   // message with FATAL 57P03 and closes. That error must win over the
-  // socket close that follows it.
+  // socket close that follows it, and being a real server answer it must
+  // not be retried.
+  let connections = 0;
   const { port, server } = await listeningServer(socket => {
+    connections++;
     socket.on("data", () => {
       const fields: [string, string][] = [
         ["S", "FATAL"],
@@ -108,6 +152,7 @@ test("postgres: server ErrorResponse during startup is still surfaced (57P03)", 
     expect(err.message).toBe("the database system is starting up");
     expect(err.code).toBe("ERR_POSTGRES_SERVER_ERROR");
     expect(err.errno).toBe("57P03");
+    expect(connections).toBe(1);
   } finally {
     server.close();
   }
@@ -154,6 +199,21 @@ test("mysql: connection closed before handshake completes is a connect failure",
     const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
     expect(err.message).toBe("Connection closed before the connection was established");
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+  } finally {
+    server.close();
+  }
+});
+
+test("mysql: connect failures are retried while queries wait", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  try {
+    const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
+    expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+    expect(connections).toBeGreaterThanOrEqual(3);
   } finally {
     server.close();
   }

@@ -1084,7 +1084,9 @@ if (isDockerEnabled()) {
         test("Connection errors are caught using begin()", async () => {
           let error;
           try {
-            const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql" });
+            // connectionTimeout bounds the connect-retry budget; keep it
+            // short so the failure surfaces quickly
+            const sql = new SQL({ host: "localhost", port: 1, adapter: "mysql", connectionTimeout: 1 });
 
             await sql.begin(async sql => {
               await sql`insert into test_connection_errors (label, value) values (${1}, ${2})`;

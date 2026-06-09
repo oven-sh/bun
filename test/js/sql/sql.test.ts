@@ -2288,7 +2288,9 @@ if (isDockerEnabled()) {
     test("Connection errors are caught using begin()", async () => {
       let error;
       try {
-        const sql = postgres({ host: "localhost", port: 1 });
+        // connectionTimeout bounds the connect-retry budget; keep it short
+        // so the failure surfaces quickly
+        const sql = postgres({ host: "localhost", port: 1, connectionTimeout: 1 });
 
         await sql.begin(async sql => {
           await sql`insert into test (label, value) values (${1}, ${2})`;

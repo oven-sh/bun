@@ -2,10 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   indoc,
   minify_error_test_with_options,
@@ -7781,6 +7782,54 @@ describe("css tests", () => {
       const input = await Bun.file(join(__dirname, "unicode.css")).text();
       const output = await Bun.file(join(__dirname, "unicode_expected.css")).text();
       cssTest(input, output);
+    });
+  });
+
+  // Exercises the Feature min-version table in src/css/compat.rs: for each
+  // feature, one target just below the minimum browser version (transform
+  // must lower the syntax) and one at the minimum (syntax must be preserved).
+  describe("browser compat feature table", () => {
+    // Feature::MediaRangeSyntax: chrome minimum is 104.
+    cssTest("@media (width >= 100px) { .a { color: red } }", "@media (min-width: 100px) { .a { color: red; } }", {
+      chrome: 103 << 16,
+    });
+    cssTest("@media (width >= 100px) { .a { color: red } }", "@media (width >= 100px) { .a { color: red; } }", {
+      chrome: 104 << 16,
+    });
+    // Feature::HexAlphaColors: chrome minimum is 62.
+    cssTest(".a { color: #ff000080 }", ".a { color: rgba(255, 0, 0, .5); }", { chrome: 61 << 16 });
+    cssTest(".a { color: #ff000080 }", ".a { color: #ff000080; }", { chrome: 62 << 16 });
+    // Feature::FontFamilySystemUi: chrome minimum is 56.
+    cssTest(
+      ".a { font-family: system-ui }",
+      ".a { font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue; }",
+      { chrome: 55 << 16 },
+    );
+    cssTest(".a { font-family: system-ui }", ".a { font-family: system-ui; }", { chrome: 56 << 16 });
+  });
+
+  // Unknown at-rules and qualified rules inside declaration-style blocks
+  // (@font-face, @keyframes, @font-palette-values, @property, style
+  // attributes) are rejected by the AtRuleParser/QualifiedRuleParser
+  // defaults; surrounding declarations survive error recovery.
+  describe("at-rule and qualified-rule rejection defaults", () => {
+    cssTest(
+      "@font-face { src: url(x.woff); @bogus oops; font-family: A; }",
+      '@font-face { src: url("x.woff"); font-family: A; }',
+    );
+    cssTest("@font-face { src: url(x.woff); .foo { color: red } }", '@font-face { src: url("x.woff"); }');
+    cssTest("@keyframes k { @bogus; 0% { opacity: 0 } }", "@keyframes k { 0% { opacity: 0; } }");
+    cssTest("@font-palette-values --p { font-family: A; @bogus; }", "@font-palette-values --p { font-family: A; }");
+    test("@property rejects unknown nested at-rules", () => {
+      expect(() =>
+        minify_test_with_options(
+          '@property --x { syntax: "<length>"; inherits: false; initial-value: 0px; @bogus; }',
+          "",
+        ),
+      ).toThrow("Unknown at-rule @bogus");
+    });
+    test("style attributes reject at-rules", () => {
+      expect(() => attrTest("color: red; @bogus; background: green", "", false)).toThrow("Unknown at-rule @bogus");
     });
   });
 });

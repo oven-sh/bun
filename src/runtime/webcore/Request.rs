@@ -930,8 +930,7 @@ impl Request {
             }
         }
         // Reject `.` / `..` path segments; scan stops at the query.
-        let path_end = strings::index_of_char(target, b'?')
-            .map_or(target.len(), |i| i as usize);
+        let path_end = strings::index_of_char(target, b'?').map_or(target.len(), |i| i as usize);
         let path = &target[..path_end];
         let mut seg_start = 1usize; // target[0] == b'/'
         let mut i = 1usize;
@@ -1021,8 +1020,7 @@ impl Request {
                         // WHATWG parse entirely.
                         let target_identity = Self::target_is_parse_identity(&req_url);
                         if target_identity
-                            && Self::host_canonical_memo(self.flags.https, host, None)
-                                == Some(true)
+                            && Self::host_canonical_memo(self.flags.https, host, None) == Some(true)
                         {
                             // ASCII by construction (LUT + verified host bytes).
                             self.url.set(BunString::clone_latin1(url));
@@ -1031,19 +1029,13 @@ impl Request {
 
                         let href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
-                            let unchanged = core::ptr::eq(
-                                href.byte_slice().as_ptr(),
-                                url.as_ptr(),
-                            ) || href.byte_slice() == url;
+                            let unchanged = core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr())
+                                || href.byte_slice() == url;
                             if target_identity {
                                 // target is identity ⇒ href == url can only
                                 // hold when scheme+host serialize unchanged
                                 // too; remember that per host.
-                                Self::host_canonical_memo(
-                                    self.flags.https,
-                                    host,
-                                    Some(unchanged),
-                                );
+                                Self::host_canonical_memo(self.flags.https, host, Some(unchanged));
                             }
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));

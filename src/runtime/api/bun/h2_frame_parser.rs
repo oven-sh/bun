@@ -1780,6 +1780,8 @@ impl Stream {
             }
             if self.data_frame_queue.is_empty() {
                 if _frame.end_stream {
+                    eprintln!("[h2dbg-r] flush end_stream id={} wait_trailers={} state={:?}",
+                        self.id, self.wait_for_trailers, self.state as u8);
                     if self.wait_for_trailers {
                         client.dispatch(JSH2FrameParser::Gc::onWantTrailers, self.get_identifier());
                     } else {
@@ -5865,6 +5867,7 @@ impl H2FrameParser {
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
 
+        eprintln!("[h2dbg-r] no_trailers id={}", stream_id);
         stream.wait_for_trailers = false;
         this.send_data(stream, b"", true, JSValue::UNDEFINED);
         Ok(JSValue::UNDEFINED)

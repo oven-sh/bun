@@ -2910,6 +2910,7 @@ class ServerHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
+      console.error(`[h2dbg-js] S streamEnd state=${state}`);
       if (!self || typeof stream !== "object") return;
       if (state == 6 || state == 7) {
         if (stream.readable) {
@@ -3001,6 +3002,7 @@ class ServerHttp2Session extends Http2Session {
       self.destroy(errorCode);
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
+      console.error(`[h2dbg-js] S wantTrailers stream=${stream?.id}`);
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;

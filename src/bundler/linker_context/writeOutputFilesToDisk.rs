@@ -5,7 +5,7 @@ use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{Error, err};
-use bun_core::{PathString, String as BunString, immutable as strings};
+use bun_core::{String as BunString, immutable as strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 
@@ -20,13 +20,12 @@ use crate::output_file::{
 };
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
-// TODO(port): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
 };
 
-/// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
+/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
 pub fn write_output_files_to_disk(
@@ -38,8 +37,6 @@ pub fn write_output_files_to_disk(
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
-    // TODO(port): Zig used `std.fs.cwd().makeOpenPath`. Replace with bun_sys
-    // directory API once available; using a placeholder wrapper here.
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {
@@ -69,9 +66,8 @@ pub fn write_output_files_to_disk(
         }
     };
     // Optimization: when writing to disk, we can re-use the memory
-    // PERF(port): MaxHeapAllocator reuses the largest allocation between
-    // iterations. Verify bun_alloc::MaxHeapAllocator semantics
-    // match (init/reset/deinit). DynAlloc is currently `()` so the arena
+    // between iterations: MaxHeapAllocator retains the largest allocation.
+    // DynAlloc is currently `()` so the arena
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
     let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
@@ -82,8 +78,8 @@ pub fn write_output_files_to_disk(
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
-    // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
-    // together into `code()`/`code_standalone()`. The callee now takes
+    // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
+    // and `chunks` as
     // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
     // shared; the only per-chunk mutation is the `intermediate_output`
     // take/restore done via `chunks[i]`.
@@ -118,7 +114,7 @@ pub fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
+        // Reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
         // guard that resets on drop and derefs to the arena, so when
         // `code_allocator` is wired up it can borrow through `_code_allocator`.
@@ -154,7 +150,7 @@ pub fn write_output_files_to_disk(
             &resolver_opts.public_path
         };
 
-        // PORT NOTE: take `intermediate_output` by value so its `&mut self` is
+        // Take `intermediate_output` by value so its `&mut self` is
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
         let mut intermediate_output =
             core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
@@ -238,15 +234,11 @@ pub fn write_output_files_to_disk(
                         + a.len()
                         + b.len()
                         + b"\n".len();
-                    // PERF(port): Zig used Chunk.IntermediateOutput.allocatorForSize(total_len)
-                    // to pick a size-appropriate arena. Using Vec (global mimalloc) here.
                     let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                    // PERF(port): was appendSliceAssumeCapacity
                     buf.extend_from_slice(&code_result.buffer);
                     buf.extend_from_slice(source_map_start);
                     buf.extend_from_slice(a);
                     buf.extend_from_slice(b);
-                    // PERF(port): was appendAssumeCapacity
                     buf.push(b'\n');
                     code_result.buffer = buf.into_boxed_slice();
                 }
@@ -301,11 +293,8 @@ pub fn write_output_files_to_disk(
 
                 let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                 let total_len = code_result.buffer.len() + source_map_start.len() + encode_len + 1;
-                // PERF(port): Zig used `code_with_inline_source_map_allocator` (MaxHeapAllocator)
-                // for this Vec to reuse across iterations.
                 let mut buf: Vec<u8> = Vec::with_capacity(total_len);
 
-                // PERF(port): was appendSliceAssumeCapacity
                 buf.extend_from_slice(&code_result.buffer);
                 buf.extend_from_slice(source_map_start);
 
@@ -313,7 +302,6 @@ pub fn write_output_files_to_disk(
                 buf.resize(old_len + encode_len, 0);
                 let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
 
-                // PERF(port): was appendAssumeCapacity
                 buf.push(b'\n');
                 code_result.buffer = buf.into_boxed_slice();
             }
@@ -371,9 +359,9 @@ pub fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(PathString::init(
+                                file: PathOrFileDescriptor::Path(
                                     &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                )),
+                                ),
                             },
                         ) {
                             Ok(_) => {}
@@ -444,7 +432,7 @@ pub fn write_output_files_to_disk(
                     0o644
                 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
+                file: PathOrFileDescriptor::Path(&chunk.final_rel_path),
             },
         ) {
             Err(e) => {
@@ -505,19 +493,20 @@ pub fn write_output_files_to_disk(
                 }
             }),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // TODO(port): `bake_types::Framework` is missing
-                // `server_components`; once it lands, restore the
-                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
-                // branch.
-                let offset: u32 = 1;
+                // Server-components builds insert 2 extra synthetic sources
+                // before user entry points, so the source-index offset is 3.
+                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
+                    3
+                } else {
+                    1
+                };
                 Some(chunk.entry_point.source_index() - offset)
             } else {
                 None
             },
             referenced_css_chunks: match &chunk.content {
                 Content::Javascript(js) => {
-                    // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `Index` is
-                    // `#[repr(transparent)]` over u32.
+                    // `Index` is `#[repr(transparent)]` over u32.
                     js.css_chunks
                         .iter()
                         .map(|&i| OutputFileIndex::init(i))
@@ -548,7 +537,7 @@ pub fn write_output_files_to_disk(
     }
 
     {
-        // PORT NOTE: reshaped for borrowck — compute len before mut borrow,
+        // Reshaped for borrowck — compute len before mut borrow,
         // bump `total_insertions`, then take the slice.
         let additional_start = output_files.additional_output_files_start as usize;
         let additional_len = output_files.output_files.len() - additional_start;
@@ -618,5 +607,3 @@ pub fn write_output_files_to_disk(
 }
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
-
-// ported from: src/bundler/linker_context/writeOutputFilesToDisk.zig

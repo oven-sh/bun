@@ -1,6 +1,4 @@
 //! Windows-only filesystem watcher backed by libuv `uv_fs_event_t`.
-//!
-//! Port of `src/runtime/node/win_watcher.zig`.
 
 #![cfg(windows)]
 
@@ -8,7 +6,6 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::Output;
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
@@ -19,9 +16,7 @@ use bun_sys::windows::libuv::UvHandle as _;
 use bun_threading::Mutex;
 
 use super::path_watcher::EventType;
-// Zig: `const onPathUpdateFn = jsc.Node.fs.Watcher.onPathUpdate;` (win_watcher.zig:306) —
-// the callbacks are *associated functions* on `FSWatcher`, not free fns.
-// lower_snake names mirror the Zig `onPathUpdateFn`/`onUpdateEndFn` decls.
+// The callbacks are *associated functions* on `FSWatcher`, not free fns.
 use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 #[allow(non_upper_case_globals)]
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
@@ -29,16 +24,20 @@ const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PA
 const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
 
 bun_output::declare_scope!(PathWatcherManager, visible);
-// Zig scope name is `.@"fs.watch"`; Rust identifiers cannot contain '.'.
-// TODO(port): declare_scope! should accept the original "fs.watch" string for BUN_DEBUG env matching.
-bun_output::declare_scope!(fs_watch, visible);
+// Rust identifiers cannot contain '.', so
+// the static is declared by hand (instead of via `declare_scope!`) with the
+// tag string, keeping `BUN_DEBUG_fs.watch` env matching and the
+// `[fs.watch]` log prefix.
+#[allow(non_upper_case_globals)]
+pub static fs_watch: bun_output::ScopedLogger =
+    bun_output::ScopedLogger::new("fs.watch", bun_output::Visibility::Visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
 // PORTING.md §Global mutable state: singleton ptr → `AtomicCell`, guarded by
 // `DEFAULT_MANAGER_MUTEX`. `fs.watch()` is reachable from Worker JS threads
-// (each Worker is its own OS thread + VM), so the unguarded read+write the
-// Zig original gets away with is a data race in Rust. Mirror the posix
+// (each Worker is its own OS thread + VM), so an unguarded read+write
+// would be a data race. Mirror the posix
 // `path_watcher.rs` pattern: every `DEFAULT_MANAGER` access holds the mutex.
 // `AtomicCell<*mut _>` (Acquire/Release on the pointer word) means even an
 // unsynchronized racing reader observes either null or a fully-published
@@ -57,12 +56,12 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
 pub(crate) struct PathWatcherManager {
-    // Keys are owned path bytes (Zig: `bun.StringArrayHashMapUnmanaged`), values are raw heap
+    // Keys are owned path bytes, values are raw heap
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
     watchers: StringArrayHashMap<*mut PathWatcher>,
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
-    // process-global, so we spell the borrow as `'static`.
-    // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.
+    // process-global, so we spell the borrow as `'static`; soundness relies on
+    // the owning VM outliving the manager (watchers are torn down before the VM).
     vm: &'static jsc::VirtualMachineRef,
     deinit_on_last_watcher: bool,
 }
@@ -97,8 +96,7 @@ impl PathWatcherManager {
             self.watchers.swap_remove_at(index);
         }
 
-        // Zig: `defer { if (deinit_on_last_watcher and count == 0) this.deinit(); }`.
-        // No early returns above, so this runs in the same place a defer would — and avoids the
+        // No early returns above, so this runs unconditionally — and avoids the
         // overlapping `&mut self` borrow a closure-based guard would require.
         if self.deinit_on_last_watcher && self.watchers.len() == 0 {
             // SAFETY: self was heap-allocated in `init`; no other live borrows after this point.
@@ -161,7 +159,6 @@ pub(crate) struct ChangeEvent {
 
 impl Default for ChangeEvent {
     fn default() -> Self {
-        // Match Zig field defaults: `hash = 0`, `event_type = .change`, `timestamp = 0`.
         Self {
             hash: 0,
             event_type: EventType::Change,
@@ -191,10 +188,7 @@ impl ChangeEvent {
     }
 }
 
-#[allow(dead_code)]
 pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-#[allow(dead_code)]
-pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
     extern "C" fn uv_event_callback(
@@ -207,7 +201,7 @@ impl PathWatcher {
         // through the raw pointer so we don't form a `&mut uv_fs_event_t` that would
         // alias the `&mut PathWatcher` we derive below (Stacked Borrows).
         if unsafe { (*event).data }.is_null() {
-            Output::debug_warn("uvEventCallback called with null data");
+            bun_core::debug_warn!("uvEventCallback called with null data");
             return;
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.
@@ -228,13 +222,11 @@ impl PathWatcher {
             this.emit_in_progress = true;
 
             for &ctx in this.handlers.keys() {
-                // Zig: `bun.sys.Error` is a value type — implicitly copied per handler.
                 on_path_update_fn(Some(ctx), Event::Error(err.clone()), false);
                 on_update_end_fn(Some(ctx));
             }
 
-            // Zig: `defer this.emit_in_progress = false;` fires AFTER `this.maybeDeinit()`, so
-            // the guard is still `true` when `maybeDeinit` checks it (always a no-op there).
+            // The guard is still `true` when `maybe_deinit` checks it (always a no-op there).
             this.maybe_deinit();
             this.emit_in_progress = false;
             return;
@@ -251,7 +243,7 @@ impl PathWatcher {
             return;
         };
 
-        // @truncate — intentional wrap to bun_watcher::HashType
+        // Intentional wrap to bun_watcher::HashType
         let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
         let is_file = !this.handle.is_dir();
         this.emit(
@@ -279,23 +271,17 @@ impl PathWatcher {
         #[cfg(debug_assertions)]
         let mut debug_count: usize = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig iterates `values()` while indexing `keys()[i]`;
-        // here we snapshot `keys()` length-contract via index iteration.
         for i in 0..self.handlers.len() {
             let event = &mut self.handlers.values_mut()[i];
             if event.emit(hash, timestamp, event_type) {
                 let ctx: *mut FSWatcher = self.handlers.keys()[i].cast::<FSWatcher>();
                 // SAFETY: handlers keys are `*mut FSWatcher` erased to `*mut c_void` in `watch()`.
                 let encoding = unsafe { (*ctx).encoding };
-                // Zig builds the tagged payload `{ .string | .bytes_to_free }` then calls
-                // `event_type.toEvent(..)` — `EventPathString` on Windows is `StringOrBytesToDecode`.
+                // `EventPathString` on Windows is `StringOrBytesToDecode`.
                 let payload = match encoding {
                     crate::node::Encoding::Utf8 => {
                         StringOrBytesToDecode::String(BunString::clone_utf8(path))
                     }
-                    // Zig: `bun.default_allocator.dupeZ(u8, path)` — owned copy; the trailing NUL is
-                    // a sentinel only (slice `.len` excludes it), so `Box<[u8]>::from(path)` is the
-                    // semantic equivalent for the Rust `BytesToFree` payload.
                     _ => StringOrBytesToDecode::BytesToFree(Box::<[u8]>::from(path)),
                 };
                 on_path_update_fn(Some(ctx.cast()), event_type.to_event(payload), is_file);
@@ -328,9 +314,9 @@ impl PathWatcher {
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
         let mut outbuf = PathBuffer::uninit();
-        // Windows `sys::readlink` returns the byte length (`Maybe<usize>`); the link target is
+        // Windows `sys::readlink` returns the byte length; the link target is
         // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
-        // the `[:0]const u8` Zig sees from `Maybe([:0]u8)` via `ZStr::from_buf`.
+        // the NUL-terminated string via `ZStr::from_buf`.
         let readlink_result = sys::readlink(path, &mut outbuf);
         let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
@@ -349,9 +335,6 @@ impl PathWatcher {
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
         let manager_ptr: *mut PathWatcherManager = manager as *mut PathWatcherManager;
 
-        // PORT NOTE: reshaped for borrowck — Zig uses `getOrPut` with a borrowed key, then
-        // overwrites `key_ptr.*` with an owned dupe on the not-found path. Rust maps own their
-        // keys, so we do lookup-then-insert instead.
         if let Some(&existing) = manager.watchers.get(event_path.as_bytes()) {
             return sys::Result::Ok(existing);
         }
@@ -392,11 +375,9 @@ impl PathWatcher {
             )
         };
         if let Some(err) = start_rc.to_error(sys::Tag::watch) {
-            // `errdefer` doesn't fire on `return .{ .err = ... }` (that's a successful return of a
-            // Maybe(T), not an error-union return). Clean up the map entry and the half-initialized
-            // watcher inline. See #26254.
-            // PORT NOTE: no map entry was inserted yet in the Rust version (see reshape above),
-            // so there is nothing to swap_remove here.
+            // Clean up the half-initialized watcher inline (see #26254). No map
+            // entry was inserted yet (see reshape above), so there is nothing
+            // to swap_remove here.
             // SAFETY: `this` is the freshly heap-allocated pointer above; deinit consumes it.
             unsafe {
                 (*this).manager = None; // prevent deinit() from re-entering unregister_watcher
@@ -408,7 +389,7 @@ impl PathWatcher {
         // SAFETY: handle is open (uv_fs_event_start succeeded); uv_unref only flips the ref flag.
         unsafe { uv::uv_unref(ptr::addr_of_mut!((*this).handle).cast()) };
 
-        // Owned key: dupe of event_path bytes (Zig: `dupeZ` — the sentinel NUL is not part of the
+        // Owned key: dupe of event_path bytes (the sentinel NUL is not part of the
         // slice's `.len`, so the StringArrayHashMap key compares equal to `event_path.as_bytes()`).
         manager.watchers.insert(event_path.as_bytes(), this);
 
@@ -454,7 +435,6 @@ impl PathWatcher {
         // SAFETY: caller guarantees `this` is a live heap-allocated pointer (see `init`).
         let me = unsafe { &mut *this };
         me.handlers.clear();
-        // PERF(port): was clearAndFree (shrinks capacity).
 
         if let Some(manager) = me.manager.take() {
             let path: &ZStr = if !me.handle.path.is_null() {
@@ -490,9 +470,6 @@ pub fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
-    // PORT NOTE: Zig takes `comptime callback` / `comptime updateEnd` and `@compileError`s if they
-    // are not exactly `onPathUpdateFn` / `onUpdateEndFn`. There is only one valid value for each,
-    // so the Rust port drops the parameters entirely.
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
     #[cfg(not(windows))]
@@ -537,5 +514,3 @@ pub fn watch(
     }
     sys::Result::Ok(watcher)
 }
-
-// ported from: src/runtime/node/win_watcher.zig

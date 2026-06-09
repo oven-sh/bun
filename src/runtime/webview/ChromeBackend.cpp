@@ -91,7 +91,7 @@ namespace CDP {
 
 using namespace JSC;
 
-// From ChromeProcess.zig. Returns the parent's socketpair fd (bidirectional).
+// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (bidirectional).
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
@@ -293,7 +293,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     m_mode = TransportMode::Pipe;
 
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
-    // isNull), which on the Zig side passes "" into --user-data-dir= and
+    // isNull), which the spawner passes as "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
     WTF::CString dir = userDataDir.utf8();
     WTF::CString pathC = path.utf8();
@@ -360,7 +360,7 @@ void Transport::send(uint32_t cdpId, Command&& cmd)
 
 // --- WebSocket transport ----------------------------------------------------
 // Native-callback trampolines. Plain C function pointers (not capturing
-// lambdas) — the ctx arg is the Transport* singleton. Zig's CppWebSocket
+// lambdas) — the ctx arg is the Transport* singleton. The CppWebSocket
 // wrapper already does eventLoop.enter()/exit() around the extern "C"
 // call, so any JS these end up running (settle → resolve → .then()) is
 // already in the right execution context.
@@ -1737,7 +1737,7 @@ void close(JSWebView* view)
 
 } // namespace CDP
 
-// Called from ChromeProcess.zig's onProcessExit. Idempotent with onClose.
+// Called from ChromeProcess.rs's onProcessExit. Idempotent with onClose.
 extern "C" void Bun__Chrome__died(int32_t signo)
 {
     auto& t = CDP::transport();

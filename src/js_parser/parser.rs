@@ -5,12 +5,11 @@
 
 use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
-// Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
-// (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
-// interchangeable with `bun_wyhash::Wyhash11`.
+// `bun_wyhash::Wyhash` (wyhash final-4) — used by `hash_for_runtime_transpiler`
+// and `ReactRefresh.HookContext`. NOT interchangeable with `bun_wyhash::Wyhash11`.
 use bun_wyhash::Wyhash;
 
-// Re-exports (mirrors the Zig `pub const X = @import(...)` block at the bottom).
+// Re-exports.
 // Round-C: stub the still-gated submodules so the helper *types* in this file
 // compile; the real bodies arrive in rounds D/E.
 #[allow(non_snake_case)]
@@ -30,14 +29,12 @@ pub mod options {
     // re-exported here so the `options::Loader`/`options::Target` spelling used
     // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
     pub(crate) use bun_ast::Loader;
-    // TODO(port): bun_options_types::{ServerComponents, OutputFormat,
-    // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
     pub use bun_options_types::bundle_enums::ModuleType;
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
     // lives in `bun_options_types::jsx`. The glob above already brings in
     // `jsx`/`JSX`; explicit re-export keeps the path stable for callers.
-    /// Zig: `bundler/options.zig` `ServerComponents` — same enum surface as
-    /// `Runtime.Features.ServerComponentsMode`. Aliased so call sites that
+    /// Same enum surface as `Runtime.Features.ServerComponentsMode`.
+    /// Aliased so call sites that
     /// spell it as either `options::ServerComponents` (P.rs) or
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
@@ -53,9 +50,6 @@ pub mod options {
         Iife,
         Internal_BakeDev,
     }
-    /// Port of `options_types/BundleEnums.zig` `Format` (spec for
-    /// `Parser.Options.output_format`). Variants and order match spec exactly;
-    /// Zig's first variant `.esm` is the `#[default]`.
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub enum Format {
         #[default]
@@ -74,8 +68,6 @@ pub mod options {
             matches!(self, Format::Cjs)
         }
     }
-    /// Port of `bundler/options.zig` `AllowUnresolved`.
-    ///
     /// Canonical home is here (the parser is the consumer
     /// — `P::should_allow_unresolved_dynamic_specifier`). `bun_bundler::options`
     /// re-exports this so `BundleOptions.allow_unresolved` and
@@ -100,8 +92,7 @@ pub mod options {
         Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
     }
     impl AllowUnresolved {
-        // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
-        // from `Options::init` (`&options::AllowUnresolved::DEFAULT`); rvalue
+        // Taken by address from `Options::init` (`&options::AllowUnresolved::DEFAULT`); rvalue
         // static promotion gives the borrow `'static` lifetime.
         pub const DEFAULT: AllowUnresolved = AllowUnresolved::All;
 
@@ -142,14 +133,13 @@ pub mod options {
     /// Port of `bake.Framework` (src/runtime/bake/mod.rs:129) — TYPE_ONLY
     /// parser-side mirror. The full struct lives in `bun_runtime::bake` (a
     /// higher tier we cannot depend on here); the parser only consumes the
-    /// two nested option fields below (see `Parser._parse`, Parser.zig:1415
-    /// and Parser.zig:1433), so `file_system_router_types`/`built_in_modules`
+    /// two nested option fields below (see `Parser._parse`),
+    /// so `file_system_router_types`/`built_in_modules`
     /// are intentionally elided.
     ///
-    /// String fields are `Cow<'static, [u8]>` to match the spec at
-    /// `bake/mod.rs` (the Zig backs them with arena-owned `[]const u8` that
-    /// is user-configured via `fromJS` and rewritten by `Framework.resolve`,
-    /// then freed in `UserOptions.deinit`). The parser only *borrows* them
+    /// String fields are `Cow<'static, [u8]>` to match `bake/mod.rs`
+    /// (they are user-configured via `fromJS`, rewritten by
+    /// `Framework.resolve`, and freed on teardown). The parser only *borrows* them
     /// for `'a` (parse lifetime), not `'static`, so `&'static [u8]` would
     /// wrongly restrict callers to literal defaults — see PORTING.md
     /// §Forbidden re: `&'static [T]` for arena-freed data.
@@ -159,16 +149,14 @@ pub mod options {
         pub server_components: Option<FrameworkServerComponents>,
         pub react_fast_refresh: Option<ReactFastRefresh>,
     }
-    /// Port of `bake.Framework.ServerComponents` (bake/mod.rs:69). Named
+    /// Mirror of `bake.Framework.ServerComponents` (bake/mod.rs:69). Named
     /// `FrameworkServerComponents` here because `options::ServerComponents`
     /// is already the `Runtime.Features.ServerComponentsMode` enum alias
-    /// (see re-export above) — both names exist in the Zig source under
-    /// different paths (`bundler/options.ServerComponents` vs
-    /// `bake.Framework.ServerComponents`).
+    /// (see re-export above).
     #[derive(Clone)]
     pub struct FrameworkServerComponents {
         pub separate_ssr_graph: bool,
-        /// REQUIRED — spec (bake.zig:360) gives no default; `fromJS` throws
+        /// REQUIRED — no default; `fromJS` throws
         /// if `serverRuntimeImportSource` is absent.
         pub server_runtime_import: Cow<'static, [u8]>,
         pub server_register_client_reference: Cow<'static, [u8]>,
@@ -275,7 +263,7 @@ pub mod Runtime {
         /// This is used for `--print` entry points so we can get the result.
         pub remove_cjs_module_wrapper: bool,
 
-        // PORT NOTE: `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
+        // `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
         // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
         // the borrowck self-borrow that `&'a mut` would induce while `P` holds
         // `&mut Options`.
@@ -287,10 +275,8 @@ pub mod Runtime {
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
         ///
-        /// Zig `bundler_feature_flags: *const bun.StringSet = &empty_bundler_feature_flags`.
         /// `None` ≡ the empty static set (contributes nothing to the hash).
-        /// Owned `Box` (not `&'static`) per PORTING.md §Forbidden — the Zig
-        /// caller frees it on `BundleOptions` teardown, so Rust must too;
+        /// Owned `Box` (not `&'static`) — freed on `BundleOptions` teardown.
         /// Leaking to satisfy a `&'static` would be an unbounded leak
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
@@ -302,7 +288,7 @@ pub mod Runtime {
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
 
-        // ── Vestigial bool stubs not present in Zig `Runtime.Features`. ──────────
+        // ── Vestigial bool stubs. ─────────────────────────────────────────────
         // Retained until their last reader (parseJSXElement.rs et al.) is ported to
         // the real predicate; they default false and are otherwise inert.
         pub jsx_optimization_inline: bool,
@@ -366,8 +352,7 @@ pub mod Runtime {
         pub fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
             // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see PORT
             // NOTE on the field) — the caller that populated it guarantees the
-            // pointee is unique to this parse and outlives `Features`; Zig held
-            // `*RuntimeTranspilerCache` and mutated freely.
+            // pointee is unique to this parse and outlives `Features`.
             self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
         }
 
@@ -375,17 +360,14 @@ pub mod Runtime {
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
         pub fn init_bundler_feature_flags(feature_flags: &[&[u8]]) -> Option<Box<StringSet>> {
-            // Zig returns `*const bun.StringSet` heap-allocated via `arena.create`, and
-            // the caller frees it on `BundleOptions` teardown. Empty path returns `None`
-            // (≡ static empty). Owned `Box` per PORTING.md §Forbidden — never leak.
+            // Empty path returns `None` (≡ static empty). Owned `Box` per
+            // PORTING.md §Forbidden — never leak.
             if feature_flags.is_empty() {
                 return None;
             }
-            // PORT NOTE: reshaped for borrowck — Zig inserted then sorted via
-            // `set.map.sort(...)` with a comparator borrowing `set.map.keys()`.
             // `StringSet` preserves insertion order and has no in-place key sort,
             // so sort the inputs first; the resulting `keys()` iteration order
-            // is then byte-lexicographic and matches runtime.zig:241-246.
+            // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
             sorted.sort_unstable();
             let mut set = StringSet::new();
@@ -395,11 +377,10 @@ pub mod Runtime {
             Some(Box::new(set))
         }
 
-        // Zig: `hash_fields_for_runtime_transpiler` — a comptime tuple of field-name
-        // enum literals iterated with `inline for` + `@field`. Rust has no field
-        // reflection; expanded by hand. Keep this list in sync with the Zig tuple.
+        // The hashed field list is maintained by hand — keep it in sync with
+        // the feature fields that affect transpiled output.
         //
-        // Spec runtime.zig:272 takes `*std.hash.Wyhash` (NOT `Wyhash11`).
+        // Takes `Wyhash` (NOT `Wyhash11`).
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
@@ -424,12 +405,12 @@ pub mod Runtime {
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
-            // `[bool; N]` is N bytes of 0x00/0x01; matches Zig `std.mem.asBytes(&bools)`.
+            // `[bool; N]` is N bytes of 0x00/0x01.
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
 
             // Hash --feature flags. These directly affect transpiled output via
-            // feature("NAME") replacement in visitExpr.zig. When empty, we add
+            // feature("NAME") replacement in visit_expr.rs. When empty, we add
             // nothing to the hash so existing cache entries remain valid.
             // Keys are sorted in init_bundler_feature_flags so flag order on the CLI doesn't matter.
             if let Some(flags) = self.bundler_feature_flags.as_deref() {
@@ -487,7 +468,7 @@ pub mod Runtime {
             bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
         }
 
-        // Zig: `@import("build_options").fallback_html_version` — wired via build.rs.
+        // Wired via build.rs.
         pub const VERSION_HASH: &'static str = bun_core::build_options::FALLBACK_HTML_VERSION;
 
         pub fn version_hash() -> u32 {
@@ -511,9 +492,8 @@ pub mod Runtime {
             entry_point: &[u8],
             writer: &mut impl bun_io::Write,
         ) -> core::result::Result<(), bun_core::Error> {
-            // Zig: `writer.print(HTMLTemplate, PrintArgs{...})` — Zig's std.fmt named-field
-            // substitution (`{[name]s}`). Rust has no runtime named-format, so substitute
-            // by scanning the embedded template byte-for-byte.
+            // The embedded template uses `{[name]s}`-style named placeholders;
+            // substitute by scanning it byte-for-byte.
             let blob = Base64FallbackMessage { msg };
             let fallback = Self::fallback_decoder_js();
             render_named_template(writer, Self::HTML_TEMPLATE, &mut |w, name| match name {
@@ -549,7 +529,7 @@ pub mod Runtime {
         }
     }
 
-    /// Tiny substitutor for Zig-style `{[name]s}` / `{[name]f}` named placeholders
+    /// Tiny substitutor for `{[name]s}` / `{[name]f}` named placeholders
     /// (the only specifiers used in fallback.html / fallback-backend.html).
     fn render_named_template<W: bun_io::Write>(
         writer: &mut W,
@@ -579,7 +559,6 @@ pub mod Runtime {
         writer.write_all(&bytes[last..])
     }
 
-    /// Zig: `Fallback.Base64FallbackMessage`
     pub(crate) struct Base64FallbackMessage<'a> {
         pub msg: &'a api::FallbackMessageContainer,
     }
@@ -589,7 +568,7 @@ pub mod Runtime {
             let mut bb: Vec<u8> = Vec::new();
             let mut encoder = schema::Writer::new(&mut bb);
             self.msg.encode(&mut encoder); // catch {}
-            // Zig: `Fallback.Base64FallbackMessage.Base64Encoder` (standard alphabet, no '=' padding)
+            // Standard alphabet, no '=' padding.
             let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
             let mut out = vec![0u8; enc.calc_size(bb.len())];
             let s = enc.encode(&mut out, &bb); // catch {}
@@ -603,7 +582,6 @@ pub(crate) type RuntimeImports = Runtime::Imports;
 
 pub use crate::p::{NewParser, P};
 
-pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
@@ -620,7 +598,6 @@ pub use js_ast::Op::Level;
 pub use crate::lexer as js_lexer;
 pub use js_lexer::T;
 
-// TODO(port): defines arrives from move-in (was bun_bundler::defines → js_parser)
 use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -671,7 +648,7 @@ pub enum JSXImport {
 }
 
 impl JSXImport {
-    /// Zig: `@tagName(field)` — the import-clause name as it appears in source.
+    /// The import-clause name as it appears in source.
     #[inline]
     pub(crate) fn tag_name(self) -> &'static [u8] {
         let s: &'static str = self.into();
@@ -784,10 +761,8 @@ impl JSXImportSymbols {
 }
 
 // ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
-// Zig: `generateImportStmt` took `symbols: anytype` and special-cased
-// `if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias`
-// to map an integer key → its string name. Rust models that comptime branch via
-// this trait, with `Key = u8` (index into `ALL`) for `RuntimeImports` and
+// `generate_import_stmt` maps a key to its string name via this trait, with
+// `Key = u8` (index into `ALL`) for `RuntimeImports` and
 // `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
 
 impl crate::p::GenerateImportSymbols for RuntimeImports {
@@ -890,8 +865,7 @@ pub struct VisitArgsOpts<'a> {
 
 /// Generic transposer over `if` expressions.
 ///
-/// `visitor` is a comptime fn pointer in Zig; here we store it as a plain
-/// `fn` pointer. // PERF(port): was comptime monomorphization
+/// `visitor` is stored as a plain `fn` pointer.
 pub struct ExpressionTransposer<'a, Context, State: Copy> {
     pub context: &'a mut Context,
     visitor: fn(&mut Context, Expr, State) -> Expr,
@@ -1061,7 +1035,6 @@ impl<'a> JSXTag<'a> {
                 return Err(bun_core::err!("SyntaxError"));
             }
 
-            // Zig: p.arena.alloc(u8, name.len + 1 + member.len)
             let new_name: &'a mut [u8] = p
                 .bump()
                 .alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
@@ -1099,7 +1072,6 @@ impl<'a> JSXTag<'a> {
 /// This makes sure that there's the lowest possible chance of having a generated name
 /// collide with a user's name. This is the easiest way to do so
 //
-// Zig: `comptime { name ++ "_" ++ truncatedHash32(std.hash.Wyhash.hash(0, name)) }`.
 // The const-fn Wyhash one-shot lives in `bun_wyhash::hash_const` next to the
 // runtime impl it must stay in lock-step with; the const-fn suffix encoder is
 // `bun_core::fmt::truncated_hash32_bytes` (re-exported here so the
@@ -1108,7 +1080,7 @@ impl<'a> JSXTag<'a> {
 #[doc(hidden)]
 pub mod __generated_symbol_hash {
 
-    /// `bun.fmt.truncatedHash32` — 8-byte base32-ish suffix (native-endian, matches Zig).
+    /// 8-byte base32-ish suffix (native-endian).
     pub use bun_core::fmt::truncated_hash32_bytes as truncated_hash32;
 }
 
@@ -1145,8 +1117,8 @@ macro_rules! generated_symbol_name {
 
 pub struct ExprOrLetStmt {
     pub stmt_or_expr: js_ast::StmtOrExpr,
-    // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
-    // that was just moved into `S::Local`. The buffer pointer is stable across
+    // `decls` borrows the heap buffer that was just moved into `S::Local`.
+    // The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
     // outlives-holder invariant without a per-site unsafe cast. Read by the
     // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
@@ -1186,8 +1158,7 @@ impl AsyncPrefixExpression {
     /// duplicate `hash<[u8]>` bodies). All three keywords are exactly 5 ASCII
     /// bytes and start with 'a'/'y', so a length gate plus one fixed-array
     /// match rejects the overwhelming majority of identifiers in a single
-    /// branch with no hashing — same shape as Zig's `ComptimeStringMap`
-    /// length-bucket prefilter.
+    /// branch with no hashing.
     #[inline]
     pub(crate) fn find(ident: &[u8]) -> AsyncPrefixExpression {
         if ident.len() != 5 {
@@ -1204,10 +1175,10 @@ impl AsyncPrefixExpression {
     }
 }
 
-// Zig: `packed struct(u8)` — assign_target:u2, is_delete_target:b1,
-// was_originally_identifier:b1, is_call_target:b1, _padding:u3.
-// Not all-bool (assign_target is enum(u2)), so per PORTING.md we use a
-// transparent u8 with manual shift accessors matching Zig field order (LSB-first).
+// Packed u8 — assign_target:u2, is_delete_target:b1,
+// was_originally_identifier:b1, is_call_target:b1, _padding:u3 (LSB-first).
+// Not all-bool (assign_target is a 2-bit enum), so per PORTING.md we use a
+// transparent u8 with manual shift accessors.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct IdentifierOpts(u8);
@@ -1245,9 +1216,8 @@ impl IdentifierOpts {
         self.0 & Self::IS_CALL_TARGET != 0
     }
 
-    // Builder-style helpers so call sites can mirror Zig's `.{ .field = ... }`
-    // initialization without paying for a named-field struct (this stays a
-    // packed u8 to match the Zig ABI).
+    // Builder-style helpers (this stays a packed u8 rather than a
+    // named-field struct).
     #[inline]
     pub(crate) const fn new() -> Self {
         Self(0)
@@ -1402,7 +1372,6 @@ pub struct ThenCatchChain {
 impl Default for ThenCatchChain {
     fn default() -> Self {
         Self {
-            // Zig: zero-init `js_ast.Expr.Data` → `.e_missing` (tag 0).
             next_target: js_ast::ExprData::EMissing(E::Missing {}),
             has_multiple_args: false,
             has_catch: false,
@@ -1475,7 +1444,8 @@ pub struct StringVoidMap {
 impl StringVoidMap {
     /// Returns true if the map already contained the given key.
     pub(crate) fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
-        // TODO(port): StringHashMap key ownership — Zig stored borrowed source slices.
+        // StringHashMap copies keys into owned heap allocations on insert,
+        // so the pooled map outliving any one source is fine.
         let entry = self.map.get_or_put(key).expect("unreachable");
         entry.found_existing
     }
@@ -1492,7 +1462,7 @@ impl StringVoidMap {
     }
 
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
-    /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
+    /// returned to the pool on `Drop`.
     #[inline]
     pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()
@@ -1507,15 +1477,13 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
     }
 }
 
-// Zig: `ObjectPool(StringVoidMap, init, true, 32)` — `true` is thread-local,
-// `32` is the preheated capacity.
 bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
-pub(crate) type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
-pub(crate) type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load factor
+pub(crate) type RefMap = HashMap<Ref, ()>;
+pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 
-// PORT NOTE: `scope` is `*mut` (not `&'arena`) because the visit pass writes
+// `scope` is `*mut` (not `&'arena`) because the visit pass writes
 // through it (push_scope_for_visit_pass assigns it to `current_scope: *mut`)
 // and the parse pass needs Copy for the BumpVec<Option<ScopeOrder>> to be
 // indexable + truncatable. The Scope itself is arena-owned for `'arena`.
@@ -1678,7 +1646,7 @@ pub struct FnOnlyDataVisit<'a> {
     /// to implement "this" and "super" references. A name is automatically generated
     /// if one is missing so this will always be present inside a class body.
     ///
-    /// Zig's `?*Ref` becomes `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
+    /// `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
     /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
     /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
     /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
@@ -1821,8 +1789,8 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        // PORT NOTE: parser.zig:778-783 does NOT clear import_records_to_keep here;
-        // matching Zig (the keep-list persists across reset()).
+        // import_records_to_keep is intentionally NOT cleared here;
+        // the keep-list persists across reset().
         self.approximate_newline_count = 0;
     }
 }
@@ -1898,22 +1866,12 @@ impl<'a> ParseStatementOptions<'a> {
     }
 }
 
-// TODO(port): `Prefill` holds mutable global AST node singletons (`pub var` in
-// Zig). Rust forbids non-`Sync` mutable statics without `unsafe`; several of
-// these contain raw pointers (e_string -> &E.String) and one (`ActivateIndex`)
-// has an `undefined` field. TODO(refactor): decide between `static mut` +
-// `unsafe`, `LazyLock`, or eliminating the globals entirely. The byte-array
-// constants are safe and ported as `pub const`.
+// Only const-able AST node singletons live here. Callers needing the rest
+// (missing nodes, empty statements, the HMR helper exprs) construct them
+// directly — they are cheap value types, so a shared-singleton optimization
+// isn't worth `static mut`/`LazyLock` plumbing.
 pub mod prefill {
     use super::*;
-
-    pub mod hot_module_reloading {
-        // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
-        // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
-        // pub static DEBUG_DISABLED: [Expr; 1] = [...];
-        // pub static ACTIVATE_STRING: E::String = E::String { data: b"activate" };
-        // pub static ACTIVATE_INDEX: E::Index = ...; // .target = undefined
-    }
 
     pub mod string_literal {
         pub(crate) const CHILDREN: [u8; 8] = *b"children";
@@ -1932,13 +1890,6 @@ pub mod prefill {
 
     pub mod data {
         use super::*;
-        // TODO(port): Expr.Data / Stmt.Data / B variant statics — needs final
-        // shape of `js_ast::ExprData` (Rust enum) before these compile.
-        // pub static B_MISSING: B = B::Missing(B::Missing {});
-        // pub static E_MISSING: ExprData = ExprData::EMissing(E::Missing {});
-        // pub static S_EMPTY: StmtData = StmtData::SEmpty(S::Empty {});
-        // pub static FILENAME: ExprData = ExprData::EString(&string::FILENAME);
-        // ... etc.
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub(crate) const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
@@ -1961,9 +1912,7 @@ impl JSXTransformType {
         matches!(self, JSXTransformType::React)
     }
 
-    /// Derive the transform mode from parser options the way the Zig
-    /// `NewParser(.{ .jsx = ... })` instantiation did (`if (jsx.parse) .react
-    /// else .none`).
+    /// Derive the transform mode from parser options.
     #[inline]
     pub(crate) const fn from_parse_flag(parse: bool) -> JSXTransformType {
         if parse {
@@ -1983,9 +1932,8 @@ pub struct MacroState<'a> {
 }
 
 impl<'a> MacroState<'a> {
-    // TODO(port): Zig initializes `prepend_stmts = undefined`; Rust cannot leave
-    // a `&mut` field uninitialized. Caller must supply a placeholder list, or
-    // this field becomes `Option<&'a mut Vec<Stmt>>` set to `None` here.
+    // The field is write-only, but a `&mut` field cannot be left
+    // uninitialized, so the caller supplies a placeholder list.
     pub fn init(prepend_stmts: &'a mut Vec<Stmt>) -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
@@ -2013,13 +1961,10 @@ pub struct Jest {
 }
 
 impl Jest {
-    /// Port of Zig `inline for (comptime std.meta.fieldNames(Jest))` — Rust has
-    /// no comptime struct-field reflection, so `_parse` iterates this static
-    /// table instead. The `&str` is the *JavaScript* global name (matches the
-    /// Zig field identifier verbatim, not the Rust snake_case rename), and the
-    /// fn-ptr projects the corresponding `Ref` out of the struct. Order matches
-    /// the Zig field declaration order so the emitted import-clause / binding
-    /// property order is identical.
+    /// `_parse` iterates this static table. The `&str` is the *JavaScript*
+    /// global name, and the fn-ptr projects the corresponding `Ref` out of
+    /// the struct. The table order determines the emitted import-clause /
+    /// binding property order.
     pub(crate) const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
         ("test", |j| j.test),
         ("it", |j| j.it),
@@ -2059,24 +2004,8 @@ impl Default for Jest {
     }
 }
 
-// Doing this seems to yield a 1% performance improvement parsing larger files
-// ❯ hyperfine "../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" "../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable" --min-runs=500
-// Benchmark #1: ../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
-//   Time (mean ± σ):      25.1 ms ±   1.1 ms    [User: 20.4 ms, System: 3.1 ms]
-//   Range (min … max):    23.5 ms …  31.7 ms    500 runs
-//
-// Benchmark #2: ../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable
-//   Time (mean ± σ):      25.6 ms ±   1.3 ms    [User: 20.9 ms, System: 3.1 ms]
-//   Range (min … max):    24.1 ms …  39.7 ms    500 runs
-// '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
-// 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
-//
-// TODO(port): `NewParser` is a Zig comptime type-generating fn parametrised by
-// a struct of bools (jsx/typescript/scan_only). The Rust port in `ast/P.rs`
-// will expose this via const generics or a marker-type strategy; these aliases
-// pin the eight monomorphizations.
-// `NewParser!` Zig comptime-type-fn lowering: named aliases now live in
-// `ast/Parser.rs` (where the JsxT ZSTs are in scope). Re-export here.
+// Named parser aliases live in `ast/Parser.rs` (where the JsxT ZSTs are
+// in scope). Re-export here.
 pub use crate::parse::parse_entry::{
     JSXImportScanner, JSXParser, JavaScriptImportScanner, JavaScriptParser, TSXImportScanner,
     TSXParser, TypeScriptImportScanner, TypeScriptParser,
@@ -2125,7 +2054,7 @@ pub fn new_lazy_export_ast<'bump>(
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
     source: &'bump bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
+    runtime_api_call: &'static [u8],
 ) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
@@ -2146,13 +2075,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
     source: &'bump bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
+    runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
 ) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     let mut temp_log = bun_ast::Log::init();
-    // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
-    // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
-    // provenance chain. See `Parser::init` for the same pattern.
+    // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
+    // pointer so they share one provenance chain. See `Parser::init` for the
+    // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
     let mut parser = Parser {
@@ -2277,8 +2206,8 @@ pub struct ReactRefresh<'a> {
     /// and then it will insert `var _s = ...`, add the `_s()` call at
     /// the start of the function, and then add the call to `_s(func, ...)`.
     ///
-    /// PORT NOTE: Zig type is `?*?HookContext` — a raw nullable pointer to
-    /// stack storage on the visiting fn frame. Modeled as `Option<NonNull<_>>`
+    /// A raw nullable pointer to stack storage on the visiting fn frame,
+    /// modeled as `Option<NonNull<_>>`
     /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
     pub hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
@@ -2316,7 +2245,7 @@ pub struct HookContext {
 
 impl ReactRefresh<'_> {
     /// Reborrow the stack-allocated `Option<HookContext>` that
-    /// `hook_ctx_storage` points at (Zig: `?*?HookContext`). The returned
+    /// `hook_ctx_storage` points at. The returned
     /// borrow is detached from `self` because the storage lives on a *caller*
     /// stack frame (set/restored around each visit), disjoint from the parser
     /// struct. Centralises the one `unsafe` so call sites in `p.rs` /
@@ -2372,44 +2301,39 @@ pub(crate) enum BuiltInHook {
     useOptimistic,
 }
 
+// PERF: all 19 keys share the `b"use"` prefix, so a perfect hash spends most
+// of its work mixing identical leading bytes. The length dispatch yields a
+// unique bucket for 13 of the 15 occupied lengths; the two collisions
+// (len 10 → 2 keys, len 13 → 4 keys) resolve via the constant-length compare
+// tree.
+bun_core::comptime_string_map! {
+    static BUILT_IN_HOOK_MAP: BuiltInHook = {
+        b"useId" => BuiltInHook::useId,
+        b"useRef" => BuiltInHook::useRef,
+        b"useMemo" => BuiltInHook::useMemo,
+        b"useState" => BuiltInHook::useState,
+        b"useEffect" => BuiltInHook::useEffect,
+        b"useReducer" => BuiltInHook::useReducer,
+        b"useContext" => BuiltInHook::useContext,
+        b"useCallback" => BuiltInHook::useCallback,
+        b"useFormState" => BuiltInHook::useFormState,
+        b"useDebugValue" => BuiltInHook::useDebugValue,
+        b"useTransition" => BuiltInHook::useTransition,
+        b"useFormStatus" => BuiltInHook::useFormStatus,
+        b"useOptimistic" => BuiltInHook::useOptimistic,
+        b"useActionState" => BuiltInHook::useActionState,
+        b"useLayoutEffect" => BuiltInHook::useLayoutEffect,
+        b"useDeferredValue" => BuiltInHook::useDeferredValue,
+        b"useInsertionEffect" => BuiltInHook::useInsertionEffect,
+        b"useImperativeHandle" => BuiltInHook::useImperativeHandle,
+        b"useSyncExternalStore" => BuiltInHook::useSyncExternalStore,
+    };
+}
+
 impl BuiltInHook {
-    /// Length-gated lookup (formerly a `phf::Map<&[u8], BuiltInHook>`).
-    ///
-    /// All 19 keys share the `b"use"` prefix, so a perfect hash spends most of
-    /// its work mixing identical leading bytes. Gating on `len()` alone yields a
-    /// unique bucket for 13 of the 15 occupied lengths; the two collisions
-    /// (len 10 → 2 keys, len 13 → 4 keys) disambiguate on `id[3]` — the first
-    /// byte after the shared prefix — before the confirming slice compare.
     #[inline]
     pub(crate) fn from_bytes(id: &[u8]) -> Option<Self> {
-        match id.len() {
-            5 if id == b"useId" => Some(Self::useId),
-            6 if id == b"useRef" => Some(Self::useRef),
-            7 if id == b"useMemo" => Some(Self::useMemo),
-            8 if id == b"useState" => Some(Self::useState),
-            9 if id == b"useEffect" => Some(Self::useEffect),
-            10 => match id[3] {
-                b'R' if id == b"useReducer" => Some(Self::useReducer),
-                b'C' if id == b"useContext" => Some(Self::useContext),
-                _ => None,
-            },
-            11 if id == b"useCallback" => Some(Self::useCallback),
-            12 if id == b"useFormState" => Some(Self::useFormState),
-            13 => match id[3] {
-                b'D' if id == b"useDebugValue" => Some(Self::useDebugValue),
-                b'T' if id == b"useTransition" => Some(Self::useTransition),
-                b'F' if id == b"useFormStatus" => Some(Self::useFormStatus),
-                b'O' if id == b"useOptimistic" => Some(Self::useOptimistic),
-                _ => None,
-            },
-            14 if id == b"useActionState" => Some(Self::useActionState),
-            15 if id == b"useLayoutEffect" => Some(Self::useLayoutEffect),
-            16 if id == b"useDeferredValue" => Some(Self::useDeferredValue),
-            18 if id == b"useInsertionEffect" => Some(Self::useInsertionEffect),
-            19 if id == b"useImperativeHandle" => Some(Self::useImperativeHandle),
-            20 if id == b"useSyncExternalStore" => Some(Self::useSyncExternalStore),
-            _ => None,
-        }
+        BUILT_IN_HOOK_MAP.get(id).copied()
     }
 }
 
@@ -2420,8 +2344,8 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
         return 0;
     }
 
-    // Note: Rust `as u32` saturates where Zig `@intFromFloat` is UB on overflow,
-    // but `@mod` ensures the value is in [0, u32::MAX] so behavior matches.
+    // The `%` keeps the value in [0, u32::MAX], so the `as u32` cast is exact
+    // (and would saturate rather than be UB if it weren't).
     let uint: u32 = (f.abs() % (u32::MAX as f64 + 1.0)) as u32;
     let int: i32 = uint as i32; // bitcast (same-width int cast reinterprets bits)
     if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
@@ -2433,5 +2357,3 @@ pub struct ParseBindingOptions {
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub is_using_statement: bool,
 }
-
-// ported from: src/js_parser/parser.zig

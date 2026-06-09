@@ -1,9 +1,8 @@
 //
-// `Wyhash11` is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
-// (the older 32-byte-round, 5-prime variant kept in src/wyhash/wyhash.zig).
+// `Wyhash11` is an older wyhash variant (32-byte rounds, 5 primes).
 //
-// `Wyhash` is the current `std.hash.Wyhash` (final4 variant, 48-byte rounds, 4 secrets) ported
-// from vendor/zig/lib/std/hash/wyhash.zig — used by RuntimeTranspilerCache, `bun.hash()`, router.
+// `Wyhash` is the current wyhash (final4 variant, 48-byte rounds, 4 secrets) —
+// used by RuntimeTranspilerCache, `bun.hash()`, router.
 //
 // THESE ARE DIFFERENT ALGORITHMS. They produce different outputs for the same input.
 //
@@ -21,8 +20,7 @@ const PRIMES: [u64; 5] = [
     0x1d8e4e27c47d124f,
 ];
 
-// Zig: `inline fn read(comptime T, data) { mem.readInt(T, data[0..@sizeOf(T)], .little) }`
-// — a single unaligned load. Mirrors the `Wyhash::read4`/`read8` treatment
+// A single unaligned load. Mirrors the `Wyhash::read4`/`read8` treatment
 // below (~lib.rs:600): the per-byte `[data[0], data[1], ...]` spelling left a
 // cmp/je-to-panic ladder per byte in `WyhashStateless::final_`/`round`, and
 // `final_` is the `StringHashMap` short-key hash — hit on every parser /
@@ -30,11 +28,10 @@ const PRIMES: [u64; 5] = [
 // keys are <32B so `aligned_len == 0` and the whole key goes through `final_`).
 // Every caller proves the length first (the `1..=31` arms of `final_` slice
 // `rem_key = &b[0..rem_len]` with `rem_len` == the match scrutinee; `round`
-// takes a `&[u8]` it `debug_assert!`s == 32), so match Zig's codegen exactly.
+// takes a `&[u8]` it `debug_assert!`s == 32), so a single unaligned load is sound.
 #[inline(always)]
 fn read_bytes<const BYTES: u8>(data: &[u8]) -> u64 {
     debug_assert!(data.len() >= usize::from(BYTES));
-    // Zig: const T = std.meta.Int(.unsigned, 8 * bytes); mem.readInt(T, data[0..bytes], .little)
     // Rust cannot mint an integer type from a const generic; dispatch on the only values used.
     match BYTES {
         1 => u64::from(data[0]),
@@ -64,8 +61,7 @@ fn read_8bytes_swapped(data: &[u8]) -> u64 {
 // bun_collections / bun_js_parser crate boundary, leaving an out-of-line `mum`
 // (and a `call` per mix step) inside the hashbrown probe loop. Force the 4 mix
 // steps to fold in with no call/ret — same reasoning the surrounding `final_*`
-// helpers are `#[inline(always)]` / `#[cold]`-split for. Zig force-inlines the
-// equivalent `mum`/`mix0`/`mix1` via `@call(bun.callmod_inline, ...)`.
+// helpers are `#[inline(always)]` / `#[cold]`-split for.
 #[inline(always)]
 fn mum(a: u64, b: u64) -> u64 {
     let mut r = (a as u128) * (b as u128);
@@ -183,7 +179,7 @@ impl WyhashStateless {
         WyhashStateless { seed, msg_len: 0 }
     }
 
-    #[inline(always)] // Zig: `@call(bun.callmod_inline, self.round, ...)`
+    #[inline(always)]
     fn round(&mut self, b: &[u8]) {
         debug_assert!(b.len() == 32);
 
@@ -198,14 +194,13 @@ impl WyhashStateless {
         );
     }
 
-    #[inline(always)] // Zig: `@call(bun.callmod_inline, c.update, ...)`
+    #[inline(always)]
     pub(crate) fn update(&mut self, b: &[u8]) {
         debug_assert!(b.len().is_multiple_of(32));
 
         let mut off: usize = 0;
         while off < b.len() {
             self.round(&b[off..off + 32]);
-            // @call(bun.callmod_inline, self.round, .{b[off .. off + 32]});
             off += 32;
         }
 
@@ -219,13 +214,11 @@ impl WyhashStateless {
     // almost always <17B, so split the cold `17..=31` tail into a separate
     // `#[cold] #[inline(never)] final_long`, leaving `final_` with just the
     // `0..=16` arms — small enough to inline cleanly into every hashbrown probe.
-    // Zig spells the call as `@call(bun.callmod_inline, c.final, ...)`.
     #[inline(always)]
     pub(crate) fn final_(&mut self, b: &[u8]) -> u64 {
         debug_assert!(b.len() < 32);
 
         let seed = self.seed;
-        // Zig: @as(u5, @intCast(b.len)) — Rust has no u5; b.len() < 32 is asserted above.
         let rem_len = b.len();
         let rem_key = &b[0..rem_len];
 
@@ -312,17 +305,14 @@ impl WyhashStateless {
     // standalone symbol (91 self-samples) and `call`ed from
     // `find_symbol_with_record_usage` and every `StringHashMap`/hashbrown probe
     // — `#[inline]` (hint) was being declined across the bun_wyhash →
-    // bun_js_parser/bun_collections crate boundary. Zig force-inlines the whole
-    // hash into the caller via `@call(bun.callmod_inline, ...)`; match that.
+    // bun_js_parser/bun_collections crate boundary; force it.
     #[inline(always)]
     pub(crate) fn hash(seed: u64, input: &[u8]) -> u64 {
         let aligned_len = input.len() - (input.len() % 32);
 
         let mut c = WyhashStateless::init(seed);
         c.update(&input[0..aligned_len]);
-        // @call(bun.callmod_inline, c.update, .{input[0..aligned_len]});
         c.final_(&input[aligned_len..])
-        // return @call(bun.callmod_inline, c.final, .{input[aligned_len..]});
     }
 }
 
@@ -340,7 +330,7 @@ impl Wyhash11 {
     pub fn init(seed: u64) -> Wyhash11 {
         Wyhash11 {
             state: WyhashStateless::init(seed),
-            buf: [0; 32], // Zig: undefined
+            buf: [0; 32],
             buf_len: 0,
         }
     }
@@ -381,8 +371,7 @@ impl Wyhash11 {
 }
 
 // Allow `Wyhash11` to be used with `core::hash::Hash::hash` (e.g., as the
-// state for std/HashMap-style hashing). Mirrors how Zig's `std.hash_map`
-// AutoContext drives a Wyhash state.
+// state for std/HashMap-style hashing).
 impl core::hash::Hasher for Wyhash11 {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
@@ -398,12 +387,11 @@ impl core::hash::Hasher for Wyhash11 {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Wyhash (std.hash.Wyhash — final4 variant, 48-byte rounds, 4 secrets)
-// Ported from vendor/zig/lib/std/hash/wyhash.zig
+// Wyhash (final4 variant, 48-byte rounds, 4 secrets)
 // ════════════════════════════════════════════════════════════════════════════
 
-/// `std.hash.Wyhash` — the wyhash final4 variant. Used by `bun.hash()`,
-/// `RuntimeTranspilerCache`, the router, and Zig's std `HashMap` autocontext.
+/// The wyhash final4 variant. Used by `bun.hash()`,
+/// `RuntimeTranspilerCache`, and the router.
 ///
 /// NOT interchangeable with [`Wyhash11`].
 #[derive(Clone, Copy)]
@@ -429,11 +417,11 @@ impl Wyhash {
     pub fn init(seed: u64) -> Wyhash {
         let s0 = seed ^ Self::mix(seed ^ Self::SECRET[0], Self::SECRET[1]);
         Wyhash {
-            a: 0, // Zig: undefined
-            b: 0, // Zig: undefined
+            a: 0,
+            b: 0,
             state: [s0, s0, s0],
             total_len: 0,
-            buf: [0; 48], // Zig: undefined
+            buf: [0; 48],
             buf_len: 0,
         }
     }
@@ -513,12 +501,12 @@ impl Wyhash {
             b: self.b,
             state: self.state,
             total_len: self.total_len,
-            buf: [0; 48], // Zig: undefined
-            buf_len: 0,   // Zig: undefined
+            buf: [0; 48],
+            buf_len: 0,
         }
     }
 
-    #[inline(always)] // Zig: `inline fn smallKey`
+    #[inline(always)]
     fn small_key(&mut self, input: &[u8]) {
         debug_assert!(input.len() <= 16);
 
@@ -540,7 +528,7 @@ impl Wyhash {
 
     #[inline]
     fn round(&mut self, input: &[u8; 48]) {
-        // Zig: inline for (0..3) |i| — manually unrolled.
+        // Manually unrolled.
         let a0 = Self::read8(&input[0..]);
         let b0 = Self::read8(&input[8..]);
         self.state[0] = Self::mix(a0 ^ Self::SECRET[1], b0 ^ self.state[0]);
@@ -554,13 +542,12 @@ impl Wyhash {
         self.state[2] = Self::mix(a2 ^ Self::SECRET[3], b2 ^ self.state[2]);
     }
 
-    // Zig: `inline fn read(comptime T, data) { mem.readInt(T, data[0..@sizeOf(T)], .little) }`
-    // — a single unaligned load. The previous per-byte `[data[0], data[1], ...]`
+    // A single unaligned load. The previous per-byte `[data[0], data[1], ...]`
     // spelling left a cmp/je-to-panic ladder per byte in the `small_key` disasm
     // (8 bounds checks for the 4× `read4` at len∈[4,16]). All call sites slice
     // from a buffer whose length is already proven ≥4/≥8 by the enclosing
     // branch (`small_key`: `len >= 4`; `round`: `&[u8; 48]`; `final1`:
-    // `i + 16 < len` / `len - 16` / `len - 8`), so match Zig's codegen exactly.
+    // `i + 16 < len` / `len - 16` / `len - 8`), so a single unaligned load is sound.
     #[inline(always)]
     fn read4(data: &[u8]) -> u64 {
         debug_assert!(data.len() >= 4);
@@ -600,8 +587,7 @@ impl Wyhash {
     }
 
     // input_lb must be at least 16-bytes long (in shorter key cases the small_key function will be
-    // used instead). We use an index into a slice for comptime processing as opposed to if we
-    // used pointers.
+    // used instead). Indexes into a slice rather than offsetting raw pointers.
     #[inline]
     fn final1(&mut self, input_lb: &[u8], start_pos: usize) {
         debug_assert!(input_lb.len() >= 16);
@@ -621,7 +607,7 @@ impl Wyhash {
         self.b = Self::read8(&input_lb[input_lb.len() - 8..]);
     }
 
-    #[inline(always)] // Zig: `inline fn final2`
+    #[inline(always)]
     fn final2(&mut self) -> u64 {
         self.a ^= Self::SECRET[1];
         self.b ^= self.state[0];
@@ -633,9 +619,8 @@ impl Wyhash {
     }
 
     // perf on build/create-next showed `Wyhash::hash` out-lined and `call`ed
-    // from every wyhash-backed hashbrown probe; Zig's `std.hash.Wyhash.hash`
-    // inlines fully into its caller. `#[inline]` (hint) is declined across the
-    // crate boundary for this body size — force it.
+    // from every wyhash-backed hashbrown probe. `#[inline]` (hint) is declined
+    // across the crate boundary for this body size — force it.
     #[inline(always)]
     pub fn hash(seed: u64, input: &[u8]) -> u64 {
         let mut this = Wyhash::init(seed);
@@ -645,25 +630,21 @@ impl Wyhash {
         } else {
             let mut i: usize = 0;
             if input.len() >= 48 {
-                // Hot path for `Bun.hash` over large buffers. Zig spells the
-                // body as `inline fn round` calling `inline fn read`/`mix`/
-                // `mum`, all of which are *force*-inlined; Rust's `#[inline]`
-                // is a hint that opt-level 0 ignores, so the helper-function
-                // shape costs ~12 callee frames per 48-byte block. Instead,
-                // hoist state into locals and open-code one round per
-                // iteration (3× 128-bit multiply, 6× le-u64 read).
+                // Hot path for `Bun.hash` over large buffers. Rust's
+                // `#[inline]` is a hint that opt-level 0 ignores, so a
+                // helper-function shape costs ~12 callee frames per 48-byte
+                // block. Instead, hoist state into locals and open-code one
+                // round per iteration (3× 128-bit multiply, 6× le-u64 read).
                 let [mut s0, mut s1, mut s2] = this.state;
                 let (k1, k2, k3) = (Self::SECRET[1], Self::SECRET[2], Self::SECRET[3]);
-                // Six little-endian u64 reads per round. Zig's
-                // `std.mem.readInt(u64, p, .little)` is a single unaligned
-                // load (`@bitCast` of `*const [8]u8`). The previous safe-Rust
-                // spellings here — `input[i..i+48].try_into()` plus per-byte
-                // shift-or — left a slice bounds-check + panic edge per
-                // iteration and 48 scalar byte loads per round, which made
+                // Six little-endian u64 reads per round. The previous
+                // safe-Rust spellings here — `input[i..i+48].try_into()` plus
+                // per-byte shift-or — left a slice bounds-check + panic edge
+                // per iteration and 48 scalar byte loads per round, which made
                 // `Wyhash::hash` the #1 self-time symbol when
-                // `RuntimeTranspilerCache` hashes multi-MB sources. Match the
-                // Zig codegen exactly: take the base pointer once and issue
-                // six `read_unaligned::<u64>` per round.
+                // `RuntimeTranspilerCache` hashes multi-MB sources. Take the
+                // base pointer once and issue six `read_unaligned::<u64>` per
+                // round.
                 //
                 // `i + 48 < len` ⇔ `i < len - 48`; len ≥ 48 is guaranteed
                 // by the enclosing branch, so the subtraction is safe and we
@@ -704,7 +685,7 @@ impl Wyhash {
 }
 
 // Allow `Wyhash` to be used with `core::hash::Hash::hash` (e.g., as the state
-// for std/HashMap-style hashing). Mirrors Zig's `std.hash_map` AutoContext.
+// for std/HashMap-style hashing).
 impl core::hash::Hasher for Wyhash {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
@@ -726,13 +707,11 @@ impl Default for Wyhash {
 
 /// One-shot `Hasher` for `std::collections::HashMap`. Unlike [`Wyhash`]'s
 /// streaming `Hasher` impl (which buffers into a 48-byte scratch and re-zeroes
-/// it on every `init`/`shallow_copy` — a measurable zero-fill cost the Zig
-/// `= undefined` avoids), this folds each `write` through the stateless
-/// one-shot path seeded by the running hash. Matches Zig's
-/// `std.hash_map.getAutoHashFn` shape: no buffering, no per-key allocation.
+/// it on every `init`/`shallow_copy` — a measurable zero-fill cost), this folds
+/// each `write` through the stateless one-shot path seeded by the running
+/// hash: no buffering, no per-key allocation.
 ///
-/// Hash values are deterministic across runs (seed 0) but are NOT
-/// bit-identical to Zig's `Wyhash.hash(0, key)` because Rust's `Hash for [T]`
+/// Hash values are deterministic across runs (seed 0). Rust's `Hash for [T]`
 /// prepends a length prefix; that's fine — these are in-memory tables only
 /// (lockfile/on-disk hashes go through [`Wyhash11`] / [`hash`] directly).
 #[derive(Default, Clone, Copy)]
@@ -744,8 +723,7 @@ impl core::hash::Hasher for OneShotHasher {
     // perf on build/create-next: `OneShotHasher::write` showed up as a
     // standalone 58-self-sample symbol `call`ed from hashbrown's probe loop —
     // `#[inline]` was being declined across the bun_wyhash → bun_collections
-    // crate boundary. Force-inline so the whole hash collapses into the caller
-    // (matches Zig's `getAutoHashFn`, which is fully comptime-inlined).
+    // crate boundary. Force-inline so the whole hash collapses into the caller.
     #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
         // Each chunk re-seeds from the previous output, so multi-`write` keys
@@ -775,8 +753,7 @@ impl core::hash::Hasher for OneShotHasher {
     /// No-op: keys hashed through this hasher are never cross-type, so the
     /// prefix-freedom guarantee `<[T] as Hash>` buys is unused. Skipping it
     /// makes `<[u8] as Hash>` collapse to a single `write(bytes)` →
-    /// `Wyhash11::hash(0, bytes)` — the exact shape of Zig's
-    /// `bun.StringHashMapContext.hash`. perf showed `hashbrown::make_hash`
+    /// `Wyhash11::hash(0, bytes)`. perf showed `hashbrown::make_hash`
     /// outlined with the extra `mum` from the length prefix as dead weight.
     #[inline(always)]
     fn write_length_prefix(&mut self, _len: usize) {}
@@ -792,7 +769,7 @@ impl core::hash::Hasher for OneShotHasher {
 
 /// Hash any `K: Hash` through [`OneShotHasher`] — the `Hash` → wyhash thunk
 /// shared by both auto-context map types. See the [`OneShotHasher`] doc-comment
-/// for the length-prefix divergence from Zig's `Wyhash.hash(0, asBytes(&k))`.
+/// for the length-prefix note.
 #[inline]
 pub fn auto_hash<K: core::hash::Hash + ?Sized>(key: &K) -> u64 {
     let mut h = OneShotHasher::default();
@@ -805,7 +782,7 @@ pub fn auto_hash<K: core::hash::Hash + ?Sized>(key: &K) -> u64 {
 /// the short identifier keys the parser/printer/renamer churn.
 pub type BuildHasher = core::hash::BuildHasherDefault<OneShotHasher>;
 
-/// `bun.hash(bytes)` — `std.hash.Wyhash` with seed 0.
+/// `bun.hash(bytes)` — wyhash with seed 0.
 #[inline]
 pub fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(0, bytes)
@@ -813,16 +790,16 @@ pub fn hash(bytes: &[u8]) -> u64 {
 
 #[inline]
 pub fn hash32(bytes: &[u8]) -> u32 {
-    hash(bytes) as u32 // @truncate
+    hash(bytes) as u32 // truncating cast
 }
 
-/// `bun.hashWithSeed(seed, bytes)` — `std.hash.Wyhash` with explicit seed.
+/// `bun.hashWithSeed(seed, bytes)` — wyhash with explicit seed.
 #[inline]
 pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash::hash(seed, bytes)
 }
 
-/// `std.hash.Wyhash` over the ASCII-lowercased view of `bytes`, streamed
+/// Wyhash over the ASCII-lowercased view of `bytes`, streamed
 /// through a 48-byte stack scratch so no heap allocation occurs regardless of
 /// input length. ASCII-only (`b'A'..=b'Z' → b'a'..=b'z'`); non-ASCII bytes
 /// pass through unchanged.
@@ -832,8 +809,7 @@ pub fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
 /// to the hasher are identical either way — so this collapses the three
 /// open-coded copies in `http::hash_header_name`,
 /// `s3_signing::S3Credentials::hash_const`, and
-/// `collections::CaseInsensitiveAsciiStringContext::hash_bytes` (Zig has the
-/// same triplication: http.zig:828, credentials.zig:23, bun.zig:1011).
+/// `collections::CaseInsensitiveAsciiStringContext::hash_bytes`.
 #[inline]
 pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {
     let mut buf = [0u8; 48];
@@ -860,17 +836,17 @@ pub fn hash_ascii_lowercase(seed: u64, bytes: &[u8]) -> u64 {
     h.final_()
 }
 
-/// `std.hash.Wyhash.hash(seed, input)` as a `const fn`.
+/// [`Wyhash::hash`]`(seed, input)` as a `const fn`.
 ///
-/// This is a parallel one-shot port of [`Wyhash::hash`] for compile-time
-/// evaluation (e.g. `generated_symbol_name!` in `js_parser`, which must match
-/// Zig's `comptime std.hash.Wyhash.hash(0, name)` byte-for-byte). The runtime
+/// This is a parallel one-shot version of [`Wyhash::hash`] for compile-time
+/// evaluation (e.g. `generated_symbol_name!` in `js_parser`, which needs the
+/// hash at compile time). The runtime
 /// [`Wyhash::hash`] is intentionally NOT `const fn` — its perf-tuned hot loop
 /// uses `slice.try_into()` (trait call) and the streaming API uses
 /// `copy_from_slice`, neither of which is const-compatible. Keep the two in
 /// lock-step; `tests::hash_const_matches_runtime` guards drift.
 pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
-    // ── std.hash.Wyhash (final4 variant) — const-fn re-port. ──
+    // ── wyhash final4 variant — const-fn re-implementation. ──
     const SECRET: [u64; 4] = Wyhash::SECRET;
 
     #[inline]
@@ -955,9 +931,9 @@ pub const fn hash_const(seed: u64, input: &[u8]) -> u64 {
     )
 }
 
-/// `std.hash.int` — integer-to-integer hashing (same width in, same width out).
-/// Zig's version is `anytype`-generic; we cover the dedicated widths (16/32/64)
-/// via a sealed trait. All current callers pass `u32`.
+/// Integer-to-integer hashing (same width in, same width out).
+/// We cover the dedicated widths (16/32/64) via a sealed trait.
+/// All current callers pass `u32`.
 #[inline]
 pub fn hash_int<T: HashInt>(input: T) -> T {
     T::hash_int(input)
@@ -1095,9 +1071,9 @@ mod tests {
 
     #[test]
     fn hash_const_matches_runtime() {
-        // `hash_const` is a parallel const-fn re-port of `Wyhash::hash`; it
-        // produces compile-time symbol suffixes that must match Zig's
-        // `comptime std.hash.Wyhash.hash(0, name)` byte-for-byte. Guard drift.
+        // `hash_const` is a parallel const-fn re-implementation of
+        // `Wyhash::hash`; it produces compile-time symbol suffixes that must
+        // match the runtime hash byte-for-byte. Guard drift.
         for s in [
             &b""[..],
             b"a",
@@ -1201,5 +1177,3 @@ mod tests {
         assert_ne!(Wyhash::hash(0, b"abc"), Wyhash11::hash(0, b"abc"));
     }
 }
-
-// ported from: src/wyhash/wyhash.zig

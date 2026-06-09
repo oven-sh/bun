@@ -86,9 +86,9 @@ struct Stringifier {
     builder: wtf::StringBuilder,
     indent: usize,
     space: Space,
-    // PORT NOTE: `JSValue` keys live on the heap here, but every entry is also
+    // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
-    // conservative GC scan keeps them alive. Matches the Zig.
+    // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
 }
 
@@ -137,7 +137,7 @@ impl Space {
     }
 }
 
-// PORT NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
+// NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
 
 impl Stringifier {
     pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
@@ -150,7 +150,7 @@ impl Stringifier {
         })
     }
 
-    // PORT NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
+    // NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
     // free via `Drop`.
 
     pub(crate) fn stringify_value(
@@ -208,16 +208,22 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Object or array — check for circular references
-        // TODO(port): narrow error set — `try_insert`/`get_or_put` OOM maps to JsError::OutOfMemory
-        let was_present = self.visiting.insert(unwrapped, ()).is_some();
+        // Object or array — check for circular references.
+        // The call site is wired for fallible
+        // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
+        // allocates infallibly and aborts on OOM, so the Err arm only becomes live
+        // once the collections-side grow is made fallible.
+        let was_present = self
+            .visiting
+            .get_or_put(unwrapped)
+            .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
+            .found_existing;
         if was_present {
             return Err(global
                 .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
-        // PORT NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
-        // a scopeguard here would hold `&mut self.visiting` across the recursive
+        // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
         let result = if unwrapped.is_array() {
             self.stringify_array(global, unwrapped)
@@ -427,9 +433,8 @@ impl Stringifier {
 }
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
+    // NOTE: the JSON5 parser never builds ropes, so the simple slice → JS
+    // path is sufficient.
     if str.is_utf16 {
         let zig = ZigString::init_utf16(str.slice16());
         let bun_s = BunString::init(zig);
@@ -479,5 +484,3 @@ fn expr_to_js_with_check(
         _ => Ok(JSValue::UNDEFINED),
     }
 }
-
-// ported from: src/runtime/api/JSON5Object.zig

@@ -1033,16 +1033,14 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
 // `BUN_DECLARE_HOST_FUNCTION(${name}__{construct,write,end,flush,start})` plus
 // the two non-host-fn externs `${name}__getInternalFd` / `${name}__memoryCost`.
 // Each thunk calls an inherent method on the real sink struct in
-// `crate::webcore` (mirroring Zig's `@import("…").${name}.<fn>`); a missing
-// method is a compile error.
+// `crate::webcore`; a missing method is a compile error.
 //
 // Calling convention: `BUN_DECLARE_HOST_FUNCTION` and `endWithSink` use
 // `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
 // `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
 // symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
 function rustSink() {
-  // All sink structs live (or will live) under `crate::webcore`; the Zig
-  // originals are `src/runtime/webcore/streams.zig::${name}`.
+  // All sink structs live (or will live) under `crate::webcore`.
   const sinkPaths: Record<string, string> = {
     ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
     FileSink: "crate::webcore::file_sink::FileSink",

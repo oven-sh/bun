@@ -22,13 +22,11 @@ use bun_ptr::BackRef;
 /// - Context receives a reference to the WorkTask itself in the `run` method
 pub trait WorkTaskContext: Sized {
     /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
-    /// loop's concurrent queue (`task_tag::*`). Mirrors Zig's per-instantiation
-    /// `TaggedPointerUnion` membership (e.g. `GetAddrInfoRequestTask`).
+    /// loop's concurrent queue (`task_tag::*`).
     const TASK_TAG: TaskTag;
 
     /// Perform the work on the thread pool. `this`/`task` are raw pointers
-    /// because the context is heap-allocated, crosses threads, and is mutated
-    /// — the Zig signature is `fn run(this: *Context, task: *Task) void`.
+    /// because the context is heap-allocated, crosses threads, and is mutated.
     fn run(this: *mut Self, task: *mut WorkTask<Self>);
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
 }
@@ -45,7 +43,6 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub async_task_tracker: AsyncTaskTracker,
 
     // This is a poll because we want it to enter the uSockets loop
-    // PORT NOTE: `ref` is a Rust keyword; field renamed to `ref_`.
     pub ref_: KeepAlive,
 }
 
@@ -79,15 +76,15 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         });
         this.ref_.ref_(Async::js_vm_ctx());
 
-        // PORT NOTE: intrusive `task` field is recovered via container_of in
+        // The intrusive `task` field is recovered via container_of in
         // run_from_thread_pool, so this must live at a stable heap address as a
         // raw pointer. Paired with `heap::take` in `destroy`.
         bun_core::heap::into_raw(this)
     }
 
-    // PORT NOTE: not `impl Drop` — `ref_.unref` is also called from `run_from_js`,
-    // and `Self` is held as a raw pointer (intrusive task). Explicit destroy matches
-    // the Zig `bun.destroy(this)` shape.
+    // Not `impl Drop` — `ref_.unref` is also called from `run_from_js`,
+    // and `Self` is held as a raw pointer (intrusive task), so destruction
+    // is explicit.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` was produced by heap::alloc in create_on_js_thread and
         // has not been freed.
@@ -143,5 +140,3 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         event_loop.enqueue_task_concurrent(task);
     }
 }
-
-// ported from: src/jsc/WorkTask.zig

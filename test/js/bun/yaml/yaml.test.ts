@@ -4566,3 +4566,120 @@ test("bounds alias expansion for parsed and imported YAML documents", async () =
   expect(stdout).not.toContain("payload:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+describe("plain scalar whitespace handling", () => {
+  test("internal whitespace runs are preserved exactly", () => {
+    expect(YAML.parse("key: word1   word2")).toEqual({ key: "word1   word2" });
+    expect(YAML.parse("key: a \t b")).toEqual({ key: "a \t b" });
+  });
+
+  test("trailing whitespace is dropped", () => {
+    expect(YAML.parse("key: value   ")).toEqual({ key: "value" });
+    expect(YAML.parse("key: value\t")).toEqual({ key: "value" });
+  });
+
+  test("whitespace before a line break is dropped when folding", () => {
+    expect(YAML.parse("key: foo  \n  bar")).toEqual({ key: "foo bar" });
+    expect(YAML.parse("key: foo \t \n  bar")).toEqual({ key: "foo bar" });
+  });
+
+  test("multiline plain scalars fold with newline counts", () => {
+    expect(YAML.parse("key: foo\n  bar")).toEqual({ key: "foo bar" });
+    expect(YAML.parse("key: foo\n\n  bar")).toEqual({ key: "foo\nbar" });
+    expect(YAML.parse("key: foo\n\n\n  bar")).toEqual({ key: "foo\n\nbar" });
+  });
+
+  test("whitespace buffer state does not leak between sibling scalars", () => {
+    // Each scalar scan reuses the parser's whitespace buffer; pending
+    // whitespace from one scalar must never appear in the next.
+    expect(YAML.parse("a: one  two   \nb: three\nc: four  \n  five\nd: 6")).toEqual({
+      a: "one  two",
+      b: "three",
+      c: "four five",
+      d: 6,
+    });
+  });
+
+  test("many scalars in one document reuse the buffer correctly", () => {
+    const n = 256;
+    const doc = Array.from({ length: n }, (_, i) => `k${i}: v${i} a  b   c\t`).join("\n");
+    const parsed = YAML.parse(doc) as Record<string, string>;
+    expect(Object.keys(parsed)).toHaveLength(n);
+    for (let i = 0; i < n; i++) {
+      expect(parsed[`k${i}`]).toBe(`v${i} a  b   c`);
+    }
+  });
+
+  test("number resolution followed by more content becomes a string", () => {
+    expect(YAML.parse("key: 12  34")).toEqual({ key: "12  34" });
+    expect(YAML.parse("key: 1+1")).toEqual({ key: "1+1" });
+    expect(YAML.parse("key: 12 then words")).toEqual({ key: "12 then words" });
+  });
+
+  test("special float forms resolve through the scalar resolver", () => {
+    expect(YAML.parse("key: .nan")).toEqual({ key: NaN });
+    expect(YAML.parse("key: .NaN")).toEqual({ key: NaN });
+    expect(YAML.parse("key: .NAN")).toEqual({ key: NaN });
+    expect((YAML.parse("key: .inf") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: .Inf") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: .INF") as any).key).toBe(Infinity);
+    expect((YAML.parse("key: -.inf") as any).key).toBe(-Infinity);
+    expect((YAML.parse("key: -.Inf") as any).key).toBe(-Infinity);
+    expect((YAML.parse("key: +.inf") as any).key).toBe(Infinity);
+  });
+
+  test("near-miss special floats fall back to strings", () => {
+    expect(YAML.parse("key: .in")).toEqual({ key: ".in" });
+    expect(YAML.parse("key: .na")).toEqual({ key: ".na" });
+    expect(YAML.parse("key: .infx")).toEqual({ key: ".infx" });
+    expect(YAML.parse("key: .nanx")).toEqual({ key: ".nanx" });
+    expect(YAML.parse("key: -.in")).toEqual({ key: "-.in" });
+  });
+
+  test("resolved keyword followed by more content becomes a string", () => {
+    expect(YAML.parse("key: null x")).toEqual({ key: "null x" });
+    expect(YAML.parse("key: true ish")).toEqual({ key: "true ish" });
+    expect(YAML.parse("key: falsey")).toEqual({ key: "falsey" });
+  });
+
+  test("plain scalars in flow context preserve internal whitespace", () => {
+    expect(YAML.parse("[one  two, 3, four   five]")).toEqual(["one  two", 3, "four   five"]);
+    expect(YAML.parse("{a: x  y, b: 1 2}")).toEqual({ a: "x  y", b: "1 2" });
+  });
+
+  test("multiline plain scalar folding in UTF-16 input", () => {
+    // Non-Latin1 characters force the UTF-16 scanner through the same
+    // whitespace-buffer machinery.
+    expect(YAML.parse("key: 测试  值\n  续行")).toEqual({ key: "测试  值 续行" });
+    expect(YAML.parse("key: 🎉 party  time   ")).toEqual({ key: "🎉 party  time" });
+  });
+
+  test("plain scalar terminated by document markers drops pending whitespace", () => {
+    expect(YAML.parse("key: value \n...")).toEqual({ key: "value" });
+  });
+
+  test("deeply interleaved numbers, keywords, and folded text in one document", () => {
+    const doc = [
+      "a: -1.5e3",
+      "b: nan but not  really",
+      "c: .nan",
+      "d: word",
+      "  folded  line",
+      "e: 0x10",
+      "f: 0b1",
+      "h: +",
+    ].join("\n");
+    const parsed = YAML.parse(doc) as any;
+    expect(parsed.a).toBe(-1500);
+    expect(parsed.b).toBe("nan but not  really");
+    expect(Number.isNaN(parsed.c)).toBe(true);
+    expect(parsed.d).toBe("word folded  line");
+    expect(parsed.e).toBe(16);
+    expect(parsed.f).toBe("0b1");
+    expect(parsed.h).toBe("+");
+  });
+
+  test("bare dash after a mapping key is a block-sequence indicator, not a plain scalar", () => {
+    expect(() => YAML.parse("g: -")).toThrow(SyntaxError);
+  });
+});

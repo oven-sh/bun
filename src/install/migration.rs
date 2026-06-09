@@ -64,7 +64,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             Ok(r) => r,
             Err(e) => {
                 if e == err!("NPMLockfileVersionMismatch") {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3\n\nRun 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.",
                     );
                     Global::exit(1);
@@ -80,8 +80,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>package-lock.json<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>package-lock.json<r>");
             Output::flush();
         }
 
@@ -107,8 +107,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>yarn.lock<r>");
             Output::flush();
         }
 
@@ -125,17 +125,17 @@ pub fn detect_and_load_other_lockfile<'a>(
             Err(e) => {
                 match e {
                     MigratePnpmLockfileError::PnpmLockfileTooOld => {
-                        Output::pretty_errorln(
+                        bun_core::pretty_errorln!(
                             "<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (\\< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.",
                         );
                     }
                     MigratePnpmLockfileError::NonExistentWorkspaceDependency => {
-                        Output::warn(
+                        bun_core::warn!(
                             "Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                         );
                     }
                     MigratePnpmLockfileError::RelativeLinkDependency => {
-                        Output::warn(
+                        bun_core::warn!(
                             "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                         );
                     }
@@ -143,7 +143,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         if log.has_errors() {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
-                        Output::warn(
+                        bun_core::warn!(
                             "pnpm-lock.yaml migration failed due to missing workspace name.",
                         );
                     }
@@ -151,7 +151,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         if log.has_errors() {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
-                        Output::warn("Failed to parse pnpm-lock.yaml.");
+                        bun_core::warn!("Failed to parse pnpm-lock.yaml.");
                     }
                     MigratePnpmLockfileError::PnpmLockfileNotObject
                     | MigratePnpmLockfileError::PnpmLockfileMissingVersion
@@ -185,8 +185,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
             Output::flush();
         }
 
@@ -235,7 +235,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     data: &[u8],
     abs_path: &[u8],
 ) -> Result<LoadResult<'a>, Error> {
-    // TODO(port): narrow error set
     debug!("begin lockfile migration");
 
     this.init_empty();
@@ -309,7 +308,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let json_array = match &wksp.data {
                 ExprData::EArray(arr) => *arr,
                 ExprData::EObject(obj) => {
-                    // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+                    // `StoreRef::get` shadows `E::Object::get`; deref-coerce.
                     let obj: &E::Object = obj;
                     if let Some(packages) = obj.get(b"packages") {
                         match &packages.data {
@@ -368,7 +367,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         else {
             return Err(err!("InvalidNPMLockfile"));
         };
-        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        // `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
         if pkg.get(b"link").is_some() {
@@ -503,7 +502,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     // dependency on `resolved`, a dependencies version tag might change, requiring
     // new strings to be allocated.
-    // PORT NOTE: reshaped for borrowck — `string_buf()` borrows `this` mutably,
+    // Reshaped for borrowck — `string_buf()` borrows `this` mutably,
     // so we re-acquire it locally where needed instead of holding it across
     // other `this.*` mutations.
 
@@ -522,7 +521,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let mut sb = this.string_buf();
             let appended = sb.append(k)?;
             this.workspace_paths.insert(name_hash, appended);
-            // PERF(port): was assume_capacity
 
             if let Some(version_string) = &v.version {
                 let sliced_version = SlicedString::init(version_string, version_string);
@@ -530,7 +528,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 if result.valid && result.wildcard == Wildcard::None {
                     this.workspace_versions
                         .insert(name_hash, result.version.min());
-                    // PERF(port): was assume_capacity
                 }
             }
         }
@@ -549,7 +546,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         else {
             unreachable!("npm lockfile: non-object Expr from JSON parser")
         };
-        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        // `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
         let pkg_path = entry
@@ -706,7 +703,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
                     this.buffers.extern_strings.push(ev);
-                    // PERF(port): was assume_capacity
                 }
 
                 #[cfg(debug_assertions)]
@@ -839,36 +835,11 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         debug_assert!(this.packages.len() == package_idx as usize);
     }
 
-    // ignoring length check because we pre-allocated it. the length may shrink later
-    // so it's faster if we ignore the underlying length buffer and just assign it at the very end.
-    // PORT NOTE: reshaped for borrowck — track cursor indices into reserved capacity instead of
-    // shrinking slices via pointer arithmetic.
-    let dependencies_base: *mut Dependency = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base: *mut PackageID = this.buffers.resolutions.as_mut_ptr();
-    let mut deps_cursor: usize = 0;
-    let mut res_cursor: usize = 0;
-    // TODO(port): Stacked-Borrows audit — these raw ptrs into
-    // `buffers.{dependencies,resolutions}` and the `packages` columns below are
-    // held across `&mut self` calls to `string_buf()` / `get_or_put_id()`. The
-    // fields actually touched are disjoint (string_bytes/string_pool resp.
-    // package_index + read of resolutions), so this is sound under Tree
-    // Borrows and matches the Zig spec, but SB retags through `Unique<T>`.
-    // Fix by split-borrowing the disjoint fields (see the `bin` path above) or
-    // by setting Vec lengths up-front and indexing safely.
+    // Both buffers are filled by pushing into the pre-reserved Vecs: capacity
+    // for `num_deps` was reserved above so pushes never reallocate, and no raw
+    // pointers are held across `&mut self` calls.
 
-    // pre-initialize the dependencies and resolutions to `unset_package_id`
-    #[cfg(debug_assertions)]
-    {
-        // SAFETY: capacity reserved above for num_deps
-        unsafe {
-            for i in 0..(num_deps as usize) {
-                core::ptr::write(dependencies_base.add(i), Dependency::default());
-                core::ptr::write(resolutions_base.add(i), UNSET_PACKAGE_ID);
-            }
-        }
-    }
-
-    // PORT NOTE: MultiArrayList column access — re-borrow the (disjoint) `resolution`,
+    // MultiArrayList column access — re-borrow the (disjoint) `resolution`,
     // `meta`, `dependencies` and `resolutions` columns of `this.packages` at each use
     // site via the generated `items_*` / `items_*_mut` accessors. Capacity is fixed
     // (no further append until end of fn), so the slices stay valid; re-acquiring per
@@ -910,7 +881,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         else {
             unreachable!("npm lockfile: non-object Expr from JSON parser")
         };
-        // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
+        // `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
         if pkg.get(b"link").is_some() || is_skipped_pkg(pkg) {
@@ -924,26 +895,28 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             .as_string(&arena)
             .unwrap();
 
-        let dependencies_start = deps_cursor;
-        let resolutions_start = res_cursor;
+        let dependencies_start = this.buffers.dependencies.len();
+        let resolutions_start = this.buffers.resolutions.len();
 
-        // PORT NOTE: Zig used `defer` here to write dependencies_list/resolution_list and
-        // increment package_idx at every loop exit. Reshaped for borrowck — inlined as
-        // `finalize_pkg!` at the one early-continue and at natural end-of-loop.
+        // `finalize_pkg!` writes dependencies_list/resolution_list and
+        // increments package_idx; invoked at the one early-continue and at
+        // natural end-of-loop.
         macro_rules! finalize_pkg {
             () => {{
                 // package_idx < pkg_count; columns re-borrowed disjointly per statement.
-                if dependencies_start == deps_cursor {
+                if dependencies_start == this.buffers.dependencies.len() {
                     this.packages.items_dependencies_mut()[package_idx as usize] =
                         ExternalSlice::default();
                     this.packages.items_resolutions_mut()[package_idx as usize] =
                         ExternalSlice::default();
                 } else {
-                    let len: u32 = (res_cursor - resolutions_start) as u32;
+                    let len: u32 = (this.buffers.resolutions.len() - resolutions_start) as u32;
                     #[cfg(debug_assertions)]
                     {
                         debug_assert!(len > 0);
-                        debug_assert!(len == (deps_cursor - dependencies_start) as u32);
+                        debug_assert!(
+                            len == (this.buffers.dependencies.len() - dependencies_start) as u32
+                        );
                     }
                     this.packages.items_dependencies_mut()[package_idx as usize] =
                         ExternalSlice::new(dependencies_start as u32, len);
@@ -996,27 +969,19 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let mut sb = this.string_buf();
                     let wksp_name = sb.append(&value.name)?;
                     let wksp_path = sb.append(key)?;
-                    // SAFETY: deps_cursor < num_deps; capacity reserved above
-                    unsafe {
-                        core::ptr::write(
-                            dependencies_base.add(deps_cursor),
-                            Dependency {
-                                name: wksp_name,
-                                name_hash,
-                                version: DepVersion {
-                                    tag: DepTag::Workspace,
-                                    literal: wksp_path,
-                                    value: DepValue {
-                                        workspace: wksp_path,
-                                    },
-                                },
-                                behavior: Behavior::WORKSPACE,
+                    this.buffers.dependencies.push(Dependency {
+                        name: wksp_name,
+                        name_hash,
+                        version: DepVersion {
+                            tag: DepTag::Workspace,
+                            literal: wksp_path,
+                            value: DepValue {
+                                workspace: wksp_path,
                             },
-                        );
-                        core::ptr::write(resolutions_base.add(res_cursor), entry1.new_package_id);
-                    }
-                    deps_cursor += 1;
-                    res_cursor += 1;
+                        },
+                        behavior: Behavior::WORKSPACE,
+                    });
+                    this.buffers.resolutions.push(entry1.new_package_id);
                 }
             }
         }
@@ -1154,12 +1119,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                             let behavior = dep_key.behavior;
 
-                            // PORT NOTE: capture tag and git/github owner before moving
-                            // `version` into the buffer (Zig copies the struct by value; Rust
-                            // moves it). The owner is needed when `version.tag` is git/github
-                            // but the package's `resolved` URL infers as something else, in
-                            // which case Zig reads `res_version.value.{git,github}.owner` from
-                            // the original parsed dependency version.
+                            // Capture tag and git/github owner before moving
+                            // `version` into the buffer. The owner is needed when
+                            // `version.tag` is git/github but the package's `resolved`
+                            // URL infers as something else.
                             let version_tag = version.tag;
                             let version_git_owner = match version_tag {
                                 DepTag::Git => version.git().owner,
@@ -1167,21 +1130,13 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 _ => SemverString::default(),
                             };
 
-                            // SAFETY: cursor < num_deps; capacity reserved
-                            unsafe {
-                                core::ptr::write(
-                                    dependencies_base.add(deps_cursor),
-                                    Dependency {
-                                        name: dep_name,
-                                        name_hash,
-                                        version,
-                                        behavior,
-                                    },
-                                );
-                                core::ptr::write(resolutions_base.add(res_cursor), id);
-                            }
-                            deps_cursor += 1;
-                            res_cursor += 1;
+                            this.buffers.dependencies.push(Dependency {
+                                name: dep_name,
+                                name_hash,
+                                version,
+                                behavior,
+                            });
+                            this.buffers.resolutions.push(id);
 
                             // If the package resolution is not set, resolve the target package
                             // using the information we have from the dependency declaration.
@@ -1473,24 +1428,15 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                             };
                                             if b.value {
                                                 let behavior = Behavior::OPTIONAL | Behavior::PEER;
-                                                // SAFETY: cursor < num_deps; capacity reserved
-                                                unsafe {
-                                                    core::ptr::write(
-                                                        dependencies_base.add(deps_cursor),
-                                                        Dependency {
-                                                            name: dep_name,
-                                                            name_hash,
-                                                            version,
-                                                            behavior,
-                                                        },
-                                                    );
-                                                    core::ptr::write(
-                                                        resolutions_base.add(res_cursor),
-                                                        Install::INVALID_PACKAGE_ID,
-                                                    );
-                                                }
-                                                deps_cursor += 1;
-                                                res_cursor += 1;
+                                                this.buffers.dependencies.push(Dependency {
+                                                    name: dep_name,
+                                                    name_hash,
+                                                    version,
+                                                    behavior,
+                                                });
+                                                this.buffers
+                                                    .resolutions
+                                                    .push(Install::INVALID_PACKAGE_ID);
                                                 continue 'dep_loop;
                                             }
                                         }
@@ -1516,17 +1462,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         finalize_pkg!();
     }
 
-    // SAFETY: res_cursor elements written above into reserved capacity
-    unsafe {
-        this.buffers.resolutions.set_len(res_cursor);
-        this.buffers.dependencies.set_len(res_cursor);
-    }
-
-    // In allow_assert, we prefill this buffer with uninitialized values that we can detect later
     // It is our fault if we hit an error here, making it safe to disable in release.
     #[cfg(debug_assertions)]
     {
-        debug_assert!(this.buffers.dependencies.len() == deps_cursor);
+        debug_assert!(this.buffers.dependencies.len() == this.buffers.resolutions.len());
         debug_assert!(this.buffers.dependencies.len() <= num_deps as usize);
         let mut crash = false;
         for (i, r) in this.buffers.dependencies.iter().enumerate() {
@@ -1553,10 +1492,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     for i in 0..pkg_count {
         let r = &this.packages.items_resolution()[i];
         if r.tag == resolution::Tag::Uninitialized {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "Could not resolve package '{}' in lockfile during migration",
                 bstr::BStr::new(this.packages.items_name()[i].slice(&this.buffers.string_bytes)),
-            ));
+            );
             is_missing_resolutions = true;
         } else {
             #[cfg(debug_assertions)]
@@ -1578,12 +1517,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     this.resolve(log)?;
 
-    // if (Environment.isDebug) {
-    //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});
-    //     defer dump_file.close();
-    //     try std.json.stringify(this, .{ .whitespace = .indent_2 }, dump_file.writer());
-    // }
-
     #[cfg(debug_assertions)]
     {
         this.verify_data()?;
@@ -1593,7 +1526,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
-        // TODO(port): lifetime — LoadResult holds &mut Lockfile in Zig; verify Rust ownership
         migrated: Migrated::Npm,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),
@@ -1635,5 +1567,3 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
 fn string_hash(s: &[u8]) -> u64 {
     Semver::semver_string::Builder::string_hash(s)
 }
-
-// ported from: src/install/migration.zig

@@ -1,7 +1,7 @@
 //! PHASE-C link bridge — **transient**, not a permanent grab-bag.
 //!
-//! Every symbol that used to be stubbed here now has a real home (the `.rs`
-//! sibling of the Zig `export fn`) inside `bun_jsc` / `bun_runtime` /
+//! Every symbol that used to be stubbed here now has a real home inside
+//! `bun_jsc` / `bun_runtime` /
 //! `bun_http_jsc` / `bun_bundler_jsc`. As of this revision `bun_runtime` (and
 //! transitively `bun_jsc`) is a real dependency of this binary crate, so any
 //! `#[no_mangle]` definition that compiles in either of those crates is now
@@ -10,7 +10,7 @@
 //! What remains is the small set of symbols that are either (a) defined here
 //! directly because this is their proper home, (b) safe-default placeholders
 //! whose real body still depends on a gated crate, or (c) genuinely
-//! unimplemented anywhere (no Zig `export fn`, no C++ body) — those are
+//! unimplemented anywhere (no C++ body) — those are
 //! `unreachable!` so a stray call is loud rather than silent garbage.
 //!
 //! `__wrap_gettid` is NOT here — it lives in `bun_core` (its proper,
@@ -36,7 +36,7 @@ type JSValue = i64; // JSC::EncodedJSValue
 type VirtualMachine = c_void;
 
 // ════════════════════════════════════════════════════════════════════════════
-// Exported variables (Zig: `export var` / `@export(&var, …)`)
+// Exported variables
 // ════════════════════════════════════════════════════════════════════════════
 
 // REAL: now provided by bun_jsc (src/jsc/VirtualMachine.rs).
@@ -61,7 +61,7 @@ type VirtualMachine = c_void;
 // Real-body exports (no gated-crate dependency)
 // ════════════════════════════════════════════════════════════════════════════
 
-// PHASE-C: C++ callback — Zig: `pub export fn Bun__panic(msg, len) noreturn`
+// PHASE-C: C++ callback
 // REAL: src/main.rs (binary-level export; defined here directly)
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
@@ -71,7 +71,7 @@ pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
         // SAFETY: `msg` is non-null (checked above) and the C++ caller guarantees it is valid for reading `len` bytes for the duration of this call.
         unsafe { core::slice::from_raw_parts(msg, len) }
     };
-    bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
+    bun_core::output::panic(format_args!("{}", bstr::BStr::new(bytes)));
 }
 
 // REAL: now provided by bun_jsc (src/jsc/array_buffer.rs).
@@ -196,7 +196,7 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 // Blob__getSize
 // Bun__Blob__getSizeForBindings
 
-// .classes.ts hooks (build/debug/codegen/ZigGeneratedClasses.zig)
+// .classes.ts hooks
 // REAL: now provided by bun_runtime::generated_classes
 //   (build/debug/codegen/generated_classes.rs via generateRust()).
 // Blob__estimatedSize
@@ -251,7 +251,7 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 // zig__renderDiff
 
 // ════════════════════════════════════════════════════════════════════════════
-// Genuinely unimplemented — no Zig `export fn`, no C++ body. Kept so the
+// Genuinely unimplemented — no C++ body. Kept so the
 // extern ref in the rlib resolves; loud crash if ever called.
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -266,7 +266,7 @@ pub(crate) extern "C" fn JSC__JSValue__parseJSON(
     )
 }
 
-// Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
+// Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn BunString__toErrorInstance(
     _this: *const c_void,
@@ -276,7 +276,7 @@ pub(crate) extern "C" fn BunString__toErrorInstance(
 }
 
 // Declared `extern` in InspectorLifecycleAgent.cpp:47-48 but never defined in
-// C++ nor Zig (Debugger.zig declares it `extern "c"` too). The agent's
+// C++. The agent's
 // preventExit/stopPreventingExit protocol commands are no-ops in the inspector
 // build today.
 #[unsafe(no_mangle)]

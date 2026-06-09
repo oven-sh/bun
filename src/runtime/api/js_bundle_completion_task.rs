@@ -50,14 +50,13 @@ use crate::node::types::{
 };
 use crate::server::html_bundle;
 
-/// Mirrors Zig `BundleV2.JSBundleCompletionTask`. See module doc for the
-/// layering rationale.
-// `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// NOTE: comment says ThreadSafeRefCount but field is `RefCount<Self>` — pre-
-// existing port discrepancy, not addressed by the dedup.
+/// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
+    // NOTE: this should arguably be a thread-safe refcount, but it is the plain
+    // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
+    // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
@@ -95,7 +94,7 @@ impl JSBundleCompletionTask {
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
             // `plugin` is the live FFI handle stashed at construction;
-            // last-ref drop is the only place that releases it (Zig: `plugin.deinit()`).
+            // last-ref drop is the only place that releases it.
             Plugin::destroy(plugin.as_ptr());
         }
         // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
@@ -103,7 +102,12 @@ impl JSBundleCompletionTask {
 }
 
 // SAFETY: enqueued onto the bundle thread; field access is serialized by
-// the producer/consumer handshake (`UnboundedQueue` + `Waker`).
+// the producer/consumer handshake (`UnboundedQueue` + `Waker`). Additionally,
+// `ref_count` is the non-atomic `RefCount<Self>` (a `Cell<u32>`; its
+// `ThreadLock` asserts single-thread affinity in debug builds only), so all
+// `ref_()`/`deref()` calls must happen on the JS thread — the bundle thread
+// may hold and transfer an already-taken +1 across the handshake but must
+// never touch the count itself.
 unsafe impl Send for JSBundleCompletionTask {}
 
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
@@ -275,9 +279,6 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        // PORT NOTE: reshaped for borrowck — `self.config` is reborrowed for
-        // every field projection so the `&mut self` receiver stays usable for
-        // `self.env` below.
         let compile_options = self
             .config
             .compile
@@ -303,8 +304,6 @@ impl JSBundleCompletionTask {
         // Always get an absolute path for the outfile to ensure it works
         // correctly with PE metadata operations.
         // Add .exe extension for Windows targets if not already present.
-        // PORT NOTE: collapsed to a single owned `Box<[u8]>` so the
-        // `&mut outbuf` borrow ends before the rest of `self` is touched.
         let full_outfile_path: Box<[u8]> = {
             let outdir_slice = &self.config.outdir.list;
             let outfile_slice = &compile_options.outfile.list;
@@ -442,10 +441,8 @@ impl JSBundleCompletionTask {
         // keep them in the output array. Destroy all other non-entry-point files.
         // With --splitting, there can be multiple sourcemap files (one per chunk).
         let mut kept: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig wrote `output_files.items[kept]
-        // = current.*` while iterating `&mut output_files.items`. Swap-compact in
-        // place via index iteration so each loop body holds at most one `&mut`
-        // into `output_files`.
+        // Swap-compact in place via index iteration so each loop body holds
+        // at most one `&mut` into `output_files`.
         for i in 0..output_files.len() {
             let keep_this = if i == entry_point_index {
                 true
@@ -498,7 +495,7 @@ impl JSBundleCompletionTask {
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_core::PathString::init(write_path),
+                            bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
                         )),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(
@@ -533,8 +530,7 @@ impl JSBundleCompletionTask {
                 output_files.swap(kept, i);
                 kept += 1;
             }
-            // PORT NOTE: Zig called `current.deinit()` on dropped entries; in
-            // Rust the trailing entries are dropped by `truncate` below.
+            // Trailing (dropped) entries are freed by `truncate` below.
         }
         output_files.truncate(kept);
 
@@ -571,18 +567,17 @@ impl JSBundleCompletionTask {
         // instead of `*this` — `do_compilation`/`to_js_error` below need `&mut *this`.
         let global_this_ref = this.global_this;
         let global_this = global_this_ref.get();
-        // PORT NOTE: `Strong::swap` ties the returned `&mut JSPromise` to
+        // `Strong::swap` ties the returned `&mut JSPromise` to
         // `&mut this.promise` even though the cell lives on the GC heap (raw
         // ptr deref inside). Detach via raw ptr so `this` can be reborrowed
-        // for `result`/`config`/`log` below — Zig stored `*JSPromise`.
+        // for `result`/`config`/`log` below.
         let promise: *mut JSPromise = this.promise.swap();
         // SAFETY: GC-owned cell; valid for the duration of this JS-thread callback.
         let promise = unsafe { &mut *promise };
 
-        // PORT NOTE: reshaped for borrowck — `do_compilation` borrows
-        // `&mut self` while needing `&mut output_files` from inside
-        // `self.result`. Temporarily move the Vec out via `take` so the
-        // method gets a disjoint `&mut self`.
+        // `do_compilation` borrows `&mut self` while needing
+        // `&mut output_files` from inside `self.result`. Temporarily move the
+        // Vec out via `take` so the method gets a disjoint `&mut self`.
         if matches!(this.result, BundleV2Result::Value(_)) && this.config.compile.is_some() {
             let mut output_files = match &mut this.result {
                 BundleV2Result::Value(build) => core::mem::take(&mut build.output_files),
@@ -614,9 +609,9 @@ impl JSBundleCompletionTask {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — `to_js_error` borrows `&mut self`,
-        // which would overlap a `&mut this.result` match scrutinee. Dispatch
-        // the pending/err arms first, then take a fresh `&mut` for Value.
+        // `to_js_error` borrows `&mut self`, which would overlap a
+        // `&mut this.result` match scrutinee. Dispatch the pending/err arms
+        // first, then take a fresh `&mut` for Value.
         if matches!(this.result, BundleV2Result::Pending) {
             unreachable!();
         }
@@ -637,10 +632,10 @@ impl JSBundleCompletionTask {
                     );
                 }
 
-                // PORT NOTE: reshaped for borrowck — `output_file.to_js()` needs
-                // `&mut OutputFile` while the path computation reads
-                // `this.config`. Snapshot the config slices once outside the
-                // loop so the per-file `&mut` doesn't overlap `&this.config`.
+                // `output_file.to_js()` needs `&mut OutputFile` while the path
+                // computation reads `this.config`. Snapshot the config slices
+                // once outside the loop so the per-file `&mut` doesn't overlap
+                // `&this.config`.
                 let outdir_is_abs = !this.config.outdir.is_empty()
                     && bun_paths::is_absolute(&this.config.outdir.list);
                 let outdir = this.config.outdir.list.clone();
@@ -825,9 +820,8 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
-        // PORT NOTE: Zig `&config.features` (a `*StringSet` borrow). The Rust
-        // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns,
-        // so clone the set rather than alias.
+        // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
+        // its set, so clone rather than alias `config.features`.
         transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
         if config.force_node_env != options::ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
@@ -953,10 +947,8 @@ impl CompletionStruct for JSBundleCompletionTask {
             transpiler.options.compile = false;
             config.compile = None;
         }
-        // PORT NOTE: `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`;
-        // Zig assigned a borrow into `*JSBundleCompletionTask` (`this.config`
-        // outlives the build). Clone into Owned so the static bound holds
-        // without tying `&mut self` to `'a`.
+        // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
+        // Owned so the static bound holds without tying `&mut self` to `'a`.
         transpiler.options.banner = std::borrow::Cow::Owned(config.banner.list.clone());
         transpiler.options.footer = std::borrow::Cow::Owned(config.footer.list.clone());
         transpiler.options.react_fast_refresh = config.react_fast_refresh;
@@ -991,8 +983,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.resolver.env_loader =
             NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
         // `Resolver.opts` is the resolver-crate subset
-        // — re-project from the now-mutated `transpiler.options` (Zig assigned
-        // the struct by value: `resolver.opts = transpiler.options`).
+        // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
         Ok(())
     }
@@ -1036,8 +1027,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         bump: &'a Arena,
     ) -> Result<&'a mut Transpiler<'a>, bun_core::Error> {
-        // Zig: `transpiler.* = try bun.Transpiler.init(alloc, &completion.log,
-        //        api.TransformOptions{ ... }, completion.env);`
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1061,13 +1050,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             extension_order: Vec::new(),
             env_files: Vec::new(),
             conditions: config.conditions.keys().to_vec(),
-            // PORT NOTE: Zig read `transpiler.options.ignore_dce_annotations`
-            // off the *uninitialized* out-param (i.e. whatever the previous
-            // build left there). The Rust port has no prior `Transpiler` here;
-            // use the config value, which `configure_bundler` reapplies anyway.
+            // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),
-            // PORT NOTE: same uninitialized-read for `bunfig_path`; default empty.
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
             ..Default::default()
@@ -1081,8 +1066,8 @@ impl CompletionStruct for JSBundleCompletionTask {
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
-        // Post-init field wiring (the rest of Zig `configureBundler`).
-        // PORT NOTE: reborrow through a raw ptr so `&mut self` is usable
+        // Post-init field wiring.
+        // Reborrow through a raw ptr so `&mut self` is usable
         // again after handing `&'a mut Transpiler` (which is tied to `bump`,
         // not `self`) to the trait method.
         let tp: *mut Transpiler<'a> = transpiler;
@@ -1114,8 +1099,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
-        // Zig passed the same `heap` by value (mimalloc handle struct copy);
-        // `Graph.heap` is now a borrow, so reuse the caller-owned `bump`.
+        // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
@@ -1127,7 +1111,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         self.set_transpiler(&raw mut *bv2);
 
-        // Snapshot entry points as `&[&[u8]]` (Zig `keys()` is `[][]const u8`).
+        // Snapshot entry points as `&[&[u8]]`.
         let entry_points: Vec<&[u8]> = self
             .config
             .entry_points
@@ -1138,9 +1122,8 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 
-        // Zig: `defer { ast_memory_allocator.pop(); this.deinitWithoutFreeingArena(); }`
-        // (the AST-allocator pop lives in `generate_in_new_thread`).
-        // `errdefer { source_maps.*_wait_group.wait(); }` — only on error path.
+        // The AST-allocator pop lives in `generate_in_new_thread`; the
+        // source-map wait-group waits run only on the error path.
         match run {
             Ok(build) => {
                 self.set_result(BundleV2Result::Value(build));
@@ -1156,5 +1139,3 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
     }
 }
-
-// ported from: src/bundler_jsc/JSBundleCompletionTask.zig

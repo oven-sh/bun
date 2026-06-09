@@ -2,7 +2,7 @@
 //! `ModuleInfoDeserialized` into a `JSC::JSModuleRecord`. Aliased back so the
 //! `extern "C"` symbol names are still discoverable from C++.
 //!
-//! Note: the `zig__renderDiff` export from `analyze_jsc.zig` lives in
+//! Note: the `zig__renderDiff` export lives in
 //! `bun_runtime::test_runner::diff_format` instead — `DiffFormatter` is a
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
@@ -28,10 +28,9 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // SourceProvider cache.
 
     // Slice-field validity / alignment caveats are documented on the
-    // `ModuleInfoDeserialized` accessors.
-    // TODO(port): switch element reads to `read_unaligned` per the upstream
-    // note in `analyze_transpiled_module.rs` if a strict-alignment target is
-    // ever added.
+    // `ModuleInfoDeserialized` accessors. If a strict-alignment target is ever
+    // added, switch element reads to `read_unaligned` per the upstream note in
+    // `analyze_transpiled_module.rs`.
     let strings_buf: &[u8] = res.strings_buf();
     let strings_lens: &[u32] = res.strings_lens();
     let requested_modules_keys: &[StringID] = res.requested_modules_keys();
@@ -40,9 +39,24 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let buffer: &[StringID] = res.buffer();
     let record_kinds: &[RecordKind] = res.record_kinds();
 
+    let identifier_count = strings_lens.len();
+    let is_valid_string_id =
+        |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
+    if !buffer.iter().copied().all(is_valid_string_id)
+        || !requested_modules_keys
+            .iter()
+            .copied()
+            .all(is_valid_string_id)
+        || !requested_modules_values
+            .iter()
+            .all(|&v| (v.0 as usize) < identifier_count || v.0 >= RequestedModuleValue::Json.0)
+    {
+        return core::ptr::null_mut();
+    }
+
     let identifiers = IdentifierArray::create(strings_lens.len());
-    // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,
-    // mirroring Zig's `defer identifiers.destroy()` (runs on both success and early-return paths).
+    // SAFETY: `identifiers` is non-null (returned by `create`); the scopeguard destroys it
+    // exactly once at scope exit (on both success and early-return paths).
     let _identifiers_guard = scopeguard::guard(identifiers, |p| unsafe {
         IdentifierArray::destroy(p);
     });
@@ -127,7 +141,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
             RequestedModuleValue::Json => {
                 module_record.add_requested_module_json(identifiers, reqk, phase_defer)
             }
-            // Zig open-enum tail: `else => |uv| @enumFromInt(@intFromEnum(uv))` —
             // FetchParameters and StringID are both `#[repr(transparent)] u32`, so this
             // is a bitcast of the raw discriminant back into the interned-string index.
             uv => module_record.add_requested_module_host_defined(
@@ -202,7 +215,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
-// TODO(port): move to bundler_jsc_sys
 
 bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
 unsafe extern "C" {
@@ -396,8 +408,7 @@ impl JSModuleRecord {
 }
 
 // Thin method shims over the raw `*mut JSModuleRecord` returned by `create`.
-// These take `*mut Self` because the Zig side calls them as `module_record.addX(...)`
-// on a raw pointer; we keep raw-ptr receivers to avoid materializing `&mut` aliases.
+// These take `*mut Self` raw-ptr receivers to avoid materializing `&mut` aliases.
 trait JSModuleRecordExt {
     fn add_indirect_export(
         self,
@@ -661,5 +672,3 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         }
     }
 }
-
-// ported from: src/bundler_jsc/analyze_jsc.zig

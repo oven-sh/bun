@@ -459,6 +459,93 @@ it("request.url should log successfully", async () => {
   );
 });
 
+it("request.url identity bytes match the native fast-path table", () => {
+  // The fast path in Request::ensure_url (src/runtime/webcore/Request.rs,
+  // URL_IDENTITY_SAFE) assumes exactly these bytes round-trip the WHATWG
+  // parser unchanged in path and query position. If this fails, the parser
+  // changed — update the native table to match.
+  const pathBad: string[] = [];
+  const queryBad: string[] = [];
+  for (let b = 0x21; b <= 0x7e; b++) {
+    const c = String.fromCharCode(b);
+    const p = `http://h.example:3000/a${c}b?q`;
+    if (new URL(p).href !== p) pathBad.push(c);
+    const q = `http://h.example:3000/a?x${c}y`;
+    if (new URL(q).href !== q) queryBad.push(c);
+  }
+  expect(pathBad.join("")).toBe('"<>\\^`{}');
+  expect(queryBad.join("")).toBe(`"'<>`);
+});
+
+it("request.url normalizes raw request targets like the WHATWG parser", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+
+  async function urlFor(target: string, host: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        data(_s, chunk) {
+          chunks.push(Buffer.from(chunk));
+        },
+        close() {
+          resolve(Buffer.concat(chunks).toString("latin1"));
+        },
+        error(_s, err) {
+          reject(err);
+        },
+      },
+    });
+    socket.write(`GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    const raw = await promise;
+    return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  }
+
+  const H = `127.0.0.1:${server.port}`;
+  const cases: [string, string][] = [
+    ["/", `http://${H}/`],
+    ["/id/1?name=bun", `http://${H}/id/1?name=bun`],
+    // dot segments are collapsed (never served verbatim by the fast path)
+    ["/a/./b", `http://${H}/a/b`],
+    ["/a/../b", `http://${H}/b`],
+    ["/a/..", `http://${H}/`],
+    // not dot segments
+    ["/.well-known/x", `http://${H}/.well-known/x`],
+    ["/..x", `http://${H}/..x`],
+    ["//double", `http://${H}//double`],
+    // percent sequences pass through verbatim, even invalid ones
+    ["/%41%zz%", `http://${H}/%41%zz%`],
+    ["/a|b", `http://${H}/a|b`],
+    ["/a[1]?b=[2]", `http://${H}/a[1]?b=[2]`],
+    // ' survives in the path but is encoded in the query
+    ["/quote'path?q='v", `http://${H}/quote'path?q=%27v`],
+    ['/d"q', `http://${H}/d%22q`],
+    ["/back\\slash", `http://${H}/back/slash`],
+    ["/ca^ret", `http://${H}/ca%5Eret`],
+    ["/cu{rl}y", `http://${H}/cu%7Brl%7Dy`],
+    ["/frag#ment?x", `http://${H}/frag#ment?x`],
+  ];
+  for (const [target, expected] of cases) {
+    expect({ target, url: await urlFor(target, H) }).toEqual({ target, url: expected });
+  }
+
+  // The Host header becomes the URL authority verbatim; non-canonical forms
+  // must still go through the parser (no fast-path contamination).
+  expect(await urlFor("/x", "EXAMPLE.com")).toBe("http://example.com/x");
+  expect(await urlFor("/x", "example.com:80")).toBe("http://example.com/x");
+  // alternate hosts to exercise the per-thread host memo replacement
+  expect(await urlFor("/x", "a.example")).toBe("http://a.example/x");
+  expect(await urlFor("/x", "b.example")).toBe("http://b.example/x");
+  expect(await urlFor("/x", "a.example")).toBe("http://a.example/x");
+});
+
 it("request.url should be based on the Host header", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

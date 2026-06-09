@@ -32,13 +32,15 @@ exit 0
 `;
 }
 
-// First `up` loses the create race exactly like the observed CI failure;
-// any retry succeeds.
-const loseCreateRaceOnce = `    if [ "$(grep -c -- ' up ' "$DOCKER_SHIM_LOG")" -le 1 ]; then
+// `up` invocations 1..n lose the create race exactly like the observed CI
+// failure; later invocations succeed.
+function loseCreateRace(times: number): string {
+  return `    if [ "$(grep -c -- ' up ' "$DOCKER_SHIM_LOG")" -le ${times} ]; then
       echo 'Error response from daemon: Conflict. The container name "/bun-test-services-redis_plain-1" is already in use by container "deadbeef". You have to remove (or rename) that container to be able to reuse that name.' >&2
       exit 1
     fi
     exit 0`;
+}
 
 // Genuine startup failure, not a create race.
 const alwaysUnhealthy = `    echo 'container bun-test-services-redis_plain-1 is unhealthy' >&2
@@ -80,11 +82,26 @@ async function runEnsure(upBehavior: string) {
 }
 
 test.skipIf(isWindows)("ensure() retries `compose up` after losing a container create race", async () => {
-  const { stdout, stderr, exitCode, upCount } = await runEnsure(loseCreateRaceOnce);
+  const { stdout, stderr, exitCode, upCount } = await runEnsure(loseCreateRace(1));
   expect(stderr).not.toContain("Failed to start service");
   expect(JSON.parse(stdout)).toEqual({ host: "127.0.0.1", ports: { 6379: 6379 } });
   expect(upCount).toBe(2);
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("ensure() retries `compose up` a second time if the race repeats", async () => {
+  const { stdout, stderr, exitCode, upCount } = await runEnsure(loseCreateRace(2));
+  expect(stderr).not.toContain("Failed to start service");
+  expect(JSON.parse(stdout)).toEqual({ host: "127.0.0.1", ports: { 6379: 6379 } });
+  expect(upCount).toBe(3);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("ensure() stops retrying `compose up` after three conflicted attempts", async () => {
+  const { stderr, exitCode, upCount } = await runEnsure(loseCreateRace(1000));
+  expect(stderr).toContain("already in use");
+  expect(upCount).toBe(3);
+  expect(exitCode).not.toBe(0);
 });
 
 test.skipIf(isWindows)("ensure() reports non-race `compose up` failures without retrying", async () => {

@@ -284,7 +284,100 @@ describe.concurrent("Server", () => {
       await Bun.sleep(5);
     }
     expect(req.signal.aborted).toBe(true);
+    // identical observable surface to a signal that existed before the abort
+    expect(req.signal).toBe(req.signal);
+    const reason = req.signal.reason;
+    expect(reason).toBeInstanceOf(DOMException);
+    expect({ name: reason.name, code: reason.code, message: reason.message }).toEqual({
+      name: "AbortError",
+      code: 20,
+      message: "The connection was closed.",
+    });
+    expect(() => req.signal.throwIfAborted()).toThrow(reason);
+    // listeners added to an already-aborted signal never fire
+    let lateFired = false;
+    req.signal.addEventListener("abort", () => {
+      lateFired = true;
+    });
+    await Bun.sleep(10);
+    expect(lateFired).toBe(false);
     unpark(new Response("late"));
+  });
+
+  test("request.signal stays non-aborted after a normal response completes", async () => {
+    const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        resolveReq(req);
+        return new Response("ok");
+      },
+    });
+    expect(await fetch(server.url).then(r => r.text())).toBe("ok");
+    const req = await gotReq;
+    // first signal access happens after the request finished
+    expect(req.signal.aborted).toBe(false);
+    expect(req.signal.reason).toBeUndefined();
+    expect(req.signal).toBe(req.signal);
+  });
+
+  test("req.clone() taken after signal access shares server aborts", async () => {
+    const { promise: gotPair, resolve: resolvePair } = Promise.withResolvers<{ req: Request; clone: Request }>();
+    let unpark!: (value: Response) => void;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const signal = req.signal; // materialize first
+        expect(signal.aborted).toBe(false);
+        resolvePair({ req, clone: req.clone() });
+        return new Promise<Response>(resolve => {
+          unpark = resolve;
+        });
+      },
+    });
+
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        data() {},
+        close: () => onClose(),
+        error: () => onClose(),
+      },
+    });
+    socket.write(`GET / HTTP/1.1\r\nHost: ${server.hostname}\r\n\r\n`);
+    const { req, clone } = await gotPair;
+    socket.end();
+    await closed;
+
+    while (!req.signal.aborted) {
+      await Bun.sleep(5);
+    }
+    expect(clone.signal.aborted).toBe(true);
+    unpark(new Response("late"));
+  });
+
+  test("lazy request.signal survives GC pressure", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        // exercise both shapes: with and without signal materialization
+        const url = new URL(req.url);
+        if (url.pathname === "/touch") {
+          req.signal.addEventListener("abort", () => {});
+          return new Response(String(req.signal.aborted));
+        }
+        return new Response("untouched");
+      },
+    });
+    for (let i = 0; i < 200; i++) {
+      const path = i % 2 ? "/touch" : "/plain";
+      const res = await fetch(`${server.url.origin}${path}`);
+      expect(await res.text()).toBe(i % 2 ? "false" : "untouched");
+      if (i % 50 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
   });
 
   test("req.clone() taken before any signal access still observes server abort", async () => {

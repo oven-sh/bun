@@ -960,9 +960,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn close_and_detach(&self, code: uws::CloseCode) {
-        eprintln!("[h2dbg] close_and_detach server={} detached={} native_cb={}",
-            self.get_handlers().mode == super::SocketMode::Server, self.socket.get().is_detached(),
-            !matches!(self.native_callback.get(), NativeCallbacks::None));
+        eprintln!(
+            "[h2dbg] close_and_detach server={} detached={} native_cb={}",
+            self.get_handlers().mode == super::SocketMode::Server,
+            self.socket.get().is_detached(),
+            !matches!(self.native_callback.get(), NativeCallbacks::None)
+        );
         let socket = self.socket.get();
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
@@ -974,9 +977,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn mark_inactive(&self) {
-        eprintln!("[h2dbg] mark_inactive server={} active={} closed={}",
-            self.get_handlers().mode == super::SocketMode::Server, self.flags.get().contains(Flags::IS_ACTIVE),
-            self.socket.get().is_closed());
+        eprintln!(
+            "[h2dbg] mark_inactive server={} active={} closed={}",
+            self.get_handlers().mode == super::SocketMode::Server,
+            self.flags.get().contains(Flags::IS_ACTIVE),
+            self.socket.get().is_closed()
+        );
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
             // otherwise we will get a segfault
@@ -1225,14 +1231,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
-        eprintln!("[h2dbg] on_end detached={} native_cb={}",
+        eprintln!(
+            "[h2dbg] on_end detached={} native_cb={}",
             this.socket.get().is_detached(),
-            !matches!(this.native_callback.get(), NativeCallbacks::None));
+            !matches!(this.native_callback.get(), NativeCallbacks::None)
+        );
         if this.socket.get().is_detached() {
             return;
         }
         let handlers = this.get_handlers();
-        eprintln!("[h2dbg] on_end server={} cb_empty={}", handlers.mode == super::SocketMode::Server, handlers.on_end.is_empty());
+        eprintln!(
+            "[h2dbg] on_end server={} cb_empty={}",
+            handlers.mode == super::SocketMode::Server,
+            handlers.on_end.is_empty()
+        );
         log!(
             "onEnd {}",
             if handlers.mode == super::SocketMode::Server {
@@ -1424,9 +1436,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
-        eprintln!("[h2dbg] on_close server={} detached={} native_cb={}",
-            this.get_handlers().mode == super::SocketMode::Server, this.socket.get().is_detached(),
-            !matches!(this.native_callback.get(), NativeCallbacks::None));
+        eprintln!(
+            "[h2dbg] on_close server={} detached={} native_cb={}",
+            this.get_handlers().mode == super::SocketMode::Server,
+            this.socket.get().is_detached(),
+            !matches!(this.native_callback.get(), NativeCallbacks::None)
+        );
         let handlers = this.get_handlers();
         log!(
             "onClose {}",

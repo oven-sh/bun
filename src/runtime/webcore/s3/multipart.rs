@@ -146,8 +146,10 @@ pub struct MultiPartUpload {
     pub part_buf: Vec<u8>,
     /// Completed parts waiting for a queue slot, FIFO. Each entry owns its
     /// allocation: a fat pointer to the initialized bytes plus the Vec
-    /// capacity it was allocated with — the contract `free_allocated_slice`
-    /// frees by (`Vec::from_raw_parts(ptr, cap, cap)`).
+    /// capacity it was allocated with. Reconstruction takes the initialized
+    /// length from the fat pointer and the capacity from the entry
+    /// (`Vec::from_raw_parts(ptr, ptr.len(), cap)`); the final partial part
+    /// has `len < cap`.
     pub ready_parts: std::collections::VecDeque<(*const [u8], usize)>,
 
     pub path: Box<[u8]>,
@@ -235,15 +237,13 @@ impl UploadPart {
         if self.allocated_size > 0 {
             // SAFETY: `data.ptr` is the `part_buf` Vec allocation (global allocator) whose
             // ownership transferred here via `finish_current_part` → `ready_parts` →
-            // `get_create_part`; `allocated_size` is the capacity it was allocated with.
-            // Reconstruct and drop.
+            // `get_create_part`: the fat pointer's length is the initialized prefix and
+            // `allocated_size` is the capacity it was allocated with (the final partial
+            // part has len < cap). Reconstruct and drop.
             unsafe {
+                let len = self.data.len();
                 let ptr = (*self.data).as_ptr().cast_mut();
-                drop(Vec::from_raw_parts(
-                    ptr,
-                    self.allocated_size,
-                    self.allocated_size,
-                ));
+                drop(Vec::from_raw_parts(ptr, len, self.allocated_size));
             }
         }
         self.data = std::ptr::from_ref::<[u8]>(b"" as &[u8]);
@@ -422,11 +422,13 @@ impl Drop for MultiPartUpload {
         // still owns their allocations — mirror free_allocated_slice.
         for (ptr, allocated) in self.ready_parts.drain(..) {
             // SAFETY: each entry was produced by finish_current_part from a
-            // Vec with the captured capacity; sole owner here.
+            // Vec with the captured capacity; the fat pointer's length is the
+            // initialized prefix (the final partial part has len < cap). Sole
+            // owner here.
             unsafe {
                 drop(Vec::from_raw_parts(
                     ptr.cast::<u8>().cast_mut(),
-                    allocated,
+                    ptr.len(),
                     allocated,
                 ))
             };

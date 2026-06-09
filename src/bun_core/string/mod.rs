@@ -2563,9 +2563,10 @@ pub mod printer {
                 }
                 Encoding::Latin1 => text[i] as i32,
                 Encoding::Utf16 => {
-                    // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                    // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                    // eg: "\u{10334}" will convert to "𐌴" without this.
+                    // Surrogate halves are processed one code unit at a time,
+                    // so a pair prints as \uD800\uDF34 instead of the raw
+                    // supplementary character; the paired escape is equivalent
+                    // JS, just longer.
                     code_unit_at!(i)
                 }
             };

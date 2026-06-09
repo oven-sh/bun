@@ -931,7 +931,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, error)));
 }
 
-
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);

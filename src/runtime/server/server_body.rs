@@ -2100,9 +2100,9 @@ where
             if request.signal.get().is_none() {
                 // SAFETY: ctx holds a live `+1`; `ref_()` bumps once more for
                 // the Request's RAII handle (paired with `AbortSignalRef::Drop`).
-                request
-                    .signal
-                    .set(Some(unsafe { jsc::AbortSignalRef::adopt((*sig.as_ptr()).ref_()) }));
+                request.signal.set(Some(unsafe {
+                    jsc::AbortSignalRef::adopt((*sig.as_ptr()).ref_())
+                }));
             }
         }
         let signal = upgrader.signal.take();

@@ -3052,7 +3052,14 @@ class ServerHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
+    // Like Node's socketOnClose, a dead socket always tears the session down
+    // (close() followed by closeSession() upstream). close() alone is not
+    // enough: it early-returns once a received GOAWAY has already marked the
+    // session closed, and the destroy it deferred to the last stream's close
+    // never comes once the peer is gone — leaving the session (and the
+    // server's open-connection count) alive forever.
     this.close();
+    this.destroy();
   }
   #onError(error: Error) {
     this.destroy(error);

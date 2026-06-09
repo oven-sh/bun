@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {
@@ -180,5 +180,98 @@ describe.concurrent("long import path overflow", () => {
     using dir = makeDir();
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
+  });
+});
+
+// On POSIX, a specifier that merely looks like a Windows absolute path
+// ("C:/", "D:\foo") is a bare package specifier. The resolver's loose path
+// joins used to adopt it as a new join root, producing a non-absolute path
+// that tripped the dirInfoCached assert and crashed the process:
+//   panic: cannot resolve DirInfo for non-absolute path: C:/
+// https://github.com/oven-sh/bun/issues/32016
+describe.skipIf(isWindows)("drive letter specifiers on posix", () => {
+  it.concurrent("fail with a catchable error when searching node_modules", async () => {
+    using dir = tempDir("resolve-drive-letter", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      // The crash required a node_modules directory in cwd or an ancestor.
+      // "C:" is an ordinary directory name on posix; Node's CJS loader finds
+      // files under it, so ours must too (proves the join lands under
+      // node_modules instead of resetting to a fake root).
+      "node_modules/C:/real.js": `module.exports = "found";`,
+      "fixture.mjs": `
+        const results = [];
+        for (const specifier of ["C:/", "C:\\\\", "D:\\\\foo", "c:/x"]) {
+          const entries = {
+            "import.meta.resolve": () => import.meta.resolve(specifier),
+            "require.resolve": () => require.resolve(specifier),
+            "Bun.resolveSync": () => Bun.resolveSync(specifier, import.meta.dir),
+          };
+          for (const kind in entries) {
+            try {
+              entries[kind]();
+              results.push(kind + " " + specifier + " resolved");
+            } catch (e) {
+              results.push(kind + " " + specifier + " " + e.code);
+            }
+          }
+          try {
+            await import(specifier);
+            results.push("import() " + specifier + " resolved");
+          } catch (e) {
+            results.push("import() " + specifier + " " + e.code);
+          }
+        }
+        results.push("positive " + require.resolve("C:/real.js").endsWith("/node_modules/C:/real.js"));
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      ...["C:/", "C:\\", "D:\\foo", "c:/x"].flatMap(s => [
+        `import.meta.resolve ${s} ERR_MODULE_NOT_FOUND`,
+        `require.resolve ${s} MODULE_NOT_FOUND`,
+        `Bun.resolveSync ${s} ERR_MODULE_NOT_FOUND`,
+        `import() ${s} ERR_MODULE_NOT_FOUND`,
+      ]),
+      "positive true",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("fail with a catchable error through the tsconfig baseUrl join", async () => {
+    using dir = tempDir("resolve-drive-letter-tsconfig", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      "tsconfig.json": `{"compilerOptions": {"baseUrl": "."}}`,
+      "fixture.mjs": `
+        try {
+          await import("C:/nope");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught " + e.code);
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("caught ERR_MODULE_NOT_FOUND");
+    expect(exitCode).toBe(0);
   });
 });

@@ -34,7 +34,6 @@ describe("issue #3192", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("Saved yarn.lock");
-    expect(exitCode).toBe(0);
 
     // Read the generated yarn.lock
     const yarnLock = await Bun.file(`${dir}/yarn.lock`).text();
@@ -44,5 +43,6 @@ describe("issue #3192", () => {
     // Good output: "package-b@packages/package-b", "package-b@workspace:*":
     expect(yarnLock).toContain('"package-b@workspace:*"');
     expect(yarnLock).not.toMatch(/package-b@workspace:\*[^"]/);
+    expect(exitCode).toBe(0);
   });
 });

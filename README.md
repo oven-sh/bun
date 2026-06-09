@@ -61,6 +61,7 @@ npm install -g bun
 
 # with Homebrew
 brew tap oven-sh/bun
+brew trust oven-sh/bun
 brew install bun
 
 # with Docker

@@ -302,14 +302,7 @@ fn raw_waker_vtable<S: Schedule>() -> &'static RawWakerVTable {
         // SAFETY: releases this waker's reference.
         unsafe { ref_dec(data.cast_mut().cast::<AsyncTask>()) };
     }
-    const {
-        &RawWakerVTable::new(
-            clone_waker::<S>,
-            wake::<S>,
-            wake_by_ref::<S>,
-            drop_waker,
-        )
-    }
+    const { &RawWakerVTable::new(clone_waker::<S>, wake::<S>, wake_by_ref::<S>, drop_waker) }
 }
 
 // ─── poll (dispatch entry) ───────────────────────────────────────────────────
@@ -329,7 +322,12 @@ unsafe fn poll_with<S: Schedule>(this: *mut AsyncTask) {
     let waker = ManuallyDrop::new(
         // SAFETY: vtable contract upheld by the fns in `raw_waker_vtable`;
         // `this` is live for the duration (queue ref).
-        unsafe { Waker::from_raw(RawWaker::new(this.cast_const().cast::<()>(), raw_waker_vtable::<S>())) },
+        unsafe {
+            Waker::from_raw(RawWaker::new(
+                this.cast_const().cast::<()>(),
+                raw_waker_vtable::<S>(),
+            ))
+        },
     );
     let mut cx = Context::from_waker(&waker);
 
@@ -701,7 +699,10 @@ mod tests {
         });
         let enqueued = drain_enqueued();
         assert_eq!(enqueued.len(), 1, "wake is idempotent while SCHEDULED");
-        assert!(!enqueued[0].1, "foreign-thread wake takes the concurrent path");
+        assert!(
+            !enqueued[0].1,
+            "foreign-thread wake takes the concurrent path"
+        );
         // SAFETY: test owns the task ref.
         assert_eq!(unsafe { state_of(this) }, SCHEDULED);
 

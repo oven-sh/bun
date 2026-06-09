@@ -331,11 +331,12 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
         // Re-polled before completion (e.g. a spurious wake of the parent
         // task): refresh the waker under the `WAKER_BUSY` baton so the
         // completion can't read it concurrently.
-        match this
-            .shared
-            .state
-            .compare_exchange(RUNNING, WAKER_BUSY, Ordering::AcqRel, Ordering::Acquire)
-        {
+        match this.shared.state.compare_exchange(
+            RUNNING,
+            WAKER_BUSY,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
             Ok(_) => {
                 // SAFETY: `WAKER_BUSY` excludes the completion's waker read.
                 unsafe { *this.shared.waker.get() = Some(cx.waker().clone()) };

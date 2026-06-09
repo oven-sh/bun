@@ -10,8 +10,8 @@ use bun_jsc::JSPromise;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
 
-use bun_alloc::SensitiveBytes;
 use crate::node::StringOrBuffer;
+use bun_alloc::SensitiveBytes;
 
 // The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
 // the implementation is wired there, not here.

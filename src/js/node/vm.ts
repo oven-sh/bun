@@ -47,7 +47,6 @@ const {
   isContext,
   compileFunction,
   isModuleNamespaceObject,
-  kUnlinked,
   kLinked,
   kEvaluated,
   kErrored,

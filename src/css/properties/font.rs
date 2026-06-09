@@ -205,7 +205,7 @@ pub enum AbsoluteFontSize {
 impl AbsoluteFontSize {
     pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
+            AbsoluteFontSize::XxxLarge => Feature::FontSizeXxxLarge.is_compatible(browsers),
             _ => true,
         }
     }

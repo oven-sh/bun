@@ -81,7 +81,7 @@ pub enum Feature {
     FocusWithin,
     FontFamilySystemUi,
     FontSizeRem,
-    FontSizeXXXLarge,
+    FontSizeXxxLarge,
     FontStretchPercentage,
     FontStyleObliqueAngle,
     FontWeightNumber,
@@ -323,7 +323,7 @@ static MIN_VERSIONS: [Option<MinVersions>; FEATURE_COUNT] = [
     Some(MinVersions { android: 8585216, chrome: 3932160, edge: 5177344, firefox: 3407872, ie: UNSUPPORTED, ios_saf: 656128, opera: 3080192, safari: 655616, samsung: 524800 }), // FocusWithin
     Some(MinVersions { android: 8585216, chrome: 3670016, edge: 5177344, firefox: 6029312, ie: UNSUPPORTED, ios_saf: 720896, opera: 2818048, safari: 720896, samsung: 393728 }), // FontFamilySystemUi
     Some(MinVersions { android: 2752512, chrome: 2752512, edge: 786432, firefox: 2031616, ie: 589824, ios_saf: 458752, opera: 1835008, safari: 458752, samsung: 262144 }), // FontSizeRem
-    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 1049600, opera: 3735552, safari: 1049600, samsung: 786432 }), // FontSizeXXXLarge
+    Some(MinVersions { android: 5177344, chrome: 5177344, edge: 5177344, firefox: 5177344, ie: UNSUPPORTED, ios_saf: 1049600, opera: 3735552, safari: 1049600, samsung: 786432 }), // FontSizeXxxLarge
     Some(MinVersions { android: 4063232, chrome: 4063232, edge: 1179648, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 721664, opera: 3014656, safari: 721152, samsung: 524288 }), // FontStretchPercentage
     Some(MinVersions { android: 4063232, chrome: 4063232, edge: 5177344, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 721664, opera: 3014656, safari: 721152, samsung: 524288 }), // FontStyleObliqueAngle
     Some(MinVersions { android: 4063232, chrome: 4063232, edge: 1114112, firefox: 3997696, ie: UNSUPPORTED, ios_saf: 720896, opera: 3014656, safari: 720896, samsung: 524288 }), // FontWeightNumber

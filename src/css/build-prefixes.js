@@ -734,11 +734,23 @@ pub fn isPartiallyCompatible(this: *const Feature, targets: Browsers) bool {
 fs.writeFileSync("src/css/compat.zig", c);
 await Bun.$`zig fmt src/css/compat.zig`;
 
-let rustFeatureName = name =>
-  enumify(name)
-    .split("_")
-    .map(part => part[0].toUpperCase() + part.slice(1))
-    .join("");
+// Runs of single-letter segments merge into one part (x_x_x -> xxx) so that
+// acronyms Pascal-case with only the first letter capitalized, matching Rust
+// conventions (compare AbsoluteFontSize::XxxLarge in properties/font.rs).
+let rustFeatureName = name => {
+  let parts = [];
+  let prevSingle = false;
+  for (let part of enumify(name).split("_")) {
+    let single = part.length === 1;
+    if (single && prevSingle) {
+      parts[parts.length - 1] += part;
+    } else {
+      parts.push(part);
+    }
+    prevSingle = single;
+  }
+  return parts.map(part => part[0].toUpperCase() + part.slice(1)).join("");
+};
 
 let compatRsEntries = [...compat]
   .flatMap(([features, supportedBrowsers]) => features.map(name => [rustFeatureName(name), supportedBrowsers]))

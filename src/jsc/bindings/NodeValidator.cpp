@@ -406,7 +406,9 @@ JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGl
         }
     }
 
-    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
+    // Node's validateBuffer passes ['Buffer', 'TypedArray', 'DataView'] which
+    // its formatter renders as "an instance of ...", not "of type ...".
+    return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -616,12 +618,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto name = callFrame->argument(1);
 
     if (!buffer.isUndefined()) {
-        if (!buffer.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
-
-        auto ty = buffer.asCell()->type();
-
-        if (JSC::typedArrayType(ty) == NotTypedArray) {
-            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+        bool isValid = false;
+        if (buffer.isCell()) {
+            isValid = JSC::typedArrayType(buffer.asCell()->type()) != NotTypedArray;
+        }
+        if (!isValid) {
+            auto nameString = name.isUndefined() ? WTF::String("buffer"_s) : name.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // Node's validateBuffer passes ['Buffer', 'TypedArray', 'DataView']
+            // which its formatter renders as "an instance of ...", not "of type".
+            return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, nameString, "Buffer, TypedArray, or DataView"_s, buffer);
         }
     }
     return JSValue::encode(jsUndefined());

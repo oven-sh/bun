@@ -86,10 +86,22 @@ const COM_STMT_PREPARE = 0x16;
 // resolved through `heldPrepare`, keeping that request in flight on the wire.
 function mockServer(opts: { holdPrepare?: boolean } = {}) {
   const wireLog: string[] = [];
-  let onPrepareHeld: (release: () => void) => void;
-  const heldPrepare = new Promise<() => void>(resolve => (onPrepareHeld = resolve));
+  const {
+    promise: heldPrepare,
+    resolve: onPrepareHeld,
+    reject: rejectHeldPrepare,
+  } = Promise.withResolvers<() => void>();
   let held = false;
   const server = net.createServer(socket => {
+    if (opts.holdPrepare) {
+      // Fail the awaiting test fast with a message if the connection dies
+      // before the prepare is held; no-ops once heldPrepare has resolved.
+      socket.once("error", rejectHeldPrepare);
+      socket.once("close", () => {
+        rejectHeldPrepare(new Error("mock connection closed before COM_STMT_PREPARE was observed"));
+      });
+    }
+
     let buffered = Buffer.alloc(0);
     let authed = false;
 

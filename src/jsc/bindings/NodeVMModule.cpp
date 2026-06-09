@@ -132,13 +132,13 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         }
     }
 
-#define VM_RETURN_IF_EXCEPTION(scope__, value__)                       \
-    do {                                                               \
-        if (JSC::Exception* exception = scope__.exception()) {         \
-            status(Status::Errored);                                   \
-            m_evaluationException.set(vm, this, exception);            \
-            return value__;                                            \
-        }                                                              \
+#define VM_RETURN_IF_EXCEPTION(scope__, value__)               \
+    do {                                                       \
+        if (JSC::Exception* exception = scope__.exception()) { \
+            status(Status::Errored);                           \
+            m_evaluationException.set(vm, this, exception);    \
+            return value__;                                    \
+        }                                                      \
     } while (false);
 
     AbstractModuleRecord* record {};

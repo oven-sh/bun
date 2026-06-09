@@ -367,6 +367,11 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #endif
 
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
+    {
+        int pt = us_internal_poll_type(p);
+        if (pt == POLL_TYPE_SOCKET || pt == POLL_TYPE_SOCKET_SHUT_DOWN)
+            fprintf(stderr, "[h2dbg-c] poll fd=%d err=%d eof=%d ev=%d\n", us_poll_fd(p), error, eof, events);
+    }
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -583,6 +588,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     }
                     #endif
 
+                    fprintf(stderr, "[h2dbg-c] recv fd=%d len=%d errno=%d shut=%d closed=%d\n",
+                        us_poll_fd(&s->p), length, length < 0 ? errno : 0,
+                        us_socket_is_shut_down(s), us_socket_is_closed(s));
                     if (length > 0) {
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
@@ -651,6 +659,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
+            if (eof) fprintf(stderr, "[h2dbg-c] eof fd=%d s=%d closed=%d shut=%d halfopen=%d\n",
+                s ? us_poll_fd(&s->p) : -1, s != NULL,
+                s ? us_socket_is_closed(s) : -1, s ? us_socket_is_shut_down(s) : -1,
+                s ? s->flags.allow_half_open : -1);
             if(eof && s) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed

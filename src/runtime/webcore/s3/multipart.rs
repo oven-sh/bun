@@ -1041,6 +1041,9 @@ impl MultiPartUpload {
             );
             self.state = State::SinglefileStarted;
             // we can do only 1 request
+            // Zig parity: both arms below discard a JsTerminated error
+            // (`catch {}` in multipart.zig's processBuffered); termination is
+            // re-checked on the next JS entry.
             let callback_context: *mut c_void = std::ptr::from_mut::<Self>(self).cast::<c_void>();
             let _ = execute_simple_s3_request(
                 &*self.credentials,
@@ -1059,10 +1062,10 @@ impl MultiPartUpload {
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 callback_context,
-            ); // TODO: properly propagate exception upwards
+            );
         } else {
             // we need to split
-            let _ = self.process_multi_part(); // TODO: properly propagate exception upwards
+            let _ = self.process_multi_part();
         }
     }
 

@@ -556,3 +556,49 @@ describe("slice bounds are respected when streaming and serving", () => {
     expect(await get.text()).toBe("3456");
   });
 });
+
+// Blob conversion accepts every ArrayBuffer-like type, both as a direct body
+// value and as a part inside an array.
+describe("Blob from ArrayBuffer-like values", () => {
+  const bytes = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+  const views = [
+    ["ArrayBuffer", () => bytes.slice().buffer],
+    ["DataView", () => new DataView(bytes.slice().buffer)],
+    ["Int8Array", () => new Int8Array(bytes.slice().buffer)],
+    ["Uint8Array", () => bytes.slice()],
+    ["Uint8ClampedArray", () => new Uint8ClampedArray(bytes.slice().buffer)],
+    ["Int16Array", () => new Int16Array(bytes.slice().buffer)],
+    ["Uint16Array", () => new Uint16Array(bytes.slice().buffer)],
+    ["Int32Array", () => new Int32Array(bytes.slice().buffer)],
+    ["Uint32Array", () => new Uint32Array(bytes.slice().buffer)],
+    ["Float16Array", () => new Float16Array(bytes.slice().buffer)],
+    ["Float32Array", () => new Float32Array(bytes.slice().buffer)],
+    ["Float64Array", () => new Float64Array(bytes.slice().buffer)],
+    ["BigInt64Array", () => new BigInt64Array(bytes.slice().buffer)],
+    ["BigUint64Array", () => new BigUint64Array(bytes.slice().buffer)],
+  ] as const;
+
+  test.each(views)("new Blob([%s]) copies the bytes", async (_name, make) => {
+    const view = make();
+    const blob = new Blob([view as any]);
+    expect(blob.size).toBe(view.byteLength);
+    expect(await blob.bytes()).toEqual(bytes);
+  });
+
+  test.each(views)("new Response(%s).blob() copies the bytes", async (_name, make) => {
+    const view = make();
+    const blob = await new Response(view as any).blob();
+    expect(blob.size).toBe(view.byteLength);
+    expect(await blob.bytes()).toEqual(bytes);
+  });
+
+  test("string, view, and Blob parts concatenate in order", async () => {
+    const blob = new Blob([
+      "ab",
+      new Uint8Array([0x63, 0x64]),
+      new Blob(["ef"]),
+      new DataView(new Uint8Array([0x67, 0x68]).buffer),
+    ]);
+    expect(await blob.text()).toBe("abcdefgh");
+  });
+});

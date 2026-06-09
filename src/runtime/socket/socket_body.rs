@@ -706,6 +706,16 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// per expression — same Stacked-Borrows footprint as the previous manual
     /// `unsafe { (*p).field }`). Mutating sites use `.as_ptr()` and reborrow
     /// `&mut` explicitly.
+    fn h2dbg_server(&self) -> &'static str {
+        match self.handlers.get() {
+            Some(h) => {
+                // SAFETY: debug-only read; handlers outlive the socket callbacks.
+                if unsafe { h.as_ref() }.mode == super::SocketMode::Server { "S" } else { "C" }
+            }
+            None => "none",
+        }
+    }
+
     pub fn get_handlers(&self) -> bun_ptr::BackRef<Handlers> {
         self.handlers
             .get()
@@ -961,8 +971,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub fn close_and_detach(&self, code: uws::CloseCode) {
         eprintln!(
-            "[h2dbg] close_and_detach server={} detached={} native_cb={}",
-            self.get_handlers().mode == super::SocketMode::Server,
+            "[h2dbg] close_and_detach who={} detached={} native_cb={}",
+            self.h2dbg_server(),
             self.socket.get().is_detached(),
             !matches!(self.native_callback.get(), NativeCallbacks::None)
         );
@@ -978,8 +988,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub fn mark_inactive(&self) {
         eprintln!(
-            "[h2dbg] mark_inactive server={} active={} closed={}",
-            self.get_handlers().mode == super::SocketMode::Server,
+            "[h2dbg] mark_inactive who={} active={} closed={}",
+            self.h2dbg_server(),
             self.flags.get().contains(Flags::IS_ACTIVE),
             self.socket.get().is_closed()
         );
@@ -1241,8 +1251,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let handlers = this.get_handlers();
         eprintln!(
-            "[h2dbg] on_end server={} cb_empty={}",
-            handlers.mode == super::SocketMode::Server,
+            "[h2dbg] on_end who={} cb_empty={}",
+            this.h2dbg_server(),
             handlers.on_end.is_empty()
         );
         log!(
@@ -1437,8 +1447,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
         eprintln!(
-            "[h2dbg] on_close server={} detached={} native_cb={}",
-            this.get_handlers().mode == super::SocketMode::Server,
+            "[h2dbg] on_close who={} detached={} native_cb={}",
+            this.h2dbg_server(),
             this.socket.get().is_detached(),
             !matches!(this.native_callback.get(), NativeCallbacks::None)
         );

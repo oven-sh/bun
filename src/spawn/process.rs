@@ -3204,8 +3204,11 @@ mod spawn_process_body {
                 if no_orphans
                     && (cfg!(any(target_os = "linux", target_os = "android"))
                         || cfg!(target_os = "macos"))
+                    // OHOS: wait_linux_signalfd uses signalfd+pidfd which hangs.
+                    // Use poll+wait4 with pidfd parent-death detection instead
+                    // (verified via ohos-pdeathsig-poll-verify.c on 2026-06-09).
+                    && !cfg!(target_env = "ohos")
                 {
-                    // OHOS: pidfd_open and prctl both verified available on 2026-06-07.
                     let ppid = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
                     #[cfg(target_os = "macos")]
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
@@ -3249,6 +3252,30 @@ mod spawn_process_body {
                     // plain poll() loop so `.buffer` stdio still drains instead
                     // of being dropped (or deadlocking) in a blind `wait4()`.
                 }
+                // OHOS no_orphans: monitor parent death via pidfd + ppid polling.
+                // Same approach as wait_linux_signalfd but without signalfd/pidfd
+                // on the child (which hangs on OHOS).
+                #[cfg(target_env = "ohos")]
+                let (ohos_ppid, ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = if no_orphans
+                {
+                    let ppid_from_watchdog = ParentDeathWatchdog::ppid_to_watch().unwrap_or(0);
+                    if ppid_from_watchdog > 1 {
+                        // Clear PDEATHSIG — SIGKILL is uncatchable and would prevent
+                        // our cleanup defer from running.  See wait_linux_signalfd:3697.
+                        let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                        let fd = bun_sys::pidfd_open(ppid_from_watchdog, 0)
+                            .map(AutoCloseFd::new)
+                            .unwrap_or_else(|_| AutoCloseFd::invalid());
+                        (ppid_from_watchdog, fd)
+                    } else {
+                        (0, AutoCloseFd::invalid())
+                    }
+                } else {
+                    (0, AutoCloseFd::invalid())
+                };
+                #[cfg(not(target_env = "ohos"))]
+                let (_ohos_ppid, _ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = (0, AutoCloseFd::invalid());
+
                 while out_fds_to_wait_for[0] != Fd::INVALID || out_fds_to_wait_for[1] != Fd::INVALID
                 {
                     for i in 0..2 {
@@ -3260,10 +3287,18 @@ mod spawn_process_body {
                         }
                     }
 
+                    // OHOS no_orphans needs a 3rd slot for the pidfd parent monitor.
+                    #[cfg(target_env = "ohos")]
+                    let mut poll_fds_buf: [libc::pollfd; 3] =
+                    // SAFETY: zeroed pollfd is valid
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                    #[cfg(not(target_env = "ohos"))]
                     let mut poll_fds_buf: [libc::pollfd; 2] =
                     // SAFETY: zeroed pollfd is valid
                     unsafe { bun_core::ffi::zeroed_unchecked() };
                     let mut poll_len: usize = 0;
+                    #[cfg(target_env = "ohos")]
+                    let mut ohos_pidfd_idx: usize = 0;
                     for &fd in &out_fds_to_wait_for {
                         if fd == Fd::INVALID {
                             continue;
@@ -3275,18 +3310,56 @@ mod spawn_process_body {
                         };
                         poll_len += 1;
                     }
+                    // OHOS no_orphans: add pidfd for parent death detection
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 && ohos_ppid_fd.fd() != Fd::INVALID {
+                        ohos_pidfd_idx = poll_len;
+                        poll_fds_buf[poll_len] = libc::pollfd {
+                            fd: ohos_ppid_fd.fd().native(),
+                            events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
+                            revents: 0,
+                        };
+                        poll_len += 1;
+                    }
                     if poll_len == 0 {
                         break;
                     }
 
+                    // OHOS fallback: no pidfd → poll with 100ms timeout so we
+                    // can check getppid() for parent death on each iteration.
+                    #[allow(unused_mut)]
+                    let mut poll_timeout: libc::c_int = -1;
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 && ohos_ppid_fd.fd() == Fd::INVALID {
+                        poll_timeout = 100;
+                    }
+
                     // SAFETY: valid pollfd array
-                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, -1) };
+                    let rc = unsafe { libc::poll(poll_fds_buf.as_mut_ptr(), poll_len as _, poll_timeout) };
                     match bun_sys::get_errno(rc as isize) {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                         err => {
                             cleanup_spawn_posix(&mut out, out_fds, &process, success);
                             return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
+                        }
+                    }
+
+                    // Check parent death after poll returns.
+                    // The pidfd in the poll set fires when the parent exits;
+                    // getppid() fallback covers the no-pidfd case.
+                    #[cfg(target_env = "ohos")]
+                    if ohos_ppid > 1 {
+                        let parent_dead = if ohos_ppid_fd.fd() != Fd::INVALID {
+                            poll_fds_buf[ohos_pidfd_idx].revents != 0
+                        } else {
+                            false
+                        };
+                        if parent_dead || getppid() != ohos_ppid {
+                            ParentDeathWatchdog::kill_sync_script_tree();
+                            Global::exit(
+                                ParentDeathWatchdog::EXIT_CODE as u32
+                            );
                         }
                     }
                 }

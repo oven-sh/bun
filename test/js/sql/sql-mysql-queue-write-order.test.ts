@@ -81,9 +81,14 @@ const COM_QUERY = 0x03;
 const COM_STMT_PREPARE = 0x16;
 
 // Mock server: OK to every COM_QUERY, ERROR to every COM_STMT_PREPARE, and a
-// wire-order log of the commands it received.
-function mockServer() {
+// wire-order log of the commands it received. With `holdPrepare`, the first
+// prepare's ERROR response is held until the test calls the release function
+// resolved through `heldPrepare`, keeping that request in flight on the wire.
+function mockServer(opts: { holdPrepare?: boolean } = {}) {
   const wireLog: string[] = [];
+  let onPrepareHeld: (release: () => void) => void;
+  const heldPrepare = new Promise<() => void>(resolve => (onPrepareHeld = resolve));
+  let held = false;
   const server = net.createServer(socket => {
     let buffered = Buffer.alloc(0);
     let authed = false;
@@ -109,6 +114,15 @@ function mockServer() {
         const cmd = payload[0];
         if (cmd === COM_STMT_PREPARE) {
           wireLog.push(`prepare:${payload.subarray(1).toString()}`);
+          if (opts.holdPrepare && !held) {
+            held = true;
+            const respond = () => {
+              wireLog.push("release");
+              socket.write(errorPacket(seq + 1, 1064, "mock prepare failure"));
+            };
+            onPrepareHeld(respond);
+            continue;
+          }
           socket.write(errorPacket(seq + 1, 1064, "mock prepare failure"));
         } else if (cmd === COM_QUERY) {
           wireLog.push(`query:${payload.subarray(1).toString()}`);
@@ -120,7 +134,7 @@ function mockServer() {
       }
     });
   });
-  return { server, wireLog };
+  return { server, wireLog, heldPrepare };
 }
 
 test("query queued behind a failing prepare of the same statement rejects instead of hanging", async () => {
@@ -181,6 +195,43 @@ test("queries reach the wire in issuance order and all settle", async () => {
     await Promise.all(queries);
 
     expect(wireLog).toEqual(["query:do 0", "query:do 1", "query:do 2", "query:do 3"]);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test("queries issued while a request is in flight stay parked behind it and drain in FIFO order", async () => {
+  const { server, wireLog, heldPrepare } = mockServer({ holdPrepare: true });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+
+    // Prepared query whose COM_STMT_PREPARE the server holds in flight.
+    const q0 = sql`hold ${1}`;
+    (q0 as any).execute();
+    const release = await heldPrepare; // the server has received the prepare
+
+    // Issued while that prepare is in flight: these park in the native queue
+    // behind it. None of them may reach the wire before the server answers
+    // the prepare (the "release" marker); afterwards they drain in issuance
+    // order. The client only processes the release bytes on a later I/O
+    // event, after all pending microtasks (including these dispatches) ran.
+    const queries = Array.from({ length: 3 }, (_, i) => sql.unsafe(`do ${i}`));
+    for (const q of queries) (q as any).execute();
+
+    release();
+
+    const q0errno = await q0.then(
+      () => null,
+      (err: any) => err?.errno,
+    );
+    await Promise.all(queries);
+
+    expect(q0errno).toBe(1064);
+    expect(wireLog).toEqual(["prepare:hold ? ", "release", "query:do 0", "query:do 1", "query:do 2"]);
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

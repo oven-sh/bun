@@ -47,7 +47,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define WRAP_BUNDLER_PLUGIN(argName) jsDoubleNumber(std::bit_cast<double>(reinterpret_cast<uintptr_t>(argName)))
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
-/// These are callbacks defined in Zig and to be run after their associated JS version is run
+/// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -539,7 +539,7 @@ extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunSt
         auto exception = scope.exception();
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 1 (Load). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 1 (Load). JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,
@@ -579,7 +579,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
         auto exception = JSValue(scope.exception());
         (void)scope.tryClearException();
         if (!plugin->plugin.tombstoned) {
-            // which = 0 (Resolve). Zig's JSBundlerPlugin__addError casts ctx based on this value.
+            // which = 0 (Resolve). JSBundlerPlugin__addError casts ctx based on this value.
             plugin->plugin.addError(
                 context,
                 plugin,

@@ -145,26 +145,23 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
       }
     `;
 
-    // Slow trickle so the child is mid-body when the parent walks away.
+    // Two-phase body so the child is deterministically mid-body when the
+    // parent walks away: send a prefix, hold the rest until the parent has
+    // abandoned the child's stdout pipe, then send the remainder so the
+    // pipe sees chunks after the destination died.
+    const { promise: parentCancelled, resolve: parentCancelledResolve } = Promise.withResolvers<void>();
     const raw = net.createServer(socket => {
       let responded = false;
       socket.on("data", () => {
         if (responded) return;
         responded = true;
         socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
-        let offset = 0;
-        const tick = setInterval(() => {
-          if (socket.destroyed) {
-            clearInterval(tick);
-            return;
-          }
-          socket.write(payload.subarray(offset, offset + 65536));
-          offset += 65536;
-          if (offset >= SIZE) {
-            clearInterval(tick);
-            socket.end();
-          }
-        }, 5);
+        socket.write(payload.subarray(0, 256 * 1024), () => {
+          parentCancelled.then(() => {
+            if (socket.destroyed) return;
+            socket.write(payload.subarray(256 * 1024), () => socket.end());
+          });
+        });
       });
       socket.on("error", () => {});
     });
@@ -189,7 +186,70 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
         got += value.length;
       }
       await reader.cancel();
+      parentCancelledResolve();
 
+      expect(await proc.exited).toBe(7);
+    } finally {
+      raw.close();
+    }
+  });
+
+  // When the source stream errors while the sink still has an in-flight or
+  // buffered write (common on pipe destinations and on Windows, where every
+  // FileSink write is an async libuv request), the rejection path must also
+  // tear the writer down. `FileSink::end`'s Pending arm leaves the writer
+  // running for a pending JS write that pipe mode never has, so without the
+  // explicit `writer.end()` in `FileSinkPipe::finish`'s error arm the sink's
+  // keep-alive ref (and fd) leaked.
+  it.skipIf(isWindows)("releases the FileSink when the stream dies with writes in flight", async () => {
+    const childScript = `
+      const { fileSinkInternals } = require("bun:internal-for-testing");
+      const client = new Bun.S3Client({
+        endpoint: process.env.S3_ENDPOINT,
+        bucket: "test-bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      });
+      const baseline = fileSinkInternals.liveCount();
+      try {
+        // fd 1 is a pipe the parent never drains, so writes stay buffered
+        // when the source connection is severed mid-body.
+        await Bun.write(Bun.file(1), client.file("big.bin"));
+        process.exit(42); // resolved — must reject
+      } catch (e) {
+        for (let i = 0; i < 20 && fileSinkInternals.liveCount() > baseline; i++) {
+          Bun.gc(true);
+          await Bun.sleep(0); // macrotask barrier, not a timing wait
+        }
+        process.exit(fileSinkInternals.liveCount() > baseline ? 9 : 7);
+      }
+    `;
+
+    const raw = net.createServer(socket => {
+      let responded = false;
+      socket.on("data", () => {
+        if (responded) return;
+        responded = true;
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
+        // sever the connection once a partial body has been flushed
+        socket.write(payload.subarray(0, SIZE / 2), () => socket.destroy());
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+    const port = (raw.address() as net.AddressInfo).port;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript],
+        env: { ...bunEnv, S3_ENDPOINT: `http://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+
+      // exit 7 = rejected and the FileSink was released;
+      // exit 9 = rejected but the FileSink leaked; exit 42 = resolved
       expect(await proc.exited).toBe(7);
     } finally {
       raw.close();

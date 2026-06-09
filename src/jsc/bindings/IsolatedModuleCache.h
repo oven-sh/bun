@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 
 namespace Zig {
+class GlobalObject;
 class SourceProvider;
 }
 
@@ -58,5 +59,9 @@ public:
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
 };
+
+// bun:internal-for-testing — returns the cached provider's sourceType name
+// for a resolved specifier, or null when not cached.
+JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject);
 
 } // namespace Bun

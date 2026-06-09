@@ -70,8 +70,6 @@ impl<'a> fmt::Display for HTMLImportManifest<'a> {
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
-            // We use std.fmt.count for this
-            // Zig: error.NoSpaceLeft => unreachable, error.OutOfMemory => return error.OutOfMemory
             Err(_) => Err(fmt::Error),
         }
     }
@@ -97,7 +95,7 @@ fn write_entry_item<W: Write + ?Sized>(
     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
 
     writer.write_all(b",\"loader\":\"")?;
-    // Zig: @tagName(loader) — strum is configured snake_case to match.
+    // strum is configured snake_case, so this prints the lowercase tag name.
     writer.write_all(<&'static str>::from(loader).as_bytes())?;
     writer.write_all(b"\",\"isEntry\":")?;
     writer.write_all(if kind == OutputKind::EntryPoint {
@@ -136,7 +134,6 @@ pub fn write_escaped_json<W: Write + ?Sized>(
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(4096)).
     let mut bytes: Vec<u8> = Vec::new();
     write(index, graph, linker_graph, chunks, &mut bytes)?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
@@ -146,7 +143,6 @@ pub fn write_escaped_json<W: Write + ?Sized>(
 }
 
 /// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-/// Mirrors Zig's `std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter)`.
 pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
 
 impl<'a> fmt::Display for EscapedJson<'a> {
@@ -160,8 +156,6 @@ impl<'a> fmt::Display for EscapedJson<'a> {
             &mut adapter,
         ) {
             Ok(()) => Ok(()),
-            // We use std.fmt.count for this
-            // Zig: error.WriteFailed => unreachable, error.OutOfMemory => return error.WriteFailed
             Err(_) => Err(fmt::Error),
         }
     }
@@ -385,5 +379,3 @@ pub mod html_import_manifest {
         Ok(())
     }
 }
-
-// ported from: src/bundler/HTMLImportManifest.zig

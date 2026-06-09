@@ -16,7 +16,7 @@ use bun_ptr::cow_slice::CowSlice;
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
-// `bun.ptr.CowString` — the Zig-shaped owned/borrowed byte slice (has
+// `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
 // re-exported at `bun_ptr::CowString`.
 pub type CowString = CowSlice<u8>;
@@ -58,8 +58,8 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the caller's ref
-    /// (Zig: `pipe.detach()`). Centralises what was the `into_raw()` +
+    /// Clear the `PipeReader`'s `process` backref and release the caller's ref.
+    /// Centralises what was the `into_raw()` +
     /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
     /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
     /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
@@ -113,12 +113,10 @@ impl Readable {
         max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {
-        // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
         super::assert_stdio_result!(result);
 
         // Ownership of any resource inside `stdio` (notably `.memfd`) is being
-        // *transferred* into the returned `Readable` — Zig's `Readable.init`
-        // never calls `stdio.deinit()`. `Stdio` has a Rust `Drop` impl that
+        // *transferred* into the returned `Readable`. `Stdio` has a `Drop` impl that
         // would close the memfd, so suppress it here to avoid a double-close
         // (EBADF) when the Readable later closes the same fd.
         let stdio = mem::ManuallyDrop::new(stdio);
@@ -214,7 +212,6 @@ impl Readable {
                 *self = Readable::Closed;
             }
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck — Zig captures `pipe` by-copy then overwrites `this.*`.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -240,8 +237,8 @@ impl Readable {
                 Self::pipe_detach(&pipe);
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.
-                // In Rust, dropping the CowString (via overwrite) is the equivalent; finalize is terminal.
+                // Dropping the CowString (via the overwrite) frees the buffer;
+                // finalize is terminal.
                 *self = Readable::Closed;
             }
             _ => {}
@@ -255,7 +252,6 @@ impl Readable {
 
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -264,7 +260,6 @@ impl Readable {
                 result
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: reshaped for borrowck — `defer this.* = .closed` becomes take-then-use.
                 let Readable::Buffer(mut buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -297,7 +292,6 @@ impl Readable {
                 }
             }
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -306,7 +300,6 @@ impl Readable {
                 Ok(result)
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -315,9 +308,8 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                // PORT NOTE: ownership of the mimalloc-backed buffer transfers to
-                // JSC (freed via `MarkedArrayBuffer_deallocator`) — matches Zig
-                // `fromBytes(own, .Uint8Array)`.
+                // Ownership of the mimalloc-backed buffer transfers to JSC
+                // (freed via `MarkedArrayBuffer_deallocator`).
                 Ok(jsc::MarkedArrayBuffer {
                     buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
                     owns_buffer: true,
@@ -331,5 +323,3 @@ impl Readable {
 }
 
 use bun_core as _; // bun.Output → bun_core (panics inlined as panic!())
-
-// ported from: src/runtime/api/bun/subprocess/Readable.zig

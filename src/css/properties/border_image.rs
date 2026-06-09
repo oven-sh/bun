@@ -34,9 +34,7 @@ pub struct BorderImage {
 }
 
 impl BorderImage {
-    // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // tables consumed via @field reflection by the shorthand codegen. Replace with
-    // a trait impl (e.g. `impl ShorthandProperty for BorderImage`).
+    // Recorded here for a future shorthand trait/derive to consume.
     // PropertyFieldMap:
     //   source -> PropertyIdTag::BorderImageSource
     //   slice  -> PropertyIdTag::BorderImageSlice
@@ -46,12 +44,9 @@ impl BorderImage {
     // VendorPrefixMap: all fields = true
 
     pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
-        // PORT NOTE: Zig passed `{}` ctx + a no-op callback struct; collapsed to a closure.
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
-    // PORT NOTE: Zig signature was (input, ctx: anytype, comptime callback: anytype)
-    // where callback(ctx, input) -> bool. Collapsed ctx into the closure capture.
     pub(crate) fn parse_with_callback(
         input: &mut css::Parser,
         mut callback: impl FnMut(&mut css::Parser) -> bool,
@@ -200,22 +195,19 @@ impl BorderImage {
         targets: &css::targets::Targets,
     ) -> SmallList<BorderImage, 6> {
         let fallbacks = self.source.get_fallbacks(arena, targets);
-        // PORT NOTE: `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
+        // `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
-        for fallback in fallbacks.slice() {
-            // TODO(port): Zig moved `fallback` by value; SmallList lacks
-            // by-value drain in Rust port — deep_clone the source image
-            // until SmallList grows IntoIterator.
+        for fallback in fallbacks {
+            // `fallback` is moved into the cloned shorthand.
             let mut clone = self.deep_clone(arena);
-            clone.source = fallback.deep_clone(arena);
+            clone.source = fallback;
             res.append(clone);
         }
         res
     }
 
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
-        // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
-        // explicitly here — keep in sync with the BorderImage field list.
+        // Keep in sync with the BorderImage field list.
         BorderImage {
             source: self.source.deep_clone(arena),
             slice: self.slice.deep_clone(arena),
@@ -306,9 +298,8 @@ pub enum BorderImageSideWidth {
 }
 
 impl BorderImageSideWidth {
-    // PORT NOTE: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // were comptime-reflected derives. Hand-expanded — declaration order matches
-    // Zig (Number → LengthPercentage → keyword `auto`).
+    // Hand-expanded — tried in declaration order
+    // (Number → LengthPercentage → keyword `auto`).
     pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(BorderImageSideWidth::Number(n));
@@ -456,11 +447,7 @@ impl BorderImageProperty {
 
     pub(crate) const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
 
-    // PORT NOTE: bitflags provides `is_empty()` already; Zig `isEmpty` maps to it.
-
     pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
-        // PORT NOTE: Zig used `inline for` over struct fields + @field to match
-        // "border-image-" ++ field.name. Unrolled explicitly here.
         match property_id {
             PropertyIdTag::BorderImageSource => Some(BorderImageProperty::SOURCE),
             PropertyIdTag::BorderImageSlice => Some(BorderImageProperty::SLICE),
@@ -494,8 +481,7 @@ impl BorderImageHandler {
     ) -> bool {
         let arena = dest.bump();
 
-        // PORT NOTE: Zig defined `flushHelper`/`propertyHelper` as local struct fns
-        // using @field for comptime field access. Ported as macro_rules! to keep the
+        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
         // per-field name dispatch without reflection.
         macro_rules! flush_helper {
             ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
@@ -570,7 +556,6 @@ impl BorderImageHandler {
                             .unwrap(),
                     );
                     dest.push(Property::Unparsed(unparsed_clone));
-                    // PERF(port): was bun.handleOom(dest.append(arena, ...))
                 } else {
                     return false;
                 }
@@ -645,7 +630,7 @@ impl BorderImageHandler {
                         .prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                     if self.flushed_properties.is_empty() {
                         let fallbacks = border_image.get_fallbacks(arena, &context.targets);
-                        for fallback in fallbacks.slice() {
+                        for fallback in fallbacks {
                             // Match prefix of fallback. e.g. -webkit-linear-gradient
                             // can only be used in -webkit-border-image, not -moz-border-image.
                             // However, if border-image is unprefixed, gradients can still be.
@@ -653,9 +638,7 @@ impl BorderImageHandler {
                             if p.is_empty() {
                                 p = prefix;
                             }
-                            // TODO(port): Zig moved `fallback` by value; SmallList has no
-                            // by-value drain yet — deep_clone until IntoIterator lands.
-                            dest.push(Property::BorderImage((fallback.deep_clone(arena), p)));
+                            dest.push(Property::BorderImage((fallback, p)));
                         }
                     }
                 }
@@ -669,22 +652,19 @@ impl BorderImageHandler {
                 self.flushed_properties
                     .insert(BorderImageProperty::BORDER_IMAGE);
             }
-            (mut source, slice, width, outset, repeat) => {
-                if let Some(mut_source) = &mut source {
+            (source, slice, width, outset, repeat) => {
+                if let Some(mut mut_source) = source {
                     if !self
                         .flushed_properties
                         .contains(BorderImageProperty::BORDER_IMAGE_SOURCE)
                     {
                         let img_fallbacks = mut_source.get_fallbacks(arena, &context.targets);
-                        for fallback in img_fallbacks.slice() {
-                            // TODO(port): same by-value move note as above.
-                            dest.push(Property::BorderImageSource(fallback.deep_clone(arena)));
+                        for fallback in img_fallbacks {
+                            dest.push(Property::BorderImageSource(fallback));
                         }
                     }
 
-                    dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
-                    // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
-                    // avoid partial-move out of `source: Option<Image>`.
+                    dest.push(Property::BorderImageSource(mut_source));
                     self.flushed_properties
                         .insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
                 }
@@ -732,5 +712,3 @@ pub(crate) fn is_border_image_property(property_id: PropertyIdTag) -> bool {
 }
 
 crate::css_eql_partialeq!(BorderImageSideWidth);
-
-// ported from: src/css/properties/border_image.zig

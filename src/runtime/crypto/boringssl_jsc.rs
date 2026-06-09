@@ -36,5 +36,3 @@ pub fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         )
         .to_js()
 }
-
-// ported from: src/runtime/crypto/boringssl_jsc.zig

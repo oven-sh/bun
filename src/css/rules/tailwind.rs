@@ -46,5 +46,3 @@ pub enum TailwindStyleName {
     /// your stylesheet by default.
     Variants,
 }
-
-// ported from: src/css/rules/tailwind.zig

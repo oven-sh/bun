@@ -3,8 +3,8 @@
 //! Per `docs/PORTING.md` §Dispatch hot-path: this crate (low/mid tier) only
 //! stores `{ tag: u8, ptr: *mut () }` and a one-shot hook; the per-tick
 //! `match` over all ~96 variant types lives in `bun_runtime::dispatch`
-//! (high tier — it owns every variant type). LLVM inlines the high-tier arms
-//! exactly as the Zig `inline else` did; this layer never names a variant.
+//! (high tier — it owns every variant type). LLVM inlines the high-tier arms;
+//! this layer never names a variant.
 //!
 //! To add a new task to the queue:
 //! 1. Add a tag constant to `bun_event_loop::task_tag` (the canonical list).
@@ -23,8 +23,7 @@ pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
 /// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
 /// back-compat with existing call sites; equivalent to [`Task::init`].
-/// Zig: `Task.init(of: anytype)` derived the tag at comptime from `@TypeOf(of)`;
-/// in Rust the tag comes from the [`Taskable`] impl.
+/// The tag comes from the [`Taskable`] impl.
 #[inline]
 pub fn new<T: Taskable>(ptr: *mut T) -> Task {
     Task::init(ptr)
@@ -52,10 +51,16 @@ pub fn report_error_or_terminate(
     if ex.is_termination_exception() {
         return Err(JsTerminated::JSTerminated);
     }
-    // TODO(port): `global.report_uncaught_exception(ex.as_exception(vm))` —
-    // `JSValue::as_exception` / `JSGlobalObject::report_uncaught_exception`
-    // surface lands when JSGlobalObject.rs un-gates.
-    let _ = (global, ex);
+    let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();
+    let exc = ex
+        .as_exception(vm)
+        .expect("exception value must be an Exception cell");
+    // `as_exception` returned a non-null cell pointer rooted on the VM;
+    // `Exception` is an opaque ZST handle — safe deref (panics on null).
+    let _ = crate::js_global_object::report_uncaught_exception(
+        global,
+        crate::Exception::opaque_ref(exc),
+    );
     Ok(())
 }
 
@@ -63,5 +68,3 @@ pub fn report_error_or_terminate(
 // `bun_runtime::dispatch::run_tasks` per §Dispatch hot-path — every arm names
 // a `bun_runtime`/`bun_shell`/`bun_s3` type and so cannot compile at this tier.
 // See git history of this file for the original draft.
-
-// ported from: src/jsc/Task.zig

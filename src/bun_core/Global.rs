@@ -5,9 +5,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use const_format::{concatcp, formatcp};
 
-use crate::env; // @import("./env.zig")
+use crate::env;
 use crate::env::version_string;
-use crate::output as Output; // @import("./output.zig")
+use crate::output as Output;
 
 use crate::USE_MIMALLOC;
 #[cfg(debug_assertions)]
@@ -61,14 +61,14 @@ pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_v
 // platform-specific symbolication / SEH bits stay in bun_crash_handler (T>core).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `std.builtin.StackTrace` — slice of return addresses + cursor.
+/// Slice of return addresses + cursor.
 #[derive(Clone, Copy)]
 pub struct StackTrace<'a> {
     pub index: usize,
     pub instruction_addresses: &'a [usize],
 }
 
-/// Zig: src/crash_handler/crash_handler.zig::StoredTrace — fixed 31-frame buffer.
+/// Fixed 31-frame stack-trace buffer.
 #[derive(Clone, Copy)]
 pub struct StoredTrace {
     pub data: [usize; 31],
@@ -109,7 +109,7 @@ impl StoredTrace {
         };
         let n = crate::capture_stack_trace(begin, &mut stored.data);
         stored.index = n;
-        // Trim trailing nulls (matches Zig loop).
+        // Trim trailing nulls.
         for (i, &addr) in stored.data[..n].iter().enumerate() {
             if addr == 0 {
                 stored.index = i;
@@ -135,7 +135,6 @@ impl StoredTrace {
     }
 }
 
-/// Zig: `WriteStackTraceLimits`.
 #[derive(Copy, Clone, Debug)]
 pub struct DumpStackTraceOptions {
     pub frame_count: usize,
@@ -155,13 +154,13 @@ impl Default for DumpStackTraceOptions {
         }
     }
 }
-/// Zig-spec name (`crash_handler.WriteStackTraceLimits`); also re-exported from `bun_crash_handler`.
+/// Alias for `DumpStackTraceOptions`; also re-exported from `bun_crash_handler`.
 pub type WriteStackTraceLimits = DumpStackTraceOptions;
 
-/// Zig: `crash_handler.dumpStackTrace`. T0 fallback prints raw return
+/// T0 fallback prints raw return
 /// addresses — **no symbolication** (the `backtrace` crate is not a T0 dep,
 /// and `std::backtrace` cannot resolve a stored address list). This is a
-/// deliberate debug-UX downgrade vs the Zig spec for the *stored*-trace path
+/// deliberate debug-UX downgrade for the *stored*-trace path
 /// (ref_count leak reports); the *current*-stack path below
 /// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
 /// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
@@ -187,9 +186,8 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
 }
 
 /// Capture and dump the current call stack. Dispatches to
-/// `bun_crash_handler::dump_current_stack_trace` (matching Zig
-/// `fd.zig`/`ref_count.zig` which call `bun.crash_handler.dumpCurrentStackTrace`
-/// directly). The upward call is routed through a link-time `extern "Rust"`
+/// `bun_crash_handler::dump_current_stack_trace`.
+/// The upward call is routed through a link-time `extern "Rust"`
 /// symbol defined by `bun_crash_handler` so the function pointer lives in
 /// read-only `.text` instead of a writable `AtomicPtr` slot — memory corruption
 /// cannot redirect it. Under `cfg(test)` (this crate's standalone test binary
@@ -217,7 +215,7 @@ pub fn dump_current_stack_trace(first_address: Option<usize>, limits: DumpStackT
 }
 
 // ─── panicking state (from bun_crash_handler) ─────────────────────────────
-// Zig: `var panicking = std.atomic.Value(u8).init(0)`. Owned here so the
+// Owned here so the
 // crash handler crate writes to `bun_core::PANICKING` (forward dep, allowed).
 pub static PANICKING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
@@ -226,20 +224,18 @@ pub fn is_panicking() -> bool {
     PANICKING.load(Ordering::Relaxed) > 0
 }
 
-/// Zig: crash_handler.sleepForeverIfAnotherThreadIsCrashing.
 pub fn sleep_forever_if_another_thread_is_crashing() {
     if PANICKING.load(Ordering::Acquire) > 0 {
-        // Sleep forever without hammering the CPU. Zig used `bun.Futex.waitForever`;
-        // `std::thread::park()` is the moral equivalent (never unparked).
+        // Sleep forever without hammering the CPU —
+        // `std::thread::park()` is never unparked.
         loop {
             std::thread::park();
         }
     }
 }
 
-// ─── SignalCode — single source of truth (Zig: src/sys/SignalCode.zig) ────
-// Zig declares ONE `enum(u8) { …, _ }` and derives the name table via
-// `@tagName` + `ComptimeEnumMap`. Rust has no enum reflection, so the 31
+// ─── SignalCode — single source of truth ──────────────────────────────────
+// Rust has no enum reflection, so the 31
 // (name,number) pairs live in ONE X-macro below; every consumer — the closed
 // enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
 // `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
@@ -259,7 +255,7 @@ macro_rules! for_each_signal {
 
 macro_rules! __define_signal_code {
     ($($name:ident = $n:literal),* $(,)?) => {
-        /// `@tagName` surrogate. Index = POSIX signal number; `[0]` is "" sentinel
+        /// Signal name table. Index = POSIX signal number; `[0]` is "" sentinel
         /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
         pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
 
@@ -273,18 +269,18 @@ macro_rules! __define_signal_code {
         impl SignalCode {
             pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
 
-            /// Zig `@enumFromInt` for the closed `1..=31` range; `None` for `0`
-            /// or the open enum's `_` tail.
+            /// Raw signal number → variant for the closed `1..=31` range;
+            /// `None` for `0` or anything outside it.
             #[inline]
             pub const fn from_raw(n: u8) -> Option<SignalCode> {
                 match n { $($n => Some(Self::$name),)* _ => None }
             }
 
-            /// Zig `@tagName` — every variant is named (enum is exhaustive).
+            /// Signal name — every variant is named (enum is exhaustive).
             #[inline]
             pub fn name(self) -> &'static str { SIGNAL_NAMES[self as u8 as usize] }
 
-            /// Zig `bun.ComptimeEnumMap(SignalCode).get` — name-bytes → variant.
+            /// Name-bytes → variant.
             /// 31-arm match; the optimizer turns it into a small string switch.
             #[inline]
             pub fn from_name(s: &[u8]) -> Option<SignalCode> {
@@ -296,8 +292,7 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
-// Zig: src/analytics/analytics.zig::Features — bag of `pub var X: usize`.
-// Port as atomic counters so cross-thread `.fetch_add` is sound. Only the
+// Atomic counters so cross-thread `.fetch_add` is sound. Only the
 // counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)
 // stays in bun_analytics (depends on tier-6).
 pub mod features {
@@ -355,7 +350,7 @@ pub mod features {
         LOCKFILE_MIGRATION_FROM_PACKAGE_LOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
     /// jsc crate calls `bun_core::analytics::Features::jsc_inc()` from
-    /// `initialize()` (spec jsc.zig:251 `bun.analytics.Features.jsc += 1`).
+    /// `initialize()`.
     #[inline]
     pub fn jsc_inc() {
         JSC.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -369,7 +364,6 @@ pub mod analytics {
 }
 
 // ─── mark_binding! (MOVE_DOWN from bun_jsc, for aio/event_loop/http_jsc) ──
-// Zig: jsc.zig::markBinding(@src()) → scoped_log!(JSC, "{fn} ({file}:{line})").
 // Pure logging; no jsc dep. Declares the JSC scope on first use.
 crate::declare_scope!(JSC, hidden);
 #[macro_export]
@@ -378,8 +372,7 @@ macro_rules! mark_binding {
         $crate::mark_binding!(::core::panic::Location::caller().file())
     };
     ($fn_name:expr) => {
-        // Zig: `Output.scoped(.JSC, .hidden)` (jsc.zig:169) — opt-in via
-        // BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
+        // Opt-in via BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
         // `debug_assertions` (== `Environment::ENABLE_LOGS`) — never on a Cargo
         // feature, since `cfg!(feature = ..)` is resolved against the *calling*
         // crate and would warn (or silently no-op) in crates without it.
@@ -398,7 +391,7 @@ pub static JSC_SCOPE: crate::output::ScopedLogger =
     crate::output::ScopedLogger::new("JSC", crate::output::Visibility::Hidden);
 
 // ─── debug_flags (MOVE_DOWN from bun_cli, for bun_resolver) ───────────────
-// Zig: src/cli/cli.zig::debug_flags — debug-build-only breakpoint matchers.
+// Debug-build-only breakpoint matchers.
 pub mod debug_flags {
     #[cfg(debug_assertions)]
     pub(crate) static RESOLVE_BREAKPOINTS: crate::Once<&'static [&'static [u8]]> =
@@ -444,8 +437,7 @@ pub const package_json_version: &str = if cfg!(debug_assertions) {
 };
 
 /// `package_json_version` with a trailing `\n` baked in, so
-/// `print_version_and_exit` is a single `write_all` (one syscall) — matches
-/// Zig's `writeAll(version ++ "\n")`.
+/// `print_version_and_exit` is a single `write_all` (one syscall).
 pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
 
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
@@ -458,9 +450,6 @@ pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
     version_string
 };
 
-// PORT NOTE: Zig sliced `git_sha[0..@min(len, 8)]` inline; we use the
-// pre-computed `GIT_SHA_SHORT` (same value) since const slicing of a const
-// `&str` by a runtime-ish min() is awkward in stable Rust.
 /// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
@@ -541,11 +530,12 @@ pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn set_thread_name(name: &ZStr) {
-    // Zig `Environment.isLinux` is true on Android (linux OS + android ABI);
-    // Rust's `target_os = "linux"` is not, so include android explicitly.
+    // Android needs the same path as Linux, but Rust's `target_os = "linux"`
+    // excludes it — include android explicitly.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: PR_SET_NAME takes a NUL-terminated byte string; `name` is `[:0]const u8`.
+        // SAFETY: PR_SET_NAME takes a NUL-terminated byte string; `&ZStr` guarantees
+        // `ptr[len] == 0`.
         unsafe {
             let _ = libc::prctl(libc::PR_SET_NAME, name.as_ptr() as usize);
         }
@@ -581,8 +571,8 @@ pub fn set_thread_name(name: &ZStr) {
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
 pub type ExitFn = extern "C" fn();
 
-// PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. Registration
-// can happen from any thread (FFI `Bun__atexit`), so guard with a Mutex.
+// Registration can happen from any thread (FFI `Bun__atexit`), so this is
+// guarded with a Mutex.
 static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
@@ -597,9 +587,9 @@ pub fn add_exit_callback(function: ExitFn) {
     Bun__atexit(function);
 }
 
-/// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. Spec
-/// `Global.zig:220` hard-codes `bun.jsc.Node.FSEvents.closeAndWait()` ahead of
-/// `runExitCallbacks()`; that crate sits above us, so it pushes its callback
+/// Callbacks `Bun__onExit` runs BEFORE `run_exit_callbacks()`. FSEvents must
+/// close-and-wait ahead of the generic exit-callback list; that crate sits
+/// above us, so it pushes its callback
 /// here at first-loop creation (data moved down — same `Vec<ExitFn>` shape as
 /// `ON_EXIT_CALLBACKS`, no fn-ptr type-erase).
 static PRE_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
@@ -650,7 +640,6 @@ unsafe extern "C" {
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) -> ! {
     IS_EXITING.store(true, Ordering::Relaxed);
-    // _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
     // MOVE_DOWN: bun_analytics::features → bun_core (move-in pass).
     crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
 
@@ -689,10 +678,9 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }
 
-/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Zig's
-/// `SignalCode` is a *non-exhaustive* `enum(u8)`, so callers may forward any
-/// signal byte (incl. Linux RT signals 32..=64) that has no `crate::SignalCode`
-/// discriminant. Mirrors `raiseIgnoringPanicHandler(@enumFromInt(sig))`.
+/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Callers may
+/// forward any signal byte (incl. Linux RT signals 32..=64) that has no
+/// `crate::SignalCode` discriminant.
 pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
@@ -700,8 +688,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     // Clear the crash handler's segfault hooks so the re-raised signal goes to
     // SIG_DFL instead of recursing into the panic handler. Storage moved down
     // from `bun_crash_handler` — it sets `CRASH_HANDLER_INSTALLED` on init and
-    // we do the libc reset ourselves (no fn-ptr hook). Mirrors
-    // `crash_handler.zig::resetSegfaultHandler`: skip when ASAN owns the
+    // we do the libc reset ourselves (no fn-ptr hook). Skip when ASAN owns the
     // signals (we never installed over them); on Windows remove the VEH.
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
@@ -796,8 +783,7 @@ pub(crate) static Bun__userAgent: SyncCStr =
     SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
-/// only ever called from C/C++ (so rustc sees no Rust caller). Port of Zig's
-/// `std.mem.doNotOptimizeAway` pattern (Global.zig:224). Expands to one
+/// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one
 /// `core::hint::black_box(f as *const ())` per path — purely a side-effect, so
 /// invoke inside a `fix_dead_code_elimination()` fn wired from `run_command`.
 #[macro_export]
@@ -809,9 +795,8 @@ macro_rules! keep_symbols {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__onExit() {
-    // `bun.jsc.Node.FSEvents.closeAndWait()` (spec `Global.zig:220`) — runs
-    // BEFORE the generic exit-callback list, matching Zig ordering. fs_events
-    // pushes into `PRE_EXIT_CALLBACKS` on first loop create.
+    // FSEvents close-and-wait runs BEFORE the generic exit-callback list.
+    // fs_events pushes into `PRE_EXIT_CALLBACKS` on first loop create.
     let pre: Vec<ExitFn> = core::mem::take(&mut *PRE_EXIT_CALLBACKS.lock());
     for callback in &pre {
         callback();
@@ -822,5 +807,3 @@ pub(crate) extern "C" fn Bun__onExit() {
 
     Output::source::stdio::restore();
 }
-
-// ported from: src/bun_core/Global.zig

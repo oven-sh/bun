@@ -3,6 +3,7 @@ use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_collections::StringHashMap;
+use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
 use bun_sql::shared::{ColumnIdentifier, Data};
 
@@ -402,7 +403,7 @@ pub fn dedupe_columns<'a>(
                 // mutating `*name_or_index`.
                 let found_existing = seen_fields
                     .get_or_put(name.slice())
-                    .expect("OOM")
+                    .unwrap_or_oom()
                     .found_existing;
                 if found_existing {
                     *name_or_index = ColumnIdentifier::Duplicate;

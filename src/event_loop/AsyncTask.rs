@@ -40,7 +40,8 @@
 //!
 //! `refs` counts: +1 held by the task itself from spawn until a terminal
 //! state (COMPLETE/CLOSED) is processed, +1 while the task sits in a queue,
-//! +1 per live `Waker` clone. The future is dropped in place at the terminal
+//! +1 per live `Waker` clone. A consuming `wake` that wins the enqueue
+//! transfers its reference into the queue slot instead of an inc/dec pair. The future is dropped in place at the terminal
 //! transition (always on the JS thread); after that the allocation is plain
 //! bytes, so the last reference may safely be dropped — and the memory freed
 //! — from any thread.
@@ -56,6 +57,16 @@ use core::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use crate::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use crate::{JsEventLoop, Task};
 use bun_io::KeepAlive;
+
+// The poll path has no unwind guards: a panicking poll would leave the task
+// in `RUNNING` forever and leak the pinned future. Every workspace profile
+// builds with `panic = "abort"` (root Cargo.toml); this trips if that ever
+// changes. Test/Miri builds compile with unwind by design (cargo ignores the
+// profile's panic setting for the test profile), hence the carve-outs.
+#[cfg(all(panic = "unwind", not(test), not(miri)))]
+compile_error!(
+    "bun_event_loop::AsyncTask requires panic=abort: its poll path has no unwind guards"
+);
 
 // ─── state machine ───────────────────────────────────────────────────────────
 
@@ -169,6 +180,13 @@ trait Schedule {
     unsafe fn enqueue_concurrent(this: *mut AsyncTask);
     /// Release the event-loop keepalive at a terminal transition. JS thread only.
     unsafe fn release_keep_alive(this: *mut AsyncTask);
+    /// The waker vtable for this schedule. Implementations return a true
+    /// `static` (not a const-promoted temporary): promotion can be
+    /// duplicated per codegen unit in non-LTO builds, giving wakers for the
+    /// same task different vtable addresses — `Waker::will_wake` then
+    /// reports false for equivalent wakers and defeats leaf futures'
+    /// stored-waker dedup.
+    fn vtable() -> &'static RawWakerVTable;
 }
 
 /// Production effects: the real event loop.
@@ -207,6 +225,16 @@ impl Schedule for LoopSchedule {
         let keep_alive = unsafe { &mut (*this).keep_alive };
         keep_alive.unref(bun_io::js_vm_ctx());
     }
+
+    fn vtable() -> &'static RawWakerVTable {
+        static VTABLE: RawWakerVTable = RawWakerVTable::new(
+            waker_clone::<LoopSchedule>,
+            waker_wake::<LoopSchedule>,
+            waker_wake_by_ref::<LoopSchedule>,
+            waker_drop,
+        );
+        &VTABLE
+    }
 }
 
 // ─── refcounting ─────────────────────────────────────────────────────────────
@@ -215,7 +243,11 @@ unsafe fn ref_inc(this: *mut AsyncTask) {
     // SAFETY: shared projection of the atomic field only.
     let refs = unsafe { &(*this).refs };
     let prev = refs.fetch_add(1, ORD);
-    debug_assert!(prev < u32::MAX / 2, "AsyncTask refcount overflow");
+    if prev > u32::MAX / 2 {
+        // A leaked-clone loop must trap before the count wraps into a
+        // use-after-free; the guard stays in release builds.
+        std::process::abort();
+    }
 }
 
 unsafe fn ref_dec(this: *mut AsyncTask) {
@@ -239,7 +271,7 @@ unsafe fn on_js_thread(this: *mut AsyncTask) -> bool {
     std::thread::current().id() == js_thread
 }
 
-unsafe fn wake_with<S: Schedule>(this: *mut AsyncTask) {
+unsafe fn wake_with<S: Schedule, const CONSUME: bool>(this: *mut AsyncTask) {
     // SAFETY: shared projection of the atomic field only.
     let state = unsafe { &(*this).state };
     let mut current = state.load(ORD);
@@ -247,12 +279,16 @@ unsafe fn wake_with<S: Schedule>(this: *mut AsyncTask) {
         match current {
             IDLE => match state.compare_exchange(IDLE, SCHEDULED, ORD, ORD) {
                 Ok(_) => {
-                    // Take the queue reference BEFORE enqueueing: once the
-                    // task is visible to the consumer it may run, complete,
-                    // and release while we are still here.
-                    // SAFETY: caller holds a reference (waker or task ref),
-                    // so `this` is live.
-                    unsafe { ref_inc(this) };
+                    if !CONSUME {
+                        // Take the queue reference BEFORE enqueueing: once
+                        // the task is visible to the consumer it may run,
+                        // complete, and release while we are still here.
+                        // SAFETY: caller holds a reference (waker), so
+                        // `this` is live.
+                        unsafe { ref_inc(this) };
+                    }
+                    // A consuming wake transfers its own reference into the
+                    // queue slot instead — no refcount traffic.
                     // SAFETY: we won the CAS — sole enqueuer for this cycle.
                     if unsafe { on_js_thread(this) } {
                         // SAFETY: on the JS thread (just checked).
@@ -268,41 +304,60 @@ unsafe fn wake_with<S: Schedule>(this: *mut AsyncTask) {
             RUNNING => match state.compare_exchange(RUNNING, NOTIFIED, ORD, ORD) {
                 // The poll exit observes NOTIFIED and re-enqueues; no queue
                 // traffic from this thread.
-                Ok(_) => return,
+                Ok(_) => break,
                 Err(actual) => current = actual,
             },
-            SCHEDULED | NOTIFIED | COMPLETE | CLOSED => return,
+            SCHEDULED | NOTIFIED => {
+                // Same-value CAS, not a plain load: a wake that loses the
+                // enqueue race must still publish a release edge pairing
+                // with the dispatcher's Acquire side of SCHEDULED→RUNNING,
+                // so writes made before this wake are visible to the poll
+                // that consumes the existing enqueue. (A leaf future with
+                // its own release/acquire pair doesn't need this; futures
+                // relying on the wake→poll edge do.)
+                match state.compare_exchange(current, current, ORD, ORD) {
+                    Ok(_) => break,
+                    Err(actual) => current = actual,
+                }
+            }
+            // Terminal states are final: nothing will poll again, no edge
+            // to publish, nothing to do.
+            COMPLETE | CLOSED => break,
             _ => unreachable!("AsyncTask.state corrupted: {current}"),
         }
+    }
+    if CONSUME {
+        // No enqueue happened on this path (the enqueue path returns above
+        // after transferring the reference) — release the waker's reference.
+        // SAFETY: this waker held a reference until here.
+        unsafe { ref_dec(this) };
     }
 }
 
 // ─── waker vtable ────────────────────────────────────────────────────────────
 
-fn raw_waker_vtable<S: Schedule>() -> &'static RawWakerVTable {
-    // Nested fns can't capture the enclosing `S`; each takes it explicitly.
-    unsafe fn clone_waker<S: Schedule>(data: *const ()) -> RawWaker {
-        let this = data.cast_mut().cast::<AsyncTask>();
-        // SAFETY: the cloned-from waker holds a reference, so `this` is live.
-        unsafe { ref_inc(this) };
-        RawWaker::new(data, raw_waker_vtable::<S>())
-    }
-    unsafe fn wake<S: Schedule>(data: *const ()) {
-        let this = data.cast_mut().cast::<AsyncTask>();
-        // SAFETY: this waker holds a reference (consumed below).
-        unsafe { wake_with::<S>(this) };
-        // SAFETY: consumes this waker's reference.
-        unsafe { ref_dec(this) };
-    }
-    unsafe fn wake_by_ref<S: Schedule>(data: *const ()) {
-        // SAFETY: this waker holds a reference for the duration of the call.
-        unsafe { wake_with::<S>(data.cast_mut().cast::<AsyncTask>()) };
-    }
-    unsafe fn drop_waker(data: *const ()) {
-        // SAFETY: releases this waker's reference.
-        unsafe { ref_dec(data.cast_mut().cast::<AsyncTask>()) };
-    }
-    const { &RawWakerVTable::new(clone_waker::<S>, wake::<S>, wake_by_ref::<S>, drop_waker) }
+unsafe fn waker_clone<S: Schedule>(data: *const ()) -> RawWaker {
+    let this = data.cast_mut().cast::<AsyncTask>();
+    // SAFETY: the cloned-from waker holds a reference, so `this` is live.
+    unsafe { ref_inc(this) };
+    RawWaker::new(data, S::vtable())
+}
+
+unsafe fn waker_wake<S: Schedule>(data: *const ()) {
+    // Consuming wake: the enqueue path transfers this waker's reference into
+    // the queue slot; every other path releases it inside `wake_with`.
+    // SAFETY: this waker holds a reference until `wake_with` disposes of it.
+    unsafe { wake_with::<S, true>(data.cast_mut().cast::<AsyncTask>()) };
+}
+
+unsafe fn waker_wake_by_ref<S: Schedule>(data: *const ()) {
+    // SAFETY: this waker holds a reference for the duration of the call.
+    unsafe { wake_with::<S, false>(data.cast_mut().cast::<AsyncTask>()) };
+}
+
+unsafe fn waker_drop(data: *const ()) {
+    // SAFETY: releases this waker's reference.
+    unsafe { ref_dec(data.cast_mut().cast::<AsyncTask>()) };
 }
 
 // ─── poll (dispatch entry) ───────────────────────────────────────────────────
@@ -320,14 +375,9 @@ unsafe fn poll_with<S: Schedule>(this: *mut AsyncTask) {
     // through `clone_waker` and count normally. `ManuallyDrop` skips the
     // vtable drop that would release a reference we never took.
     let waker = ManuallyDrop::new(
-        // SAFETY: vtable contract upheld by the fns in `raw_waker_vtable`;
-        // `this` is live for the duration (queue ref).
-        unsafe {
-            Waker::from_raw(RawWaker::new(
-                this.cast_const().cast::<()>(),
-                raw_waker_vtable::<S>(),
-            ))
-        },
+        // SAFETY: vtable contract upheld by the `waker_*` fns; `this` is
+        // live for the duration (queue ref).
+        unsafe { Waker::from_raw(RawWaker::new(this.cast_const().cast::<()>(), S::vtable())) },
     );
     let mut cx = Context::from_waker(&waker);
 
@@ -569,6 +619,15 @@ mod tests {
             record(this, false);
         }
         unsafe fn release_keep_alive(_this: *mut AsyncTask) {}
+        fn vtable() -> &'static RawWakerVTable {
+            static VTABLE: RawWakerVTable = RawWakerVTable::new(
+                waker_clone::<TestSchedule>,
+                waker_wake::<TestSchedule>,
+                waker_wake_by_ref::<TestSchedule>,
+                waker_drop,
+            );
+            &VTABLE
+        }
     }
 
     /// Fabricated handle: `TestSchedule` never dispatches through it.

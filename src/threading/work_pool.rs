@@ -1,7 +1,7 @@
 use core::cell::UnsafeCell;
 use core::future::Future;
 use core::pin::Pin;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use core::task::{Context, Poll, Waker};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -221,28 +221,34 @@ impl WorkPool {
 
 // ─── awaitable offload ───────────────────────────────────────────────────────
 
-/// Oneshot completion state. `RUNNING`: the job may still produce a value.
-/// `WAKER_BUSY`: the poller is swapping the waker; completion spins briefly.
-/// `DONE`: the value is written and release-published.
-const RUNNING: u8 = 0;
-const WAKER_BUSY: u8 = 1;
-const DONE: u8 = 2;
+/// Waker-cell lock states. The hand-off protocol is the one
+/// `futures_core::task::AtomicWaker` uses: the side that fails to take the
+/// cell lock never spins — it leaves its bit set and the lock holder
+/// resolves the collision on exit. A registrant that observes `WAKING` at
+/// unlock reclaims the waker it just stored; a completer that observes
+/// `REGISTERING` simply returns, knowing the registrant will see `WAKING`.
+const WAITING: u8 = 0;
+const REGISTERING: u8 = 0b01;
+const WAKING: u8 = 0b10;
 
 /// Result cell shared between the pool thread and the awaiting task.
 ///
-/// `value` is written only by the pool thread before `DONE` and read only by
-/// the poller after observing `DONE`. `waker` is touched by the poller before
-/// the job is scheduled or inside the `WAKER_BUSY` window, and by the pool
-/// thread only after winning the `RUNNING→DONE` transition — never
-/// concurrently.
+/// `done` publishes the value: stored `Release` by the pool thread after the
+/// `value` write, loaded `Acquire` by the poller. The `waker` cell is guarded
+/// by `waker_state` (protocol above). The poller registers its waker and
+/// *then* re-checks `done` — the canonical register-before-checking order
+/// that makes a completion racing the registration impossible to lose: if
+/// the completion's take ran first, `done` was already set before it.
 struct Oneshot<T> {
-    state: AtomicU8,
+    waker_state: AtomicU8,
+    done: AtomicBool,
     value: UnsafeCell<Option<T>>,
     waker: UnsafeCell<Option<Waker>>,
 }
 
-// SAFETY: cross-thread access to the `UnsafeCell`s is mediated by the `state`
-// protocol documented above; `T: Send` is required by [`run`]'s bounds.
+// SAFETY: cross-thread access to the `UnsafeCell`s is mediated by the
+// `waker_state` lock (waker cell) and the `done` publish (value cell);
+// `T: Send` is required by [`run`]'s bounds.
 unsafe impl<T: Send> Sync for Oneshot<T> {}
 
 /// Run `f` on the global [`WorkPool`] and await its result.
@@ -259,7 +265,8 @@ where
 {
     RunOnWorkPool {
         shared: Arc::new(Oneshot {
-            state: AtomicU8::new(RUNNING),
+            waker_state: AtomicU8::new(WAITING),
+            done: AtomicBool::new(false),
             value: UnsafeCell::new(None),
             waker: UnsafeCell::new(None),
         }),
@@ -285,10 +292,10 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
         let this = self.get_mut();
 
         if let Some(job) = this.job.take() {
-            // First poll: register the waker BEFORE scheduling so the
+            // First poll: store the waker BEFORE scheduling so the
             // completion can never miss it, then hand the job to the pool.
             // SAFETY: the job is not yet scheduled — no other thread exists
-            // that could touch `waker`.
+            // that could touch `waker` (the schedule hand-off publishes it).
             unsafe { *this.shared.waker.get() = Some(cx.waker().clone()) };
 
             fn finish<T, F>((shared, job): (Arc<Oneshot<T>>, F))
@@ -297,22 +304,25 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
                 T: Send + 'static,
             {
                 let value = job();
-                // SAFETY: the pool thread is the only writer of `value`, and
-                // the poller reads it only after observing `DONE`.
+                // SAFETY: the pool thread is the only writer of `value`; the
+                // poller reads it only after acquiring `done`.
                 unsafe { *shared.value.get() = Some(value) };
-                // Win the baton; a poller mid-waker-swap holds `WAKER_BUSY`
-                // for a few instructions at most.
-                while shared
-                    .state
-                    .compare_exchange(RUNNING, DONE, Ordering::AcqRel, Ordering::Acquire)
-                    .is_err()
-                {
-                    std::thread::yield_now();
-                }
-                // SAFETY: once `DONE` is published the poller never touches
-                // `waker` again (it goes straight to the value).
-                if let Some(waker) = unsafe { (*shared.waker.get()).take() } {
-                    waker.wake();
+                // Publish the value BEFORE the wake hand-off (state change
+                // precedes wake): a poller that misses the hand-off still
+                // observes `done` after registering.
+                shared.done.store(true, Ordering::Release);
+                // Take the cell lock to wake. If the poller is mid-register,
+                // leave `WAKING` set and return — its unlock CAS fails, it
+                // reclaims its waker and reads `done`. Nobody spins.
+                if shared.waker_state.fetch_or(WAKING, Ordering::AcqRel) == WAITING {
+                    // SAFETY: we hold the cell lock (`WAKING`, was WAITING);
+                    // a registrant cannot enter until the store below.
+                    let waker = unsafe { (*shared.waker.get()).take() };
+                    let prev = shared.waker_state.swap(WAITING, Ordering::Release);
+                    debug_assert_eq!(prev, WAKING);
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
                 }
             }
 
@@ -321,34 +331,53 @@ impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkP
             return Poll::Pending;
         }
 
-        if this.shared.state.load(Ordering::Acquire) == DONE {
-            // SAFETY: `DONE` was release-published after the value write;
+        // Re-poll: register first, then check `done` — never the reverse.
+        match this.shared.waker_state.compare_exchange(
+            WAITING,
+            REGISTERING,
+            Ordering::Acquire,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // Lock held: refresh the cell, skipping the clone when the
+                // stored waker already wakes this task.
+                // SAFETY: `REGISTERING` excludes the completion's take.
+                unsafe {
+                    match &*this.shared.waker.get() {
+                        Some(old) if old.will_wake(cx.waker()) => {}
+                        _ => *this.shared.waker.get() = Some(cx.waker().clone()),
+                    }
+                }
+                // Unlock. Failure means the completion set `WAKING` while we
+                // held the lock and backed off without the waker: reclaim it
+                // (the `done` check below settles the poll — the completion
+                // published `done` before `WAKING`, and our failed CAS
+                // acquired that edge).
+                if this
+                    .shared
+                    .waker_state
+                    .compare_exchange(REGISTERING, WAITING, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    // SAFETY: the completion never touches the cell after
+                    // observing `REGISTERING`; it is ours until the swap.
+                    let _stale = unsafe { (*this.shared.waker.get()).take() };
+                    let prev = this.shared.waker_state.swap(WAITING, Ordering::AcqRel);
+                    debug_assert_eq!(prev, REGISTERING | WAKING);
+                }
+            }
+            // The completion holds the cell lock (mid-take of the previous
+            // waker). `done` was published before `WAKING`, and this failed
+            // CAS acquired it — fall through to the check.
+            Err(actual) => debug_assert_eq!(actual & WAKING, WAKING, "single poller"),
+        }
+
+        if this.shared.done.load(Ordering::Acquire) {
+            // SAFETY: `done` was release-published after the value write;
             // the single poller takes the value exactly once.
             let value = unsafe { (*this.shared.value.get()).take() };
             return Poll::Ready(value.expect("RunOnWorkPool polled after completion"));
         }
-
-        // Re-polled before completion (e.g. a spurious wake of the parent
-        // task): refresh the waker under the `WAKER_BUSY` baton so the
-        // completion can't read it concurrently.
-        match this.shared.state.compare_exchange(
-            RUNNING,
-            WAKER_BUSY,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {
-                // SAFETY: `WAKER_BUSY` excludes the completion's waker read.
-                unsafe { *this.shared.waker.get() = Some(cx.waker().clone()) };
-                this.shared.state.store(RUNNING, Ordering::Release);
-                Poll::Pending
-            }
-            Err(_) => {
-                // Completion won the race; the value is ready now.
-                // SAFETY: as in the `DONE` fast path above.
-                let value = unsafe { (*this.shared.value.get()).take() };
-                Poll::Ready(value.expect("RunOnWorkPool polled after completion"))
-            }
-        }
+        Poll::Pending
     }
 }

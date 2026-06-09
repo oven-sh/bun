@@ -1,3 +1,6 @@
+// https://github.com/oven-sh/bun/issues/3192
+// yarn lockfile must quote workspace:* versions
+
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 

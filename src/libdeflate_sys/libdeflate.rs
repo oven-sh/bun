@@ -542,5 +542,3 @@ unsafe extern "C" {
         free_func: Option<unsafe extern "C" fn(*mut c_void)>,
     );
 }
-
-// ported from: src/libdeflate_sys/libdeflate.zig

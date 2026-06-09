@@ -12,7 +12,6 @@ workspace = true
 [dependencies]
 bytemuck = "1"
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -29,4 +28,5 @@ bun_ptr.workspace = true
 bun_paths.workspace = true
 bun_collections.workspace = true
 bun_sys.workspace = true
+bun_perf.workspace = true
 bun_wyhash.workspace = true

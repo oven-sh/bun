@@ -5,8 +5,8 @@
 use crate::string::strings;
 use bun_alloc::AllocError;
 
-// PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
-// node and duplicated-string allocations.
+// Node and duplicated-string allocations use the global allocator (mimalloc);
+// there is no per-joiner allocator field.
 #[derive(Default)]
 pub struct StringJoiner<'a> {
     /// Total length of all nodes
@@ -76,10 +76,6 @@ impl<'a> StringJoiner<'a> {
         self.push_owned(Box::from(data));
     }
 
-    // PORT NOTE: Zig signature was `push(data: []const u8, ?Allocator param)`.
-    // The optional allocator only encoded ownership of `data`, which has no Rust
-    // analogue for a borrowed `&[u8]`; callers wanting owned semantics use
-    // `push_owned`/`push_cloned` instead.
     pub fn push(&mut self, data: &'a [u8]) {
         if data.is_empty() {
             return;
@@ -143,8 +139,7 @@ impl<'a> StringJoiner<'a> {
         let len = self.len;
         self.len = 0;
 
-        // Zig: `allocator.alloc(u8, this.len)` — allocates uninitialized.
-        // `Vec::with_capacity` + `extend_from_slice` is also zero-fill-free
+        // `Vec::with_capacity` + `extend_from_slice` is zero-fill-free
         // (each push is a `memcpy` into spare capacity), and since the final
         // `len == capacity` the `into_boxed_slice` is a no-realloc move.
         let mut out = Vec::<u8>::with_capacity(len);
@@ -311,5 +306,3 @@ mod tests {
         assert_eq!(&*detached.done().unwrap(), b"KEY borrowed cloned KEY");
     }
 }
-
-// ported from: src/string/StringJoiner.zig

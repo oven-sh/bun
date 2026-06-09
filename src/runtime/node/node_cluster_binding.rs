@@ -10,7 +10,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, Stro
 
 use crate::api::bun::subprocess::Subprocess;
 
-// PORT NOTE: struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
 pub use bun_jsc::ipc::InternalMsgHolder;
@@ -26,9 +26,7 @@ unsafe extern "C" {
     pub(crate) safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
-// TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
-// JS thread; wrap in a JS-thread-local cell or assert const-init of fields.
-// PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
+// ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
 // PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`
 // fields (`Strong`). RacyCell — single-thread access is the contract.
@@ -43,8 +41,8 @@ pub(crate) static CHILD_SINGLETON: bun_core::RacyCell<Option<InternalMsgHolder>>
 /// must not hold the borrow across a re-entrant `child_singleton()` call.
 #[inline]
 fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
-    // SAFETY: only called on the single JS thread; mirrors Zig `pub var`
-    // access. `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
+    // SAFETY: only called on the single JS thread.
+    // `RacyCell::get` returns `*mut Option<_>`; the `Option` lives in
     // `'static` storage so the returned `&mut` is valid for any caller-chosen
     // `'a`. Aliasing: each of the three callers borrows for a single
     // statement/block with no nested call to this fn.
@@ -258,10 +256,8 @@ pub(crate) fn handle_internal_message_primary(
     if let Some(p) = message.get(global, "ack")? {
         if !p.is_undefined() {
             let ack = p.to_int32();
-            // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
-            // entry, then `defer deinit()` + swapRemove. Here we peek the JSValue
-            // first (ending the immutable borrow), then swap_remove (which drops the
-            // Strong == `defer cbstrong.deinit()`).
+            // Peek the JSValue first (ending the immutable borrow), then
+            // swap_remove (which drops the Strong).
             let entry = ipc_data
                 .internal_msg_queue
                 .callbacks
@@ -353,5 +349,3 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
-
-// ported from: src/runtime/node/node_cluster_binding.zig

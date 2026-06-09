@@ -1,9 +1,8 @@
 //! CityHash32 / CityHash64.
 //!
-//! Ported from `vendor/zig/lib/std/hash/cityhash.zig` (which itself follows
-//! Google's reference implementation / Abseil).
+//! Follows Google's reference implementation / Abseil.
 //!
-//! `HashObject.zig` exposes:
+//! `HashObject.rs` exposes:
 //!   * `cityHash32` → `CityHash32::hash(input)` (no seed; the JS seed is ignored)
 //!   * `cityHash64` → `CityHash64::hash_with_seed(input, seed)`
 
@@ -65,7 +64,7 @@ impl CityHash32 {
         let mut b: u32 = 0;
         let mut c: u32 = 9;
         for &v in str {
-            // Zig: @bitCast(@intCast(@bitCast(v) as i8) as i32) — i.e. sign-extend the byte.
+            // Sign-extend the byte.
             b = b
                 .wrapping_mul(Self::C1)
                 .wrapping_add((v as i8 as i32) as u32);

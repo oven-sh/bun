@@ -17,9 +17,6 @@ pub fn int32<T>(value: T) -> [u8; 4]
 where
     int4: TryFrom<T>,
 {
-    // @intCast → checked narrowing; @byteSwap → .swap_bytes(); @bitCast to [4]u8 → .to_ne_bytes()
     let v: int4 = int4::try_from(value).ok().expect("@intCast");
     v.swap_bytes().to_ne_bytes()
 }
-
-// ported from: src/sql/postgres/types/int_types.zig

@@ -43,7 +43,7 @@ impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
-// PORT NOTE: hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
+// Hand-rolled `JsClass` impl (proc-macro `#[bun_jsc::JsClass]`
 // not yet wired for Request). Routes through the codegen'd
 // `crate::generated_classes::js_Request` wrappers — no local extern decls.
 const _: () = {
@@ -57,11 +57,10 @@ const _: () = {
             js::from_js_direct(value).map(|p| p.as_ptr())
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
-            // Route through the inherent `Request::to_js` so the Zig override
-            // semantics (Request.zig:229-236) are preserved for generic
-            // `<T: JsClass>::to_js` callers too: `calculate_estimated_byte_size`,
-            // `js_ref = .init_weak(...)`, and `check_body_stream_ref` must all
-            // run, otherwise the wrapper reports size 0 and any Locked-body
+            // Route through the inherent `Request::to_js` so generic
+            // `<T: JsClass>::to_js` callers also run `calculate_estimated_byte_size`,
+            // `js_ref = .init_weak(...)`, and `check_body_stream_ref` —
+            // otherwise the wrapper reports size 0 and any Locked-body
             // ReadableStream is never migrated into the GC slot.
             let ptr = bun_core::heap::into_raw(Box::new(self));
             // SAFETY: `ptr` is a freshly-leaked heap allocation; the inherent
@@ -87,11 +86,10 @@ pub struct Request {
     pub url: bun_core::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
-    // PORT NOTE: Zig `?*AbortSignal` with manual `ref()`/`unref()`. AbortSignal
-    // is an opaque C++ handle with intrusive WebCore refcounting — `Arc` of an
-    // opaque ZST is meaningless (its payload address is not the C++ object).
-    // `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes Clone/Drop to
-    // the C++ ref/unref.
+    // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
+    // `Arc` of an opaque ZST is meaningless (its payload address is not the
+    // C++ object). `AbortSignalRef` wraps `NonNull<AbortSignal>` and routes
+    // Clone/Drop to the C++ ref/unref.
     pub signal: JsCell<Option<AbortSignalRef>>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. The
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
@@ -109,9 +107,7 @@ pub struct Request {
     pub internal_event_callback: JsCell<InternalJSEventCallback>,
 }
 
-// PORT NOTE: Zig was `packed struct(u8)` (u2+u3+u2+bool = 8 bits). Fields are
-// enums + 1 bool, so the canonical port would be `#[repr(transparent)]` u8 +
-// shift accessors. Kept as a `#[repr(C)]` 4-byte struct to preserve direct
+// A `#[repr(C)]` 4-byte struct for direct
 // field access — `Request` is only ever passed to C++ by **pointer** with size
 // reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
 // not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout
@@ -142,7 +138,7 @@ impl Default for Flags {
 pub use js_gen::from_js;
 pub use js_gen::from_js_direct;
 
-// `pub const new = bun.TrivialNew(@This());` → Box::new (global mimalloc).
+// Heap-allocates via Box::new (global mimalloc).
 impl Request {
     #[inline]
     pub fn new(v: Request) -> Box<Request> {
@@ -151,8 +147,7 @@ impl Request {
 }
 
 // Wire the codegen'd cached `body`/`stream` JS slot accessors + weak `js_ref`
-// so the [`BodyMixin`] twin defaults can run generically (Zig:
-// `T.js.bodyGetCached` / `T.js.gc.stream.*` / `this.#js_ref.tryGet()`).
+// so the [`BodyMixin`] twin defaults can run generically.
 impl crate::webcore::body::BodyOwnerJs for Request {
     #[inline]
     fn js_ref(&self) -> Option<JSValue> {
@@ -183,7 +178,7 @@ impl BodyMixin for Request {
     }
     #[inline]
     fn get_fetch_headers(&self) -> Option<core::ptr::NonNull<FetchHeaders>> {
-        // Zig: `?*FetchHeaders` — opaque C++ handle. Return the raw `*mut`
+        // Opaque C++ handle. Return the raw `*mut`
         // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
@@ -202,7 +197,6 @@ impl BodyMixin for Request {
 
 // ─── un-gated header accessors & simple getters ─────────────────────────────
 impl Request {
-    /// Zig: `pub fn getBodyValue(this: *Request) *Body.Value`.
     /// Inherent shim; `impl BodyMixin for Request` supplies the real trait method.
     #[inline]
     #[allow(clippy::mut_from_ref)]
@@ -210,14 +204,12 @@ impl Request {
         self.body_value_mut()
     }
 
-    /// Zig: `this.#body.value` (immutable view).
+    /// Immutable view of the body value.
     #[inline]
     pub(crate) fn body_value(&self) -> &BodyValue {
         &self.body
     }
 
-    /// Zig: `&this.#body.value`.
-    ///
     /// R-2: `&self` → `&mut` through the slot's raw pointer. The slot is shared
     /// with `RequestContext.request_body` but never `&mut`-borrowed concurrently
     /// (single-threaded event-loop sequencing). Keep the borrow short.
@@ -269,10 +261,8 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
-            // PORT NOTE: reshaped for borrowck — Zig read `blob.content_type`
-            // through `self.body_value()` while holding `self.headers`. Snapshot the
-            // pointer first; `Blob.content_type` is a raw `*const [u8]` that
-            // stays valid across the field borrow.
+            // Snapshot the pointer first; `Blob.content_type` is a raw
+            // `*const [u8]` that stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match self.body_value() {
                 BodyValue::Blob(blob) => Some(blob.content_type.get()),
                 BodyValue::Locked(locked) => match locked.readable.get(global_this) {
@@ -416,8 +406,8 @@ impl Request {
             return;
         }
 
-        // Zig spec: `seconds.to(c_uint)` → `JSValue.toU32` (clamps via JS ToUint32 rules,
-        // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do).
+        // `JSValue.toU32` clamps via JS ToUint32 rules,
+        // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do.
         self.set_timeout(seconds.to_u32() as c_uint);
     }
 
@@ -426,8 +416,6 @@ impl Request {
         self.clone(global_this).ok()
     }
 }
-
-// `comptime { _ = Request__clone; ... }` force-reference block → drop. Rust links what's pub.
 
 // NOTE: `EventType` and `impl InternalJSEventCallback` are defined once below
 // (near the struct decl); the duplicate block that used to live here was
@@ -462,7 +450,6 @@ impl Request {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        // `defer content_type_slice.deinit()` → Drop on ZigString::Slice
         let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
         else {
             return Ok(None);
@@ -483,10 +470,9 @@ impl Request {
         let Some(info) = self.request_context.get_remote_socket_info() else {
             return Ok(None);
         };
-        // Zig: `jsc.JSSocketAddress.create` → SocketAddress DTO POJO. Zig's
-        // `JSSocketAddress.create` is infallible, but the Rust port routes
-        // through `create_utf8_for_js` which can throw — propagate, don't
-        // swallow, so we never return `None` while a JS exception is pending.
+        // `create_dto` routes through `create_utf8_for_js` which can throw —
+        // propagate, don't swallow, so we never return `None` while a JS
+        // exception is pending.
         crate::socket::socket_address::SocketAddress::create_dto(
             global_object,
             &info.ip,
@@ -536,7 +522,6 @@ impl Request {
     }
 }
 
-// TODO(port): move to runtime_sys
 // Request is opaque on the C++ side; see note on the JsClass extern block above.
 // C++ side defines `extern "C" SYSV_ABI` (JSBunRequest.cpp).
 bun_jsc::jsc_abi_extern! {
@@ -561,15 +546,12 @@ impl Request {
                 std::ptr::from_ref::<Request>(self).cast_mut(),
             )
         })
-        // TODO(port): `@src()` argument dropped — fromJSHostCall location tracking TBD
     }
 }
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     #[link_name = "Bun__getParamsIfBunRequest"]
     safe fn Bun__getParamsIfBunRequest(this_value: JSValue) -> JSValue;
-    // Zig: `extern "JS"` — JS-side builtin.
 }
 
 impl Request {
@@ -583,10 +565,9 @@ impl Request {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // PORT NOTE: return type narrowed to `core::fmt::Result` (matches
+        // Return type narrowed to `core::fmt::Result` (matches
         // Response::write_format / Blob::write_format). Funnel JsError /
-        // AllocError through `fmt::Error`; Zig's `anyerror!void` carried no
-        // payload either.
+        // AllocError through `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
         let params_object = Bun__getParamsIfBunRequest(this_value);
@@ -603,9 +584,8 @@ impl Request {
             bun_fmt::size(self.body_value_mut().size() as usize, Default::default())
         )?;
         {
-            // Zig: `formatter.indent += 1; defer formatter.indent -|= 1;` — RAII guard
-            // restores indent on every exit incl. `?` error paths. Shadows `formatter`
-            // for the block; auto-derefs to `&mut F`.
+            // RAII guard restores indent on every exit incl. `?` error paths.
+            // Shadows `formatter` for the block; auto-derefs to `&mut F`.
             let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
 
             formatter.write_indent(writer)?;
@@ -613,8 +593,7 @@ impl Request {
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>method<d>:<r> \"").as_ref(),
             )?;
 
-            // Zig: `bun.asByteSlice(@tagName(this.method))` — wire-form token
-            // (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
+            // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
             writer.write_str(self.method.as_str())?;
             writer.write_str("\"")?;
             formatter
@@ -630,7 +609,6 @@ impl Request {
                 writer,
                 "{}",
                 format_args!(
-                    // TODO(port): comptime Output.prettyFmt with embedded {f} — needs const_format
                     "{}{}{}",
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("\"<b>"),
                     self.url.get(),
@@ -721,10 +699,8 @@ impl Request {
 
     pub fn mime_type(&self) -> &[u8] {
         if let Some(headers) = self.headers_mut().as_mut() {
-            // TODO(port): Zig has `try` here but fn returns plain `string` — preserved as
-            // non-fallible; FetchHeaders.fastGet may need to be infallible in Rust.
             if let Some(content_type) = headers.fast_get(HTTPHeaderName::ContentType) {
-                // PORT NOTE: `fast_get` returns a `ZigString` by value whose
+                // `fast_get` returns a `ZigString` by value whose
                 // bytes borrow the FetchHeaders' WTF::String storage (NOT the
                 // local). `ZigString::slice` ties the borrow to the local
                 // `content_type`; detach and re-anchor on `self` so the
@@ -735,7 +711,7 @@ impl Request {
             }
         }
 
-        // PORT NOTE: upstream `bun_http_types::MimeType::{OTHER,TEXT}` are `const` items
+        // Upstream `bun_http_types::MimeType::{OTHER,TEXT}` are `const` items
         // (not `static`), so `&CONST.value` borrows a temporary `Cow` and cannot be
         // returned. Mirror their `init_comptime` byte literals here as `'static` slices.
         const MIME_OTHER_VALUE: &[u8] = b"application/octet-stream";
@@ -786,7 +762,7 @@ impl Request {
         let js_signal = AbortSignal::create(global_this);
         js_signal.ensure_still_alive();
         if let Some(signal) = AbortSignal::ref_from_js(js_signal) {
-            // `ref_from_js` already bumped the C++ refcount (Zig: `signal.ref()`).
+            // `ref_from_js` already bumped the C++ refcount.
             self.signal.set(Some(signal));
         }
         js_signal
@@ -806,7 +782,7 @@ impl Request {
 
         self.url.set(BunString::empty());
 
-        // Zig: `signal.unref()` — AbortSignalRef::Drop unrefs the C++ handle.
+        // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
         // internal_event_callback.deinit() → Drop on Strong inside; explicit take to match timing
         self.internal_event_callback
@@ -826,8 +802,7 @@ impl Request {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
             // `drop_in_place` over every field (headers / url / signal /
-            // js_ref / internal_event_callback) once, matching Zig's
-            // plain-store `finalizeWithoutDeinit` without the 4× `Cell::set`
+            // js_ref / internal_event_callback) once, without the 4× `Cell::set`
             // read-write-drop round-trips the old `finalize_without_deinit()`
             // call performed here before re-dropping the (now-empty) fields.
             // SAFETY: `this` is the live Box-allocated payload.
@@ -1063,9 +1038,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         };
-        // Zig `defer { if (!success) { req.finalizeWithoutDeinit(); _ = req.#body.unref(); }
-        //               if (req.#body != body) { _ = body.unref(); } }`
-        // PORT NOTE: reshaped for borrowck — scopeguard cannot capture `&mut req` while the
+        // A scopeguard cannot capture `&mut req` while the
         // fn body also uses it. Cleanup is invoked at each early-return site via `bail!`.
         let cleanup = |req: &mut Request,
                        body_seed_ptr: *mut crate::webcore::body::HiveRef,
@@ -1231,8 +1204,6 @@ impl Request {
 
                     if !fields.contains(Fields::Headers) {
                         if let Some(headers) = response.get_init_headers_mut() {
-                            // Zig: `req.#headers = try headers.cloneThis(globalThis);
-                            //       fields.insert(.headers);`
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
@@ -1249,7 +1220,7 @@ impl Request {
 
                     if !fields.contains(Fields::Url) {
                         // `Response::url()` returns a bitwise `Copy` of the underlying
-                        // `bun.String` (no ref bump). Zig spec is `response.url.dupeRef()`,
+                        // `bun.String` (no ref bump),
                         // so take a +1 ref before storing — `req.url` is later released by
                         // `finalize_without_deinit` / the bail!-path `deref()`.
                         let url = response.url();
@@ -1315,7 +1286,7 @@ impl Request {
                         // first value
                     }
                     Ok(None) => {
-                        // Preserve Zig short-circuit ordering: only probe
+                        // Short-circuit ordering: only probe
                         // `implementsToString` (which performs JS property
                         // lookup with observable side effects) when the first
                         // two guards already hold.
@@ -1353,7 +1324,7 @@ impl Request {
                         if let Some(signal) = AbortSignal::ref_from_js(signal_) {
                             // Keep it alive
                             signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd (Zig: `signal.ref()`).
+                            // `ref_from_js` already ref'd.
                             req.signal.set(Some(signal));
                         } else {
                             if !global_this.has_exception() {
@@ -1505,7 +1476,7 @@ impl Request {
                         .unwrap()
                         .fast_has(HTTPHeaderName::ContentType)
                 {
-                    // PORT NOTE: reshaped for borrowck — split borrow of req.body and req.headers
+                    // Reshaped for borrowck — split borrow of req.body and req.headers
                     let ct_ptr: *const [u8] = ct;
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
@@ -1564,17 +1535,16 @@ impl Request {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
         let body_ = self.clone_body_value_via_cached_stream(global_this)?;
-        // errdefer body_.deinit() → deleted; BodyValue: Drop frees on `?` error path
+        // BodyValue's Drop frees `body_` on the `?` error path
         let body = body::hive_alloc(body_);
-        // Last fallible call. Zig hoists `url` above this with an
-        // `errdefer if (!preserve_url) url.deref()`; we instead sink the url
-        // computation below it so no guard is needed at all — `BunString` is
+        // Last fallible call. The url computation is sunk below it
+        // so no guard is needed at all — `BunString` is
         // `Copy` with no `Drop`, so an early return here leaves `req.url`
         // untouched and still owned by the caller's `finalize_without_deinit`.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path below,
-        // releasing its +1 — Zig's `errdefer body.unref()`.
+        // releasing its +1.
         let headers = self.clone_headers(global_this)?;
-        // errdefer if (headers) |_h| _h.deref() → Arc drop on error path is automatic
+        // `headers` is released automatically on the error path via its drop glue
         let url = if preserve_url {
             // Bitwise copy — the `ptr::write` below overwrites the old slot;
             // `BunString` has no `Drop`, so the stale `req.url` bits are discarded
@@ -1584,10 +1554,10 @@ impl Request {
             self.url.get().dupe_ref()
         };
 
-        // Zig `req.* = Request{...}` is a raw bit-overwrite — no destructors run
-        // on the old `*req`. Match that with `ptr::write` so future Drop impls
-        // on `JsRef` / `strong::Optional` don't fire on the caller's sentinel.
-        // The old `req.body` hive ref is NOT unref'd here (Zig doesn't either):
+        // `ptr::write` is a raw bit-overwrite — no destructors run on the old
+        // `*req`, so Drop impls on `JsRef` / `strong::Optional` don't fire on
+        // the caller's sentinel.
+        // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was bitwise-copied above (preserve_url) or is the empty
@@ -1614,7 +1584,7 @@ impl Request {
         }
 
         if let Some(signal) = self.signal.get() {
-            // `AbortSignalRef::clone` → C++ `ref()` (matches Zig `signal.ref()`).
+            // `AbortSignalRef::clone` → C++ `ref()`.
             req.signal.set(Some(signal.clone()));
         }
         Ok(())
@@ -1622,8 +1592,7 @@ impl Request {
 
     pub fn clone(&self, global_this: &JSGlobalObject) -> JsResult<Box<Request>> {
         // allocator param dropped (global mimalloc)
-        // Zig does `Request.new(undefined)` then clone_into bit-overwrites the
-        // whole struct. clone_into `ptr::write`s the new fields over the seed
+        // `clone_into` `ptr::write`s the new fields over the seed
         // without reading or dropping it.
         let mut req = Box::new(Request {
             url: OwnedStringCell::new(BunString::empty()),
@@ -1644,7 +1613,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
             internal_event_callback: JsCell::new(InternalJSEventCallback::default()),
         });
-        // errdefer bun.destroy(req) → Box<Request> drops on error path automatically
+        // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, global_this, false)?;
         Ok(req)
     }
@@ -1659,8 +1628,7 @@ pub struct InternalJSEventCallback {
     pub function: jsc::strong::Optional, // jsc.Strong.Optional → bun_jsc::Strong
 }
 
-/// Re-export of `NodeHTTPResponse.AbortEvent` (Zig: `pub const EventType =
-/// jsc.API.NodeHTTPResponse.AbortEvent`).
+/// Re-export of `NodeHTTPResponse.AbortEvent`.
 pub type EventType = crate::server::node_http_response::AbortEvent;
 
 impl InternalJSEventCallback {
@@ -1726,12 +1694,10 @@ impl Request {
 
     /// Mutable access to the already-materialized headers (does NOT lazily
     /// create from the underlying uWS request — see `get_fetch_headers_unless_empty`
-    /// for that). Mirrors Zig `Request.getFetchHeaders` returning `?*FetchHeaders`.
+    /// for that).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn get_fetch_headers_mut(&self) -> Option<&mut FetchHeaders> {
         self.headers_mut().as_deref_mut()
     }
 }
-
-// ported from: src/runtime/webcore/Request.zig

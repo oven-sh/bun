@@ -66,15 +66,13 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
 
 // `bun_tcc_sys` is an un-gated workspace crate and a direct dep of
 // `bun_runtime`, so import it unconditionally. Runtime availability is governed
-// by `bun_core::Environment::ENABLE_TINYCC` (mirrors Zig
-// `Environment.enable_tinycc`) via the early-return guards in the host-fns
+// by `bun_core::Environment::ENABLE_TINYCC` via the early-return guards in the host-fns
 // below — type resolution for `TCC::{Config, ConfigErr, OutputFormat, State}`
 // must succeed regardless.
 use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
 }
@@ -97,7 +95,6 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
             unsafe { pthread_jit_write_protect_np(true as c_int) };
         }
     }
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile if it shows up on a hot path.
     func()
 }
 
@@ -109,7 +106,6 @@ struct Offsets {
     js_cell_offset_of_type: u32,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // Written once by C++ before any Rust read. C++ mutates these bytes, so a
     // plain non-`mut` extern static would assert immutability to the optimizer
@@ -134,7 +130,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `JSValue.exposed_to_ffi` (JSValue.zig:2467) — raw extern fn pointers fed to
+/// Raw extern fn pointers fed to
 /// the TCC-JIT'd C trampolines via `add_symbol`. Declared locally while the
 /// `bun_jsc::ffi` module stays gated.
 mod exposed_to_ffi {
@@ -220,7 +216,6 @@ impl Default for FFI {
 
 impl FFI {
     pub fn finalize(self: Box<Self>) {
-        // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
         // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
         // symbols may still be reachable from JS after the wrapper is GC'd
         // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
@@ -243,7 +238,7 @@ impl FFI {
 
 struct CompileC {
     source: Source,
-    current_file_for_errors: ZBox, // TODO(port): lifetime — Zig stored borrowed [:0]const u8
+    current_file_for_errors: ZBox,
     libraries: StringArray,
     library_dirs: StringArray,
     include_dirs: StringArray,
@@ -288,10 +283,8 @@ impl Source {
         state: &mut TCC::State,
         current_file_for_errors: &mut ZBox,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         match self {
             Source::File(file) => {
-                // TODO(port): Zig stored borrowed slice
                 *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                 state
                     .add_file(file)
@@ -317,7 +310,6 @@ impl Source {
 mod stdarg {
     use super::*;
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
@@ -349,8 +341,7 @@ mod stdarg {
         // libc declares these as `FILE *__stdinp;` — `AtomicPtr<c_void>` is
         // `#[repr(C)]` over a single `*mut c_void`, so the extern layout is
         // identical. We never read them; we hand TinyCC the *address* of the
-        // global (matching Zig's `@extern(*anyopaque, .{ .name = "__stdinp" })`)
-        // so JIT'd code that references `__stdoutp` loads the FILE* from there.
+        // global so JIT'd code that references `__stdoutp` loads the FILE* from there.
         unsafe extern "C" {
             #[link_name = "__stdinp"]
             static FFI_STDINP: AtomicPtr<c_void>;
@@ -514,15 +505,13 @@ impl CompileC {
     fn get_system_root_dir_once() {
         #[cfg(target_os = "macos")]
         {
-            // Zig: `bun.spawnSync(&.{ argv = ["xcrun", "-sdk", "macosx",
-            // "-show-sdk-path"], stdout = .buffer, ... })` to auto-detect the
+            // Run `xcrun -sdk macosx -show-sdk-path` to auto-detect the
             // active SDK root. The Rust `bun::spawn_sync` helper isn't ported
             // yet (see install/repository.rs TODO), so use std::process as a
-            // shim — semantics match: inherit env, ignore stdin/stderr,
-            // capture stdout, treat any spawn/exit failure as "not found"
-            // (Zig: `catch return` / `if (process.result.isOK())`).
-            // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
-            // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            // shim: inherit env, ignore stdin/stderr,
+            // capture stdout, treat any spawn/exit failure as "not found".
+            // `Command::new("xcrun")` does PATH lookup, and
+            // /usr/bin is always in PATH on macOS.
             #[allow(clippy::disallowed_types, clippy::disallowed_methods)]
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
@@ -540,7 +529,6 @@ impl CompileC {
             }
             use bstr::ByteSlice as _;
             let stdout = out.stdout.as_slice();
-            // Zig: `strings.trim(stdout, "\n\r")`
             let trimmed: &[u8] = stdout.trim_with(|c| c == '\n' || c == '\r');
             if trimmed.is_empty() {
                 return;
@@ -620,14 +608,14 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> Result<NonNull<TCC::State>, bun_core::Error> {
-        // TODO(port): narrow error set (DeferredErrors | JSError | OutOfMemory | JSTerminated)
+        let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
         } else if let Some(tcc_options) = env_var::BUN_TCC_OPTIONS.get() {
-            // TODO(port): @ptrCast from []const u8 to [:0]const u8 — env var must be NUL-terminated
-            // SAFETY: env vars are NUL-terminated by the OS; the slice points into
-            // the process env block, so a sentinel byte follows it.
-            unsafe { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
+            // Copy into an owned NUL-terminated buffer instead of assuming the
+            // OS env block provides a sentinel byte right after the slice.
+            tcc_options_owned = ZBox::from_bytes(tcc_options);
+            &tcc_options_owned
         } else {
             zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
         };
@@ -984,7 +972,7 @@ impl StringArray {
 // ─── FFI host functions ─────────────────────────────────────────────────────
 
 impl FFI {
-    // TODO(port): `#[bun_jsc::host_fn]` — the `Free` shim emits a bare
+    // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1212,7 +1200,7 @@ impl FFI {
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
         for function in compile_c.symbols.map.values_mut() {
-            // PORT NOTE: clone the name before `compile(&mut self)` so the
+            // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
             let function_name = function.base_name.clone().unwrap();
 
@@ -1227,7 +1215,7 @@ impl FFI {
                 }
                 return Err(JsError::Thrown);
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
@@ -1247,7 +1235,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global_this, str.slice(), cb);
                 }
             }
@@ -1260,7 +1248,6 @@ impl FFI {
             functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
             closed: Cell::new(false),
         });
-        // PORT NOTE: reshaped for borrowck — Zig nulled tcc_state and symbols after move
 
         let js_object = lib.to_js(global_this);
         symbols_value_set_cached(js_object, global_this, obj);
@@ -1415,7 +1402,6 @@ impl FFI {
         }
         jsc::mark_binding();
         let mut strs: Vec<bun_core::String> = Vec::with_capacity(symbols.len());
-        // PERF(port): was initCapacity assume_capacity
         for function in symbols.values_mut() {
             let mut arraylist: Vec<u8> = Vec::new();
             if function.print_source_code(&mut arraylist).is_err() {
@@ -1423,7 +1409,6 @@ impl FFI {
                 return Ok(ZigString::init(b"Error while printing code").to_error_instance(global));
             }
             strs.push(bun_core::String::clone_utf8(&arraylist));
-            // PERF(port): was appendAssumeCapacity
         }
 
         let ret = strings_to_js_array(global, &strs)?;
@@ -1472,10 +1457,10 @@ impl FFI {
                 () => b"dylib",
                 #[cfg(windows)]
                 () => b"dll",
-                // TODO(port): wasm @compileError("TODO")
+                // No arm for other targets (e.g. wasm) — the match fails to
+                // compile there.
             };
-            // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
-            // name_slice.slice(), ext)` extracts a bunfs-embedded shared
+            // Extract a bunfs-embedded shared
             // library (added via `import lib from "./lib.so" with { type:
             // "file" }` and shipped through `bun build --compile`) to a real
             // on-disk temp file, returning the tmpfile path; libc `dlopen(2)`
@@ -1487,7 +1472,7 @@ impl FFI {
                 ext,
                 &mut filepath_buf[..],
             ) {
-                // Spec `ffi.zig:1041` — NUL-terminate in place so `DynLib::open`
+                // NUL-terminate in place so `DynLib::open`
                 // can pass the slice to libc without copying. `resolve_*_to_buf`
                 // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
                 // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
@@ -1563,7 +1548,7 @@ impl FFI {
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
-            // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
+            // Reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
@@ -1591,7 +1576,7 @@ impl FFI {
                 dylib.close();
                 return ret;
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global);
                     dylib.close();
@@ -1612,7 +1597,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global, str.slice(), cb);
                 }
             }
@@ -1688,7 +1673,7 @@ impl FFI {
                 ));
                 return ret;
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global);
                     return res;
@@ -1708,8 +1693,7 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
-
+                    // `cb` is rooted by the `symbolsValue` cached own-property set below.
                     obj.put(global, name.slice(), cb);
                 }
             }
@@ -1757,10 +1741,9 @@ pub(super) fn generate_symbol_for_function(
 
             if val.is_any_int() {
                 let int = val.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     abi_types.push(t);
-                    // PERF(port): was appendAssumeCapacity
                     continue;
                 } else {
                     return Ok(Some(
@@ -1784,7 +1767,6 @@ pub(super) fn generate_symbol_for_function(
                 )));
             };
             abi_types.push(abi);
-            // PERF(port): was appendAssumeCapacity
         }
     }
     // var function
@@ -1800,7 +1782,7 @@ pub(super) fn generate_symbol_for_function(
         if let Some(ret_value) = value.get_truthy(global, "returns")? {
             if ret_value.is_any_int() {
                 let int = ret_value.to_int32();
-                // Zig: `0...ABIType.max` — reject Buffer (20); only the string-label path accepts it.
+                // Reject Buffer (20); only the string-label path accepts it.
                 if let Some(t) = ABIType::from_int(int).filter(|_| int <= ABIType::MAX) {
                     return_type = t;
                     break 'brk;
@@ -1905,7 +1887,6 @@ pub(super) fn generate_symbols(
         function.base_name = Some(base_name);
 
         symbols.insert(&key, function);
-        // PERF(port): was putAssumeCapacity
     }
 
     Ok(None)
@@ -1939,7 +1920,6 @@ impl Default for Function {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn FFICallbackFunctionWrapper_destroy(_: *mut c_void);
 }
@@ -1972,7 +1952,6 @@ impl Function {
 
     fn fail(&mut self, msg: &'static [u8]) {
         if !matches!(self.step, Step::Failed { .. }) {
-            // PORT NOTE: @branchHint(.likely) — Rust has no statement-level hint; left as-is
             self.step = Step::Failed {
                 msg: Box::<[u8]>::from(msg),
                 allocated: false,
@@ -1981,7 +1960,6 @@ impl Function {
     }
 
     pub(crate) fn ffi_header() -> &'static [u8] {
-        // Port of `Function.ffiHeader` (ffi.zig:1517).
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
 
@@ -2019,7 +1997,6 @@ impl Function {
         &mut self,
         napi_env: Option<&napi::NapiEnv>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2118,7 +2095,6 @@ impl Function {
         js_function: JSValue,
         is_threadsafe: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         jsc::mark_binding();
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
@@ -2127,7 +2103,6 @@ impl Function {
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
-            // TODO(port): uses std.posix directly in Zig — keep raw libc here for parity
             // SAFETY: best-effort debug write; failures are swallowed
             unsafe {
                 let fd = libc::open(
@@ -2247,8 +2222,7 @@ impl Function {
 
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
-            js_function,
-            // SAFETY: opaque-handle storage only (Zig: `?*anyopaque`). Never
+            // SAFETY: opaque-handle storage only. Never
             // dereferenced or written through on the Rust side; stored as
             // NonNull to avoid laundering &T → *mut T provenance.
             js_context: Some(NonNull::from(js_context)),
@@ -2261,7 +2235,6 @@ impl Function {
         &self,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }
@@ -2419,7 +2392,6 @@ impl Function {
         context_ptr: Option<*mut c_void>,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)
@@ -2546,7 +2518,6 @@ impl Function {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn FFI_Callback_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_0(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
@@ -2569,11 +2540,12 @@ pub enum Step {
     Failed { msg: Box<[u8]>, allocated: bool },
 }
 
+/// Stores no JS function value: symbol functions are rooted by the
+/// `symbolsValue` cached own-property on the FFI wrapper, callbacks by the
+/// `JSC::Strong` inside `FFICallbackFunctionWrapper`.
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
-    pub js_function: JSValue,
-    // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
+    // Opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
@@ -2583,7 +2555,6 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            js_function: JSValue::ZERO,
             js_context: None,
             ffi_callback_function_wrapper: None,
         }
@@ -2627,7 +2598,6 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // Spec ffi.zig:2340 — `Fs.FileSystem.instance.tmpdir() catch return`.
         // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
@@ -2636,24 +2606,21 @@ impl CompilerRT {
             return;
         };
 
-        // Spec ffi.zig:2341 — `tmpdir.makeOpenPath("bun-cc", .{}) catch return`.
         let Ok(bun_cc) = tmpdir.make_open_path(b"bun-cc", bun_sys::OpenDirOptions::default())
         else {
             return;
         };
 
-        // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
         for (name, source) in CompilerRtSources::SOURCES {
             let name_z = ZBox::from_bytes(name.as_bytes());
             let _ = bun_sys::File::write_file(bun_cc.fd(), name_z.as_zstr(), source);
         }
 
-        // Spec ffi.zig:2351-2352 — `getFdPath(bunCC) catch return`, then `dupeZ`.
         let mut path_buf = PathBuffer::uninit();
         let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
             return;
         };
-        // `bun.handleOom(allocator.dupeZ(u8, path))` — `ZBox::from_bytes` panics on OOM.
+        // `ZBox::from_bytes` panics on OOM.
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
     }
 
@@ -2797,9 +2764,8 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 
 // ─── exports ────────────────────────────────────────────────────────────────
 
-/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`. Zig declared
-/// `pub const Bun__FFI__cc = FFI.Bun__FFI__cc;` at file scope so the
-/// `js2native` codegen could resolve it as `crate::ffi::ffi::bun__ffi__cc`.
+/// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`, so the
+/// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
 pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2816,14 +2782,11 @@ fn make_napi_env_if_needed<'a>(
     // immediate-after `values_mut()` loop at every call site.
     for function in functions {
         if function.needs_napi_env() {
-            // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // PORT NOTE: `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
+            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
             // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
             return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
         }
     }
     None
 }
-
-// ported from: src/runtime/ffi/ffi.zig

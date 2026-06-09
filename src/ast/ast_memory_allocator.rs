@@ -7,24 +7,19 @@ use bun_alloc::ast_alloc::{self, AstAllocState};
 use crate::expr;
 use crate::stmt;
 
-// PERF(port): Zig used `std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min))`
-// — a small inline stack buffer with heap fallback. `bun_alloc::Arena`
-// (`MimallocArena`) has no stack buffer; instead the owned arena is recycled
+// `bun_alloc::Arena` (`MimallocArena`) has no inline stack buffer with heap
+// fallback; instead the owned arena is recycled
 // per thread via `ARENA_POOL` below so the per-module callers don't pay a fresh
 // `mi_heap_new` + first-segment page faults every file. (The `AstAlloc` side
 // *does* have an inline buffer now — see `bun_alloc::ast_alloc::AstAllocState`.)
 
 // ── Thread-local arena pool ──────────────────────────────────────────────
 //
-// Zig's `ASTMemoryAllocator` was a `StackFallbackAllocator(8192, fallback)`:
-// the 8 KB stack buffer absorbed most per-module AST scratch without touching
-// the heap, and the spill went to a long-lived `fallback` arena whose pages
-// stayed resident across modules. The Rust port collapsed that to one owned
-// `MimallocArena` per `ASTMemoryAllocator`, so a fresh per-module instance
-// (`RuntimeTranspilerStore::run`, `Bun.Transpiler.*`, the dev server) paid a
-// fresh `mi_heap_new` + first-segment page faults every file, and `enter()`'s
-// reset then destroyed-and-recreated that just-created heap before it was even
-// used.
+// With one owned `MimallocArena` per `ASTMemoryAllocator`, a fresh per-module
+// instance (`RuntimeTranspilerStore::run`, `Bun.Transpiler.*`, the dev server)
+// would pay a fresh `mi_heap_new` + first-segment page faults every file, and
+// `enter()`'s reset would then destroy-and-recreate that just-created heap
+// before it was even used.
 //
 // Instead, recycle one `MimallocArena` per thread: `Drop` cleans the arena
 // (`reset()` bulk-frees this module's nodes — leaving it pristine) and parks
@@ -51,8 +46,6 @@ fn return_pooled_arena(arena: Arena) {
 }
 
 pub struct ASTMemoryAllocator {
-    // Zig fields `stack_arena: SFA` + `bump_std.mem.Allocator param` (the vtable into
-    // the SFA) collapse to a single bump arena.
     arena: Arena,
     /// When non-null, allocations route to this caller-owned arena instead of
     /// `self.arena` and `Drop`/`reset` never destroy or pool anything. Must
@@ -229,16 +222,10 @@ impl ASTMemoryAllocator {
     }
 
     pub fn enter(&mut self) -> Scope<'_> {
-        // Zig: this.stack_allocator = SFA{ .fallback_allocator = arena, .. };
-        //      this.bump_allocator = this.stack_allocator.get();
-        // The Zig spec OVERWRITES the entire SFA on every `enter()` (fresh
-        // 8 KB stack buffer + rewired fallback to the per-call arena), so any
-        // bytes bump-allocated by the previous `enter()` are released. The
-        // Rust port collapsed SFA+fallback into a single internal `Arena`
-        // owned by `self`, so the equivalent re-init is `arena.reset()` —
-        // otherwise a thread-local `ASTMemoryAllocator` reused across
-        // `RuntimeTranspilerStore::run()` calls grows unboundedly (one full
-        // AST worth of nodes per import).
+        // `enter()` must release any bytes bump-allocated by the previous
+        // `enter()`, i.e. `arena.reset()` — otherwise a thread-local
+        // `ASTMemoryAllocator` reused across `RuntimeTranspilerStore::run()`
+        // calls grows unboundedly (one full AST worth of nodes per import).
         //
         // ...but a *pristine* arena (fresh from `new()` / the thread-local
         // pool, or just `reset()`) has nothing to discard, so the
@@ -265,8 +252,6 @@ impl ASTMemoryAllocator {
     }
 
     pub fn reset(&mut self) {
-        // Zig rebuilt the SFA against the stored fallback arena; Arena::reset is equivalent.
-        // PERF(port): was stack-fallback — profile
         // Skip the `mi_heap_destroy` + `mi_heap_new` when already pristine.
         if self.arena_dirty {
             // The AST state's spill pointer targets the arena's heap; null it
@@ -352,15 +337,12 @@ impl ASTMemoryAllocator {
 
     #[inline]
     pub fn append<T>(&self, value: T) -> crate::StoreRef<T> {
-        // Zig: `this.bump_allocator.create(ValueType) catch unreachable; ptr.* = value;`
-        // bumpalo's `alloc` aborts on OOM, matching `catch unreachable`.
+        // bumpalo's `alloc` aborts on OOM.
         // SAFETY: bumpalo never returns null.
         crate::StoreRef::from_bump(self.arena().alloc(value))
     }
 
-    /// Zig: `this.stack_allocator.get()` — the `std.mem.Allocator` vtable into
-    /// the stack-fallback buffer. In the Rust port both `stack_allocator` and
-    /// `bump_allocator` collapse to the single `Arena`, so this returns it.
+    /// Returns the single `Arena` backing this allocator.
     #[inline]
     pub fn stack_allocator(&self) -> &Arena {
         self.arena()
@@ -461,8 +443,7 @@ impl<'a> Scope<'a> {
     }
 }
 
-// Zig callers write `defer ast_scope.exit()` immediately after `enter()`;
-// porting that as RAII so `let _scope = alloc.enter();` restores the previous
+// RAII: `let _scope = alloc.enter();` restores the previous
 // `Expr/Stmt.Data.Store.memory_allocator` on every return path. `exit()` is
 // idempotent (guarded by `entered`), so an explicit `.exit()` followed by Drop
 // is harmless.
@@ -471,5 +452,3 @@ impl<'a> Drop for Scope<'a> {
         self.exit();
     }
 }
-
-// ported from: src/js_parser/ast/ASTMemoryAllocator.zig

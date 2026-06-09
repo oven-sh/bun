@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use crate::mark_binding;
 use bun_core::String as BunString;
 
-// TODO(port): move to <jsc>_sys
 unsafe extern "C" {
     fn Bun__createTextCodec(
         encoding_name: *const u8,
@@ -46,7 +45,7 @@ impl TextCodec {
         unsafe { Bun__createTextCodec(encoding.as_ptr(), encoding.len()) }
     }
 
-    // PORT NOTE: FFI-owned opaque; constructed/destroyed across FFI, so explicit
+    // FFI-owned opaque; constructed/destroyed across FFI, so explicit
     // destroy instead of `impl Drop` (cannot own a `TextCodec` by value).
     pub unsafe fn destroy(this: *mut TextCodec) {
         mark_binding!();
@@ -96,5 +95,3 @@ impl TextCodec {
         Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
     }
 }
-
-// ported from: src/jsc/TextCodec.zig

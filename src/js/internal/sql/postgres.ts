@@ -548,7 +548,6 @@ class PooledPostgresConnection {
     this.storedError = err;
     if (!err) {
       this.connectStartedAt = 0;
-      this.connectAttempts = 0;
       this.flags |= PooledConnectionFlags.canBeConnected;
     }
     this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
@@ -574,32 +573,38 @@ class PooledPostgresConnection {
     if (err) {
       err = wrapPostgresError(err);
     }
-    const connectionInfo = this.connectionInfo;
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(err);
-    }
+    this.connection = null;
+    this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {
       // The server is not accepting connections yet (e.g. still starting
       // up). Keep the slot pending and retry with backoff instead of
-      // failing the queries that are waiting for a connection.
-      this.connection = null;
-      this.storedError = err;
+      // failing the queries that are waiting for a connection. The user's
+      // onclose callback only fires when the slot actually closes.
       this.connectAttempts++;
       const delay = Math.min(20 * 2 ** this.connectAttempts, 1000);
       this.retryTimer = setTimeout(() => {
         this.retryTimer = null;
-        if (this.adapter.closed) {
-          this.state = PooledConnectionState.closed;
-          return;
+        // conditions may have changed during the backoff (pool closing,
+        // waiters gone, retry budget elapsed) — re-check before dialing
+        if (this.#canKeepRetrying()) {
+          this.#startConnection();
+        } else {
+          this.#finishClose(this.storedError);
         }
-        this.#startConnection();
       }, delay);
       return;
     }
     // this connect cycle is over; a later retry() starts a fresh one
     this.connectStartedAt = 0;
+    this.#finishClose(err);
+  }
+
+  #finishClose(err) {
+    const connectionInfo = this.connectionInfo;
+    if (connectionInfo?.onclose) {
+      connectionInfo.onclose(err);
+    }
     this.state = PooledConnectionState.closed;
-    this.connection = null;
     this.storedError = err;
 
     // remove from ready connections if its there
@@ -651,13 +656,23 @@ class PooledPostgresConnection {
     if ((err as any)?.code !== "ERR_POSTGRES_CONNECTION_FAILED") {
       return false;
     }
+    return this.#canKeepRetrying();
+  }
+
+  #canKeepRetrying(): boolean {
     if (this.adapter.closed || this.onFinish !== null) {
       return false;
     }
-    if (!this.adapter.hasPendingQueries()) {
+    // only retry while queries are actually waiting for a connection
+    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
       return false;
     }
-    const connectionTimeout = this.connectionInfo.connectionTimeout || 30 * 1000;
+    // an explicit connectionTimeout of 0 disables the connect timer, and with
+    // it the retry budget
+    const connectionTimeout = this.connectionInfo.connectionTimeout ?? 30 * 1000;
+    if (connectionTimeout <= 0) {
+      return false;
+    }
     return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
   }
 
@@ -973,6 +988,11 @@ class PostgresAdapter
         }
         for (const pending of reservedQueue) {
           pending(connection.storedError, connection);
+        }
+        // draining the queues may have been the last pending work — a
+        // graceful close() is waiting on this callback
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
         }
       }
       return;

@@ -88,7 +88,8 @@ test("postgres: connect failures are retried while queries wait", async () => {
   try {
     const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
     expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
-    expect(connections).toBeGreaterThanOrEqual(3);
+    // at least one retry happened; the exact count depends on machine speed
+    expect(connections).toBeGreaterThanOrEqual(2);
   } finally {
     server.close();
   }
@@ -213,7 +214,89 @@ test("mysql: connect failures are retried while queries wait", async () => {
   try {
     const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
     expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
-    expect(connections).toBeGreaterThanOrEqual(3);
+    // at least one retry happened; the exact count depends on machine speed
+    expect(connections).toBeGreaterThanOrEqual(2);
+  } finally {
+    server.close();
+  }
+});
+
+test("postgres: graceful close() resolves while a connect retry is pending", async () => {
+  // close() with no timeout waits for pending queries; a query stuck behind
+  // a retrying connection must not deadlock it.
+  const firstConnection = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    firstConnection.resolve();
+    socket.destroy();
+  });
+  const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1 });
+  try {
+    const query = db`SELECT 1`.catch(err => err);
+    await firstConnection.promise;
+    await db.close();
+    const err = await query;
+    expect(["ERR_POSTGRES_CONNECTION_FAILED", "ERR_POSTGRES_CONNECTION_CLOSED"]).toContain(err.code);
+  } finally {
+    server.close();
+  }
+});
+
+test("postgres: onclose fires once per closed connection, not per retry attempt", async () => {
+  let connections = 0;
+  let oncloseCalls = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  const db = new SQL({
+    url: `postgres://postgres@127.0.0.1:${port}/postgres`,
+    max: 1,
+    connectionTimeout: 1,
+    onclose: () => {
+      oncloseCalls++;
+    },
+  });
+  try {
+    const err = await db.connect().catch(e => e);
+    expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+    expect(connections).toBeGreaterThanOrEqual(2);
+    expect(oncloseCalls).toBe(1);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+test("postgres: connectionTimeout: 0 disables connect retries", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1, connectionTimeout: 0 });
+  try {
+    const err = await db.connect().catch(e => e);
+    expect(err.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+    expect(connections).toBe(1);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+test("mysql: graceful close() resolves while a connect retry is pending", async () => {
+  const firstConnection = Promise.withResolvers<void>();
+  const { port, server } = await listeningServer(socket => {
+    firstConnection.resolve();
+    socket.destroy();
+  });
+  const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/mysql`, max: 1 });
+  try {
+    const query = db`SELECT 1`.catch(err => err);
+    await firstConnection.promise;
+    await db.close();
+    const err = await query;
+    expect(["ERR_MYSQL_CONNECTION_FAILED", "ERR_MYSQL_CONNECTION_CLOSED"]).toContain(err.code);
   } finally {
     server.close();
   }

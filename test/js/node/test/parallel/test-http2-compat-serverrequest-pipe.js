@@ -35,6 +35,7 @@ const watchdog = setTimeout(() => {
     }
     console.error(`  ${name}: ${JSON.stringify(pick)}`);
   };
+  try { console.error(`  serverSock.isPaused(): ${state.serverSock?.isPaused?.()}`); } catch {}
   dump('serverSock', state.serverSock);
   dump('serverSession', state.serverSession);
   try { console.error(`  server._connections: ${server._connections}`); } catch {}

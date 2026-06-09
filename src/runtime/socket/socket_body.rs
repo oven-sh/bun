@@ -1601,7 +1601,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             },
             data.len()
         );
-        if this.native_callback.get().on_data(data) {
+        let native_consumed = this.native_callback.get().on_data(data);
+        if native_consumed {
+            eprintln!("[h2dbg] on_data native len={}", data.len());
             return;
         }
 

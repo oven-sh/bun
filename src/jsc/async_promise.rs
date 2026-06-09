@@ -54,7 +54,14 @@ where
                 promise.reject_with_async_stack(global, Ok(global.create_out_of_memory_error()))
             }
             Err(_) => match global.try_take_exception() {
-                Some(exception) => promise.reject_with_async_stack(global, Ok(exception)),
+                Some(exception) => {
+                    // Match `JSPromise::reject`'s normalization: unwrap a
+                    // `JSC::Exception` cell to the thrown error so the
+                    // rejection reason and async-stack attachment behave
+                    // exactly like a plain `throw`.
+                    let exception = exception.to_error().unwrap_or(exception);
+                    promise.reject_with_async_stack(global, Ok(exception))
+                }
                 // Same contract violation `JSPromise::reject` panics on: an
                 // `Err` future output requires the exception to be pending.
                 None => panic!(

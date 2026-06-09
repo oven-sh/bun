@@ -1693,13 +1693,6 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
 /// through logging.
 pub struct SensitiveBytes(Box<[u8]>);
 
-impl SensitiveBytes {
-    #[inline]
-    pub fn new(bytes: Box<[u8]>) -> Self {
-        Self(bytes)
-    }
-}
-
 impl From<Box<[u8]>> for SensitiveBytes {
     #[inline]
     fn from(bytes: Box<[u8]>) -> Self {
@@ -1708,9 +1701,19 @@ impl From<Box<[u8]>> for SensitiveBytes {
 }
 
 impl From<Vec<u8>> for SensitiveBytes {
-    #[inline]
-    fn from(bytes: Vec<u8>) -> Self {
-        Self(bytes.into_boxed_slice())
+    fn from(mut bytes: Vec<u8>) -> Self {
+        if bytes.capacity() == bytes.len() {
+            return Self(bytes.into_boxed_slice());
+        }
+        // `into_boxed_slice` on a Vec with spare capacity reallocates and
+        // frees the original buffer WITHOUT zeroing — exactly the leak this
+        // type exists to prevent. Copy to an exact-size allocation, then
+        // volatile-zero the source's initialized bytes before they are freed.
+        let boxed: Box<[u8]> = bytes.as_slice().into();
+        // SAFETY: `bytes` is exclusively owned and `len` bytes are initialized.
+        unsafe { secure_zero(bytes.as_mut_ptr(), bytes.len()) };
+        drop(bytes);
+        Self(boxed)
     }
 }
 

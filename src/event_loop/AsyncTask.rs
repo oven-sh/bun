@@ -34,7 +34,9 @@
 //! future on the JS thread while JSC handles are still valid. A task parked
 //! on an external event (state `IDLE`) at forced teardown follows the same
 //! rules as every in-flight completion today: its keepalive prevents natural
-//! exit, and abrupt termination leaks the box rather than touching a dead VM.
+//! exit, and abrupt termination leaks the box. (Worker teardown shares the
+//! pre-existing hazard of every in-flight pool completion: a late
+//! cross-thread wake targets the worker's freed loop.)
 //!
 //! ## Reference counts
 //!
@@ -60,13 +62,10 @@ use bun_io::KeepAlive;
 
 // The poll path has no unwind guards: a panicking poll would leave the task
 // in `RUNNING` forever and leak the pinned future. Every workspace profile
-// builds with `panic = "abort"` (root Cargo.toml); this trips if that ever
-// changes. Test/Miri builds compile with unwind by design (cargo ignores the
-// profile's panic setting for the test profile), hence the carve-outs.
-#[cfg(all(panic = "unwind", not(test), not(miri)))]
-compile_error!(
-    "bun_event_loop::AsyncTask requires panic=abort: its poll path has no unwind guards"
-);
+// builds with `panic = "abort"` (root Cargo.toml). A `cfg(panic = "unwind")`
+// compile_error is not viable as a guard: cargo builds the dependency graph
+// of every test target with unwind and without `cfg(test)`, which would
+// break `cargo test` for this crate and all dependents.
 
 // ─── state machine ───────────────────────────────────────────────────────────
 
@@ -101,10 +100,9 @@ const ORD: Ordering = Ordering::SeqCst;
 pub struct AsyncTask {
     state: AtomicU32,
     refs: AtomicU32,
-    /// The owning loop, captured at spawn. Deliberately the specific
-    /// `jsc::EventLoop` (not re-derived per wake): if spawnSync has swapped
-    /// `vm.event_loop`, a wake must still target the regular loop — the task
-    /// then runs after the swap-back, never inside the isolated loop.
+    /// The owning loop, captured at spawn. Wakes may fire from any thread,
+    /// where no TLS lookup exists — the handle pins the loop this task
+    /// belongs to for its whole life.
     event_loop: JsEventLoop,
     js_thread: std::thread::ThreadId,
     /// Embedded envelope for cross-thread wakes. At most one enqueue is in
@@ -214,8 +212,9 @@ impl Schedule for LoopSchedule {
         // SAFETY: same immutable-field read as `enqueue_local`.
         let event_loop = unsafe { (*this).event_loop };
         // `enqueue_task_concurrent` is the `&self` thread-safe surface:
-        // lock-free MPSC push, then `us_wakeup_loop` (lost-wakeup-proof via
-        // the loop's `pending_wakeups` handshake).
+        // lock-free MPSC push, then a loop wakeup that is lose-proof on
+        // every backend (`pending_wakeups` handshake on POSIX, `uv_async`
+        // on Windows).
         event_loop.enqueue_task_concurrent(NonNull::from(node));
     }
 
@@ -410,7 +409,7 @@ unsafe fn poll_with<S: Schedule>(this: *mut AsyncTask) {
                     // Woken mid-poll. Keep the queue reference and go around
                     // again. Note: lands in the live FIFO, so a future that
                     // self-wakes every poll re-runs within the current tick
-                    // (nextTick-like). Use [`yield_now`] judiciously.
+                    // (nextTick-like), never reaching the I/O poll.
                     debug_assert_eq!(actual, NOTIFIED);
                     state.store(SCHEDULED, ORD);
                     // SAFETY: poll runs on the JS thread.
@@ -525,36 +524,6 @@ where
     // first poll consumes the SCHEDULED state exactly as a queue dispatch
     // would; the state machine does not distinguish the two entry paths.
     unsafe { poll_with::<LoopSchedule>(this) };
-}
-
-// ─── yield_now ───────────────────────────────────────────────────────────────
-
-/// Cooperatively yield: wake immediately and return `Pending` once.
-///
-/// The re-poll happens within the **current** tick (the re-enqueue lands in
-/// the live FIFO), so this yields to other queued tasks and microtasks — it
-/// does not reach the I/O poll. A "yield past I/O" awaits a 0-deadline timer
-/// instead (ships with the timer leaf future).
-pub fn yield_now() -> YieldNow {
-    YieldNow { yielded: false }
-}
-
-pub struct YieldNow {
-    yielded: bool,
-}
-
-impl Future for YieldNow {
-    type Output = ();
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        if self.yielded {
-            Poll::Ready(())
-        } else {
-            self.yielded = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    }
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────
@@ -781,7 +750,7 @@ mod tests {
         unsafe { release_with::<TestSchedule>(this) };
         // Remaining refs: the original `waker` clone (waker2 was consumed by
         // `wake()`). Dropping it frees the allocation (not observable here;
-        // ASAN/LSan in CI assert it).
+        // Miri verifies the free in last_waker_ref_dropped_off_thread_deallocs).
         drop(waker);
     }
 

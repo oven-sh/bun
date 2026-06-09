@@ -488,10 +488,10 @@ pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject
 
 // ─── PasswordOp: generic hash/verify off-thread job ───────────────────────
 //
-// Hash and verify jobs differ only in (a) extra input fields, (b) success
-// payload type + JS conversion, (c) the verb in the error message. Collapse
-// both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
-// `PasswordOp` carrying exactly those three axes.
+// Hash and verify differ only in (a) extra input fields, (b) success payload
+// type + JS conversion, (c) the verb in the error message. Both collapse into
+// one async `run` parameterised on a `PasswordOp` carrying exactly those
+// three axes.
 
 trait PasswordOp: Send + 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
@@ -583,7 +583,8 @@ impl JSPasswordObject {
         Ok(jsc::async_promise::js_promise(global_object, async move {
             // The closure's captures drop on the pool thread right after
             // compute; `SensitiveBytes` volatile-zeroes `password` (and the
-            // op's `prev_hash`) wherever they die.
+            // op's `prev_hash`) wherever they die. Parse-time intermediates
+            // (`StringOrBuffer` copies) are out of scope, as before.
             let value = bun_threading::work_pool::run(move || op.compute(&password)).await;
             // SAFETY: spawned futures run (and are dropped) on the JS thread
             // while the VM is alive; the global outlives every spawned task.
@@ -658,11 +659,7 @@ pub(crate) fn js_password_object_hash(
         );
     }
 
-    JSPasswordObject::hash::<false>(
-        global_object,
-        password_to_hash.into_boxed_slice().into(),
-        algorithm,
-    )
+    JSPasswordObject::hash::<false>(global_object, password_to_hash.into(), algorithm)
 }
 
 // Once we have bindings generator, this should be replaced with a generated function
@@ -785,8 +782,8 @@ pub(crate) fn js_password_object_verify(
 
     JSPasswordObject::verify::<false>(
         global_object,
-        owned_password.into_boxed_slice().into(),
-        owned_hash.into_boxed_slice().into(),
+        owned_password.into(),
+        owned_hash.into(),
         algorithm,
     )
 }

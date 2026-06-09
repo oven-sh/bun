@@ -225,7 +225,8 @@ impl WorkPool {
 /// `futures_core::task::AtomicWaker` uses: the side that fails to take the
 /// cell lock never spins — it leaves its bit set and the lock holder
 /// resolves the collision on exit. A registrant that observes `WAKING` at
-/// unlock reclaims the waker it just stored; a completer that observes
+/// unlock reclaims the cell's waker (the one it stored, or the surviving
+/// equivalent when the `will_wake` dedup skipped the store); a completer that observes
 /// `REGISTERING` simply returns, knowing the registrant will see `WAKING`.
 const WAITING: u8 = 0;
 const REGISTERING: u8 = 0b01;

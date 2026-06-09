@@ -70,3 +70,70 @@ test.skipIf(!cargo || !hasCodegen)(
     expect(exitCode).toBe(101); // cargo check exits 101 on compile errors
   },
 );
+
+test("empty buffers round-trip without freeing the dangling sentinel", async () => {
+  // An empty Box<[u8]> never allocates: its pointer is NonNull::dangling()
+  // (0x1), not a heap address. destroy()/the GC deallocator must skip the
+  // free for byte_len == 0 — under ASAN (the debug build), freeing 0x1
+  // aborts with "free on address which was not malloc()-ed", so this test
+  // discriminates: it crashes if the guard is removed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("node:fs");
+      const path = require("node:path").join(require("node:os").tmpdir(), "empty-" + process.pid);
+      fs.writeFileSync(path, "");
+      for (let i = 0; i < 64; i++) {
+        const buf = fs.readFileSync(path);          // empty Buffer via MarkedArrayBuffer
+        if (buf.length !== 0) process.exit(1);
+        const text = fs.readFileSync(path, "utf8"); // empty string path
+        if (text !== "") process.exit(1);
+      }
+      Bun.gc(true);                                  // run deallocators
+      fs.rmSync(path);
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
+test("empty buffers round-trip without freeing the dangling sentinel", async () => {
+  // An empty Box<[u8]> never allocates: its pointer is NonNull::dangling()
+  // (0x1), not a heap address. destroy() and the JSC handoff must skip the
+  // free for byte_len == 0 — under ASAN (the debug build), freeing 0x1
+  // aborts, so this test discriminates if the guard is removed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const fs = require("node:fs");
+      const path = require("node:path").join(require("node:os").tmpdir(), "empty-" + process.pid);
+      fs.writeFileSync(path, "");
+      for (let i = 0; i < 64; i++) {
+        const buf = fs.readFileSync(path);
+        if (buf.length !== 0) process.exit(1);
+        const text = fs.readFileSync(path, "utf8");
+        if (text !== "") process.exit(1);
+      }
+      Bun.gc(true);
+      fs.rmSync(path);
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("ok");
+  expect(exitCode).toBe(0);
+});

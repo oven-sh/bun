@@ -8,7 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSBigInt;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // safe: `JSValue` is a by-value tagged i64; returns a nullable GC-cell
     // pointer the caller checks before deref.
@@ -21,7 +20,6 @@ unsafe extern "C" {
 }
 
 /// Types that can be compared against a `JSBigInt` via the FFI order functions.
-/// Mirrors the `comptime T: type` switch in the Zig `order` fn.
 pub trait BigIntOrderable: Copy {
     fn raw_order(self, this: &JSBigInt) -> i8;
 }
@@ -55,7 +53,6 @@ impl JSBigInt {
         // (stack-scanned) for as long as the returned ref is used. `JSBigInt`
         // is an opaque ZST handle so the deref is the centralised `opaque_ref`
         // proof.
-        // TODO(port): lifetime — model as `&'a JSBigInt` tied to a stack guard?
         let p = JSC__JSBigInt__fromJS(value);
         (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
     }
@@ -79,5 +76,3 @@ impl JSBigInt {
         crate::host_fn::from_js_host_call_generic(global, || JSC__JSBigInt__toString(self, global))
     }
 }
-
-// ported from: src/jsc/JSBigInt.zig

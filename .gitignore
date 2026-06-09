@@ -1,4 +1,7 @@
+.rustup
 .claude/settings.local.json
+.cargo
+Library/Caches
 .direnv
 .DS_Store
 .env

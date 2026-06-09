@@ -212,7 +212,6 @@ export namespace t {
    * ```
    *
    * ```zig
-   * // foo.zig
    * pub fn foo(bar: []const u8) void {
    *   // ...
    * }
@@ -288,7 +287,7 @@ export namespace t {
   }
 
   /**
-   * Equivalent to `stringEnum`, but using an enum sourced from the given Zig
+   * Equivalent to `stringEnum`, but using an enum sourced from the given
    * file. Use this to get an enum type that can have functions added.
    */
   export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
@@ -322,7 +321,6 @@ interface FuncOptionsWithVariant extends FuncMetadata {
    * ```
    *
    * ```zig
-   * // foo.zig
    * pub fn foo1(a: i32) i32 {
    *    return a;
    * }

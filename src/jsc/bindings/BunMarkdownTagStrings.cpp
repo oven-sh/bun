@@ -36,7 +36,7 @@ template void MarkdownTagStrings::visit(JSC::SlotVisitor&);
 
 } // namespace Bun
 
-// C API for Zig bindings
+// C API for the Rust bindings
 extern "C" JSC::EncodedJSValue BunMarkdownTagStrings__getTagString(Zig::GlobalObject* globalObject, uint8_t tagIndex)
 {
     if (tagIndex >= MARKDOWN_TAG_STRINGS_COUNT)

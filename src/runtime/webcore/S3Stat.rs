@@ -24,7 +24,7 @@ impl S3Stat {
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
         // `bun_core::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
-        // Zig `defer date_str.deref()` runs on both the `Ok` and `?`-error paths.
+        // string is deref'd on both the `Ok` and `?`-error paths.
         let mut date_str = OwnedString::new(BunString::init(last_modified));
         let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
 
@@ -62,11 +62,9 @@ impl Drop for S3Stat {
         // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
-        // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
+        // explicitly.
         // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
         self.etag.deref();
         self.content_type.deref();
     }
 }
-
-// ported from: src/runtime/webcore/S3Stat.zig

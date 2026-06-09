@@ -1128,7 +1128,11 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    if (!thisObject) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, throwScope, ${className(typeName)}::info(), attributeName);
+        return false;
+    }
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(encodedValue));
     RELEASE_AND_RETURN(throwScope, true);
@@ -1229,7 +1233,11 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
+    if (!thisObject) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, throwScope, ${className(typeName)}::info(), attributeName);
+        return false;
+    }
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     bool result = ${symbolName(typeName, proto[name].setter || proto[name].accessor.setter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
@@ -2732,7 +2740,7 @@ const rustModuleResolver = (() => {
       // `pub use bun_jsc::{BuildMessage, ResolveMessage};` so route there.
       return `crate::api::${name}`;
     },
-    /** Resolve an absolute `.rs` (or `.zig`) file path to its `crate::…` module path. */
+    /** Resolve an absolute `.rs` file path to its `crate::…` module path. */
     resolveFile(absRs: string): string | null {
       return fileToMod.get(path.resolve(absRs)) ?? null;
     },
@@ -2836,8 +2844,7 @@ function generateRust(
   // ── exported #[no_mangle] thunks ─────────────────────────────────────────
   // Direct dispatch: each thunk calls an *inherent* method on the user's real
   // Rust struct (re-exported as `${typeName}` below). No trait, no opaque
-  // placeholder, no `unimplemented!()` — a missing method is a compile error,
-  // mirroring the Zig path's `@import("…").${T}.${fn}` behaviour.
+  // placeholder, no `unimplemented!()` — a missing method is a compile error.
   const thunks: string[] = [];
   const symbols: string[] = [];
   function thunk(sym: string, sig: string, body: string) {
@@ -3063,9 +3070,9 @@ function generateRust(
   }
 
   // ── C++→Rust extern imports + safe wrappers ──────────────────────────────
-  // Emitted as free functions in a per-class `js_${T}` sub-module (mirrors
-  // Zig's `pub const js = jsc.Codegen.JS${T};`) so they don't collide with
-  // inherent `from_js`/`to_js` already defined on the real struct.
+  // Emitted as free functions in a per-class `js_${T}` sub-module so they
+  // don't collide with inherent `from_js`/`to_js` already defined on the
+  // real struct.
   const cachedExterns = gc_fields
     .map(
       ([name]) =>
@@ -3145,9 +3152,8 @@ ${gcAccessors}
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
-/// hand-ported struct so the thunks below call its inherent methods directly
-/// (mirrors Zig's \`@import("…").${typeName}.<fn>\`). A missing method is a
-/// compile error — fix it in \`${rustPath}\`, not here.
+/// struct so the thunks below call its inherent methods directly. A missing
+/// method is a compile error — fix it in \`${rustPath}\`, not here.
 pub use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
@@ -3538,8 +3544,8 @@ function writeCppSerializers() {
 
 // ── Rust output: per-class thunks for `lang === "rust"` (default). ─────────
 // Zig output is still emitted for every class so the C++ side's `extern`
-// declarations stay satisfied during incremental migration; the Zig thunks for
-// rust-lang classes simply go unreferenced once the Rust crate links.
+// declarations stay satisfied; the Zig thunks for rust-lang classes simply go
+// unreferenced once the Rust crate links.
 {
   const rustClasses = classes.filter(a => (a.lang ?? "rust") === "rust");
   let totalSyms = 0;
@@ -3745,8 +3751,8 @@ if (!process.env.ONLY_ZIG) {
 }
 
 /**
- * Generates a basic TypeScript type signature string and corresponding Zig source comment
- * for a given property definition.
+ * Generates a basic TypeScript type signature string for a given property
+ * definition.
  * Returns null if the property should not be included in the types (e.g., private).
  */
 function getPropertySignatureWithComment(

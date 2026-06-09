@@ -2,7 +2,7 @@
 //!
 //! Strategy B for the require-cache ESM leak (docs/BABYLIST_REPLACEMENT.md):
 //! `G::DeclList` / `G::PropertyList` / `ExprNodeList` / `ClassStaticBlock::stmts`
-//! were ported from Zig `BabyList<T>` to global-heap `Vec<T>`. The AST *nodes*
+//! use global-heap `Vec<T>`. The AST *nodes*
 //! that embed those `Vec` headers live in `ASTMemoryAllocator`'s `MimallocArena`
 //! and are bulk-freed (no `Drop`) on `enter()` → `arena.reset()`, so the global
 //! buffers leak — one full AST's worth of `Vec` backing storage per imported
@@ -36,8 +36,8 @@ use core::ptr::NonNull;
 use crate::{MimallocArena, mimalloc};
 
 // The parser builds thousands of tiny `AstVec`s; allocations `<= BUMP_MAX` are
-// carved from a 16 KB buffer stored inline in the state (mirroring Zig's
-// `StackFallbackAllocator`), so the small case never touches mimalloc. The
+// carved from a 16 KB buffer stored inline in the state, so the small case
+// never touches mimalloc. The
 // cursor, the buffer, and the spill target live in one struct, so none of them
 // can outlive the others.
 
@@ -388,8 +388,8 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
 //   the "pointers may be freed by any clone" requirement is satisfied.
 // - `Send + Sync` (auto-derived for a fieldless ZST) is sound: each call reads
 //   the *calling* thread's `AST_ALLOC`, and allocation is gated to that thread
-//   by `ASTMemoryAllocator`'s single-threaded contract (mirrored from Zig's
-//   `ThreadLock`; see `MimallocArena::assert_owning_thread`). The no-op
+//   by `ASTMemoryAllocator`'s single-threaded contract (see
+//   `MimallocArena::assert_owning_thread`). The no-op
 //   `deallocate` removes the only cross-thread hazard a `Vec<_,A>: Send` would
 //   otherwise introduce.
 unsafe impl Allocator for AstAlloc {
@@ -439,8 +439,7 @@ unsafe impl Allocator for AstAlloc {
         // bookkeeping) *without* moving the block — so it stays in whatever heap
         // owns it and never thrashes the `heap → theap` TLS lookup. When it
         // succeeds there is no allocation, no `memcpy`, and no abandoned block,
-        // matching `MimallocArena`'s `resize_in_place` (Zig's arena `remap` is
-        // `mi_expand`-then-`mi_realloc`).
+        // matching `MimallocArena`'s `resize_in_place`.
         //
         // Gated on:
         //  - `old.size() > BUMP_MAX`: smaller blocks may be bump-chunk interior
@@ -512,7 +511,7 @@ impl AstAlloc {
         Vec::with_capacity_in(cap, AstAlloc)
     }
 
-    /// `<[T]>::to_vec` parity (Zig: `BabyList.fromSlice`).
+    /// `<[T]>::to_vec` parity.
     #[inline]
     pub fn vec_from_slice<T: Clone>(items: &[T]) -> AstVec<T> {
         let mut v = Vec::with_capacity_in(items.len(), AstAlloc);

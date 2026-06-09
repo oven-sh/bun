@@ -768,9 +768,9 @@ impl PostgresSQLConnection {
         // (the connection was never established) rather than a closed
         // connection so the error is actionable.
         self.handle_socket_failure(|this| match this.status.get() {
-            Status::Connecting | Status::SentStartupMessage => this.fail_fmt(
-                b"ERR_POSTGRES_CONNECTION_FAILED",
-                format_args!("Connection closed before the connection was established"),
+            Status::Connecting | Status::SentStartupMessage => this.fail(
+                b"Connection closed before the connection was established",
+                AnyPostgresError::ConnectionFailed,
             ),
             _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
         });
@@ -778,10 +778,7 @@ impl PostgresSQLConnection {
 
     pub fn on_connect_error(&self) {
         self.handle_socket_failure(|this| {
-            this.fail_fmt(
-                b"ERR_POSTGRES_CONNECTION_FAILED",
-                format_args!("Failed to connect"),
-            );
+            this.fail(b"Failed to connect", AnyPostgresError::ConnectionFailed);
         });
     }
 

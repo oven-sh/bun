@@ -1393,32 +1393,51 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     db.close();
   });
 
-  it("preserves index-like column names in SQL order on both sides of the boundary", () => {
-    // Column names that parse as array indices ("0", "2") have always been
-    // stored as named string properties in the row Structure — never routed
-    // to indexed storage. These pins assert that behavior is the same for
-    // narrow (cached inline Structure) and wide (out-of-line) rows. Note the
-    // pre-existing quirk shared with released versions: such properties are
-    // visible to enumeration/serialization but plain `row["0"]` access
-    // canonicalizes to an array-index lookup and returns undefined.
+  it("makes index-like column names readable on both sides of the boundary", () => {
+    // Column names that parse as array indices ("0", "2") cannot live in the
+    // shared row Structure: reads canonicalize them to indexed lookups, which
+    // never consult the property table, so `row["0"]` used to return
+    // undefined even though enumeration saw the key. Such columns now go to
+    // per-row indexed storage, making reads work and giving the spec
+    // enumeration order (integer indices first, ascending).
     const db = new Database(":memory:");
 
     const narrow = db.query(`SELECT 1 AS "2", 2 AS name, 3 AS "0"`).get();
-    expect(Object.keys(narrow)).toEqual(["2", "name", "0"]);
-    expect(JSON.parse(JSON.stringify(narrow))).toEqual({ "2": 1, "name": 2, "0": 3 });
+    expect(narrow["2"]).toBe(1);
+    expect(narrow[2]).toBe(1);
+    expect(narrow["0"]).toBe(3);
+    expect(narrow.name).toBe(2);
+    expect("2" in narrow).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(narrow, "2")?.value).toBe(1);
+    expect(Object.keys(narrow)).toEqual(["0", "2", "name"]);
+    expect(narrow).toEqual({ "0": 3, "2": 1, name: 2 });
+    expect(JSON.parse(JSON.stringify(narrow))).toEqual({ "0": 3, "2": 1, name: 2 });
 
     const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS "c${i}"`);
     cols[5] = `1005 AS "2"`;
-    cols[65] = `1065 AS "0"`; // index-like name at an out-of-line offset
-    const wide = db.query(`SELECT ${cols.join(", ")}`).get();
+    cols[65] = `1065 AS "0"`;
+    const rows = db.query(`SELECT ${cols.join(", ")}`).all();
+    expect(rows).toHaveLength(1);
+    const wide = rows[0];
+    expect(wide["2"]).toBe(1005);
+    expect(wide[0]).toBe(1065);
+    expect(wide.c0).toBe(100);
+    expect(wide.c69).toBe(169);
     const keys = Object.keys(wide);
     expect(keys).toHaveLength(70);
-    expect(keys[5]).toBe("2");
-    expect(keys[65]).toBe("0");
+    expect(keys.slice(0, 2)).toEqual(["0", "2"]);
     const parsed = JSON.parse(JSON.stringify(wide));
     expect(parsed["2"]).toBe(1005);
     expect(parsed["0"]).toBe(1065);
-    expect(wide.c69).toBe(169);
+    expect(parsed.c69).toBe(169);
+
+    // >512 columns (never uses the cached Structure) takes the same per-row path
+    const many = Array.from({ length: 515 }, (_, i) => `${1000 + i} AS d${i}`);
+    many[7] = `42 AS "7"`;
+    const big = db.query(`SELECT ${many.join(", ")}`).get();
+    expect(big["7"]).toBe(42);
+    expect(big[7]).toBe(42);
+    expect(big.d514).toBe(1514);
     db.close();
   });
 

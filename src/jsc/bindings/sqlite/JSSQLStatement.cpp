@@ -744,12 +744,22 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
                 break;
             }
 
+            const auto identifier = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
+
+            // Column names that parse as array indices ("0", "2", ...) cannot be
+            // stored in a Structure's property table: reads canonicalize them to
+            // indexed lookups, which never consult the property table. Take the
+            // non-cached path, which puts them into per-row indexed storage.
+            if (JSC::parseIndex(identifier)) {
+                anyHoles = true;
+                break;
+            }
+
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
-            columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
+            columnNames->add(identifier);
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -837,7 +847,13 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         // only put the property if it's not a duplicate
         if (preCount != curCount) {
             castedThis->validColumns.set(i);
-            object->putDirect(vm, key, primitive, 0);
+            // Index-like keys are stored per row in indexed storage by
+            // constructResultObject. Seeding one here would both trip
+            // putDirect's no-array-index precondition and transition this
+            // shared shape's indexing type, which rows created with a null
+            // butterfly cannot have.
+            if (!JSC::parseIndex(key))
+                object->putDirect(vm, key, primitive, 0);
         }
     }
     // We iterated over the columns in reverse order so we need to reverse the columnNames here
@@ -2029,7 +2045,10 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             const auto& name = columnNames[j];
             auto value = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
             RETURN_IF_EXCEPTION(scope, {});
-            result->putDirect(vm, name, value, 0);
+            // Index-like names go to indexed storage so that both reads
+            // (canonicalized to indexed lookups) and enumeration see them.
+            result->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

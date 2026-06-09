@@ -71,21 +71,24 @@ extern "C" int32_t set_process_priority(int32_t pid, int32_t priority)
 #if !OS(WINDOWS)
 extern "C" bool is_executable_file(const char* path)
 {
-#if defined(O_EXEC)
-    // O_EXEC is macOS specific
+#if defined(__OHOS__)
+    // OHOS kernel bug: open(O_EXEC) doesn't check file x permission bit,
+    // so a 0660 file incorrectly succeeds. Use access(X_OK) instead.
+    return access(path, X_OK) == 0;
+#elif defined(O_EXEC)
+    // macOS: O_EXEC correctly checks x permission.
     int fd = open(path, O_EXEC | O_CLOEXEC | O_NONBLOCK | O_NOCTTY, 0);
     if (fd < 0)
         return false;
     close(fd);
     return true;
-#endif // defined(O_EXEC)
-
+#else
+    // Linux (no O_EXEC): use stat to check x bit.
     struct stat st;
     if (stat(path, &st) != 0)
         return false;
-
-    // regular file and user can execute
-    return S_ISREG(st.st_mode) && (st.st_mode & S_IXUSR);
+    return (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
+#endif
 }
 #endif
 

@@ -436,6 +436,61 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  itBundled("edgecase/PackageExportsJSExtensionRetry", {
+    // A ".js" subpath missing from the exports map is retried without the
+    // extension, for packages (like React) that omit extensions in "exports".
+    files: {
+      "/entry.js": /* js */ `
+        import value from 'boop/jsx-runtime.js'
+        console.log(value)
+      `,
+      "/node_modules/boop/package.json": /* json */ `
+        {
+          "name": "boop",
+          "exports": {
+            ".": "./index.js",
+            "./jsx-runtime": "./lib/jsx-runtime.js"
+          }
+        }
+      `,
+      "/node_modules/boop/index.js": /* js */ `
+        export default "index"
+      `,
+      "/node_modules/boop/lib/jsx-runtime.js": /* js */ `
+        export default 456
+      `,
+    },
+    run: {
+      stdout: "456",
+    },
+  });
+  itBundled("edgecase/PackageExportsExtensionRetryOnlyForJS", {
+    // The extensionless retry is limited to ".js"; other extensions miss.
+    files: {
+      "/entry.js": /* js */ `
+        import value from 'boop/util.mjs'
+        console.log(value)
+      `,
+      "/node_modules/boop/package.json": /* json */ `
+        {
+          "name": "boop",
+          "exports": {
+            ".": "./index.js",
+            "./util": "./lib/util.mjs"
+          }
+        }
+      `,
+      "/node_modules/boop/index.js": /* js */ `
+        export default "index"
+      `,
+      "/node_modules/boop/lib/util.mjs": /* js */ `
+        export default 789
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ['Could not resolve: "boop/util.mjs". Maybe you need to "bun install"?'],
+    },
+  });
   itBundled("edgecase/TSConfigPathsStarOnlyInLeft", {
     files: {
       "/entry.ts": /* ts */ `

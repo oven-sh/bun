@@ -753,7 +753,23 @@ impl Request {
         ZigString::EMPTY.to_js(global_this)
     }
 
+    /// Server requests create their `AbortSignal` lazily: materialize the
+    /// context-wired signal (abort fires on client disconnect) and mirror a
+    /// `+1` into this Request. No-op for detached/non-server requests.
+    fn materialize_server_signal(&self, global_this: &JSGlobalObject) {
+        if self.signal.get().is_some() {
+            return;
+        }
+        if let Some(signal) = self.request_context.ensure_ctx_signal(global_this) {
+            // SAFETY: the ctx holds a live `+1`; `ref_()` bumps once more for
+            // the Request's RAII handle (paired with `AbortSignalRef::Drop`).
+            let owned = unsafe { AbortSignalRef::adopt((*signal.as_ptr()).ref_()) };
+            self.signal.set(Some(owned));
+        }
+    }
+
     pub fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
+        self.materialize_server_signal(global_this);
         // Already have a C++ instance
         if let Some(signal) = self.signal.get() {
             return signal.to_js(global_this);
@@ -1583,6 +1599,10 @@ impl Request {
             );
         }
 
+        // Materialize the server-wired signal first so the clone shares it
+        // (matches the previous eager-creation behavior: aborts propagate to
+        // clones of in-flight server requests).
+        self.materialize_server_signal(global_this);
         if let Some(signal) = self.signal.get() {
             // `AbortSignalRef::clone` → C++ `ref()`.
             req.signal.set(Some(signal.clone()));

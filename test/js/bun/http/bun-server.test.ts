@@ -247,6 +247,113 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("request.signal read for the first time after client disconnect observes aborted", async () => {
+    // Signals are created lazily; an abort that happens before the first
+    // `request.signal` access must still be observable afterwards.
+    const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+    let unpark!: (value: Response) => void;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        resolveReq(req);
+        // Park the handler so the connection dies before a response exists.
+        // Deliberately do NOT touch req.signal here.
+        return new Promise<Response>(resolve => {
+          unpark = resolve;
+        });
+      },
+    });
+
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        data() {},
+        close: () => onClose(),
+        error: () => onClose(),
+      },
+    });
+    socket.write(`GET / HTTP/1.1\r\nHost: ${server.hostname}\r\n\r\n`);
+    const req = await gotReq;
+    socket.end();
+    await closed;
+
+    // The server notices the disconnect asynchronously; await the condition.
+    while (!req.signal.aborted) {
+      await Bun.sleep(5);
+    }
+    expect(req.signal.aborted).toBe(true);
+    unpark(new Response("late"));
+  });
+
+  test("req.clone() taken before any signal access still observes server abort", async () => {
+    const { promise: gotClone, resolve: resolveClone } = Promise.withResolvers<Request>();
+    let unpark!: (value: Response) => void;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        // Clone before anyone touches req.signal; aborts must propagate to the clone.
+        resolveClone(req.clone());
+        return new Promise<Response>(resolve => {
+          unpark = resolve;
+        });
+      },
+    });
+
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        data() {},
+        close: () => onClose(),
+        error: () => onClose(),
+      },
+    });
+    socket.write(`GET / HTTP/1.1\r\nHost: ${server.hostname}\r\n\r\n`);
+    const clone = await gotClone;
+    socket.end();
+    await closed;
+
+    while (!clone.signal.aborted) {
+      await Bun.sleep(5);
+    }
+    expect(clone.signal.aborted).toBe(true);
+    unpark(new Response("late"));
+  });
+
+  test("request.signal of an upgraded request aborts when the WebSocket closes", async () => {
+    const { promise: gotReq, resolve: resolveReq } = Promise.withResolvers<Request>();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        resolveReq(req);
+        if (server.upgrade(req)) return;
+        return new Response("expected upgrade", { status: 400 });
+      },
+      websocket: {
+        message() {},
+      },
+    });
+
+    const ws = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    const { promise: wsClosed, resolve: onWsClose } = Promise.withResolvers<void>();
+    const { promise: wsOpened, resolve: onWsOpen, reject: rejectOpen } = Promise.withResolvers<void>();
+    ws.onopen = () => onWsOpen();
+    ws.onerror = e => rejectOpen(e);
+    ws.onclose = () => onWsClose();
+    await wsOpened;
+    const req = await gotReq;
+    ws.close();
+    await wsClosed;
+
+    while (!req.signal.aborted) {
+      await Bun.sleep(5);
+    }
+    expect(req.signal.aborted).toBe(true);
+  });
+
   test("abort signal on server with direct stream", async () => {
     {
       let signalOnServer = false;

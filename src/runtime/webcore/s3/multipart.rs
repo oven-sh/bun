@@ -235,9 +235,10 @@ pub struct UploadPartResult {
 impl UploadPart {
     fn free_allocated_slice(&mut self) {
         if self.allocated_size > 0 {
-            // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
-            // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
-            // StreamBuffer's backing allocation). Reconstruct and drop.
+            // SAFETY: `data.ptr` is the `part_buf` Vec allocation (global allocator) whose
+            // ownership transferred here via `finish_current_part` → `ready_parts` →
+            // `get_create_part`; `allocated_size` is the capacity it was allocated with.
+            // Reconstruct and drop.
             unsafe {
                 let ptr = (*self.data).as_ptr().cast_mut();
                 drop(Vec::from_raw_parts(
@@ -496,13 +497,11 @@ impl MultiPartUpload {
         }
     }
 
-    /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    fn get_create_part(
-        &mut self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> Option<*mut UploadPart> {
+    /// This is the only place we allocate the queue, this is responsible for the flow of parts and the max allowed concurrency.
+    /// Takes ownership of `chunk`'s allocation (`allocated_size` is the `Vec` capacity it was
+    /// built with in `finish_current_part`); returns `None` when the queue is at capacity, in
+    /// which case no transfer happens.
+    fn get_create_part(&mut self, chunk: &[u8], allocated_size: usize) -> Option<*mut UploadPart> {
         let Some(index) = self.available.find_first_set() else {
             // this means that the queue is full and we cannot flush it
             return None;
@@ -533,13 +532,7 @@ impl MultiPartUpload {
             }
             self.queue = Some(queue.into_boxed_slice());
         }
-        let (data, allocated_len): (*const [u8], usize) = if needs_clone {
-            let owned = Box::<[u8]>::from(chunk);
-            let len = owned.len();
-            (bun_core::heap::into_raw(owned).cast_const(), len)
-        } else {
-            (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
-        };
+        let data: *const [u8] = std::ptr::from_ref::<[u8]>(chunk);
 
         let part_number = self.current_part_number;
         // PORT NOTE: `defer this.currentPartNumber += 1` hoisted before return
@@ -549,7 +542,7 @@ impl MultiPartUpload {
         // always set all struct fields to avoid undefined behavior
         *queue_item = UploadPart {
             data,
-            allocated_size: allocated_len,
+            allocated_size,
             part_number,
             ctx: self_ref,
             index: index as u8, // @truncate
@@ -575,9 +568,8 @@ impl MultiPartUpload {
                 }
             }
         }
-        let part_size = self.part_size_in_bytes();
         if self.ended || !self.ready_parts.is_empty() {
-            self.process_multi_part(part_size)?;
+            self.process_multi_part()?;
         }
 
         // empty queue
@@ -894,13 +886,8 @@ impl MultiPartUpload {
         )
     }
 
-    fn enqueue_part(
-        &mut self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> JsTerminatedResult<bool> {
-        let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
+    fn enqueue_part(&mut self, chunk: &[u8], allocated_size: usize) -> JsTerminatedResult<bool> {
+        let Some(part) = self.get_create_part(chunk, allocated_size) else {
             return Ok(false);
         };
 
@@ -935,14 +922,13 @@ impl MultiPartUpload {
         Ok(true)
     }
 
-    fn process_multi_part(&mut self, part_size: usize) -> JsTerminatedResult<()> {
+    fn process_multi_part(&mut self) -> JsTerminatedResult<()> {
         scoped_log!(
             S3MultiPartUpload,
             "processMultiPart {} {}",
             BStr::new(&self.path),
-            part_size
+            self.part_size_in_bytes()
         );
-        let _ = part_size;
         if self.ended {
             // The stream is over: whatever is accumulated becomes the final
             // (possibly partial) part.
@@ -954,18 +940,27 @@ impl MultiPartUpload {
             return Ok(());
         }
 
-        while let Some((ptr, allocated)) = self.ready_parts.pop_front() {
-            // Pop BEFORE enqueueing: `enqueue_part(needs_clone=false)` hands
-            // the allocation to the `UploadPart` as soon as `get_create_part`
-            // succeeds, and its fallible tail (`execute_simple_s3_request`,
-            // `start`) can still propagate `Err` afterwards — at which point
-            // the part's failure path frees the buffer. Leaving the entry in
-            // `ready_parts` for that case would make `Drop` free it a second
-            // time. On `Err` the entry must stay popped; only a queue-full
-            // `Ok(false)` (no transfer happened) returns it to the front.
+        // `enqueue_part` can finish the upload synchronously (e.g. signing the
+        // multipart-init request fails, which runs `fail()`): stop handing
+        // parts to a `Finished` task. `fail()` already canceled the queue, so
+        // parts stored after it would never be started, canceled, or freed.
+        // Entries left in `ready_parts` keep their allocations and are freed
+        // in `Drop`.
+        while self.state != State::Finished {
+            let Some((ptr, allocated)) = self.ready_parts.pop_front() else {
+                break;
+            };
+            // Pop BEFORE enqueueing: `enqueue_part` hands the allocation to
+            // the `UploadPart` as soon as `get_create_part` succeeds, and its
+            // fallible tail (`execute_simple_s3_request`, `start`) can still
+            // propagate `Err` afterwards — at which point the part's failure
+            // path frees the buffer. Leaving the entry in `ready_parts` for
+            // that case would make `Drop` free it a second time. On `Err` the
+            // entry must stay popped; only a queue-full `Ok(false)` (no
+            // transfer happened) returns it to the front.
             // SAFETY: the entry owned its allocation (transferred in
             // finish_current_part) until this handoff.
-            match self.enqueue_part(unsafe { &*ptr }, allocated, false) {
+            match self.enqueue_part(unsafe { &*ptr }, allocated) {
                 Ok(true) => {
                     scoped_log!(
                         S3MultiPartUpload,
@@ -1033,7 +1028,7 @@ impl MultiPartUpload {
         Some(&self.proxy)
     }
 
-    fn process_buffered(&mut self, part_size: usize) {
+    fn process_buffered(&mut self) {
         if self.ended
             && self.ready_parts.is_empty()
             && self.part_buf.len() < self.part_size_in_bytes()
@@ -1067,7 +1062,7 @@ impl MultiPartUpload {
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split
-            let _ = self.process_multi_part(part_size); // TODO: properly propagate exception upwards
+            let _ = self.process_multi_part(); // TODO: properly propagate exception upwards
         }
     }
 
@@ -1079,9 +1074,17 @@ impl MultiPartUpload {
         if self.state == State::WaitStreamCheck {
             self.state = State::NotStarted;
             if self.ended {
-                self.process_buffered(self.part_size_in_bytes());
+                self.process_buffered();
             }
         }
+    }
+
+    /// Whether the upload has issued its first request. A task that never
+    /// started has no completion callback coming: whoever drops its last
+    /// external handle must finish it (`fail`) so the lifecycle ref and the
+    /// event-loop handle are released.
+    pub fn has_started(&self) -> bool {
+        !matches!(self.state, State::WaitStreamCheck | State::NotStarted)
     }
 
     pub fn has_backpressure(&self) -> bool {
@@ -1119,7 +1122,7 @@ impl MultiPartUpload {
             // we do this because stream will close if the file dont exists and we dont wanna to send an empty part in this case
             self.ended = true;
             if !self.part_buf.is_empty() || !self.ready_parts.is_empty() {
-                self.process_buffered(self.part_size_in_bytes());
+                self.process_buffered();
             }
             return Ok(if self.has_backpressure() {
                 ResumableSinkBackpressure::Backpressure
@@ -1158,10 +1161,10 @@ impl MultiPartUpload {
         }
         if is_last {
             self.ended = true;
-            self.process_buffered(self.part_size_in_bytes());
+            self.process_buffered();
         } else if !self.ready_parts.is_empty() {
             // at least one full part is staged — try to enqueue it
-            self.process_buffered(self.part_size_in_bytes());
+            self.process_buffered();
         }
         Ok(if self.has_backpressure() {
             ResumableSinkBackpressure::Backpressure

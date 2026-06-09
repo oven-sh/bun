@@ -1,9 +1,11 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
+import { join } from "path";
 
-// Streamed multipart uploads against a local fake S3 endpoint (the
-// s3-insecure.test.ts pattern): pins part sizing, ordering, reassembly, and
-// the single-PUT route for sub-part-size uploads.
+// Streamed multipart uploads: part assembly against a local fake S3 endpoint
+// (the s3-insecure.test.ts pattern), plus teardown of writers whose upload
+// never completes.
 describe("S3 multipart part assembly", () => {
   function makeServer() {
     const uploads = new Map<string, Map<number, Buffer>>();
@@ -100,5 +102,96 @@ describe("S3 multipart part assembly", () => {
     await writer.end();
     expect(singlePuts).toHaveLength(1);
     expect(singlePuts[0].toString("utf8")).toBe("hello wörld ✓");
+  });
+});
+
+describe("S3 multipart upload teardown", () => {
+  // A writer dropped in the never-started state (sub-part-size write, no
+  // end()) issues no request, so no completion callback ever fires; the
+  // wrapper's finalizer must tear the upload task down itself or the task's
+  // event-loop handle keeps the process alive forever.
+  it("a writer dropped before its first request releases its event-loop handle", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
+        const networkSinkCells = () => heapStats().objectTypeCounts.NetworkSink ?? 0;
+        function makeAbandonedWriter() {
+          const s3 = new Bun.S3Client({
+            endpoint: "http://127.0.0.1:1",
+            bucket: "b",
+            accessKeyId: "k",
+            secretAccessKey: "s",
+            region: "r",
+          });
+          const writer = s3.file("never-started.bin").writer();
+          writer.write("tiny");
+          // cell count while the wrapper is provably live (also counts
+          // persistent prototype/structure cells, so it never reaches 0)
+          return networkSinkCells();
+        }
+        const withWriter = makeAbandonedWriter();
+        // wait for the wrapper cell to be collected: the count drops below
+        // its live-writer level
+        for (let i = 0; networkSinkCells() >= withWriter; i++) {
+          if (i > 500) throw new Error("writer wrapper was never collected");
+          Bun.gc(true);
+          await Bun.sleep(0);
+        }
+        console.log("collected");
+        // nothing else is pending: the process must now exit on its own`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect(stdout).toBe("collected\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Signing the multipart-init request fails synchronously (empty
+  // credentials) while a second full part is already staged. The drain loop
+  // must stop handing parts to the failed task; a part stored after fail()
+  // is never started, canceled, or freed, and LeakSanitizer aborts the child
+  // on the leaked 5 MiB buffer.
+  it.skipIf(!isASAN)("frees staged parts when the multipart init fails synchronously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s3 = new Bun.S3Client({
+          endpoint: "http://127.0.0.1:1",
+          bucket: "b",
+          accessKeyId: "",
+          secretAccessKey: "",
+          region: "r",
+        });
+        const writer = s3.file("sign-fail.bin").writer();
+        // one write staging two full 5 MiB parts before the first drain
+        writer.write(Buffer.alloc(10 * 1024 * 1024, 7));
+        console.log("ended", await writer.end());`,
+      ],
+      env: {
+        ...bunEnv,
+        // same leak-check contract the ASAN CI runner applies to test
+        // processes (scripts/runner.node.mjs): full VM teardown so exit-time
+        // reachability is precise, leak detection on, abort so a report
+        // fails the child.
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS:
+          bunEnv.LSAN_OPTIONS ??
+          `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect(stdout).toBe("ended 0\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -6,6 +6,7 @@
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
+#include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
@@ -284,6 +285,11 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
 {
     if (vm.hasTerminationRequest()) {
         vm.drainMicrotasksForGlobalObject(globalObject);
+        // The termination may have fired inside an afterEvaluate microtask
+        // checkpoint, leaving the termination exception pending; clear it so
+        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+        if (vm.hasPendingTerminationException())
+            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();
         if (script->getSigintReceived()) {
             script->setSigintReceived(false);
@@ -356,14 +362,22 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     script->setSigintReceived(false);
 
+    // Node performs the afterEvaluate microtask checkpoint inside the
+    // watchdog/SIGINT scope, so a `timeout` also bounds microtasks the script
+    // scheduled on the context's own queue (e.g. promise jobs).
+    auto drainAfterEvaluate = [&] {
+        if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
+            globalObject->drainOwnMicrotasks();
+    };
+
     if (options.breakOnSigint) {
         auto holder = SigintWatcher::hold(globalObject, script);
         run();
+        drainAfterEvaluate();
     } else {
         run();
+        drainAfterEvaluate();
     }
-
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (options.timeout) {
         vm.watchdog()->setTimeLimit(WTF::Seconds::fromMilliseconds(*oldLimit));
@@ -372,6 +386,8 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     if (checkForTermination(vm, globalObject, scope, script, newLimit)) {
         return {};
     }
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     script->setSigintReceived(false);
 
@@ -460,7 +476,19 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
-    const String& url = script->source().provider()->sourceMappingURLDirective();
+    String url = script->source().provider()->sourceMappingURLDirective();
+
+    if (!url && !script->sourceMapURLParsed()) {
+        // The directive is only populated once the source has been parsed; a
+        // Script that has never run hasn't been. Parse once so sourceMapURL
+        // is available before the first run, like Node where compilation
+        // happens in the Script constructor.
+        script->sourceMapURLParsed(true);
+        ParserError parserError;
+        parseRootNode<ProgramNode>(vm, script->source(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            NoLexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, parserError);
+        url = script->source().provider()->sourceMappingURLDirective();
+    }
 
     if (!url) {
         return encodedJSUndefined();

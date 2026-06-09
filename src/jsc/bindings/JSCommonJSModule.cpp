@@ -161,8 +161,15 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
 
-        JSValue result = JSC::evaluate(globalObject, code, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, false);
+        // The overload of JSC::evaluate without an exception out-param
+        // swallows the thrown exception, so a throwing `-e` entry point would
+        // look like it evaluated successfully. Capture and rethrow instead.
+        WTF::NakedPtr<JSC::Exception> returnedException;
+        JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (returnedException) [[unlikely]] {
+            scope.throwException(globalObject, returnedException.get());
+            return false;
+        }
         ASSERT(result);
 
         Bun__VM__setEntryPointEvalResultCJS(globalObject->bunVM(), JSValue::encode(result));
@@ -170,8 +177,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         RELEASE_AND_RETURN(scope, true);
     }
 
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
+    WTF::NakedPtr<JSC::Exception> returnedException;
+    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+    if (returnedException) [[unlikely]] {
+        scope.throwException(globalObject, returnedException.get());
+        return false;
+    }
     ASSERT(fnValue);
 
     JSObject* fn = fnValue.getObject();

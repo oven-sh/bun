@@ -546,6 +546,151 @@ it("request.url normalizes raw request targets like the WHATWG parser", async ()
   expect(await urlFor("/x", "a.example")).toBe("http://a.example/x");
 });
 
+it("request.url equals the WHATWG href for seeded-random raw targets", async () => {
+  // Deterministic fuzz over the byte classes the fast path classifies
+  // (identity-safe bytes, bytes the parser rewrites, dot segments) across
+  // hosts that exercise the per-thread host memo (mixed case, default and
+  // non-default ports, IPv6). Oracle: new URL(...) in this process — the
+  // parser itself is unchanged by the fast path.
+  let seed = 0x12345678;
+  const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const pool = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" + "-._~!$&()*+,;=:@/?%#[]|'\"<>\\^`{}";
+  function genTarget(): string {
+    let t = "/";
+    const len = 1 + Math.floor(rand() * 40);
+    for (let i = 0; i < len; i++) t += pool[Math.floor(rand() * pool.length)];
+    if (rand() < 0.25)
+      t = t.slice(0, 1 + Math.floor(rand() * t.length)) + "/../" + t.slice(1 + Math.floor(rand() * t.length));
+    if (rand() < 0.15) t += "/.";
+    if (rand() < 0.15) t = "/." + t;
+    return t;
+  }
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+
+  async function urlFor(target: string, host: string): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = await Bun.connect({
+      hostname: server.hostname,
+      port: server.port,
+      socket: {
+        data(_s, c) {
+          chunks.push(Buffer.from(c));
+        },
+        close() {
+          resolve(Buffer.concat(chunks).toString("latin1"));
+        },
+        error(_s, e) {
+          reject(e);
+        },
+      },
+    });
+    socket.write(`GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+    const raw = await promise;
+    return raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  }
+
+  const hosts = [
+    `127.0.0.1:${server.port}`,
+    "example.com",
+    "EXAMPLE.com",
+    "example.com:80",
+    "example.com:8080",
+    "127.0.0.1",
+    "[::1]:9999",
+    "a.example",
+  ];
+  for (let i = 0; i < 200; i++) {
+    const target = genTarget();
+    const host = hosts[Math.floor(rand() * hosts.length)];
+    const expected = new URL(`http://${host}${target}`).href;
+    const actual = await urlFor(target, host);
+    expect({ target, host, url: actual }).toEqual({ target, host, url: expected });
+  }
+});
+
+it("request.url fast path edge cases: keep-alive reuse, long URLs, missing Host", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+  const port = server.port;
+
+  async function raw(requests: string[]): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data(_s, c) {
+          chunks.push(Buffer.from(c));
+        },
+        close() {
+          resolve(Buffer.concat(chunks).toString("latin1"));
+        },
+        error(_s, e) {
+          reject(e);
+        },
+      },
+    });
+    socket.write(requests.join(""));
+    return promise;
+  }
+
+  // keep-alive: alternating fast-path and parser-path targets on one socket
+  const long = "/" + "a".repeat(180) + "?q=" + "b".repeat(40);
+  const keepAlive = await raw([
+    `GET /first?x=1 HTTP/1.1\r\nHost: h.example\r\n\r\n`,
+    `GET /second/../x HTTP/1.1\r\nHost: h.example\r\n\r\n`,
+    `GET ${long} HTTP/1.1\r\nHost: h.example\r\nConnection: close\r\n\r\n`,
+  ]);
+  const bodies = keepAlive
+    .split("\r\n\r\n")
+    .slice(1)
+    .map(s => s.split("HTTP/1.1")[0]);
+  expect(bodies).toEqual(["http://h.example/first?x=1", "http://h.example/x", `http://h.example${long}`]);
+
+  // >=128-byte URL with dot segments takes the pre-existing slow path
+  const longDots = await raw([`GET /${"a".repeat(180)}/../z HTTP/1.1\r\nHost: h.example\r\nConnection: close\r\n\r\n`]);
+  expect(longDots.slice(longDots.indexOf("\r\n\r\n") + 4)).toBe("http://h.example/z");
+
+  // No Host header: url stays the bare target
+  const noHost = await raw([`GET /nohost?a=1 HTTP/1.0\r\n\r\n`]);
+  expect(noHost.slice(noHost.indexOf("\r\n\r\n") + 4)).toBe("/nohost?a=1");
+});
+
+it("request.url uses https scheme in the fast path for TLS servers", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls,
+    fetch(req) {
+      return new Response(req.url);
+    },
+  });
+  for (const [path, host, expected] of [
+    ["/a?b=c", "example.com", "https://example.com/a?b=c"],
+    ["/x/../y", "example.com", "https://example.com/y"],
+    // default https port is stripped by the parser — must not hit the fast path
+    ["/p'q", "example.com:443", "https://example.com/p'q"],
+    ["/p", "EXAMPLE.com", "https://example.com/p"],
+  ] as const) {
+    const res = await fetch(`https://127.0.0.1:${server.port}${path}`, {
+      headers: { Host: host },
+      tls: { rejectUnauthorized: false },
+    });
+    expect(await res.text()).toBe(expected);
+  }
+});
+
 it("request.url should be based on the Host header", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

@@ -1392,7 +1392,7 @@ async function getPipelineOptions() {
         (p.os === "darwin" || (p.os === "linux" && (p.distro === "amazonlinux" || p.abi === "musl"))),
     ),
     testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "darwin" && p.arch === "aarch64"),
-    testFiles: ["test/js/node/test/parallel/test-http2-debug-pipe.js"],
+    testFiles: ["js/node/test/parallel/test-http2-"],
   };
 }
 

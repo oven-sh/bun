@@ -9,6 +9,44 @@ const http2 = require('http2');
 const fs = require('fs');
 
 // Piping should work as expected with createWriteStream
+// DEBUG BRANCH: instrumented with an event trail + stall watchdog to diagnose
+// a darwin-aarch64 suite-context timeout. Logic is unchanged from upstream.
+
+const t0 = Date.now();
+const events = [];
+const ev = m => events.push(`+${Date.now() - t0}ms ${m}`);
+const state = {};
+
+const watchdog = setTimeout(() => {
+  console.error('WATCHDOG: stalled after 15s, event trail:');
+  for (const e of events) console.error(`  ${e}`);
+  const dump = (name, s) => {
+    if (!s) return console.error(`  ${name}: <unset>`);
+    const pick = {};
+    for (const k of [
+      'readable', 'readableEnded', 'readableFlowing', 'readableLength',
+      'writable', 'writableEnded', 'writableFinished', 'writableLength', 'writableNeedDrain',
+      'destroyed', 'closed', 'complete', 'aborted', 'rstCode', 'pending', 'bytesWritten',
+    ]) {
+      try {
+        const v = s[k];
+        if (v !== undefined) pick[k] = v;
+      } catch {}
+    }
+    console.error(`  ${name}: ${JSON.stringify(pick)}`);
+  };
+  dump('serverReq', state.serverReq);
+  dump('serverRes', state.serverRes);
+  dump('serverDest', state.serverDest);
+  dump('clientReq', state.clientReq);
+  dump('clientStr', state.clientStr);
+  dump('clientSession', state.clientSession);
+  try {
+    console.error(`  clientSession.state: ${JSON.stringify(state.clientSession?.state)}`);
+  } catch {}
+  process.exit(7);
+}, 15000);
+watchdog.unref();
 
 const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
@@ -18,32 +56,47 @@ const fn = tmpdir.resolve('http2-url-tests.js');
 const server = http2.createServer();
 
 server.on('request', common.mustCall((req, res) => {
-  const dest = req.pipe(fs.createWriteStream(fn));
+  state.serverReq = req;
+  state.serverRes = res;
+  ev('server: request');
+  req.on('end', () => ev('server: req end'));
+  req.on('error', e => ev(`server: req error ${e}`));
+  const dest = (state.serverDest = req.pipe(fs.createWriteStream(fn)));
+  dest.on('error', e => ev(`server: dest error ${e}`));
   dest.on('finish', common.mustCall(() => {
+    ev('server: dest finish');
     assert.strictEqual(req.complete, true);
     assert.strictEqual(fs.readFileSync(loc).length, fs.readFileSync(fn).length);
     fs.unlinkSync(fn);
     res.end();
+    ev('server: res.end()');
   }));
 }));
 
 server.listen(0, common.mustCall(() => {
   const port = server.address().port;
-  const client = http2.connect(`http://localhost:${port}`);
+  const client = (state.clientSession = http2.connect(`http://localhost:${port}`));
+  client.on('error', e => ev(`client: session error ${e}`));
+  client.on('goaway', (code, last) => ev(`client: goaway code=${code} last=${last}`));
+  client.on('close', () => ev('client: session close'));
 
   let remaining = 2;
   function maybeClose() {
+    ev(`maybeClose remaining=${remaining - 1}`);
     if (--remaining === 0) {
-      server.close();
-      client.close();
+      server.close(() => ev('server.close() completed'));
+      client.close(() => ev('client.close() completed'));
     }
   }
 
-  const req = client.request({ ':method': 'POST' });
-  req.on('response', common.mustCall());
+  const req = (state.clientReq = client.request({ ':method': 'POST' }));
+  req.on('response', common.mustCall(() => ev('client: response')));
   req.resume();
-  req.on('end', common.mustCall(maybeClose));
-  const str = fs.createReadStream(loc);
-  str.on('end', common.mustCall(maybeClose));
+  req.on('end', common.mustCall(() => { ev('client: req end'); maybeClose(); }));
+  req.on('error', e => ev(`client: req error ${e}`));
+  const str = (state.clientStr = fs.createReadStream(loc));
+  str.on('end', common.mustCall(() => { ev('client: str end'); maybeClose(); }));
+  str.on('error', e => ev(`client: str error ${e}`));
   str.pipe(req);
+  ev('client: pipe started');
 }));

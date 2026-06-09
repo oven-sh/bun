@@ -95,6 +95,108 @@ describe("test.extend", () => {
     expect(doubled).toBe(42);
   });
 
+  // diamond dependencies: d -> (b, c) -> a. The shared dependency is set up
+  // exactly once and torn down exactly once, in reverse setup order.
+  const diamondOrder: string[] = [];
+  const diamond = test.extend<{ a: number; b: number; c: number; d: number }>({
+    a: async ({}, use) => {
+      diamondOrder.push("+a");
+      await use(1);
+      diamondOrder.push("-a");
+    },
+    b: async ({ a }, use) => {
+      diamondOrder.push("+b");
+      await use(a + 1);
+      diamondOrder.push("-b");
+    },
+    c: async ({ a }, use) => {
+      diamondOrder.push("+c");
+      await use(a + 2);
+      diamondOrder.push("-c");
+    },
+    d: async ({ b, c }, use) => {
+      diamondOrder.push("+d");
+      await use(b + c);
+      diamondOrder.push("-d");
+    },
+  });
+
+  diamond("diamond dependencies set up the shared fixture once", ({ d }) => {
+    expect(d).toBe(5); // b = 2, c = 3
+    expect(diamondOrder).toEqual(["+a", "+b", "+c", "+d"]);
+  });
+
+  test("diamond teardown ran once per fixture, in reverse order", () => {
+    expect(diamondOrder).toEqual(["+a", "+b", "+c", "+d", "-d", "-c", "-b", "-a"]);
+  });
+
+  // fixture functions may return the value instead of calling use(); a
+  // disposable return value (Symbol.asyncDispose / Symbol.dispose) is disposed
+  // after the test as the fixture's teardown
+  const disposeLog: string[] = [];
+  const returned = test.extend<{
+    res: { tag: string; [Symbol.asyncDispose](): Promise<void>; [Symbol.dispose](): void };
+    syncRes: { [Symbol.dispose](): void };
+    plain: number;
+    nothing: null;
+  }>({
+    res: () => ({
+      tag: "res",
+      async [Symbol.asyncDispose]() {
+        disposeLog.push("asyncDispose res");
+      },
+      [Symbol.dispose]() {
+        disposeLog.push("dispose res");
+      },
+    }),
+    syncRes: async () => ({
+      [Symbol.dispose]() {
+        disposeLog.push("dispose syncRes");
+      },
+    }),
+    plain: ({ res }) => (disposeLog.push("create plain"), res.tag.length),
+    nothing: () => null,
+  });
+
+  returned("return-style fixtures provide the returned value", ({ res, syncRes, plain, nothing }) => {
+    expect(res.tag).toBe("res");
+    expect(typeof syncRes[Symbol.dispose]).toBe("function");
+    expect(plain).toBe(3);
+    expect(nothing).toBeNull();
+    expect(disposeLog).toEqual(["create plain"]);
+  });
+
+  test("returned disposables were disposed in reverse order, preferring asyncDispose", () => {
+    // `plain` has no teardown; `syncRes` only has Symbol.dispose; `res` has
+    // both and asyncDispose wins. Setup order was res, syncRes, plain.
+    expect(disposeLog).toEqual(["create plain", "dispose syncRes", "asyncDispose res"]);
+  });
+
+  // `await using` inside a use()-style fixture disposes when the fixture
+  // function resumes after the test
+  const usingLog: string[] = [];
+  const usingFixture = test.extend<{ conn: { name: string } }>({
+    conn: async ({}, use) => {
+      await using guard = {
+        async [Symbol.asyncDispose]() {
+          usingLog.push("disposed");
+        },
+      };
+      expect(guard).toBeDefined();
+      await use({ name: "conn" });
+      usingLog.push("after use");
+    },
+  });
+
+  usingFixture("await using composes with use()-style fixtures", ({ conn }) => {
+    expect(conn.name).toBe("conn");
+    expect(usingLog).toEqual([]);
+  });
+
+  test("await using declarations in fixtures were disposed after the test", () => {
+    expect(usingLog).toEqual(["after use", "disposed"]);
+  });
+
   // a [value, options] tuple whose second element carries no fixture option keys
   // is a plain array fixture value, not a tuple
   const plainTuple = test.extend<{ pair: unknown }>({ pair: [1, { other: true }] as any });
@@ -153,17 +255,21 @@ describe("test.extend", () => {
     expect(later).toBe("resolved");
   });
 
-  // concurrent tests each get their own context
+  // concurrent tests each get their own context. A shared barrier guarantees
+  // all three test bodies overlap before any of them re-checks its context.
   const concurrent = test.extend<{ bag: { id?: number } }>({
     bag: async ({}, use) => {
       await use({});
     },
   });
 
+  let startedCount = 0;
+  const allStarted = Promise.withResolvers<void>();
   concurrent.concurrent.each([[1], [2], [3]])("concurrent test %d has an isolated context", async (id, { bag }) => {
     expect(bag.id).toBeUndefined();
     bag.id = id;
-    await Bun.sleep(1);
+    if (++startedCount === 3) allStarted.resolve();
+    await allStarted.promise;
     expect(bag.id).toBe(id);
   });
 
@@ -262,7 +368,7 @@ describe.concurrent("test.extend failure modes", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a fixture that never calls use() fails the test", async () => {
+  test("a fixture that neither calls use() nor returns a value fails the test", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
       const t = test.extend<{ nope: number }>({
@@ -270,7 +376,40 @@ describe.concurrent("test.extend failure modes", () => {
       });
       t("uses nope", ({ nope }) => {});
     `);
-    expect(stderr).toContain('Fixture "nope" completed without calling use()');
+    expect(stderr).toContain('Fixture "nope" completed without calling use() or returning a value');
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("calling use() twice fails the test instead of deadlocking", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test } from "bun:test";
+      const t = test.extend<{ x: number }>({
+        x: async ({}, use) => {
+          await use(1);
+          await use(2);
+        },
+      });
+      t("double use", ({ x }) => {});
+    `);
+    expect(stderr).toContain('Fixture "x" called use() more than once');
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a throwing Symbol.asyncDispose on a returned fixture value fails the test", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test } from "bun:test";
+      const t = test.extend<{ bad: object }>({
+        bad: () => ({
+          async [Symbol.asyncDispose]() {
+            throw new Error("dispose exploded");
+          },
+        }),
+      });
+      t("uses bad", ({ bad }) => {});
+    `);
+    expect(stderr).toContain("dispose exploded");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });

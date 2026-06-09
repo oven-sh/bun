@@ -89,7 +89,9 @@ export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, n
  * Wrap a test callback so that, when the test runs, the fixtures it uses are set
  * up first (in dependency order), the callback receives the fixture context as
  * its last argument (after any `test.each` case arguments), and teardown runs in
- * reverse setup order once the callback settles.
+ * reverse setup order once the callback settles. Fixture functions either call
+ * `await use(value)` (code after it is the teardown) or return the value
+ * directly (a disposable return value is disposed as the teardown).
  */
 export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback: Function) {
   function arrayIncludes(array: string[], value: string): boolean {
@@ -203,17 +205,23 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     const teardowns: (() => Promise<unknown>)[] = [];
     const resolvedNames: string[] = [];
 
-    // Run one fixture function. The value passed to `use()` becomes the fixture
-    // value; the fixture function then stays suspended inside `use()` until
-    // teardown, when the remainder of the fixture function runs.
+    // Run one fixture function. The value passed to `use()` (or, when `use()` is
+    // never called, the function's resolved return value) becomes the fixture
+    // value. A `use()`-style fixture stays suspended inside `use()` until
+    // teardown, when the remainder of the fixture function runs. A return-style
+    // fixture whose value is disposable (`Symbol.asyncDispose`/`Symbol.dispose`)
+    // is disposed at teardown instead.
     function runFixtureSetup(name: string, setupFn: Function): Promise<unknown> {
       const valueCapability = $newPromiseCapability(Promise);
       let useCalled = false;
       // assigned before any teardown can run; teardown closures only execute
       // after the test body, long after this synchronous assignment
-      let fixtureReturn: Promise<void>;
+      let fixtureReturn: Promise<unknown>;
       fixtureReturn = (async () => {
-        await setupFn(context, async (useValue: unknown) => {
+        return await setupFn(context, async (useValue: unknown) => {
+          if (useCalled) {
+            throw new Error(`Fixture "${name}" called use() more than once. Call \`await use(value)\` exactly once.`);
+          }
           useCalled = true;
           valueCapability.resolve.$call(undefined, useValue);
           const releaseCapability = $newPromiseCapability(Promise);
@@ -224,14 +232,30 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
           await releaseCapability.promise;
         });
       })().$then(
-        () => {
-          if (!useCalled) {
-            valueCapability.reject.$call(
-              undefined,
-              new Error(
-                `Fixture "${name}" completed without calling use(). Call \`await use(value)\` in the fixture function.`,
-              ),
-            );
+        (returnValue: unknown) => {
+          if (useCalled) return;
+          try {
+            if (returnValue === undefined) {
+              throw new Error(
+                `Fixture "${name}" completed without calling use() or returning a value. Call \`await use(value)\` or return the fixture value.`,
+              );
+            }
+            // return-style fixture: the resolved return value is the fixture
+            // value. If it is disposable, disposing it is the teardown.
+            if (returnValue !== null && (typeof returnValue === "object" || typeof returnValue === "function")) {
+              const asyncDispose = (returnValue as Record<symbol, unknown>)[Symbol.asyncDispose];
+              const dispose = $isCallable(asyncDispose)
+                ? asyncDispose
+                : (returnValue as Record<symbol, unknown>)[Symbol.dispose];
+              if ($isCallable(dispose)) {
+                $arrayPush(teardowns, async () => {
+                  await (dispose as Function).$call(returnValue);
+                });
+              }
+            }
+            valueCapability.resolve.$call(undefined, returnValue);
+          } catch (error) {
+            valueCapability.reject.$call(undefined, error);
           }
         },
         (error: unknown) => {

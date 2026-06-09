@@ -419,7 +419,28 @@ test("select user", async ({ db }) => {
 });
 ```
 
-A fixture setup function receives the context as its first parameter and a `use` function as its second. Call `await use(value)` to provide the fixture value; code after `await use(value)` is the fixture's teardown and runs after the test finishes, even if the test fails. Teardown runs in reverse setup order.
+A fixture setup function receives the context as its first parameter and a `use` function as its second. Call `await use(value)` exactly once to provide the fixture value; code after `await use(value)` is the fixture's teardown and runs after the test finishes, even if the test fails. Teardown runs in reverse setup order.
+
+A fixture function can also return its value instead of calling `use()`. If the returned value is disposable (it implements `Symbol.asyncDispose` or `Symbol.dispose`), disposing it after the test is the fixture's teardown. This makes resources designed for `await using` one-liners:
+
+```ts
+// Database implements AsyncDisposable, so it is disposed after the test
+const test = base.extend<{ db: Database }>({
+  db: () => connect(),
+});
+```
+
+`await using` also composes with `use()`-style fixtures: the fixture function resumes after the test, so its `await using` declarations are disposed as teardown:
+
+```ts
+const test = base.extend<{ db: Database }>({
+  db: async ({}, use) => {
+    await using db = await connect();
+    await use(db);
+    // db is disposed here, after the test
+  },
+});
+```
 
 Fixtures are **lazy**: a fixture is only set up when a test (or another fixture) destructures it. To run a fixture for every test regardless, pass `{ auto: true }`:
 

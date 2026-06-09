@@ -462,6 +462,12 @@ declare module "bun:test" {
   /**
    * A fixture setup function. Receives the context (other fixtures it depends
    * on, referenced by destructuring) and a {@link Use} function.
+   *
+   * Either call `await use(value)` exactly once (code after it is the
+   * fixture's teardown), or return the fixture value directly without calling
+   * `use()`; a returned value that is disposable (it implements
+   * `Symbol.asyncDispose` or `Symbol.dispose`) is disposed after the test as
+   * the fixture's teardown.
    */
   export type FixtureFn<V, Ctx> = (context: Ctx, use: Use<V>) => unknown | Promise<unknown>;
 
@@ -621,13 +627,15 @@ declare module "bun:test" {
      * test registered through it. The test callback receives the fixture
      * context as its last parameter; access fixtures by destructuring it.
      *
-     * A fixture is either a plain value or a setup function that calls
-     * `await use(value)`. Setup code before `use()` runs before the test, and
-     * teardown code after `use()` runs after the test, in reverse setup order.
-     * Fixture setup functions can depend on other fixtures by destructuring
-     * their first parameter. Fixtures are lazy: a fixture is only set up when
-     * the test (or another fixture it uses) destructures it, unless it is
-     * declared with `{ auto: true }`.
+     * A fixture is either a plain value or a setup function. A setup function
+     * either calls `await use(value)` (setup code before `use()` runs before
+     * the test, teardown code after it runs after the test, in reverse setup
+     * order) or returns the fixture value directly, in which case a disposable
+     * value (`Symbol.asyncDispose` or `Symbol.dispose`) is disposed after the
+     * test. Fixture setup functions can depend on other fixtures by
+     * destructuring their first parameter. Fixtures are lazy: a fixture is only
+     * set up when the test (or another fixture it uses) destructures it, unless
+     * it is declared with `{ auto: true }`.
      *
      * Tests registered through an extended test function do not take a `done`
      * callback; return a promise instead.
@@ -649,7 +657,7 @@ declare module "bun:test" {
      */
     extend<FixturesCtx extends Record<string, unknown>>(
       fixtures: Fixtures<FixturesCtx, __internal.ContextOrEmpty<Ctx>>,
-    ): Test<T, __internal.ContextOrEmpty<Ctx> & FixturesCtx>;
+    ): Test<T, Omit<__internal.ContextOrEmpty<Ctx>, keyof FixturesCtx> & FixturesCtx>;
   }
   /**
    * Runs a test.

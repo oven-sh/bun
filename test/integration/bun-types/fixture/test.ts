@@ -496,4 +496,27 @@ unknownMatchers.toBe("a");
   const typed = test.extend<{ port: number }>({ port: 3000 });
   // @ts-expect-error string is not assignable to number
   typed.extend<{ port: number }>({ port: "nope" });
+
+  // re-extending the same fixture name with a different type: the later type wins
+  const retyped = test.extend<{ v: number }>({ v: 1 }).extend<{ v: string }>({ v: "s" });
+  retyped("override replaces the fixture type", ({ v }) => {
+    expectType<string>(v);
+  });
+
+  // return-style fixtures: the setup function may return the value instead of
+  // calling use(); disposable values are disposed after the test
+  const withDisposable = test.extend<{ res: { tag: string } & AsyncDisposable; plain: number }>({
+    res: () => ({
+      tag: "r",
+      async [Symbol.asyncDispose]() {},
+    }),
+    plain: ctx => {
+      expectType<string>(ctx.res.tag);
+      return 42;
+    },
+  });
+  withDisposable("return-style fixtures are typed", ({ res, plain }) => {
+    expectType<string>(res.tag);
+    expectType<number>(plain);
+  });
 }

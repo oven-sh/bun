@@ -308,3 +308,46 @@ test("mysql: graceful close() resolves while a connect retry is pending", async 
     server.close();
   }
 });
+
+test("mysql: onclose fires once per closed connection, not per retry attempt", async () => {
+  let connections = 0;
+  let oncloseCalls = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  const db = new SQL({
+    url: `mysql://root@127.0.0.1:${port}/mysql`,
+    max: 1,
+    connectionTimeout: 1,
+    onclose: () => {
+      oncloseCalls++;
+    },
+  });
+  try {
+    const err = await db.connect().catch(e => e);
+    expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+    expect(connections).toBeGreaterThanOrEqual(2);
+    expect(oncloseCalls).toBe(1);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});
+
+test("mysql: connectionTimeout: 0 disables connect retries", async () => {
+  let connections = 0;
+  const { port, server } = await listeningServer(socket => {
+    connections++;
+    socket.destroy();
+  });
+  const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/mysql`, max: 1, connectionTimeout: 0 });
+  try {
+    const err = await db.connect().catch(e => e);
+    expect(err.code).toBe("ERR_MYSQL_CONNECTION_FAILED");
+    expect(connections).toBe(1);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
+});

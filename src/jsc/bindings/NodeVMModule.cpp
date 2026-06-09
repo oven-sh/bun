@@ -319,13 +319,14 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
             if (dependency->status() == Status::Linked) {
                 JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
                 RETURN_IF_EXCEPTION(scope, );
-                // Source text dependencies now evaluate via the spec-style
-                // Evaluate() and always return a capability promise; a
-                // synchronously-finished dependency's promise is already
-                // settled. Only a still-pending promise (top-level await in a
-                // dependency) is unsupported by this sequential walk.
-                if (auto* dependencyPromise = dynamicDowncast<JSC::JSPromise>(dependencyResult))
-                    RELEASE_ASSERT_WITH_MESSAGE(dependencyPromise->status() != JSC::JSPromise::Status::Pending, "TODO(@heimskr): implement async support for node:vm module dependencies");
+                // Source text dependencies evaluate via the spec-style
+                // Evaluate() and return a capability promise. A still-pending
+                // promise means the dependency uses top-level await; the
+                // root record's evaluate() drives the async machinery to
+                // completion and the wrapper status reconciles lazily
+                // (reconcileEvaluationState), so a pending result is fine
+                // here.
+                UNUSED_PARAM(dependencyResult);
             }
         }
     }

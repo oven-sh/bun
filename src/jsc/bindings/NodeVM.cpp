@@ -16,6 +16,7 @@
 
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/JSWebAssemblyCompileError.h"
+#include "JavaScriptCore/JSWebAssemblyModule.h"
 #include "wtf/text/ExternalStringImpl.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -492,6 +493,16 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         if (stack_size == 0) {
             return false;
         }
+
+        // Decoration must be idempotent: an error crossing several nested vm
+        // boundaries passes through here once per layer (Node guards with a
+        // hidden "decorated" marker too).
+        const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
+        if (errorInstance->getDirect(vm, decoratedName)) {
+            JSC::throwException(globalObject, throwScope, exception.get());
+            return true;
+        }
+
         auto& stack_frame = e_stack[0];
         auto source_url = stack_frame.sourceURL(vm);
         // Treat empty, [unknown], and [source:*] placeholders as missing source URLs
@@ -553,6 +564,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
             prepend = makeString(source_url, ":"_s, line_and_column.line, "\n"_s, stack);
         }
         errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
+        errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 
         JSC::throwException(globalObject, throwScope, exception.get());
         return true;
@@ -605,15 +617,22 @@ std::optional<JSC::EncodedJSValue> getNodeVMContextOptions(JSGlobalObject* globa
     }
 
     // microtaskMode: "afterEvaluate" gives the context its own microtask
-    // queue. Value validation (validateOneOf) happens in vm.ts.
+    // queue. Validated here (not only in vm.ts) so native entry points like
+    // script.runInNewContext reject invalid values the way Node does.
     JSValue microtaskModeValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "microtaskMode"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    if (microtaskModeValue && microtaskModeValue.isString()) {
-        String microtaskMode = microtaskModeValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (microtaskMode == "afterEvaluate"_s) {
-            outOptions.ownMicrotaskQueue = true;
+    if (microtaskModeValue && !microtaskModeValue.isUndefined()) {
+        bool isAfterEvaluate = false;
+        if (microtaskModeValue.isString()) {
+            String microtaskMode = microtaskModeValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            isAfterEvaluate = microtaskMode == "afterEvaluate"_s;
         }
+        if (!isAfterEvaluate) {
+            static constexpr ASCIILiteral oneOf[] = { "afterEvaluate"_s, "undefined"_s };
+            return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.microtaskMode"_s, "must be one of"_s, microtaskModeValue, oneOf);
+        }
+        outOptions.ownMicrotaskQueue = true;
     }
 
     JSValue codeGenerationValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, codeGenerationKey));
@@ -901,6 +920,18 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmDisallowed, (JSC::JSGlobalObject * globalOb
     return {};
 }
 
+// Async compile entry points reject (rather than throw) with the embedder
+// CompileError, like V8's code-generation callback.
+JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* error = JSC::createJSWebAssemblyCompileError(globalObject, vm, "Wasm code generation disallowed by embedder"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, error)));
+}
+
+
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -930,16 +961,48 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 
     if (!m_contextOptions.allowWasm) {
         // JSC's setWebAssemblyEnabled only gates the streaming entry points;
-        // synchronous `new WebAssembly.Module(bytes)` would still compile.
-        // Replace the constructor so it throws CompileError like V8's
-        // embedder gating.
+        // `new WebAssembly.Module(bytes)`, WebAssembly.compile(bytes), and
+        // WebAssembly.instantiate(bytes) would still compile. Gate them like
+        // V8's embedder callback: code *generation* throws/rejects
+        // CompileError, while introspection (Module.imports/exports/
+        // customSections) and instantiating an already-compiled module stay
+        // available.
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue webAssembly = get(this, Identifier::fromString(vm, "WebAssembly"_s));
         RETURN_IF_EXCEPTION(scope, );
         if (webAssembly.isObject()) {
             JSObject* webAssemblyObject = asObject(webAssembly);
+
             JSC::JSFunction* moduleDisallowed = JSC::JSFunction::create(vm, this, 1, "Module"_s, jsNodeVmWasmDisallowed, ImplementationVisibility::Public, NoIntrinsic, jsNodeVmWasmDisallowed);
+            JSValue originalModule = webAssemblyObject->get(this, Identifier::fromString(vm, "Module"_s));
+            RETURN_IF_EXCEPTION(scope, );
+            if (originalModule.isObject()) {
+                JSObject* originalModuleObject = asObject(originalModule);
+                // Preserve the introspection statics and the prototype so
+                // existing Module instances keep working inside the context.
+                for (auto staticName : { "imports"_s, "exports"_s, "customSections"_s }) {
+                    Identifier identifier = Identifier::fromString(vm, staticName);
+                    JSValue staticValue = originalModuleObject->get(this, identifier);
+                    RETURN_IF_EXCEPTION(scope, );
+                    moduleDisallowed->putDirect(vm, identifier, staticValue, static_cast<unsigned>(PropertyAttribute::DontEnum));
+                }
+                JSValue prototypeValue = originalModuleObject->get(this, vm.propertyNames->prototype);
+                RETURN_IF_EXCEPTION(scope, );
+                moduleDisallowed->putDirect(vm, vm.propertyNames->prototype, prototypeValue, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+                // Without this, prototype.constructor would hand back the
+                // original compiling constructor.
+                if (prototypeValue.isObject()) {
+                    asObject(prototypeValue)->putDirect(vm, vm.propertyNames->constructor, moduleDisallowed, static_cast<unsigned>(PropertyAttribute::DontEnum));
+                }
+            }
             webAssemblyObject->putDirect(vm, Identifier::fromString(vm, "Module"_s), moduleDisallowed, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+            // WebAssembly.compile bypasses JSC's webAssemblyEnabled gate, so
+            // replace it with a rejecting version. WebAssembly.instantiate is
+            // already gated by setWebAssemblyEnabled and rejects with the
+            // embedder CompileError on its own.
+            JSC::JSFunction* compileDisallowed = JSC::JSFunction::create(vm, this, 1, "compile"_s, jsNodeVmWasmCompileDisallowed, ImplementationVisibility::Public);
+            webAssemblyObject->putDirect(vm, Identifier::fromString(vm, "compile"_s), compileDisallowed, static_cast<unsigned>(PropertyAttribute::DontEnum));
         }
     }
 

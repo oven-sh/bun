@@ -949,9 +949,9 @@ pub use ws2_32::WSAGetLastError;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
-// codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
-// crates (errno) is named here; the full 1188-variant table can be extended
-// without ABI change.
+// codes round-trip and `match` on consts works (structural equality). Only
+// the subset referenced by lower-tier crates (errno) is named here; new
+// MS-ERREF consts can be added without ABI change.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

@@ -35,6 +35,9 @@ const watchdog = setTimeout(() => {
     }
     console.error(`  ${name}: ${JSON.stringify(pick)}`);
   };
+  dump('serverSock', state.serverSock);
+  dump('serverSession', state.serverSession);
+  try { console.error(`  server._connections: ${server._connections}`); } catch {}
   dump('serverReq', state.serverReq);
   dump('serverRes', state.serverRes);
   dump('serverDest', state.serverDest);
@@ -54,6 +57,21 @@ const loc = fixtures.path('person-large.jpg');
 const fn = tmpdir.resolve('http2-url-tests.js');
 
 const server = http2.createServer();
+
+server.on('connection', sock => {
+  state.serverSock = sock;
+  ev('server: connection');
+  sock.on('end', () => ev('server: socket end'));
+  sock.on('close', () => ev('server: socket close'));
+  sock.on('error', e => ev('server: socket error ' + e));
+});
+server.on('session', session => {
+  state.serverSession = session;
+  ev('server: session');
+  session.on('close', () => ev('server: session close'));
+  session.on('goaway', (c, l) => ev('server: session goaway code=' + c + ' last=' + l));
+  session.on('error', e => ev('server: session error ' + e));
+});
 
 server.on('request', common.mustCall((req, res) => {
   state.serverReq = req;

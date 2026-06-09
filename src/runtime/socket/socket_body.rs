@@ -710,7 +710,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         match self.handlers.get() {
             Some(h) => {
                 // SAFETY: debug-only read; handlers outlive the socket callbacks.
-                if unsafe { h.as_ref() }.mode == super::SocketMode::Server { "S" } else { "C" }
+                if unsafe { h.as_ref() }.mode == super::SocketMode::Server {
+                    "S"
+                } else {
+                    "C"
+                }
             }
             None => "none",
         }

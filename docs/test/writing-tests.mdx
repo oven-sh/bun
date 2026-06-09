@@ -439,13 +439,11 @@ const test = base.extend<{ logs: string[] }>({
 Fixtures can depend on other fixtures by destructuring them, and `.extend()` calls chain, with later fixtures overriding earlier ones of the same name:
 
 ```ts
-const test = base
-  .extend<{ port: number }>({ port: 3000 })
-  .extend<{ url: string }>({
-    url: async ({ port }, use) => {
-      await use(`http://localhost:${port}`);
-    },
-  });
+const test = base.extend<{ port: number }>({ port: 3000 }).extend<{ url: string }>({
+  url: async ({ port }, use) => {
+    await use(`http://localhost:${port}`);
+  },
+});
 
 test("fixtures compose", ({ url }) => {
   expect(url).toBe("http://localhost:3000");

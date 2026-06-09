@@ -309,6 +309,10 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
+    /// Copies the remaining bytes with a blocking read/write loop (we run on
+    /// a concurrent task thread, not the JS thread) and truncates the
+    /// destination to the copied length. Used when `copy_file_range`,
+    /// `sendfile`, and `splice` are unavailable or unusable.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn fallback_read_write(
         &mut self,
@@ -318,7 +322,6 @@ impl<'a> CopyFile<'a> {
         unknown_size: bool,
         total_written: &mut u64,
     ) -> Result<(), bun_core::Error> {
-        // TODO: this should use non-blocking I/O.
         match node_fs::NodeFS::copy_file_using_read_write_loop(
             bun_core::ZStr::EMPTY,
             bun_core::ZStr::EMPTY,

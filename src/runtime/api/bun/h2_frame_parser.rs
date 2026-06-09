@@ -1780,8 +1780,10 @@ impl Stream {
             }
             if self.data_frame_queue.is_empty() {
                 if _frame.end_stream {
-                    eprintln!("[h2dbg-r] flush end_stream id={} wait_trailers={} state={:?}",
-                        self.id, self.wait_for_trailers, self.state as u8);
+                    eprintln!(
+                        "[h2dbg-r] flush end_stream id={} wait_trailers={} state={:?}",
+                        self.id, self.wait_for_trailers, self.state as u8
+                    );
                     if self.wait_for_trailers {
                         client.dispatch(JSH2FrameParser::Gc::onWantTrailers, self.get_identifier());
                     } else {

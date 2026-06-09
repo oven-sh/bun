@@ -440,7 +440,51 @@ declare module "bun:test" {
      * Accepts `[1, 2, 3] | ["a", "b", "c"]` and returns `[1 | "a", 2 | "b", 3 | "c"]`
      */
     type Flatten<T, Copy extends T = T> = { [Key in keyof T]: Copy[Key] };
+
+    /**
+     * `Test<T>` uses `never` as the "not extended" marker; after `.extend()` the
+     * context is a real object type. This maps the marker to `{}` so fixture
+     * contexts can be intersected.
+     */
+    type ContextOrEmpty<Ctx> = [Ctx] extends [never] ? {} : Ctx;
+
+    /** A fixture value of a function type must be declared with the setup-function form. */
+    type FixtureValue<V, Ctx> = ((...args: any) => any) extends V ? FixtureFn<V, Ctx> : V | FixtureFn<V, Ctx>;
   }
+
+  /**
+   * The `use` function passed to a fixture function. Call `await use(value)` to
+   * provide the fixture value; the test runs while `use()` is pending, and code
+   * after `await use(value)` runs as teardown once the test finishes.
+   */
+  export type Use<V> = (value: V) => Promise<void>;
+
+  /**
+   * A fixture setup function. Receives the context (other fixtures it depends
+   * on, referenced by destructuring) and a {@link Use} function.
+   */
+  export type FixtureFn<V, Ctx> = (context: Ctx, use: Use<V>) => unknown | Promise<unknown>;
+
+  export interface FixtureOptions {
+    /**
+     * Set up this fixture for every test registered through the extended test
+     * function, even tests that do not destructure it.
+     *
+     * @default false
+     */
+    auto?: boolean;
+  }
+
+  /**
+   * The object passed to `test.extend()`. Each property is either a plain
+   * fixture value or a fixture setup function, optionally wrapped in a
+   * `[valueOrFn, options]` tuple.
+   */
+  export type Fixtures<FixturesCtx extends Record<string, unknown>, Ctx = {}> = {
+    [K in keyof FixturesCtx]:
+      | __internal.FixtureValue<FixturesCtx[K], Ctx & Omit<FixturesCtx, K>>
+      | [__internal.FixtureValue<FixturesCtx[K], Ctx & Omit<FixturesCtx, K>>, FixtureOptions];
+  };
 
   /**
    * Runs a test.
@@ -465,13 +509,16 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test<T extends ReadonlyArray<unknown>> {
+  export interface Test<T extends ReadonlyArray<unknown>, Ctx extends Record<string, unknown> = never> {
     (
       label: string,
 
       fn: (
         ...args: __internal.IsTuple<T> extends true
-          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          ? [
+              ...table: __internal.Flatten<T>,
+              ...rest: [Ctx] extends [never] ? [done: (err?: unknown) => void] : [context: Ctx],
+            ]
           : T
       ) => void | Promise<unknown>,
 
@@ -487,11 +534,11 @@ declare module "bun:test" {
     /**
      * Skips all other tests, except this test.
      */
-    only: Test<T>;
+    only: Test<T, Ctx>;
     /**
      * Skips this test.
      */
-    skip: Test<T>;
+    skip: Test<T, Ctx>;
     /**
      * Marks this test as to be written or to be fixed.
      *
@@ -500,7 +547,7 @@ declare module "bun:test" {
      * remove the `.todo` or check that your test
      * is implemented correctly.
      */
-    todo: Test<T>;
+    todo: Test<T, Ctx>;
     /**
      * Marks this test as failing.
      *
@@ -512,16 +559,16 @@ declare module "bun:test" {
      * `test.failing` is very similar to {@link test.todo} except that it always
      * runs, regardless of the `--todo` flag.
      */
-    failing: Test<T>;
+    failing: Test<T, Ctx>;
     /**
      * Runs the test concurrently with other concurrent tests.
      */
-    concurrent: Test<T>;
+    concurrent: Test<T, Ctx>;
     /**
      * Forces the test to run serially (not in parallel),
      * even when the --concurrent flag is used.
      */
-    serial: Test<T>;
+    serial: Test<T, Ctx>;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -529,46 +576,80 @@ declare module "bun:test" {
      *
      * @param condition if the test should run
      */
-    if(condition: boolean): Test<T>;
+    if(condition: boolean): Test<T, Ctx>;
     /**
      * Skips this test, if `condition` is true.
      *
      * @param condition if the test should be skipped
      */
-    skipIf(condition: boolean): Test<T>;
+    skipIf(condition: boolean): Test<T, Ctx>;
     /**
      * Marks this test as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if the test should be marked TODO
      */
-    todoIf(condition: boolean): Test<T>;
+    todoIf(condition: boolean): Test<T, Ctx>;
     /**
      * Marks this test as failing, if `condition` is true.
      *
      * @param condition if the test should be marked as failing
      */
-    failingIf(condition: boolean): Test<T>;
+    failingIf(condition: boolean): Test<T, Ctx>;
     /**
      * Runs the test concurrently with other concurrent tests, if `condition` is true.
      *
      * @param condition if the test should run concurrently
      */
-    concurrentIf(condition: boolean): Test<T>;
+    concurrentIf(condition: boolean): Test<T, Ctx>;
     /**
      * Forces the test to run serially (not in parallel), if `condition` is true.
      * This applies even when the --concurrent flag is used.
      *
      * @param condition if the test should run serially
      */
-    serialIf(condition: boolean): Test<T>;
+    serialIf(condition: boolean): Test<T, Ctx>;
     /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
-    each<T extends unknown[]>(table: readonly T[]): Test<T>;
-    each<const T>(table: T[]): Test<[T]>;
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T, Ctx>;
+    each<T extends unknown[]>(table: readonly T[]): Test<T, Ctx>;
+    each<const T>(table: T[]): Test<[T], Ctx>;
+    /**
+     * Returns a new test function with the given fixtures available to every
+     * test registered through it. The test callback receives the fixture
+     * context as its last parameter; access fixtures by destructuring it.
+     *
+     * A fixture is either a plain value or a setup function that calls
+     * `await use(value)`. Setup code before `use()` runs before the test, and
+     * teardown code after `use()` runs after the test, in reverse setup order.
+     * Fixture setup functions can depend on other fixtures by destructuring
+     * their first parameter. Fixtures are lazy: a fixture is only set up when
+     * the test (or another fixture it uses) destructures it, unless it is
+     * declared with `{ auto: true }`.
+     *
+     * Tests registered through an extended test function do not take a `done`
+     * callback; return a promise instead.
+     *
+     * @example
+     * const dbTest = test.extend<{ db: Database }>({
+     *   db: async ({}, use) => {
+     *     const db = await connect();
+     *     await use(db);
+     *     await db.close();
+     *   },
+     * });
+     *
+     * dbTest("select", async ({ db }) => {
+     *   expect(await db.query("SELECT 1")).toHaveLength(1);
+     * });
+     *
+     * @param fixtures an object defining the fixtures
+     */
+    extend<FixturesCtx extends Record<string, unknown>>(
+      fixtures: Fixtures<FixturesCtx, __internal.ContextOrEmpty<Ctx>>,
+    ): Test<T, __internal.ContextOrEmpty<Ctx> & FixturesCtx>;
   }
   /**
    * Runs a test.

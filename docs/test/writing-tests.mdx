@@ -396,6 +396,74 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
 });
 ```
 
+## Fixtures
+
+### test.extend
+
+Use `test.extend()` to create a test function with reusable setup and teardown, modeled on [Playwright](https://playwright.dev/docs/test-fixtures) and [Vitest](https://vitest.dev/guide/test-context.html#test-extend) fixtures. Each fixture is either a plain value or a setup function; tests access fixtures by destructuring the context object, which is passed as the test callback's last parameter.
+
+```ts title="db.test.ts" icon="/icons/typescript.svg"
+import { test as base, expect } from "bun:test";
+
+const test = base.extend<{ db: Database }>({
+  db: async ({}, use) => {
+    const db = await connect(); // runs before the test
+    await use(db); // the test runs while use() is pending
+    await db.close(); // runs after the test
+  },
+});
+
+test("select user", async ({ db }) => {
+  const rows = await db.query("SELECT 1");
+  expect(rows).toHaveLength(1);
+});
+```
+
+A fixture setup function receives the context as its first parameter and a `use` function as its second. Call `await use(value)` to provide the fixture value; code after `await use(value)` is the fixture's teardown and runs after the test finishes, even if the test fails. Teardown runs in reverse setup order.
+
+Fixtures are **lazy**: a fixture is only set up when a test (or another fixture) destructures it. To run a fixture for every test regardless, pass `{ auto: true }`:
+
+```ts
+const test = base.extend<{ logs: string[] }>({
+  logs: [
+    async ({}, use) => {
+      const logs: string[] = [];
+      await use(logs);
+      console.log(logs.join("\n"));
+    },
+    { auto: true },
+  ],
+});
+```
+
+Fixtures can depend on other fixtures by destructuring them, and `.extend()` calls chain, with later fixtures overriding earlier ones of the same name:
+
+```ts
+const test = base
+  .extend<{ port: number }>({ port: 3000 })
+  .extend<{ url: string }>({
+    url: async ({ port }, use) => {
+      await use(`http://localhost:${port}`);
+    },
+  });
+
+test("fixtures compose", ({ url }) => {
+  expect(url).toBe("http://localhost:3000");
+});
+```
+
+The extended test function keeps all modifiers (`.skip`, `.only`, `.todo`, `.each`, `.if`, and so on). With `test.each`, the table arguments come first and the fixture context last:
+
+```ts
+const withN = base.extend<{ n: number }>({ n: 10 });
+
+withN.each([[1], [2]])("n + %i", (i, { n }) => {
+  expect(n + i).toBeGreaterThan(10);
+});
+```
+
+Because the runner detects used fixtures from the destructuring pattern, the context parameter of a test (or fixture) must use object destructuring; rest elements (`...rest`) are not supported. Tests registered through an extended test function do not take a `done` callback; return a promise instead. Fixture teardown does not run for tests that time out.
+
 ## Assertion Counting
 
 Bun supports verifying that a specific number of assertions were called during a test:

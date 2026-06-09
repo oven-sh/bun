@@ -263,7 +263,14 @@ class MockAgent {
 function mockErrors() {}
 
 class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
+class Agent extends Dispatcher {
+  async close() {
+    // Bun's undici implementation doesn't maintain connections
+    // that need to be explicitly closed, so this is a no-op
+    // This method exists for API compatibility with Node.js undici
+    return undefined;
+  }
+}
 class Pool extends Dispatcher {
   request() {}
 }

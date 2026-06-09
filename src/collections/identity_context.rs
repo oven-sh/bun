@@ -1,7 +1,6 @@
 use core::marker::PhantomData;
 
-/// Trait covering the Zig `@typeInfo(Key)` switch in `IdentityContext.hash`:
-/// `.@"enum" => @intFromEnum(key)`, `.int => key`, `else => @compileError(...)`.
+/// Trait for keys usable with `IdentityContext`.
 /// Implement for any int (`self as u64`) or `#[repr(uN)]` enum (`self as uN as u64`).
 pub trait IdentityHash: Copy + Eq {
     fn identity_hash(self) -> u64;
@@ -22,7 +21,6 @@ pub struct IdentityContext<Key>(PhantomData<Key>);
 
 impl<Key: IdentityHash> IdentityContext<Key> {
     pub fn hash(self, key: Key) -> u64 {
-        // Zig: switch (comptime @typeInfo(Key)) { .@"enum" => @intFromEnum(key), .int => key, else => @compileError }
         key.identity_hash()
     }
 
@@ -59,8 +57,8 @@ impl ArrayIdentityContextU64 {
     }
 }
 
-// Zig's `ArrayIdentityContext.U64` nesting — inherent assoc types are unstable,
-// so expose as a free path alias instead. Callers: `identity_context::U64`.
+// Inherent assoc types are unstable, so expose this as a free path alias.
+// Callers: `identity_context::U64`.
 pub type U64 = ArrayIdentityContextU64;
 
 // ArrayHashMap requires `C: ArrayHashContext<K>`, so wire the inherent impls
@@ -88,5 +86,3 @@ impl crate::array_hash_map::ArrayHashContext<u64> for ArrayIdentityContextU64 {
         a == b
     }
 }
-
-// ported from: src/collections/identity_context.zig

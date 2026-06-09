@@ -1,5 +1,4 @@
-//! Copy of std.Thread.Condition, but uses Bun's Mutex and Futex.
-//! Synchronized with std as of Zig 0.14.1.
+//! Condition variable built on Bun's Mutex and Futex.
 //!
 //! Condition variables are used with a Mutex to efficiently wait for an arbitrary condition to occur.
 //! It does this by atomically unlocking the mutex, blocking the thread until notified, and finally re-locking the mutex.
@@ -58,7 +57,6 @@ use crate::guarded::GuardedLock;
 
 #[derive(Default)]
 pub struct Condition {
-    // PORT NOTE: Zig field name `impl` is a Rust keyword; renamed to `impl_`.
     impl_: Impl,
 }
 
@@ -79,7 +77,7 @@ impl From<TimeoutError> for bun_core::Error {
 }
 
 impl Condition {
-    /// Const-init an empty condition variable (Zig: `.{}`). Required for
+    /// Const-init an empty condition variable. Required for
     /// `static` items — this is the `parking_lot::Condvar::new()` parity that
     /// `std::sync::Condvar` lacks.
     pub const fn new() -> Self {
@@ -142,9 +140,8 @@ impl Condition {
 
     // ── parking_lot::Condvar parity (guard-style API) ─────────────────────
     //
-    // Zig's `Condition.wait` takes a bare `*Mutex` (the caller writes
-    // `mutex.lock(); defer mutex.unlock(); cond.wait(&mutex)`). Rust callers
-    // hold a `GuardedLock<'_, T>` instead, so these overloads peel the inner
+    // The base `wait` takes a bare `&Mutex`. Callers that hold a
+    // `GuardedLock<'_, T>` instead use these overloads, which peel the inner
     // `&Mutex` out of the guard and forward. The mutex is unlocked for the
     // duration of the OS wait and re-locked before return, so the guard's
     // `Drop` (which unlocks once) remains balanced.
@@ -185,9 +182,9 @@ type Impl = WindowsImpl;
 #[cfg(not(windows))]
 type Impl = FutexImpl;
 
-// PORT NOTE: Zig passed `comptime notify: Notify`. Stable Rust forbids enum
-// const-generic params (`adt_const_params`), so `wake()` takes it at runtime;
-// the two-variant match optimizes equivalently.
+// Stable Rust forbids enum const-generic params (`adt_const_params`), so
+// `wake()` takes the notify mode at runtime; the two-variant match optimizes
+// equivalently.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Notify {
     One, // wake up only one thread
@@ -257,7 +254,6 @@ mod windows_impl {
             #[cfg(debug_assertions)]
             {
                 // The internal state of the DebugMutex needs to be handled here as well.
-                // TODO(port): Mutex internals — Zig: mutex.impl.locking_thread.store(0, .unordered)
                 mutex.impl_.locking_thread.store(0, Ordering::Relaxed);
             }
             // SAFETY: `condition` and `srwlock` are UnsafeCell-wrapped OS sync primitives;
@@ -266,7 +262,7 @@ mod windows_impl {
             let rc = unsafe {
                 kernel32::SleepConditionVariableSRW(
                     self.condition.get(),
-                    // TODO(port): Mutex internals — debug build wraps an inner impl with `srwlock`.
+                    // The debug build's DebugMutex wraps an inner impl holding `srwlock`.
                     #[cfg(debug_assertions)]
                     {
                         mutex.impl_.impl_.srwlock.get()
@@ -349,7 +345,7 @@ impl FutexImpl {
         state += Self::ONE_WAITER;
 
         mutex.unlock();
-        // PORT NOTE: Zig `defer mutex.lock()` — re-acquire on every exit path (Ok and Err).
+        // Re-acquire on every exit path (Ok and Err).
         // Condvar wait semantics (unlock, block, re-lock) are the inverse of MutexGuard,
         // so the re-lock is expressed as a one-off defer rather than an RAII guard type.
         scopeguard::defer! { mutex.lock(); }
@@ -462,5 +458,3 @@ impl FutexImpl {
         }
     }
 }
-
-// ported from: src/threading/Condition.zig

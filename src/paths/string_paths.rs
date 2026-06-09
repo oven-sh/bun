@@ -12,8 +12,8 @@ use crate::windows;
 use bun_core::string::immutable as strings;
 use bun_core::{WStr, ZStr};
 
-// Generic code-unit bound for fns that operate over both u8 and u16 paths.
-// Zig used `comptime T: type`; bound on `crate::PathChar` (provides
+// Generic code-unit bound for fns that operate over both u8 and u16 paths:
+// `crate::PathChar` (provides
 // `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
 pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
 impl Ch for u8 {}
@@ -24,8 +24,8 @@ impl Ch for u16 {}
 /// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
 /// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
 /// returned lifetime to it; the NUL is debug-asserted (release relies on the
-/// caller upholding the documented `wbuf[len] == 0` precondition — same
-/// contract as Zig `[:0]const u16` slicing). Mirrors [`ZStr::from_buf`].
+/// caller upholding the documented `wbuf[len] == 0` precondition).
+/// Mirrors [`ZStr::from_buf`].
 #[inline(always)]
 pub(crate) fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
@@ -56,7 +56,7 @@ fn has_prefix_ascii_t<T: Ch>(s: &[T], prefix: &[u8]) -> bool {
 /// an absolute path contain a drive letter.
 ///
 /// Thin wrapper over the canonical [`crate::strings`] impl that additionally
-/// debug-asserts the Zig precondition `Platform.windows.isAbsoluteT(chars)`
+/// debug-asserts the precondition `Platform.windows.isAbsoluteT(chars)`
 /// (bun_core can't, as `bun_paths` would be a tier-0 cycle there).
 #[inline]
 pub fn is_windows_absolute_path_missing_drive_letter<T: Ch + From<u8>>(chars: &[T]) -> bool {
@@ -79,8 +79,8 @@ pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
-    // PORT NOTE: Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
-    // collapsed to a local `has_prefix_ascii_t` (widens each ASCII byte via T::from_u8).
+    // A local `has_prefix_ascii_t` covers both widths (widens each ASCII byte
+    // via T::from_u8).
     if has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
         return &path[windows::NT_OBJECT_PREFIX.len()..];
     }
@@ -234,8 +234,8 @@ pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &
         return wstr_in_buf(wbuf, 0);
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
-    // here we capture the length and re-derive the mutable slice.
+    // Capture the length and re-derive the mutable slice (borrowck-friendly
+    // alternative to writing into wbuf and re-slicing it).
     let len = {
         let mut path_to_use = normalize_slashes_only_t::<u16, b'\\', true>(wbuf, path);
 
@@ -262,7 +262,7 @@ pub(crate) fn normalize_slashes_only_t<
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
-    // PORT NOTE: was `const _: () = assert!(..)` but Rust forbids const items
+    // Was `const _: () = assert!(..)` but Rust forbids const items
     // referencing outer const-generic params (E0401). Debug-assert instead.
     debug_assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
     let undesired_slash: u8 = if DESIRED_SLASH == b'/' { b'\\' } else { b'/' };
@@ -284,9 +284,9 @@ pub(crate) fn normalize_slashes_only_t<
     path
 }
 
-// TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
+// `desired_slash` is a runtime arg (not a const generic) since a
 // const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF(port): was comptime monomorphization.
+// PERF: profile if it shows up on a hot path.
 pub fn normalize_slashes_only<'a>(
     buf: &'a mut [u8],
     utf8: &'a [u8],
@@ -320,7 +320,7 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 /// NT maximum path length), leaving room for the longest prefix any converter
 /// prepends (`\??\UNC\`, 8 units), a trailing slash, and the NUL? Paths that
 /// fail this cannot exist on disk; callers surface `false`/`ENAMETOOLONG`
-/// instead of converting (mirrors the Zig-side fix in oven-sh/bun#27775).
+/// instead of converting (see oven-sh/bun#27775).
 ///
 /// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
 /// already proves the fit; the unit count (simdutf, SIMD) is only computed
@@ -371,13 +371,12 @@ pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
-    // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
-    // route through the checked `try_convert_utf8_to_utf16_in_buffer` (same
-    // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
+    // Route through the checked `try_convert_utf8_to_utf16_in_buffer`
+    // (simdutf + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
     //
-    // Over-long input is fail-safed to "" instead of overflowing: the Zig
-    // original handed simdutf a buffer it could write past, silently
-    // corrupting the stack once a path's UTF-16 form exceeded the wide
+    // Over-long input is fail-safed to "" instead of overflowing: handing
+    // simdutf a buffer it could write past would silently
+    // corrupt the stack once a path's UTF-16 form exceeded the wide
     // buffer (32767 units for `WPathBuffer`, i.e. longer than any path NT
     // can address). The empty result makes the consuming syscall fail
     // cleanly; JS-facing paths are rejected with `false`/ENAMETOOLONG before
@@ -421,7 +420,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     if base[0] == crate::SEP {
         buf[0] = crate::SEP;
     }
-    // PORT NOTE: reshaped for borrowck — track index instead of moving slice ptr.
+    // Reshaped for borrowck — track index instead of moving slice ptr.
     let mut i: usize = (base[0] == crate::SEP) as usize;
 
     for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {
@@ -750,5 +749,3 @@ mod tests {
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
 }
-
-// ported from: src/string/immutable/paths.zig

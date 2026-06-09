@@ -92,10 +92,10 @@
 
 use crate::array_buffer::TypedArrayType;
 
-// PORT NOTE: Zig's `enum(u8) { ..., _ }` is non-exhaustive — any u8 value is a valid
-// JSType (values are read directly from JSCell::m_type via FFI, including embedder-
-// defined types). A plain `#[repr(u8)] enum` would be UB for unknown discriminants,
-// so this is a transparent newtype with associated consts instead.
+// Any u8 value is a valid JSType (values are read directly from JSCell::m_type
+// via FFI, including embedder-defined types). A plain `#[repr(u8)] enum` would
+// be UB for unknown discriminants, so this is a transparent newtype with
+// associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);
@@ -582,7 +582,7 @@ impl JSType {
     pub const DOMWrapper: JSType = JSType(0b11101110);
     pub const EmbedderArrayLike: JSType = JSType(0b11101101);
 
-    /// This means that we don't have Zig bindings for the type yet, but it
+    /// This means that we don't have bindings for the type yet, but it
     /// implements .toJSON()
     pub const JSAsJSONType: JSType = JSType(0b11110000 | 1);
 }
@@ -591,7 +591,7 @@ impl JSType {
     pub const MIN_TYPED_ARRAY: JSType = JSType::Int8Array;
     pub const MAX_TYPED_ARRAY: JSType = JSType::DataView;
 
-    /// Port of Zig `@tagName(arrayBuffer.typed_array_type)` — `JSType` is a
+    /// `JSType` is a
     /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
     /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
@@ -870,5 +870,3 @@ impl JSType {
         )
     }
 }
-
-// ported from: src/jsc/JSType.zig

@@ -205,5 +205,3 @@ fn rd32(b: &[u8], off: usize, big: bool) -> Option<u32> {
         u32::from_le_bytes(bytes)
     })
 }
-
-// ported from: src/runtime/image/exif.zig

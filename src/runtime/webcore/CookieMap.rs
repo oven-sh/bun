@@ -9,7 +9,6 @@ bun_opaque::opaque_ffi! {
     pub struct CookieMap;
 }
 
-// TODO(port): move to runtime_sys (or webcore_sys) — extern decls belong in the *_sys crate
 unsafe extern "C" {
     // Reference params discharge the non-null/aligned preconditions; `JSGlobalObject`
     // wraps `UnsafeCell` so `&JSGlobalObject` permits C++ interior mutation.
@@ -104,5 +103,3 @@ impl Drop for CookieMapRef {
         CookieMap__deref(self)
     }
 }
-
-// ported from: src/runtime/webcore/CookieMap.zig

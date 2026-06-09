@@ -2,17 +2,13 @@
 //! named ANSI escape constants used directly by REPL / diff-printer / multi-run
 //! output. Zero-dep `#![no_std]` leaf so both the proc-macro crate and runtime
 //! crates can import it without a cycle.
-//!
-//! Port of `color_map` from `src/bun_core/output.zig:965-1056`. Zig re-declares
-//! the escapes per-file (repl.zig, printDiff.zig, multi_run.zig); the Rust port
-//! collapses them onto [`ansi`].
 
 #![no_std]
 
 /// Named ANSI SGR escape sequences. One canonical literal per colour/attribute;
 /// every other crate aliases this module rather than re-declaring the bytes.
 ///
-/// `WHITE` is SGR 37 (normal). printDiff.zig:177 uses SGR 97 — that is
+/// `WHITE` is SGR 37 (normal); SGR 97 is
 /// [`BRIGHT_WHITE`], kept distinct so diff output stays byte-identical.
 pub mod ansi {
     pub const RESET: &str = "\x1b[0m";
@@ -94,8 +90,7 @@ pub fn color_for(name: &str) -> Option<&'static str> {
     None
 }
 
-/// Byte-slice form of [`color_for`] for callers working over `&[u8]` templates
-/// (mirrors Zig's `ComptimeStringMap.get`).
+/// Byte-slice form of [`color_for`] for callers working over `&[u8]` templates.
 #[inline]
 pub fn color_for_bytes(name: &[u8]) -> Option<&'static str> {
     for &(k, v) in COLOR_TABLE {

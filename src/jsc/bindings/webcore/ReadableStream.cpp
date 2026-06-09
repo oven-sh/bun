@@ -126,6 +126,21 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     return result;
 }
 
+// readableStreamCancel can return a rejected promise (Promise.reject(storedError)
+// for an already-errored stream) or a pending promise that rejects later (when a
+// still-readable stream's underlyingSource.cancel() rejects asynchronously).
+// Native teardown call sites discard the result, so mark it handled to avoid
+// surfacing the error as an unhandled rejection. isHandledFlag is sticky and read
+// at rejection time, so marking a pending promise is correct. Matches
+// $markPromiseAsHandled, which the JS callers of stream.cancel() use unconditionally.
+static inline void markCancelResultHandled(std::optional<JSC::JSValue> result)
+{
+    if (!result)
+        return;
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(*result))
+        promise->markAsHandled();
+}
+
 void ReadableStream::pipeTo(ReadableStreamSink& sink)
 {
     auto& lexicalGlobalObject = *m_globalObject;
@@ -186,7 +201,7 @@ void ReadableStream::cancel(const Exception& exception)
     arguments.append(readableStream());
     arguments.append(value);
     ASSERT(!arguments.hasOverflowed());
-    invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
+    markCancelResultHandled(invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments));
 }
 
 void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadableStream* readableStream, const Exception& exception)
@@ -207,7 +222,7 @@ void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadable
     arguments.append(readableStream);
     arguments.append(value);
     ASSERT(!arguments.hasOverflowed());
-    invokeReadableStreamFunction(globalObject, privateName, JSC::jsUndefined(), arguments);
+    markCancelResultHandled(invokeReadableStreamFunction(globalObject, privateName, JSC::jsUndefined(), arguments));
 }
 
 static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadableStream* readableStream, JSC::JSValue function)
@@ -232,16 +247,25 @@ static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadab
 
 bool ReadableStream::isLocked() const
 {
-    auto clientData = WebCore::clientData(m_globalObject->vm());
-    auto& privateName = clientData->builtinNames().readerPrivateName();
-    return readableStream()->getDirect(m_globalObject->vm(), privateName).isTrue();
+    return isLocked(globalObject(), readableStream());
 }
 
 bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
+    // Mirror isReadableStreamLocked() in ReadableStreamInternals.ts. The builtins
+    // store a reader object or an empty {} sentinel in the $reader slot, never the
+    // literal `true`, so a `.isTrue()` check never matches. A stream is locked when
+    // $reader holds a value, or once the native reader has been detached ($bunNativePtr
+    // set to -1 by ReadableStream__detach).
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
     auto& privateName = clientData->builtinNames().readerPrivateName();
-    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
+    JSValue reader = readableStream->getDirect(vm, privateName);
+    if (!reader.isEmpty() && !reader.isUndefinedOrNull())
+        return true;
+
+    JSValue nativePtr = readableStream->nativePtr();
+    return nativePtr.isInt32() && nativePtr.asInt32() == -1;
 }
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
@@ -327,9 +351,20 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
     if (!readableStream) [[unlikely]]
         return;
 
-    if (!WebCore::ReadableStream::isLocked(globalObject, readableStream)) {
+    // Only cancel a stream that has a real reader. Direct streams store an empty
+    // {} sentinel in $reader (see $readDirectStream) while native code consumes
+    // them; routing that through readableStreamCancel is wrong (their teardown is
+    // owned by the controller close/detach path) and drops the native source's
+    // last reference mid-consumption. A real reader holds an ownerReadableStream
+    // back-pointer; the sentinel does not.
+    auto& vm = globalObject->vm();
+    auto& builtinNames = WebCore::builtinNames(vm);
+    JSValue reader = readableStream->getDirect(vm, builtinNames.readerPrivateName());
+    if (reader.isEmpty() || !reader.isObject())
         return;
-    }
+    JSObject* readerObject = asObject(reader);
+    if (!readerObject->getDirect(vm, builtinNames.ownerReadableStreamPrivateName()))
+        return;
 
     WebCore::Exception exception { Bun::AbortError };
     WebCore::ReadableStream::cancel(*globalObject, readableStream, exception);
@@ -354,7 +389,7 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
     arguments.append(readableStream);
     arguments.append(JSC::JSValue::decode(encodedReason));
     ASSERT(!arguments.hasOverflowed());
-    invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments);
+    markCancelResultHandled(invokeReadableStreamFunction(*globalObject, privateName, JSC::jsUndefined(), arguments));
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)

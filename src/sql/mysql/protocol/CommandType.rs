@@ -34,5 +34,3 @@ pub enum CommandType {
     COM_BINLOG_DUMP_GTID = 0x1e,
     COM_RESET_CONNECTION = 0x1f,
 }
-
-// ported from: src/sql/mysql/protocol/CommandType.zig

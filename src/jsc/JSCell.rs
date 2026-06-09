@@ -1,6 +1,6 @@
 use crate::custom_getter_setter::CustomGetterSetter;
 use crate::getter_setter::GetterSetter;
-use crate::{JSGlobalObject, JSObject, JSValue};
+use crate::{JSGlobalObject, JSObject, JSType, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::JSCell`.
@@ -10,8 +10,9 @@ bun_opaque::opaque_ffi! {
 impl JSCell {
     /// Statically cast a cell to a JSObject. Returns null for non-objects.
     /// Use `to_object` to mutate non-objects into objects.
+    #[track_caller]
     pub fn get_object(&self) -> Option<&JSObject> {
-        // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
+        crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null-ZST deref proof. Nullable per the C++ contract
         // (non-object cells return null).
@@ -26,18 +27,20 @@ impl JSCell {
     ///
     /// ## References
     /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
+    #[track_caller]
     pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
-        // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
+        crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof (ToObject on a cell never returns null).
         JSObject::opaque_ref(JSC__JSCell__toObject(self, global))
     }
 
-    pub fn get_type(&self) -> u8 {
-        // TODO(port): jsc.markMemberBinding(JSCell, @src()) — comptime binding marker, likely drop
-        // TODO(port): Zig wraps the extern result in @enumFromInt but the fn return type is `u8`;
-        // likely intended to return `JSType` — verify.
-        JSC__JSCell__getType(self)
+    #[track_caller]
+    pub fn get_type(&self) -> JSType {
+        crate::mark_member_binding("JSCell", core::panic::Location::caller());
+        // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte
+        // returned by the extern is a valid value (see the extern's NOTE).
+        JSType(JSC__JSCell__getType(self))
     }
 
     pub fn to_js(&self) -> JSValue {
@@ -45,7 +48,7 @@ impl JSCell {
     }
 
     pub fn get_getter_setter(&self) -> &GetterSetter {
-        // TODO(port): bun_jsc::JSValue::is_getter_setter (debug_assert dropped while JSValue.rs gated)
+        debug_assert!(self.get_type() == JSType::GetterSetter);
         // Caller-asserted invariant — this cell's JSType is GetterSetter.
         // `GetterSetter` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null-ZST deref proof (`self` is non-null).
@@ -53,7 +56,7 @@ impl JSCell {
     }
 
     pub fn get_custom_getter_setter(&self) -> &CustomGetterSetter {
-        // TODO(port): bun_jsc::JSValue::is_custom_getter_setter (debug_assert dropped while JSValue.rs gated)
+        debug_assert!(self.get_type() == JSType::CustomGetterSetter);
         // Caller-asserted invariant — this cell's JSType is CustomGetterSetter.
         // `CustomGetterSetter` is an `opaque_ffi!` ZST handle; see `get_getter_setter`.
         CustomGetterSetter::opaque_ref(
@@ -66,8 +69,6 @@ impl JSCell {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSCell`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `*const T` and C++ mutating cell state
 // through it is interior mutation invisible to Rust.
@@ -80,8 +81,6 @@ unsafe extern "C" {
     // when upgrading WebKit.
     safe fn JSC__JSCell__getType(this: &JSCell) -> u8;
 }
-
-// ported from: src/jsc/JSCell.zig
 
 // ════════════════════════════════════════════════════════════════════════════
 // JsCell<T> — single-JS-thread interior mutability
@@ -97,9 +96,8 @@ unsafe extern "C" {
 /// Bun runs **one** `VirtualMachine` per JS thread. JavaScript is
 /// single-threaded and reentrant: a host function may call back into JS, which
 /// may call back into Rust, but always on the *same* OS thread. There is no
-/// true concurrent aliasing — only stacked, same-thread reentrancy. The Zig
-/// source models this with raw `*VirtualMachine` everywhere; `JsCell` is the
-/// Rust spelling of that contract.
+/// true concurrent aliasing — only stacked, same-thread reentrancy. `JsCell`
+/// is the Rust spelling of that contract.
 ///
 /// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
 /// `unsafe impl Sync` below is a lie to the type system that we discharge by

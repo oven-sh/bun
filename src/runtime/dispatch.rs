@@ -25,6 +25,7 @@
 pub mod js2native;
 
 use bun_event_loop::AnyTask::AnyTask;
+use bun_event_loop::AsyncTask::AsyncTask;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_event_loop::{Task, task_tag};
 
@@ -269,6 +270,15 @@ pub fn run_task(
             if let Err(err) = cast!(CppTask).run(global) {
                 report_error_or_terminate(global, err)?;
             }
+        }
+        task_tag::AsyncTask => {
+            // SAFETY: §Dispatch — tag identifies pointee; the pointer is the
+            // pinned executor allocation, kept alive by the queue reference
+            // taken at wake. The poll body may re-enter JS/the event loop
+            // through TLS; `run_from_js` holds no `&`/`&mut` across the poll
+            // (raw per-field projections only). JS errors are handled inside
+            // the future (a poll has no JS-error channel by construction).
+            unsafe { AsyncTask::run_from_js(cast_ptr!(AsyncTask)) };
         }
 
         // ── archive ──────────────────────────────────────────────────────
@@ -579,7 +589,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 97,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1186,6 +1196,17 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // A queued-but-never-polled spawned future: drop the future on the
+        // JS thread (it may hold `Strong`s — still valid here, before
+        // `destructOnExit`), release the keepalive and the queue + task
+        // references. Waker clones parked elsewhere release theirs whenever
+        // they drop; by then the header is plain bytes.
+        task_tag::AsyncTask => {
+            // SAFETY: `task.ptr` is the live pinned executor allocation,
+            // drained from the queue in SCHEDULED state on the JS thread.
+            unsafe { AsyncTask::release_at_shutdown(task.ptr.cast::<AsyncTask>()) };
             true
         }
         // Re-queued by the caller; the box stays reachable from the

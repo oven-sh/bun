@@ -1,3 +1,9 @@
+use core::cell::UnsafeCell;
+use core::future::Future;
+use core::pin::Pin;
+use core::sync::atomic::{AtomicU8, Ordering};
+use core::task::{Context, Poll, Waker};
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use crate::ThreadPool;
@@ -210,5 +216,138 @@ impl WorkPool {
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
         Self::schedule(unsafe { &raw mut (*task_).task });
         Ok(())
+    }
+}
+
+// ─── awaitable offload ───────────────────────────────────────────────────────
+
+/// Oneshot completion state. `RUNNING`: the job may still produce a value.
+/// `WAKER_BUSY`: the poller is swapping the waker; completion spins briefly.
+/// `DONE`: the value is written and release-published.
+const RUNNING: u8 = 0;
+const WAKER_BUSY: u8 = 1;
+const DONE: u8 = 2;
+
+/// Result cell shared between the pool thread and the awaiting task.
+///
+/// `value` is written only by the pool thread before `DONE` and read only by
+/// the poller after observing `DONE`. `waker` is touched by the poller before
+/// the job is scheduled or inside the `WAKER_BUSY` window, and by the pool
+/// thread only after winning the `RUNNING→DONE` transition — never
+/// concurrently.
+struct Oneshot<T> {
+    state: AtomicU8,
+    value: UnsafeCell<Option<T>>,
+    waker: UnsafeCell<Option<Waker>>,
+}
+
+// SAFETY: cross-thread access to the `UnsafeCell`s is mediated by the `state`
+// protocol documented above; `T: Send` is required by [`run`]'s bounds.
+unsafe impl<T: Send> Sync for Oneshot<T> {}
+
+/// Run `f` on the global [`WorkPool`] and await its result.
+///
+/// Lazy: nothing is scheduled until the first poll (a future that is never
+/// polled never runs the closure). Once scheduled, the closure runs exactly
+/// once even if the future is dropped early — there is no cancellation, same
+/// as every existing pool task; the result is then discarded with the shared
+/// cell.
+pub fn run<T, F>(f: F) -> RunOnWorkPool<T, F>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    RunOnWorkPool {
+        shared: Arc::new(Oneshot {
+            state: AtomicU8::new(RUNNING),
+            value: UnsafeCell::new(None),
+            waker: UnsafeCell::new(None),
+        }),
+        job: Some(f),
+    }
+}
+
+/// Future returned by [`run`].
+pub struct RunOnWorkPool<T: Send + 'static, F: FnOnce() -> T + Send + 'static> {
+    shared: Arc<Oneshot<T>>,
+    job: Option<F>,
+}
+
+// No field is structurally pinned: `job` is moved out (never polled through)
+// and `shared` is an `Arc`. The future itself holds no self-references.
+impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Unpin for RunOnWorkPool<T, F> {}
+
+impl<T: Send + 'static, F: FnOnce() -> T + Send + 'static> Future for RunOnWorkPool<T, F> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
+        // `RunOnWorkPool` is `Unpin` (`Arc` + `Option<F>`), so no projection.
+        let this = self.get_mut();
+
+        if let Some(job) = this.job.take() {
+            // First poll: register the waker BEFORE scheduling so the
+            // completion can never miss it, then hand the job to the pool.
+            // SAFETY: the job is not yet scheduled — no other thread exists
+            // that could touch `waker`.
+            unsafe { *this.shared.waker.get() = Some(cx.waker().clone()) };
+
+            fn finish<T, F>((shared, job): (Arc<Oneshot<T>>, F))
+            where
+                F: FnOnce() -> T + Send + 'static,
+                T: Send + 'static,
+            {
+                let value = job();
+                // SAFETY: the pool thread is the only writer of `value`, and
+                // the poller reads it only after observing `DONE`.
+                unsafe { *shared.value.get() = Some(value) };
+                // Win the baton; a poller mid-waker-swap holds `WAKER_BUSY`
+                // for a few instructions at most.
+                while shared
+                    .state
+                    .compare_exchange(RUNNING, DONE, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
+                    std::thread::yield_now();
+                }
+                // SAFETY: once `DONE` is published the poller never touches
+                // `waker` again (it goes straight to the value).
+                if let Some(waker) = unsafe { (*shared.waker.get()).take() } {
+                    waker.wake();
+                }
+            }
+
+            let shared = Arc::clone(&this.shared);
+            bun_core::handle_oom(WorkPool::go((shared, job), finish::<T, F>));
+            return Poll::Pending;
+        }
+
+        if this.shared.state.load(Ordering::Acquire) == DONE {
+            // SAFETY: `DONE` was release-published after the value write;
+            // the single poller takes the value exactly once.
+            let value = unsafe { (*this.shared.value.get()).take() };
+            return Poll::Ready(value.expect("RunOnWorkPool polled after completion"));
+        }
+
+        // Re-polled before completion (e.g. a spurious wake of the parent
+        // task): refresh the waker under the `WAKER_BUSY` baton so the
+        // completion can't read it concurrently.
+        match this
+            .shared
+            .state
+            .compare_exchange(RUNNING, WAKER_BUSY, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => {
+                // SAFETY: `WAKER_BUSY` excludes the completion's waker read.
+                unsafe { *this.shared.waker.get() = Some(cx.waker().clone()) };
+                this.shared.state.store(RUNNING, Ordering::Release);
+                Poll::Pending
+            }
+            Err(_) => {
+                // Completion won the race; the value is ready now.
+                // SAFETY: as in the `DONE` fast path above.
+                let value = unsafe { (*this.shared.value.get()).take() };
+                Poll::Ready(value.expect("RunOnWorkPool polled after completion"))
+            }
+        }
     }
 }

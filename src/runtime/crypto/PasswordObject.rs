@@ -3,22 +3,14 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::ZigString;
-use bun_io::KeepAlive;
-use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
-};
-// `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
-// `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
+use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::JSPromise;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{JSPromise, JSPromiseStrong};
-use bun_threading::work_pool::WorkPool;
 
+use bun_alloc::SensitiveBytes;
 use crate::node::StringOrBuffer;
 
 // The argon2/bcrypt API-surface shim lives at `crypto::pwhash` (this dir);
@@ -501,13 +493,14 @@ pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject
 // both into one `PasswordJob<Op>` / `PasswordResult<Op>` parameterised on a
 // `PasswordOp` carrying exactly those three axes.
 
-trait PasswordOp: 'static {
+trait PasswordOp: Send + 'static {
     /// Success payload (`Box<[u8]>` for hash, `bool` for verify).
-    type Value;
+    /// `Send`: produced on the work pool, converted on the JS thread.
+    type Value: Send;
     /// "hashing" | "verification" — slotted into the JS Error message.
     const ERR_VERB: &'static str;
     /// Off-thread compute. `self` borrows the op so its inputs stay owned by
-    /// the job and are `free_sensitive`d in the job's / op's `Drop`.
+    /// the pool closure; sensitive inputs are `SensitiveBytes`, zeroed on drop.
     fn compute(&self, password: &[u8]) -> Result<Self::Value, HashError>;
     /// Convert the success payload to a `JSValue` on the JS thread.
     fn to_js(value: Self::Value, g: &JSGlobalObject) -> JSValue;
@@ -529,15 +522,8 @@ impl PasswordOp for HashOp {
 }
 
 struct VerifyOp {
-    prev_hash: Box<[u8]>,
+    prev_hash: SensitiveBytes,
     algorithm: Option<Algorithm>,
-}
-impl Drop for VerifyOp {
-    fn drop(&mut self) {
-        // bun.freeSensitive — volatile-zero then free; the job's Drop handles
-        // `password`, this handles the op-specific `prev_hash`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.prev_hash));
-    }
 }
 impl PasswordOp for VerifyOp {
     type Value = bool;
@@ -570,110 +556,15 @@ fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JS
     instance
 }
 
-struct PasswordJob<Op: PasswordOp> {
-    op: Op,
-    password: Box<[u8]>,
-    promise: JSPromiseStrong,
-    event_loop: *mut EventLoop,
-    global: *const JSGlobalObject,
-    r#ref: KeepAlive,
-    task: WorkPoolTask,
-}
-
-impl<Op: PasswordOp> Drop for PasswordJob<Op> {
-    fn drop(&mut self) {
-        // promise: Drop on JSPromiseStrong handles deinit.
-        // bun.freeSensitive — volatile-zero the buffer then free; take the Box so
-        // the field's own Drop sees an empty slice afterwards. Any op-owned
-        // sensitive buffers (`prev_hash`) are freed by the op's own `Drop`.
-        bun_alloc::free_sensitive(core::mem::take(&mut self.password));
-    }
-}
-
-bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
-
-impl<Op: PasswordOp> PasswordJob<Op> {
-    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
-    // is a false positive on this macro contract.
-    #[allow(clippy::boxed_local)]
-    fn run_owned(mut self: Box<Self>) {
-        let value = self.op.compute(&self.password);
-        let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
-            value,
-            task: AnyTask::default(), // overwritten below
-            promise: core::mem::take(&mut self.promise),
-            global: self.global,
-            r#ref: core::mem::take(&mut self.r#ref),
-        }));
-        // SAFETY: `result` was just heap-allocated and is not yet shared
-        // (enqueue happens after this write).
-        unsafe {
-            (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
-        }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
-            ));
-        }
-        // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
-    }
-}
-
-struct PasswordResult<Op: PasswordOp> {
-    value: Result<Op::Value, HashError>,
-    r#ref: KeepAlive,
-    task: AnyTask,
-    promise: JSPromiseStrong,
-    global: *const JSGlobalObject,
-}
-
-impl<Op: PasswordOp> PasswordResult<Op> {
-    fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
-        Self::run_from_js(p)
-            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
-    }
-
-    fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
-        // SAFETY: `this` was produced by heap::into_raw in `run_owned` and the
-        // event loop hands sole ownership to this callback. Reclaim the Box once
-        // up-front so all fields drop on scope exit (no `mem::replace` dance).
-        let this = *unsafe { bun_core::heap::take(this) };
-        let PasswordResult {
-            value,
-            mut r#ref,
-            mut promise,
-            global,
-            task: _,
-        } = this;
-        // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
-        let global = unsafe { &*global };
-        r#ref.unref(bun_io::js_vm_ctx());
-        match value {
-            Err(err) => {
-                let error_instance = password_error_instance(err, Op::ERR_VERB, global);
-                promise.reject_with_async_stack(global, Ok(error_instance))?;
-            }
-            Ok(v) => {
-                let js = Op::to_js(v, global);
-                promise.resolve(global, js)?;
-            }
-        }
-        Ok(())
-    }
-}
-
 // ─── hash / verify entry points ───────────────────────────────────────────
 
 impl JSPasswordObject {
     /// Shared body of `hash`/`verify`: sync path computes inline and either
-    /// throws or returns the converted value; async path boxes a
-    /// `PasswordJob<Op>`, refs the loop, and schedules it.
+    /// throws or returns the converted value; async path runs the compute on
+    /// the work pool and settles a promise (`js_promise` + `work_pool::run`).
     fn run<Op: PasswordOp, const SYNC: bool>(
         global_object: &JSGlobalObject,
-        password: Box<[u8]>,
+        password: SensitiveBytes,
         op: Op,
     ) -> JsResult<JSValue> {
         debug_assert!(!password.is_empty()); // caller must check
@@ -688,28 +579,28 @@ impl JSPasswordObject {
             };
         }
 
-        let promise = JSPromiseStrong::init(global_object);
-        let promise_value = promise.value();
-
-        let mut job = Box::new(PasswordJob::<Op> {
-            op,
-            password,
-            promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
-            global: std::ptr::from_ref(global_object),
-            r#ref: KeepAlive::default(),
-            task: WorkPoolTask::default(),
-        });
-        job.r#ref.ref_(bun_io::js_vm_ctx());
-        WorkPool::schedule_owned(job);
-
-        Ok(promise_value)
+        let global = core::ptr::from_ref(global_object);
+        Ok(jsc::async_promise::js_promise(global_object, async move {
+            // The closure's captures drop on the pool thread right after
+            // compute; `SensitiveBytes` volatile-zeroes `password` (and the
+            // op's `prev_hash`) wherever they die.
+            let value = bun_threading::work_pool::run(move || op.compute(&password)).await;
+            // SAFETY: spawned futures run (and are dropped) on the JS thread
+            // while the VM is alive; the global outlives every spawned task.
+            let global_object = unsafe { &*global };
+            match value {
+                Ok(v) => Ok(Op::to_js(v, global_object)),
+                Err(err) => {
+                    let error_instance = password_error_instance(err, Op::ERR_VERB, global_object);
+                    Err(global_object.throw_value(error_instance))
+                }
+            }
+        }))
     }
 
     pub fn hash<const SYNC: bool>(
         global_object: &JSGlobalObject,
-        password: Box<[u8]>,
+        password: SensitiveBytes,
         algorithm: AlgorithmValue,
     ) -> JsResult<JSValue> {
         Self::run::<HashOp, SYNC>(global_object, password, HashOp { algorithm })
@@ -717,8 +608,8 @@ impl JSPasswordObject {
 
     pub fn verify<const SYNC: bool>(
         global_object: &JSGlobalObject,
-        password: Box<[u8]>,
-        prev_hash: Box<[u8]>,
+        password: SensitiveBytes,
+        prev_hash: SensitiveBytes,
         algorithm: Option<Algorithm>,
     ) -> JsResult<JSValue> {
         Self::run::<VerifyOp, SYNC>(
@@ -769,7 +660,7 @@ pub(crate) fn js_password_object_hash(
 
     JSPasswordObject::hash::<false>(
         global_object,
-        password_to_hash.into_boxed_slice(),
+        password_to_hash.into_boxed_slice().into(),
         algorithm,
     )
 }
@@ -808,11 +699,11 @@ pub(crate) fn js_password_object_hash_sync(
         );
     }
 
-    // The sync path only needs `&[u8]`; copy into a Box to share the async
-    // signature.
+    // The sync path only needs `&[u8]`; copy into a `SensitiveBytes` to
+    // share the async signature.
     JSPasswordObject::hash::<true>(
         global_object,
-        Box::<[u8]>::from(string_or_buffer.slice()),
+        Box::<[u8]>::from(string_or_buffer.slice()).into(),
         algorithm,
     )
 }
@@ -894,8 +785,8 @@ pub(crate) fn js_password_object_verify(
 
     JSPasswordObject::verify::<false>(
         global_object,
-        owned_password.into_boxed_slice(),
-        owned_hash.into_boxed_slice(),
+        owned_password.into_boxed_slice().into(),
+        owned_hash.into_boxed_slice().into(),
         algorithm,
     )
 }
@@ -964,12 +855,12 @@ pub(crate) fn js_password_object_verify_sync(
         return Ok(JSValue::FALSE);
     }
 
-    // The sync path only needs `&[u8]`; copy into Boxes to share the async
-    // signature.
+    // The sync path only needs `&[u8]`; copy into `SensitiveBytes` to share
+    // the async signature.
     JSPasswordObject::verify::<true>(
         global_object,
-        Box::<[u8]>::from(password.slice()),
-        Box::<[u8]>::from(hash_.slice()),
+        Box::<[u8]>::from(password.slice()).into(),
+        Box::<[u8]>::from(hash_.slice()).into(),
         algorithm,
     )
 }

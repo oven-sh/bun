@@ -2,6 +2,7 @@
 #![warn(unused_must_use)]
 pub mod AnyTask;
 pub mod AnyTaskWithExtraContext;
+pub mod AsyncTask;
 pub mod AutoFlusher;
 pub mod ConcurrentTask;
 pub mod DeferredTaskQueue;

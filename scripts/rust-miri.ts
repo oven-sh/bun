@@ -37,6 +37,7 @@ const MIRI_CRATES = [
   "bun_collections",
   "bun_dispatch",
   "bun_errno",
+  "bun_event_loop",
   "bun_hash",
   "bun_http_types",
   "bun_md",

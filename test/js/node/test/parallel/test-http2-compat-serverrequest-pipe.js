@@ -43,6 +43,7 @@ const watchdog = setTimeout(() => {
   dump('serverDest', state.serverDest);
   dump('clientReq', state.clientReq);
   dump('clientStr', state.clientStr);
+  dump('clientSock', state.clientSock);
   dump('clientSession', state.clientSession);
   try {
     console.error(`  clientSession.state: ${JSON.stringify(state.clientSession?.state)}`);
@@ -55,6 +56,25 @@ const tmpdir = require('../common/tmpdir');
 tmpdir.refresh();
 const loc = fixtures.path('person-large.jpg');
 const fn = tmpdir.resolve('http2-url-tests.js');
+
+// Plain-net same-tick write+end EOF delivery probe (mirrors the h2 client's
+// GOAWAY+GOAWAY+FIN burst at the socket level).
+const net = require('net');
+{
+  const ns = net.createServer(sock => {
+    sock.on('data', d => ev(`net-probe: server data ${d.length}`));
+    sock.on('end', () => ev('net-probe: server end'));
+    sock.on('close', () => { ev('net-probe: server close'); ns.close(); });
+  });
+  ns.listen(0, () => {
+    const c = net.connect(ns.address().port, '127.0.0.1', () => {
+      c.write(Buffer.alloc(17));
+      c.write(Buffer.alloc(17));
+      c.end();
+    });
+    c.on('close', () => ev('net-probe: client close'));
+  });
+}
 
 const server = http2.createServer();
 
@@ -94,6 +114,13 @@ server.on('request', common.mustCall((req, res) => {
 server.listen(0, common.mustCall(() => {
   const port = server.address().port;
   const client = (state.clientSession = http2.connect(`http://localhost:${port}`));
+  client.on('connect', () => {
+    const cs = (state.clientSock = client.socket);
+    ev('client: connected');
+    cs.on('end', () => ev('client: socket end'));
+    cs.on('close', () => ev('client: socket close'));
+    cs.on('finish', () => ev('client: socket finish'));
+  });
   client.on('error', e => ev(`client: session error ${e}`));
   client.on('goaway', (code, last) => ev(`client: goaway code=${code} last=${last}`));
   client.on('close', () => ev('client: session close'));

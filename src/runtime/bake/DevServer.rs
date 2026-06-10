@@ -3475,7 +3475,7 @@ impl DevServer {
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
-            Some(bundler::bundle_v2::BakeOptions {
+            Some(bundler::bundle_v2::FrameworkBundleOptions {
                 framework: self.framework.as_bundler_view(),
                 server_component_manifests: super::SERVER_COMPONENTS_MANIFESTS,
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
@@ -3513,16 +3513,16 @@ impl DevServer {
             self.graph_safety_lock.unlock();
         }
 
-        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
+        // LAYERING: `bun_bundler::bundle_v2::EntryPointList` is the TYPE_ONLY
         // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
         // can name it without depending on `bun_runtime`). Convert by value —
         // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
-            let mut bt = bundler::bake_types::EntryPointList::empty();
+        let start_data = bv2.start_from_dev_server(&{
+            let mut bt = bundler::bundle_v2::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
                 bun_core::handle_oom(
                     bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
+                        .put(k, bundler::bundle_v2::EntryPointFlags(v.bits())),
                 );
             }
             bt

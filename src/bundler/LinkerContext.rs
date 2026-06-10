@@ -3018,7 +3018,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
-    /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
+    /// caller (`finish_from_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,

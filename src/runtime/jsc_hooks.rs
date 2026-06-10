@@ -922,10 +922,15 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
-    // Call `ctx.timer.getTimeout(..)` ONLY inside
-    // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
-    // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
-    // rather than running unconditionally.
+    // Note (§Forbidden aliased-&mut): `get_timeout`/`drain_timers` fire JS
+    // callbacks that re-enter `(*runtime_state()).timer`, so they take a raw
+    // `*mut All` instead of `&mut`. SAFETY: `state` is the live per-thread
+    // `RuntimeState`; the field address is stable for the VM lifetime.
+    let timer_all = unsafe { core::ptr::addr_of_mut!((*state).timer) };
+
+    // `get_timeout` has side effects (pops + fires due `WTFTimer` heap
+    // entries), so call it only where its result feeds the immediately
+    // following tick — never hoisted.
     {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
@@ -947,20 +952,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         if unsafe { (*loop_).is_active() } {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
-            // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
-            // `WTFTimer` JS callback.
-            // A re-entrant `setTimeout`/`clearTimeout` reaches
-            // `timer::All::insert`/`remove` via `runtime_state()` and would
-            // mint a second `&mut timer` if we held `&mut (*state).timer`
-            // across the call. Pass the raw `*mut Self` instead;
-            // `timer::All::get_timeout` forms short-lived `&mut` only around
-            // heap ops that cannot re-enter JS, releasing the borrow before
-            // invoking `fire()`.
-            // SAFETY: `state` is the live per-thread `RuntimeState`; the
-            // `timer` field address is stable for the VM lifetime.
+            // SAFETY: JS thread, no outstanding `&mut All` (see Note above).
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    timer_all,
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -972,24 +967,63 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
             };
         } else {
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe { (*loop_).tick_without_idle() };
+            // Nothing refs the loop, but the caller (`waitForPromise`,
+            // `bun:test`'s drive loop, the module loader) is still ticking
+            // it. Unref'd timers must still fire here, so park until the
+            // soonest timer deadline instead of returning immediately —
+            // returning busy-spins the driver and on Windows never fires
+            // the timer (`uv_run` skips timers with no ref'd handles).
+            // With no pending deadline, keep the non-blocking pump.
+            #[cfg(unix)]
+            {
+                // SAFETY: JS thread, no outstanding `&mut All` (see Note above).
+                let have_timeout = unsafe {
+                    timer::All::get_timeout(
+                        timer_all,
+                        &mut timespec,
+                        has_pending_immediate,
+                        quic_next_tick_us,
+                        vm.cast(),
+                    )
+                };
+                if have_timeout && !(timespec.sec == 0 && timespec.nsec == 0) {
+                    // `us_loop_run_bun_tick` early-returns when
+                    // `num_polls == 0`; hold a virtual poll so an empty loop
+                    // still parks. `inc`/`dec` (not `ref_`/`unref`) so
+                    // `active` stays 0. The wakeup eventfd stays registered,
+                    // so cross-thread wakeups interrupt the park.
+                    // SAFETY: `loop_` is the live per-thread uws loop.
+                    unsafe { (*loop_).inc() };
+                    let _g = scopeguard::guard(loop_, |l| {
+                        // SAFETY: balances the `inc()` above.
+                        unsafe { (*l).dec() }
+                    });
+                    // SAFETY: `loop_` is the live per-thread uws loop.
+                    unsafe { (*loop_).tick_with_timeout(Some(&timespec)) };
+                } else {
+                    // SAFETY: `loop_` is the live per-thread uws loop.
+                    unsafe { (*loop_).tick_without_idle() };
+                }
+            }
+            #[cfg(windows)]
+            {
+                // SAFETY: JS thread, no outstanding `&mut All` (see Note
+                // above); `loop_` is the live per-thread uws loop.
+                let parked =
+                    unsafe { timer::All::tick_uv_loop_with_timer_deadline(timer_all, loop_) };
+                if !parked {
+                    // SAFETY: `loop_` is the live per-thread uws loop.
+                    unsafe { (*loop_).tick_without_idle() };
+                }
+            }
         }
     }
 
     #[cfg(unix)]
-    {
-        // Note (§Forbidden aliased-&mut): `drain_timers` fires user
-        // `setTimeout` callbacks which may re-enter `timer::All::insert`/
-        // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
-        // long-lived `&mut (*state).timer` is held across `fire()`;
-        // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
-        // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
-        // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
-    }
-    #[cfg(not(unix))]
-    let _ = state;
+    // SAFETY: JS thread, no outstanding `&mut All` (see Note above).
+    unsafe {
+        timer::All::drain_timers(timer_all, vm.cast())
+    };
 
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
@@ -1070,11 +1104,11 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         if unsafe { (*loop_).is_active() } {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
-            // SAFETY: `state` is the live per-thread `RuntimeState`; see
-            // Note on `auto_tick` re: aliased-&mut across `fire()`.
+            // SAFETY: JS thread, no outstanding `&mut All`; see Note on
+            // `auto_tick` re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    core::ptr::addr_of_mut!((*state).timer),
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -1092,11 +1126,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     }
 
     #[cfg(unix)]
-    {
-        // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
-        // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
-    }
+    // SAFETY: JS thread, no outstanding `&mut All`; see Note on `auto_tick`.
+    unsafe {
+        timer::All::drain_timers(core::ptr::addr_of_mut!((*state).timer), vm.cast())
+    };
     #[cfg(not(unix))]
     let _ = state;
 

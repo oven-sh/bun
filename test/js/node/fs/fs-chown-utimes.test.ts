@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { tmpdirSync } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
-import { tmpdirSync } from "harness";
 
 // chown/fchown/lchown share one uid/gid reader and utimes/futimes/lutimes
 // share one atime/mtime reader in src/runtime/node/node_fs.rs, so every

@@ -114,7 +114,10 @@ pub use any_request_context::AnyRequestContext;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{GetOrStartLoadResult, ServePluginsCallback, ServePluginsConsumer};
+pub use server_body::{
+    FrameworkRouterSeam, FrameworkRouterTypes, GetOrStartLoadResult, ServePluginsCallback,
+    ServePluginsConsumer, ServerInitContext,
+};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -332,6 +335,11 @@ pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
 pub enum CreateJsRequest {
     Yes,
     No,
+    /// Create the JS wrapper via `Request::to_js_for_bake`
+    /// (`Bun__JSRequest__createForBake` on the C++ side) so the dev server's
+    /// deferred handler gets a `BunRequest`. Name-only association with the
+    /// dev server — no `crate::bake` type is involved, so the match arms on
+    /// this variant are deliberately outside the bake decoupling seams.
     Bake,
 }
 
@@ -3941,14 +3949,9 @@ impl AnyServer {
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
             // `s` is the live `*mut NewServer` carried in `self.ptr`,
             // tagged at construction in `AnyServer::from`.
-            let Some(p) = NewServer::prepare_js_request_context(
-                s,
-                req,
-                r,
-                None,
-                create_js_request,
-                method,
-            ) else {
+            let Some(p) =
+                NewServer::prepare_js_request_context(s, req, r, None, create_js_request, method)
+            else {
                 return Ok(None);
             };
             Some(p.save(global, req, r))

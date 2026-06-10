@@ -810,16 +810,33 @@ impl AnyRoute {
     }
 }
 
+/// Compile-time seam: the dev-server module supplies the concrete types of
+/// the framework-router collection state on [`ServerInitContext`] by
+/// implementing this on [`FrameworkRouterSeam`] (in `FrameworkRouter.rs`).
+/// `Mount` values are only stored and moved here: they are written by the
+/// dev-server route parser (`ServerInitContext::framework_router_from_js`)
+/// and consumed by the dev-server options derivation at listen time.
+/// `StringAllocations` is also written by this file's `{ dir }` parsing
+/// (`AnyRoute::from_js` tracks the directory string before deciding between
+/// a `DirectoryRoute` and a framework-router mount), so a replacement must
+/// keep that `track` entry point.
+pub trait FrameworkRouterTypes {
+    /// One parsed `{ dir, style }` framework-router mount.
+    type Mount;
+    /// Owns the JS string refs backing the mounts' borrowed bytes.
+    type StringAllocations: Default;
+}
+
+/// Type-level carrier for the dev-server module's [`FrameworkRouterTypes`]
+/// impl (uninhabited; never instantiated).
+pub enum FrameworkRouterSeam {}
+
 pub struct ServerInitContext<'a> {
     pub(crate) dedupe_html_bundle_map:
         HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
-    // SEAM(bake): the two `crate::bake`-typed fields below collect `{ dir, style }`
-    // framework-router mounts during route parsing; the dev server consumes
-    // them at listen time. The parsing itself lives in bake
-    // (`ServerInitContext::framework_router_from_js` in FrameworkRouter.rs).
-    pub(crate) js_string_allocations: crate::bake::StringRefList,
+    pub(crate) js_string_allocations: <FrameworkRouterSeam as FrameworkRouterTypes>::StringAllocations,
     pub global: &'a JSGlobalObject,
-    pub(crate) framework_router_list: Vec<crate::bake::FileSystemRouterType>,
+    pub(crate) framework_router_list: Vec<<FrameworkRouterSeam as FrameworkRouterTypes>::Mount>,
     pub(crate) user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
 }
 
@@ -3397,7 +3414,11 @@ where
             // DNS-rebound origin connects from 127.0.0.1 but presents the
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
-            if !dev_server.is_allowed_host(req) {
+            //
+            // Spelled with the full `crate::bake` path on purpose: this is a
+            // direct host→dev-server call that stays an acknowledged coupling
+            // until `Server.dev_server` itself is type-erased.
+            if !crate::bake::DevServer::DevServer::is_allowed_host(dev_server, req) {
                 break 'brk false;
             }
 

@@ -629,6 +629,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             unsafe { &mut *server_ptr },
             bun_bundler::bundle_v2::BakeOptions {
                 framework: bundler_framework,
+                server_component_manifests: super::SERVER_COMPONENTS_MANIFESTS,
                 client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
                 ssr_transpiler: NonNull::new(ssr_ptr).expect("stack-owned transpiler"),
                 plugins: options.bundler_options.plugin,

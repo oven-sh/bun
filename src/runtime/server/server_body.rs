@@ -2250,7 +2250,7 @@ where
             global,
             &mut args_slice,
             server_config::FromJSOptions {
-                allow_bake_config: false,
+                allow_dev_server_options: false,
                 is_fetch_required: true,
                 has_user_routes: !self.user_routes.is_empty(),
             },

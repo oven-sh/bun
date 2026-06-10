@@ -1572,7 +1572,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             global_object,
             &mut args,
             crate::server::server_config::FromJSOptions {
-                allow_bake_config: true,
+                allow_dev_server_options: true,
                 is_fetch_required: true,
                 has_user_routes: false,
             },

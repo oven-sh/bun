@@ -1091,7 +1091,7 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if opts.allow_bake_config {
+        if opts.allow_dev_server_options {
             if let Some(options) = super::__bun_bake_dev_server_options_from_app(
                 arg,
                 global,
@@ -1452,7 +1452,7 @@ pub struct FromJSOptions {
     /// serve config (`Bun.serve` may; `server.reload` may not). Feature
     /// gating on top of this is owned by
     /// [`super::__bun_bake_dev_server_options_from_app`].
-    pub allow_bake_config: bool,
+    pub allow_dev_server_options: bool,
     pub is_fetch_required: bool,
     pub has_user_routes: bool,
 }
@@ -1460,7 +1460,7 @@ pub struct FromJSOptions {
 impl Default for FromJSOptions {
     fn default() -> Self {
         Self {
-            allow_bake_config: true,
+            allow_dev_server_options: true,
             is_fetch_required: true,
             has_user_routes: false,
         }

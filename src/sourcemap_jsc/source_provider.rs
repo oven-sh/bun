@@ -36,9 +36,14 @@ impl BakeSourceProvider {
     pub fn to_source_content_ptr(&self) -> source_map::parsed_source_map::SourceContentPtr {
         // `bun_sourcemap` defines its own opaque `BakeSourceProvider` so it
         // can name the pointer without a tier-6 dep. Both are `#[repr(C)]` ZST opaques
-        // for the same C++ type, so the pointer cast is layout-correct.
-        source_map::parsed_source_map::SourceContentPtr::from_bake_provider(
-            self.as_mut_ptr().cast::<source_map::BakeSourceProvider>(),
+        // for the same C++ type, so the pointer cast is layout-correct. Packing
+        // as `bun_sourcemap`'s type keeps the erased dispatch routed through
+        // its `SourceProvider` impl, matching how this pointer was dispatched
+        // before erasure.
+        source_map::parsed_source_map::SourceContentPtr::from_source_provider(
+            self.as_mut_ptr()
+                .cast::<source_map::BakeSourceProvider>()
+                .cast_const(),
         )
     }
 

@@ -30,9 +30,11 @@ pub use mapping::{Lookup as MappingLookup, Mapping};
 pub use parsed_source_map::{ParsedSourceMap, SourceContentPtr};
 
 // SAFETY: `ParsedSourceMap` is shared across threads via the thread-safe
-// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait inference fails
-// only because `SourceContentPtr` packs raw provider pointers; those are
-// opaque handles that are never dereferenced off the JS thread.
+// `SavedSourceMap` store (its `ref_count` is an `AtomicU32`). The auto-trait
+// inference fails only because `InternalSourceMap` holds the blob's raw data
+// pointer (owned by this map, or borrowed from the embedded standalone
+// section); `SourceContentPtr`'s provider handles are packed as plain
+// integers and never dereferenced off the JS thread.
 unsafe impl Send for ParsedSourceMap {}
 // SAFETY: see the `Send` rationale above — refcount is atomic and the raw
 // provider pointers are opaque, never dereferenced off the JS thread.
@@ -79,12 +81,7 @@ impl BakeSourceProvider {
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        // SAFETY: opaque ZST handle — `UnsafeCell<[u8; 0]>` at offset 0 grants
-        // interior-mutability provenance, so deriving `*mut Self` from `&self`
-        // is sound. C++ owns the real storage; the `*mut` exists only to match
-        // `SourceContentPtr::from_bake_provider`'s signature (stores it as a
-        // raw address in a packed u60).
-        SourceContentPtr::from_bake_provider(self._p.get().cast::<Self>())
+        SourceContentPtr::from_source_provider::<Self>(self)
     }
 
     /// Returns the pre-bundled sourcemap JSON for `source_filename` if the
@@ -518,7 +515,7 @@ impl DevServerSourceProvider {
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {
-        SourceContentPtr::from_dev_server_provider(self)
+        SourceContentPtr::from_source_provider::<Self>(self)
     }
 
     /// The last two arguments to this specify loading hints

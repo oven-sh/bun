@@ -338,7 +338,7 @@ impl TargetMainFields {
         match t {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun | Target::BunMacro | Target::BakeServerComponentsSsr => {
+            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => {
                 DEFAULT_MAIN_FIELDS_BUN
             }
         }

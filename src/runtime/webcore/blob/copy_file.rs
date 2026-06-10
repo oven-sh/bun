@@ -309,6 +309,44 @@ impl<'a> CopyFile<'a> {
         Ok(())
     }
 
+    /// Copies the remaining bytes with a blocking read/write loop (we run on
+    /// a concurrent task thread, not the JS thread) and truncates the
+    /// destination to the copied length. Used when `copy_file_range`,
+    /// `sendfile`, and `splice` are unavailable or unusable.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn fallback_read_write(
+        &mut self,
+        src_fd: Fd,
+        dest_fd: Fd,
+        remain: usize,
+        unknown_size: bool,
+        total_written: &mut u64,
+    ) -> Result<(), bun_core::Error> {
+        match node_fs::NodeFS::copy_file_using_read_write_loop(
+            bun_core::ZStr::EMPTY,
+            bun_core::ZStr::EMPTY,
+            src_fd,
+            dest_fd,
+            if unknown_size { 0 } else { remain },
+            total_written,
+        ) {
+            bun_sys::Result::Err(err) => {
+                self.system_error = Some(err.to_system_error());
+                Err(bun_core::errno_to_zig_err(err.errno as i32))
+            }
+            bun_sys::Result::Ok(()) => {
+                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
+                let _ = unsafe {
+                    libc::ftruncate(
+                        dest_fd.native(),
+                        i64::try_from(*total_written).expect("int cast"),
+                    )
+                };
+                Ok(())
+            }
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
@@ -343,29 +381,13 @@ impl<'a> CopyFile<'a> {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            match node_fs::NodeFS::copy_file_using_read_write_loop(
-                bun_core::ZStr::EMPTY,
-                bun_core::ZStr::EMPTY,
+            return self.fallback_read_write(
                 src_fd,
                 dest_fd,
-                if unknown_size { 0 } else { remain },
+                remain,
+                unknown_size,
                 &mut total_written,
-            ) {
-                bun_sys::Result::Err(err) => {
-                    self.system_error = Some(err.to_system_error());
-                    return Err(bun_core::errno_to_zig_err(err.errno as i32));
-                }
-                bun_sys::Result::Ok(()) => {
-                    // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                    let _ = unsafe {
-                        libc::ftruncate(
-                            dest_fd.native(),
-                            i64::try_from(total_written).expect("int cast"),
-                        )
-                    };
-                    return Ok(());
-                }
-            }
+            );
         }
 
         loop {
@@ -417,30 +439,13 @@ impl<'a> CopyFile<'a> {
                 // NOSYS: syscall not available
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
-                    // TODO: this should use non-blocking I/O.
-                    match node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
+                    return self.fallback_read_write(
                         src_fd,
                         dest_fd,
-                        if unknown_size { 0 } else { remain },
+                        remain,
+                        unknown_size,
                         &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                            return Err(bun_core::errno_to_zig_err(err.errno as i32));
-                        }
-                        bun_sys::Result::Ok(()) => {
-                            // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                            let _ = unsafe {
-                                libc::ftruncate(
-                                    dest_fd.native(),
-                                    i64::try_from(total_written).expect("int cast"),
-                                )
-                            };
-                            return Ok(());
-                        }
-                    }
+                    );
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -474,30 +479,13 @@ impl<'a> CopyFile<'a> {
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
                     if total_written == 0 {
-                        // TODO: this should use non-blocking I/O.
-                        match node_fs::NodeFS::copy_file_using_read_write_loop(
-                            bun_core::ZStr::EMPTY,
-                            bun_core::ZStr::EMPTY,
+                        return self.fallback_read_write(
                             src_fd,
                             dest_fd,
-                            if unknown_size { 0 } else { remain },
+                            remain,
+                            unknown_size,
                             &mut total_written,
-                        ) {
-                            bun_sys::Result::Err(err) => {
-                                self.system_error = Some(err.to_system_error());
-                                return Err(bun_core::errno_to_zig_err(err.errno as i32));
-                            }
-                            bun_sys::Result::Ok(()) => {
-                                // SAFETY: dest_fd is a valid open fd; raw ftruncate(2).
-                                let _ = unsafe {
-                                    libc::ftruncate(
-                                        dest_fd.native(),
-                                        i64::try_from(total_written).expect("int cast"),
-                                    )
-                                };
-                                return Ok(());
-                            }
-                        }
+                        );
                     }
 
                     self.system_error = Some(

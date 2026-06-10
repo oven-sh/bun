@@ -3852,16 +3852,18 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // a fake extension out of the URL body (`loader_for_path`'s `is_data_url`
     // check only fires when the resolver tagged the path with the `dataurl`
     // namespace, which the runtime loader never does). Pick the loader from
-    // the MIME type instead, matching the bundler pipeline
-    // (`enqueue_on_load_plugin_if_needed`). Unknown and absent MIME types keep
-    // the maximally permissive tsx default used for extensionless files;
-    // invalid data URLs fall through to the transpile path, which reports the
-    // parse error.
+    // the MIME type instead, like the bundler does for `dataurl`-namespace
+    // paths. `Category::init` (rather than `decode_mime_type().category`)
+    // classifies `application/javascript` as JavaScript too, matching Node,
+    // which compiles both JS MIME spellings as JavaScript modules. Unknown
+    // and absent MIME types keep the maximally permissive tsx default used
+    // for extensionless files; invalid data URLs fall through to the
+    // transpile path, which reports the parse error.
     if bun_core::strings::has_prefix_comptime(path.text, b"data:") {
         use bun_http_types::MimeType::Category;
         loader = Some(
             match bun_resolver::data_url::DataURL::parse_without_check(path.text) {
-                Ok(data_url) => match data_url.decode_mime_type().category {
+                Ok(data_url) => match Category::init(data_url.mime_type) {
                     Category::Javascript => Loader::Js,
                     Category::Json => Loader::Json,
                     Category::Css => Loader::Css,

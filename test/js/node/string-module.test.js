@@ -57,6 +57,16 @@ test("application/json data URL imports as JSON", async () => {
   expect(mod.default).toEqual({ a: 1.5 });
 });
 
+// https://github.com/oven-sh/bun/issues/29159
+test.each(["text/javascript", "application/javascript"])(
+  "TypeScript syntax in a %s data URL is a syntax error",
+  async mime => {
+    const code = `export const a = "a.b";\nexport enum A { A }\n`;
+    await expect(import(`data:${mime},` + encodeURIComponent(code))).rejects.toThrow("Unexpected enum");
+    await expect(import(`data:${mime};base64,` + btoa(code))).rejects.toThrow("Unexpected enum");
+  },
+);
+
 // https://github.com/oven-sh/bun/issues/28483
 test("errors from imports nested inside a data URL module propagate", async () => {
   const inner = "data:text/javascript," + encodeURIComponent(`throw new Error("boom.1");`);

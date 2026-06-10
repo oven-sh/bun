@@ -170,8 +170,11 @@ public:
                 /* Write mark, this propagates to WebSockets too */
                 writeMark();
 
-                /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
+                /* WebSocket upgrades does not allow content-length.
+                 * Once write() has been called the header section is already terminated and body
+                 * bytes are on the wire (e.g. a close-delimited HTTP/1.0 streaming response), so
+                 * writing a header here would corrupt the response body. */
+                if (allowContentLength && !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
                     /* Even zero is a valid content-length */
                     Super::write("Content-Length: ", 16);
                     writeUnsigned64(totalSize);

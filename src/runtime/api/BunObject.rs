@@ -1833,14 +1833,20 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
             let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
         }
 
-        jsc::array_buffer::make_typed_array_with_bytes_no_copy(
-            global_this,
-            jsc::TypedArrayType::TypeUint8,
-            map.as_ptr().cast_mut().cast::<c_void>(),
-            map.len(),
-            Some(munmap_dealloc),
-            map.len() as *mut c_void,
-        )
+        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
+        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
+        // unmaps it exactly once via `munmap_dealloc` with the length stuffed
+        // into the ctx pointer.
+        unsafe {
+            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
+                global_this,
+                jsc::TypedArrayType::TypeUint8,
+                map.as_ptr().cast_mut().cast::<c_void>(),
+                map.len(),
+                Some(munmap_dealloc),
+                map.len() as *mut c_void,
+            )
+        }
     }
 }
 
@@ -2547,11 +2553,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
@@ -2597,11 +2608,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }
@@ -2698,11 +2714,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
@@ -2741,11 +2762,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }

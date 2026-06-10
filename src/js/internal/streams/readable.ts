@@ -2,7 +2,7 @@
 
 const EE = require("node:events");
 const { Stream, prependListener } = require("internal/streams/legacy");
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
+const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
@@ -21,7 +21,7 @@ const {
   kConstructed,
 } = require("internal/streams/utils");
 const { aggregateTwoErrors } = require("internal/errors");
-const { validateObject } = require("internal/validators");
+const { validateObject, validateAbortSignal } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
@@ -561,6 +561,9 @@ function howMuchToRead(n, state) {
   if (n <= 0 || (state.length === 0 && (state[kState] & kEnded) !== 0)) return 0;
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
+    // Fast path for buffers.
+    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     // Only flow one buffer at a time.
     if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
     return state.length;
@@ -1128,6 +1131,9 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
+  if ((state[kState] & kDestroyed) !== 0) {
+    return this;
+  }
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1167,6 +1173,9 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
+  if ((state[kState] & kDestroyed) !== 0) {
+    return this;
+  }
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");
@@ -1245,6 +1254,56 @@ Readable.prototype.iterator = function (options) {
     validateObject(options, "options");
   }
   return streamToAsyncIterator(this, options);
+};
+
+// The flag cannot be checked at module load time (readable loads during
+// bootstrap before options are available). Instead, toAsyncStreamable is
+// always defined but lazily initializes on first call -- throwing if the
+// flag is not set.
+{
+  const toAsyncStreamable = Symbol.for("Stream.toAsyncStreamable");
+  let createBatchedAsyncIterator;
+  let normalizeBatch;
+  let kValidatedSource;
+
+  Readable.prototype[toAsyncStreamable] = function () {
+    if (createBatchedAsyncIterator === undefined) {
+      // Write-once CLI bit set during argument parsing - unlike
+      // process.execArgv this cannot be mutated by user code.
+      if (!$cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag")) {
+        throw $ERR_STREAM_ITER_MISSING_FLAG();
+      }
+      ({ createBatchedAsyncIterator, normalizeBatch } = require("internal/streams/iter/classic"));
+      ({ kValidatedSource } = require("internal/streams/iter/types"));
+    }
+    const state = this._readableState;
+    const normalize = state.objectMode || state.encoding ? normalizeBatch : null;
+    const iter = createBatchedAsyncIterator(this, normalize);
+    iter[kValidatedSource] = true;
+    iter.stream = this;
+    return iter;
+  };
+}
+
+let composeImpl;
+
+Readable.prototype.compose = function compose(stream, options) {
+  if (options != null) {
+    validateObject(options, "options");
+  }
+  if (options?.signal != null) {
+    validateAbortSignal(options.signal, "options.signal");
+  }
+
+  composeImpl ??= require("internal/streams/compose");
+  const composedStream = composeImpl(this, stream);
+
+  if (options?.signal) {
+    // Not validating as we already validated before
+    addAbortSignalNoValidate(options.signal, composedStream);
+  }
+
+  return composedStream;
 };
 
 function streamToAsyncIterator(stream, options?) {
@@ -1528,7 +1587,7 @@ function fromList(n, state) {
         n -= str.length;
         buf[idx++] = null;
       } else {
-        if (n === buf.length) {
+        if (n === str.length) {
           ret += str;
           buf[idx++] = null;
         } else {

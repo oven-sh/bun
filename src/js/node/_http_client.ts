@@ -225,8 +225,38 @@ function ClientRequest(input, options, cb) {
 
     this.finished = true;
 
+    // Node routes destroy(err) through the socket 'error' event back to the
+    // request (socketErrorListener) and only then emits 'close'
+    // (socketCloseListener). Our teardown below emits 'close' synchronously
+    // via the abort chain, so surface the error first to keep 'close' the
+    // terminal event. Re-entry from an error handler is a no-op via the
+    // this.destroyed guard above. With no 'error' listener a synchronous
+    // emit would throw out of destroy() and skip the teardown entirely, so
+    // defer to a nextTick instead: cleanup always runs, a listener attached
+    // later this tick still catches, and an unhandled error crashes
+    // asynchronously - all matching node, where destroy() never throws.
+    if (err) {
+      if (this.listenerCount("error") > 0) {
+        try {
+          this.emit("error", err);
+        } catch (listenerError) {
+          // A throwing 'error' handler must not skip the teardown below.
+          // Node surfaces it as an async uncaught exception after
+          // socket.destroy(err) has already run; re-throw on a fresh tick.
+          process.nextTick(thrown => {
+            throw thrown;
+          }, listenerError);
+        }
+      } else {
+        process.nextTick((self, e) => self.emit("error", e), this, err);
+      }
+    }
+
+    // Node tears the in-flight response down via the socket 'close' path
+    // (socketCloseListener): an incomplete response is destroyed with
+    // ECONNRESET so consumers (e.g. async iteration) observe the reset.
     if (this.res && !this.res.complete) {
-      this.res.emit("end");
+      this.res.destroy(new ConnResetException("aborted"));
     }
 
     // If request is destroyed we abort the current response

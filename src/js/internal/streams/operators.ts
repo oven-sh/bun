@@ -3,9 +3,6 @@
 const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");
 const { kWeakHandler, kResistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
-const staticCompose = require("internal/streams/compose");
-const { addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
-const { isWritable, isNodeStream } = require("internal/streams/utils");
 
 const MathFloor = Math.floor;
 const PromiseResolve = Promise.$resolve.bind(Promise);
@@ -17,28 +14,6 @@ const ObjectDefineProperty = Object.defineProperty;
 
 const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
-
-function compose(stream, options) {
-  if (options != null) {
-    validateObject(options, "options");
-  }
-  if (options?.signal != null) {
-    validateAbortSignal(options.signal, "options.signal");
-  }
-
-  if (isNodeStream(stream) && !isWritable(stream)) {
-    throw $ERR_INVALID_ARG_VALUE("stream", stream, "must be writable");
-  }
-
-  const composedStream = staticCompose(this, stream);
-
-  if (options?.signal) {
-    // Not validating as we already validated before
-    addAbortSignalNoValidate(options.signal, composedStream);
-  }
-
-  return composedStream;
-}
 
 function map(fn, options) {
   if (typeof fn !== "function") {
@@ -397,7 +372,6 @@ export default {
     flatMap,
     map,
     take,
-    compose,
   },
   promiseReturningOperators: {
     every,

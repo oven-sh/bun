@@ -3130,11 +3130,13 @@ where
         Some(PreparedRequestFor {
             js_request: match create_js_request {
                 CreateJsRequest::Yes => request_object.to_js(&self.global()),
-                CreateJsRequest::Bake => match request_object.to_js_for_bake(&self.global()) {
-                    Ok(v) => v,
-                    Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                    Err(_) => return None,
-                },
+                CreateJsRequest::Custom(materialize) => {
+                    match materialize(request_object, &self.global()) {
+                        Ok(v) => v,
+                        Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
+                        Err(_) => return None,
+                    }
+                }
                 CreateJsRequest::No => JSValue::ZERO,
             },
             request_object,
@@ -3354,7 +3356,7 @@ where
         }
 
         let authorized = 'brk: {
-            let Some(dev_server) = self.dev_server.as_deref() else {
+            let Some(dev_server) = self.dev_server.as_ref() else {
                 break 'brk false;
             };
 
@@ -3362,11 +3364,7 @@ where
             // DNS-rebound origin connects from 127.0.0.1 but presents the
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
-            //
-            // Spelled with the full `crate::bake` path on purpose: this is a
-            // direct host→dev-server call that stays an acknowledged coupling
-            // until `Server.dev_server` itself is type-erased.
-            if !crate::bake::DevServer::DevServer::is_allowed_host(dev_server, req) {
+            if !dev_server.is_allowed_host(req) {
                 break 'brk false;
             }
 

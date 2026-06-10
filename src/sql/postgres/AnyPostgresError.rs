@@ -9,6 +9,7 @@
 #[derive(Debug, Copy, Clone, Eq, PartialEq, strum::IntoStaticStr, strum::EnumString)]
 pub enum AnyPostgresError {
     ConnectionClosed,
+    ConnectionFailed,
     ExpectedRequest,
     ExpectedStatement,
     InvalidBackendKeyData,

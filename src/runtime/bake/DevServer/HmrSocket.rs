@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_core::{Output, feature_flags};
+use bun_core::Output;
 use bun_uws::AnyWebSocket;
 use bun_uws_sys::{Opcode, SendStatus};
 
@@ -127,7 +127,7 @@ impl HmrSocket {
                         let _ = ws.subscribe(&[field as u8]);
 
                         // on-subscribe hooks
-                        if feature_flags::BAKE_DEBUGGING_FEATURES {
+                        if crate::bake::DEBUGGING_FEATURES {
                             // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                             let dev = unsafe { self.dev() };
                             match field {
@@ -321,7 +321,7 @@ impl HmrSocket {
     }
 
     fn on_unsubscribe(&mut self, field: HmrTopicBits) {
-        if feature_flags::BAKE_DEBUGGING_FEATURES {
+        if crate::bake::DEBUGGING_FEATURES {
             // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
             let dev = unsafe { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {

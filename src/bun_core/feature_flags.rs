@@ -120,14 +120,3 @@ pub fn is_libdeflate_enabled() -> bool {
 
     !feature_flag::BUN_FEATURE_FLAG_NO_LIBDEFLATE.get()
 }
-
-/// Enable the "app" option in Bun.serve. This option will likely be removed
-/// in favor of HTML loaders and configuring framework options in bunfig.toml
-pub fn bake() -> bool {
-    // In canary or if an environment variable is specified.
-    env::IS_CANARY || env::IS_DEBUG || feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get()
-}
-
-/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
-/// To use them, extra flags are passed in addition to this one.
-pub const BAKE_DEBUGGING_FEATURES: bool = env::IS_CANARY || env::IS_DEBUG;

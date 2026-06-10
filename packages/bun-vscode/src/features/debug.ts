@@ -72,22 +72,31 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
   }
 }
 
+function getWorkspaceFolderForPath(filePath: string): vscode.WorkspaceFolder | undefined {
+  const uri = vscode.Uri.file(filePath);
+  return vscode.workspace.getWorkspaceFolder(uri);
+}
+
 function runFileCommand(resource?: vscode.Uri): void {
   const path = getActivePath(resource);
   if (path) {
+    const workspaceFolder = getWorkspaceFolderForPath(path);
     vscode.debug.startDebugging(undefined, {
       ...RUN_CONFIGURATION,
       noDebug: true,
       program: path,
-      runtime: getRuntime(resource),
+      cwd: workspaceFolder?.uri.fsPath ?? RUN_CONFIGURATION.cwd,
+      runtime: getRuntime(workspaceFolder ?? resource),
     });
   }
 }
 
 export function debugCommand(command: string) {
+  const workspaceFolder = getWorkspaceFolderForPath(command);
   vscode.debug.startDebugging(undefined, {
     ...DEBUG_CONFIGURATION,
     program: command,
+    cwd: workspaceFolder?.uri.fsPath ?? RUN_CONFIGURATION.cwd,
     runtime: getRuntime(),
   });
 }

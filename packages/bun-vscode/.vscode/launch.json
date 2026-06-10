@@ -27,6 +27,20 @@
       ],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
       "preLaunchTask": "Build"
+    },
+    {
+      "name": "Extension (multi workspace)",
+      "type": "extensionHost",
+      "request": "launch",
+      "env": {
+        "NODE_ENV": "development"
+      },
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "${workspaceFolder}/example-multi-root/multiroot.code-workspace"
+      ],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "Build"
     }
   ]
 }

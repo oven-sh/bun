@@ -107,6 +107,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "repl"_s,
     "stream"_s,
     "stream/consumers"_s,
+    "stream/iter"_s,
     "stream/promises"_s,
     "stream/web"_s,
     "string_decoder"_s,
@@ -126,6 +127,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "worker_threads"_s,
     "ws"_s,
     "zlib"_s,
+    "zlib/iter"_s,
 };
 
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])

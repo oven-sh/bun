@@ -2497,7 +2497,11 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "enable_lto"_s), JSC::jsBoolean(false), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_module_version"_s), JSC::jsNumber(REPORTED_NODEJS_ABI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
-    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+    // Lazy property callbacks cannot propagate exceptions (reifyStaticProperty
+    // never checks), so use the non-throwing array constructor.
+    auto* shareableBuiltins = JSC::JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithUndecided), 0);
+    RELEASE_ASSERT(shareableBuiltins);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), shareableBuiltins, 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
@@ -3765,12 +3769,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
 
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* array = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(array);
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    // Lazy property callbacks cannot propagate exceptions (reifyStaticProperty
+    // never checks), so use the non-throwing array constructor.
+    auto* globalObject = processObject->globalObject();
+    auto* array = JSC::JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithUndecided), 0);
+    RELEASE_ASSERT(array);
+    return array;
 }
 
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)

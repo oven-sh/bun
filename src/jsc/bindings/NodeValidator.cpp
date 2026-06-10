@@ -363,7 +363,9 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
-    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -382,7 +384,9 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
-    if (!JSC::isArray(globalObject, value)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isArray) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Array"_s, value);
 
     auto length = value.get(globalObject, Identifier::fromString(vm, "length"_s));
     RETURN_IF_EXCEPTION(scope, {});
@@ -703,7 +707,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
     auto value = callFrame->argument(0);
 
-    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (value.isNull() || isArray || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
     }
 
@@ -716,7 +722,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {
-    if (value.isNull() || JSC::isArray(globalObject, value) || value.isCallable()) {
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (value.isNull() || isArray || value.isCallable()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 

@@ -167,6 +167,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_NON_CONTEXT_AWARE_DISABLED", Error],
+  ["ERR_OPERATION_FAILED", Error],
   ["ERR_OUT_OF_RANGE", RangeError],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],
@@ -324,5 +325,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_FS_CP_EEXIST", Error],
+  ["ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY", Error],
+  ["ERR_DIR_CONCURRENT_OPERATION", Error],
 ];
 export default errors;

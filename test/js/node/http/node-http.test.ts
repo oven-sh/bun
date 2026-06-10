@@ -2034,6 +2034,50 @@ it("native server socket handle accessors return undefined for non-socket receiv
   expect(exitCode).toBe(0);
 }, 15_000);
 
+it("server request socket exposes the net.Socket compatibility surface", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+  const server = createServer((req, res) => {
+    try {
+      const s = req.socket;
+      resolve({
+        readyState: s.readyState,
+        pending: s.pending,
+        connecting: s.connecting,
+        bufferSizeEqualsWritableLength: s.bufferSize === s.writableLength,
+        refReturnsThis: s.ref() === s,
+        unrefReturnsThis: s.unref() === s,
+        setNoDelayReturnsThis: s.setNoDelay() === s,
+        remoteAddressType: typeof s.remoteAddress,
+        remotePortType: typeof s.remotePort,
+        remoteFamilyIsIP: s.remoteFamily === "IPv4" || s.remoteFamily === "IPv6",
+      });
+    } catch (err) {
+      reject(err);
+    } finally {
+      res.end("ok");
+    }
+  });
+  try {
+    const url = await listen(server);
+    const res = await fetch(url);
+    await res.text();
+    expect(await promise).toEqual({
+      readyState: "open",
+      pending: false,
+      connecting: false,
+      bufferSizeEqualsWritableLength: true,
+      refReturnsThis: true,
+      unrefReturnsThis: true,
+      setNoDelayReturnsThis: true,
+      remoteAddressType: "string",
+      remotePortType: "number",
+      remoteFamilyIsIP: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("socket handle write keeps buffered data intact when encoding coercion re-enters write", async () => {
   // Argument conversion for the native socket write can run arbitrary JS (an encoding
   // object's toString). If that JS calls write() again on the same socket, both the

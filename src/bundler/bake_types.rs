@@ -176,33 +176,48 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     }
 }
 
-/// `bun_ast::Source` is not `const`-constructible (owns a `fs::Path`), so these
-/// are lazy statics.
-pub(crate) static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
-    std::sync::LazyLock::new(|| {
-        // Inlined because `bun_paths::fs::Path<'static>` is the local TYPE_ONLY stub and
-        // does not expose a built-in-path constructor.
+/// Descriptor for one synthesized virtual module. The bundler creates the two
+/// server-components manifest modules from these when
+/// `Framework.server_components` is configured; the names are supplied by the
+/// framework integration through `BakeOptions.server_component_manifests`
+/// (bake passes its `bun:bake/server` / `bun:bake/client` specifiers), so the
+/// bundler hardcodes no framework-specific module names.
+#[derive(Clone, Copy)]
+pub struct VirtualModule {
+    /// Import specifier framework/user code writes (matched against
+    /// `import_record.path.text`), e.g. `bun:bake/server`.
+    pub specifier: &'static [u8],
+    /// Stable internal path (chunk naming / sourcemaps), e.g. `_bun/bake/server`.
+    pub path: &'static [u8],
+    /// Path namespace, e.g. `bun`.
+    pub namespace: &'static [u8],
+}
+
+impl VirtualModule {
+    /// Materialize the `Source` for this virtual module at the bundler's
+    /// reserved source `index`.
+    ///
+    /// `bun_paths::fs::Path<'static>` is the local TYPE_ONLY stub and does not
+    /// expose a built-in-path constructor, so the path is built field-by-field.
+    pub(crate) fn to_source(self, index: bun_ast::Index) -> bun_ast::Source {
         bun_ast::Source {
             path: bun_paths::fs::Path {
-                pretty: b"bun:bake/server",
-                text: b"_bun/bake/server",
-                namespace: b"bun",
+                pretty: self.specifier,
+                text: self.path,
+                namespace: self.namespace,
                 is_disabled: false,
                 is_symlink: true,
             },
-            index: bun_ast::Index(crate::Index::BAKE_SERVER_DATA.get()),
+            index,
             ..Default::default()
         }
-    });
-pub(crate) static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
-    std::sync::LazyLock::new(|| bun_ast::Source {
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/client",
-            text: b"_bun/bake/client",
-            namespace: b"bun",
-            is_disabled: false,
-            is_symlink: true,
-        },
-        index: bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get()),
-        ..Default::default()
-    });
+    }
+}
+
+/// The two server-components manifest modules, at the bundler's fixed reserved
+/// source indexes (`Index::BAKE_SERVER_DATA` / `Index::BAKE_CLIENT_DATA`).
+#[derive(Clone, Copy)]
+pub struct ServerComponentsManifests {
+    pub server: VirtualModule,
+    pub client: VirtualModule,
+}

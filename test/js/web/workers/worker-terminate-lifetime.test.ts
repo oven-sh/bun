@@ -25,7 +25,8 @@ const timeout = slow ? 60_000 : 20_000;
 // tests still cover the plain clean-shutdown contract.
 const debugHeapEnv = {
   ...bunEnv,
-  ...(isWindows ? {} : { Malloc: "1" }),
+  // `undefined` also clears a Malloc inherited from the parent environment.
+  Malloc: isWindows ? undefined : "1",
   ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
 };
 
@@ -120,11 +121,14 @@ test("worker that loaded Bun.SQL and Bun.s3 exits without touching freed JSC han
         // RareData Strong. The worker then drains and exits naturally,
         // running the full shutdown sequence.
         const w = new Worker("data:text/javascript," + encodeURIComponent("Bun.SQL; Bun.s3; postMessage('loaded');"));
+        const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
         const loaded = new Promise((resolve, reject) => {
           w.onmessage = resolve;
           w.onerror = reject;
+          // A close before "loaded" means the worker died early; fail fast
+          // instead of hanging on a promise that can never settle.
+          closed.then(() => reject(new Error("worker closed before posting 'loaded'")));
         });
-        const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
         await loaded;
         await closed;
         console.log("worker closed");
@@ -152,16 +156,25 @@ test("worker terminated with an in-flight DNS query shuts down cleanly", async (
       bunExe(),
       "-e",
       `
-        const code = \`
-          const dns = require("node:dns");
-          dns.setServers(["192.0.2.1"]); // TEST-NET blackhole: the query stays in flight
-          dns.promises.resolve4("inflight.example").catch(() => {});
-          postMessage("inflight");
-          setInterval(() => {}, 1000); // keep the worker alive until terminate()
-        \`;
+        // Local UDP socket that never replies: the worker's c-ares query
+        // stays in flight until terminate() without touching the network.
+        const udp = await Bun.udpSocket({ socket: { data() {} } });
+        const code =
+          'const dns = require("node:dns");' +
+          'dns.setServers(["127.0.0.1:' + udp.port + '"]);' +
+          'dns.promises.resolve4("inflight.example").catch(() => {});' +
+          'postMessage("inflight");' +
+          'setInterval(() => {}, 1000);'; // keep the worker alive until terminate()
         const w = new Worker("data:text/javascript," + encodeURIComponent(code));
-        await new Promise((res, rej) => { w.onmessage = res; w.onerror = rej; });
+        await new Promise((res, rej) => {
+          w.onmessage = res;
+          w.onerror = rej;
+          // A close before "inflight" means the worker died early; fail fast
+          // instead of hanging on a promise that can never settle.
+          w.addEventListener("close", () => rej(new Error("worker closed before posting 'inflight'")), { once: true });
+        });
         await w.terminate();
+        udp.close();
         console.log("terminated ok");
       `,
     ],

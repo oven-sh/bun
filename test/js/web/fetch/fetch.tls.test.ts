@@ -210,8 +210,12 @@ describe.concurrent("fetch-tls", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Fixture reports unexpected outcomes on stdout; stderr carries only
-    // crash/sanitizer output (and benign debug-build noise).
+    // Check stderr for sanitizer reports first (and unconditionally): a
+    // recovered ASAN report can leave exit code 0, and on an abort this
+    // surfaces the actual report instead of a bare exit-code mismatch.
+    // Don't assert emptiness: debug builds emit benign startup noise.
+    expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+    // Fixture reports unexpected outcomes on stdout.
     expect(stdout).toStartWith("OK ");
     expect(exitCode).toBe(0);
   });

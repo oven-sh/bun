@@ -709,10 +709,62 @@ describe("compiled executable bytecode integrity", () => {
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
-  async function runQuiet(cmd: string[]): Promise<{ stderr: string; exitCode: number }> {
-    await using proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+  // Bun signs macOS --compile output itself (MachoSigner in
+  // src/exe_format/macho.rs): an ad-hoc signature whose CodeDirectory holds a
+  // SHA-256 hash per 4096-byte page. Corrupting section bytes invalidates the
+  // touched pages' hashes and the arm64 kernel kills the process at page-in.
+  // Apple's codesign cannot be used to re-sign here (newer releases reject the
+  // binary with "main executable failed strict validation"), so recompute the
+  // page hashes and patch them into the existing CodeDirectory instead, which
+  // keeps the ad-hoc signature valid on every macOS version.
+  function patchMachoAdhocSignature(exe: Buffer): void {
+    expect(exe.readUInt32LE(0)).toBe(0xfeedfacf); // thin 64-bit Mach-O
+    const ncmds = exe.readUInt32LE(16);
+    let sigOff = 0;
+    let cmdOff = 32;
+    for (let i = 0; i < ncmds; i++) {
+      if (exe.readUInt32LE(cmdOff) === 0x1d) {
+        // LC_CODE_SIGNATURE: linkedit_data_command { cmd, cmdsize, dataoff, datasize }
+        sigOff = exe.readUInt32LE(cmdOff + 8);
+        break;
+      }
+      cmdOff += exe.readUInt32LE(cmdOff + 4);
+    }
+    expect(sigOff).toBeGreaterThan(0);
+
+    // Code-signature blobs use big-endian fields.
+    expect(exe.readUInt32BE(sigOff)).toBe(0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE
+    const blobCount = exe.readUInt32BE(sigOff + 8);
+    let cdOff = 0;
+    for (let i = 0; i < blobCount; i++) {
+      if (exe.readUInt32BE(sigOff + 12 + i * 8) === 0) {
+        // CSSLOT_CODEDIRECTORY
+        cdOff = sigOff + exe.readUInt32BE(sigOff + 12 + i * 8 + 4);
+        break;
+      }
+    }
+    expect(cdOff).toBeGreaterThan(0);
+    expect(exe.readUInt32BE(cdOff)).toBe(0xfade0c02); // CSMAGIC_CODEDIRECTORY
+
+    const hashOffset = exe.readUInt32BE(cdOff + 16);
+    const nCodeSlots = exe.readUInt32BE(cdOff + 28);
+    const codeLimit = exe.readUInt32BE(cdOff + 32);
+    const hashSize = exe[cdOff + 36];
+    const hashType = exe[cdOff + 37];
+    const pageSize = 1 << exe[cdOff + 39];
+    expect({ hashSize, hashType }).toEqual({ hashSize: 32, hashType: 2 }); // SHA-256
+
+    for (let i = 0; i < nCodeSlots; i++) {
+      const start = i * pageSize;
+      // MachoSigner hashes the final partial page zero-padded to a full page.
+      let page: Buffer = exe.subarray(start, start + pageSize);
+      if (start + pageSize > codeLimit) {
+        page = Buffer.alloc(pageSize);
+        exe.copy(page, 0, start, codeLimit);
+      }
+      const digest = new Bun.CryptoHasher("sha256").update(page).digest();
+      exe.set(digest, cdOff + hashOffset + i * hashSize);
+    }
   }
 
   // Writes the corrupted executable to a sibling path: overwriting the
@@ -720,25 +772,11 @@ describe("compiled executable bytecode integrity", () => {
   // from the pristine run.
   async function writeCorrupted(exePath: string, exe: Buffer): Promise<string> {
     const corruptedPath = isWindows ? exePath.replace(/\.exe$/, "-corrupted.exe") : `${exePath}-corrupted`;
+    if (isMacOS) {
+      patchMachoAdhocSignature(exe);
+    }
     await Bun.write(corruptedPath, exe);
     chmodSync(corruptedPath, 0o755);
-    if (isMacOS) {
-      // Re-sign so the ad-hoc code signature covers the corrupted bytes;
-      // otherwise the kernel kills the process before it can start. Newer
-      // codesign versions can refuse to force-replace a signature that no
-      // longer matches the file, so strip it and sign fresh when that fails.
-      const force = await runQuiet(["codesign", "--force", "--sign", "-", corruptedPath]);
-      if (force.exitCode !== 0) {
-        const remove = await runQuiet(["codesign", "--remove-signature", corruptedPath]);
-        const sign = await runQuiet(["codesign", "--sign", "-", corruptedPath]);
-        // `force` is mirrored so its stderr shows up in the failure diff.
-        expect({ force, remove, sign }).toEqual({
-          force,
-          remove: { stderr: expect.any(String), exitCode: 0 },
-          sign: { stderr: expect.any(String), exitCode: 0 },
-        });
-      }
-    }
     return corruptedPath;
   }
 

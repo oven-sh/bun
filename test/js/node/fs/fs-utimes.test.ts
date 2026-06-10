@@ -29,9 +29,7 @@ describe("utimes-family errors report node's syscall names", () => {
   });
 
   it("futimesSync reports 'futime'", () => {
-    expect(() => fs.futimesSync(badFd, 0, 0)).toThrow(
-      expect.objectContaining({ code: "EBADF", syscall: "futime" }),
-    );
+    expect(() => fs.futimesSync(badFd, 0, 0)).toThrow(expect.objectContaining({ code: "EBADF", syscall: "futime" }));
   });
 
   it("promises.utimes reports 'utime'", async () => {

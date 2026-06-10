@@ -316,6 +316,18 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   1,
 );
 
+export const uvRawErrno: (rc: number) => number | undefined = $newZigFunction(
+  "sys/Error.zig",
+  "TestingAPIs.uvRawErrno",
+  1,
+);
+
+export const uvTranslatedErrno: (rc: number) => number | undefined = $newZigFunction(
+  "sys/Error.zig",
+  "TestingAPIs.uvTranslatedErrno",
+  1,
+);
+
 export const sigactionLayout: () =>
   | undefined
   | {

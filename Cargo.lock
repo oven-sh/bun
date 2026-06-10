@@ -2083,6 +2083,7 @@ version = "0.0.0"
 dependencies = [
  "bun_core",
  "bun_jsc",
+ "bun_libuv_sys",
  "bun_sys",
 ]
 

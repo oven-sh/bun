@@ -91,7 +91,10 @@ impl IntoErrnoInt for i32 {
         // a caller bug, so panic.
         #[cfg(windows)]
         {
-            self.unsigned_abs() as Int
+            // Windows system codes can exceed u16 (e.g. NTSTATUS-shaped
+            // values libuv passes through); map them to UNKNOWN instead of
+            // truncating into an aliased errno.
+            Int::try_from(self.unsigned_abs()).unwrap_or(E::UNKNOWN as Int)
         }
         #[cfg(not(windows))]
         {
@@ -151,15 +154,9 @@ impl Error {
 
     // c_int covers all call sites in practice.
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
-        #[cfg(windows)]
-        let n = Int::try_from(errno.unsigned_abs()).unwrap();
-        #[cfg(not(windows))]
-        let n = u16::try_from(errno).expect("int cast");
-        Error {
-            errno: n,
-            syscall: syscall_tag,
-            ..Default::default()
-        }
+        // Same conversion as `IntoErrnoInt for i32`: absolute value clamped
+        // to UNKNOWN on Windows, non-negative asserted on POSIX.
+        Error::new(errno, syscall_tag)
     }
 
     #[inline]
@@ -575,9 +572,11 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
         if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(
-                self.int() as core::ffi::c_int
-            ))
+            // Saturate: an i64 below c_int range is not a `UV_E*` code, and a
+            // wrapping `as` cast could alias one. `translate_uv_error_to_e`
+            // maps `c_int::MIN` to `E::UNKNOWN`.
+            let code = c_int::try_from(self.int()).unwrap_or(c_int::MIN);
+            Some(crate::windows::translate_uv_error_to_e(code))
         } else {
             None
         }

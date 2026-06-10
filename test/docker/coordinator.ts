@@ -58,26 +58,32 @@ if (!socketPath) {
 // environment.
 delete process.env.BUN_DOCKER_COORDINATOR;
 
-// Collapse concurrent and repeated requests for one service onto a single
-// ensure(). Evicted on failure so a later request re-attempts instead of
-// re-awaiting the same rejection.
+// Collapse concurrent requests for one service onto a single ensure(), but
+// never memoize a settled result: each new request re-runs `up -d --wait`
+// (restarting the container and waiting for health again if it died since)
+// and re-reads the port mapping. That's the self-healing every test file's
+// own ensure() provided before the coordinator existed; answering from a
+// cache for the rest of the shard hands out dead ports after a mid-run
+// container crash.
 const inflight = new Map<ServiceName, Promise<ServiceInfo>>();
 
 function ensureService(service: ServiceName): Promise<ServiceInfo> {
   let p = inflight.get(service);
   if (p === undefined) {
-    console.log(`coordinator: starting ${service}`);
+    console.log(`coordinator: ensuring ${service}`);
     p = ensure(service).then(
       info => {
         console.log(`coordinator: ${service} ready`);
         return info;
       },
       error => {
-        inflight.delete(service);
+        console.error(`coordinator: ${service} failed: ${error}`);
         throw error;
       },
     );
     inflight.set(service, p);
+    const evict = () => inflight.delete(service);
+    p.then(evict, evict);
   }
   return p;
 }

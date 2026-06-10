@@ -105,16 +105,20 @@ class DockerComposeHelper {
   }
 
   up(service: ServiceName): Promise<void> {
-    // Share one in-flight promise per service so `Promise.all([ensure(a), ensure(b)])`
-    // (or two describeWithContainer blocks for the same service) start their
-    // containers in parallel without racing duplicate `compose up` invocations.
+    // Share one in-flight promise per service so concurrent ensure() calls
+    // (`Promise.all([ensure(a), ensure(b)])`, two describeWithContainer
+    // blocks, or two coordinator clients) never race duplicate `compose up`
+    // invocations. Settled promises are evicted rather than memoized: the
+    // next request re-runs `up -d --wait`, which restarts the container and
+    // waits for health again if it died in the meantime. In the coordinator
+    // this promise lives for the whole shard, and serving a memoized "ready"
+    // after mysql crashed mid-run is how tests end up dialing a dead port.
     let p = this.upPromises.get(service);
     if (p === undefined) {
       p = this.doUp(service);
       this.upPromises.set(service, p);
-      // Evict on failure so a later retry actually re-runs compose instead of
-      // re-awaiting the same rejected promise.
-      p.catch(() => this.upPromises.delete(service));
+      const evict = () => this.upPromises.delete(service);
+      p.then(evict, evict);
     }
     return p;
   }

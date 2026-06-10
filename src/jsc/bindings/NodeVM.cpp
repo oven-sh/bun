@@ -785,7 +785,7 @@ void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
 
 static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
 {
-    // Delegate to the parent Zig::GlobalObject so that unhandled rejections
+    // Delegate to the parent global object so that unhandled rejections
     // in VM contexts are reported to the main process (matching Node.js behavior)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
@@ -833,7 +833,7 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 
     vm.ensureTerminationException();
 
-    // Share the async context data with the parent Zig::GlobalObject.
+    // Share the async context data with the parent global object.
     // This is necessary because AsyncLocalStorage methods (run, getStore, etc.) are defined
     // in the parent realm and reference the parent's $asyncContext. However, microtask
     // processing (JSMicrotask.cpp) operates on this NodeVMGlobalObject's m_asyncContextData.

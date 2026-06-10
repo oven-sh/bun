@@ -10,5 +10,3 @@ pub struct Param {
     pub r#type: FieldType,
     pub flags: ColumnFlags,
 }
-
-// ported from: src/sql/mysql/MySQLParam.zig

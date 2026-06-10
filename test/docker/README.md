@@ -66,7 +66,10 @@ const postgres = await dockerCompose.ensure("postgres_plain");
 ```yaml
 services:
   postgres_plain:
-    image: postgres:15
+    build:                # build a local image so init scripts are baked in
+      context: .          # (bind mounts don't resolve against a remote/sidecar daemon)
+      dockerfile: Dockerfile.postgres-plain
+    image: bun-postgres-plain:local
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
@@ -168,6 +171,10 @@ test("wait for service to be healthy", async () => {
 ```
 test/docker/
 ├── docker-compose.yml       # Service definitions
+├── Dockerfile.postgres-plain # postgres_plain image (bakes in init-scripts)
+├── Dockerfile.postgres-auth  # postgres_auth image (init-scripts + pg_hba)
+├── Dockerfile.autobahn       # autobahn image (fuzzingserver.json)
+├── Dockerfile.squid          # squid image (squid.conf)
 ├── index.ts                # TypeScript API
 ├── prepare-ci.sh          # CI/CD setup script
 ├── README.md              # This file

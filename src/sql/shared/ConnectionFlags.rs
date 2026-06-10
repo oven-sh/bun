@@ -16,5 +16,3 @@ impl Default for ConnectionFlags {
         Self::empty()
     }
 }
-
-// ported from: src/sql/shared/ConnectionFlags.zig

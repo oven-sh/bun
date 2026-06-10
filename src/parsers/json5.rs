@@ -1118,5 +1118,3 @@ fn append_codepoint_to_utf8(buf: &mut BumpVec<'_, u8>, cp: i32) -> Result<(), Pa
 fn is_ident_continue_ascii(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
 }
-
-// ported from: src/interchange/json5.zig

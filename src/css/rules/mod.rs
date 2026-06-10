@@ -4,7 +4,7 @@ use css::PrintErr;
 use css::Printer;
 use css::error::MinifyErr;
 
-// PERF(port): heap-backed shim — Zig used arena-backed `std.ArrayListUnmanaged`.
+// PERF: heap-backed shim.
 // TODO(refactor): thread `'bump` and replace this with `crate::generics::ArrayList<'bump, T>`
 // (= `bun_alloc::ArenaVec`) crate-wide in one pass.
 pub(super) type ArrayList<T> = Vec<T>;
@@ -32,10 +32,8 @@ pub mod unknown;
 pub mod viewport;
 
 // ─── CssRule / CssRuleList ─────────────────────────────────────────────────
-// Zig: pub fn CssRule(comptime Rule: type) type { return union(enum) { ... } }
-//
-// PORT NOTE: the original port threaded a `'bump` arena lifetime through every
-// rule (matching Zig's `ArrayListUnmanaged`-backed AST). That cascades into
+// An earlier iteration threaded a `'bump` arena lifetime through every
+// rule. That cascades into
 // every leaf module signature; while those leaves are gated, `CssRule<R>` is
 // kept lifetime-free here (the gated bodies re-introduce `'bump` when they
 // un-gate alongside `bumpalo::collections::Vec` storage).
@@ -44,7 +42,7 @@ pub mod viewport;
 // Single source of truth for the 20 typed at-rule payloads. Adding a new
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
-// their `to_css` arms are special-cased (see PORT NOTE on `Custom`).
+// their `to_css` arms are special-cased (see the note on `Custom`).
 macro_rules! css_rule_variants {
     ( $( $(#[$doc:meta])* $Variant:ident($Payload:ty) ),+ $(,)? ) => {
         /// A single CSS rule (at-rule or style rule).
@@ -63,33 +61,25 @@ macro_rules! css_rule_variants {
                 match self {
                     $( CssRule::$Variant(x) => x.to_css(dest), )+
                     CssRule::Unknown(x) => x.to_css(dest),
-                    // Zig: `.custom => |x| x.toCss(dest) catch return dest.addFmtError()`.
-                    //
-                    // PORT NOTE (incomplete): the spec has TWO concrete `R` types —
-                    // `DefaultAtRule` (whose `toCss` errors unconditionally) and
-                    // `TailwindAtRule` (src/css/rules/tailwind.zig:14-19, used via
-                    // `BundlerAtRule` when `ENABLE_TAILWIND_PARSING`), whose `toCss`
-                    // SUCCEEDS and writes `@tailwind <name>;`. This arm therefore
-                    // diverges from the spec for `R = TailwindAtRule`: it fails
-                    // serialization where the spec round-trips.
-                    //
-                    // The correct port threads a `ToCss`-style bound (or per-`R`
-                    // vtable) so `Custom(x)` dispatches to `x.to_css(dest)` and only
-                    // maps the error path via `add_fmt_error()`. That bound cascades
-                    // through every nested `CssRuleList<R>` printer (media, supports,
-                    // layer, document, nesting, starting_style, style, scope,
-                    // container) — deferred to the patch that un-gates
-                    // `BundlerAtRule = TailwindAtRule`.
-                    // TODO(port): dispatch to `x.to_css(dest)` once `R: ToCss` (or
-                    // equivalent) is threaded; current behavior is only spec-correct
-                    // for `R = DefaultAtRule`.
+                    // There are TWO concrete `R` types — `DefaultAtRule` (whose
+                    // `to_css` errors unconditionally) and `TailwindAtRule`,
+                    // whose `to_css` succeeds and writes `@tailwind <name>;`.
+                    // Tailwind parsing is disabled (`ENABLE_TAILWIND_PARSING =
+                    // false`, `BundlerAtRule = DefaultAtRule` in css_parser.rs),
+                    // so erroring here is correct for every `R` that is
+                    // actually instantiated. If
+                    // `TailwindAtRule` is ever un-gated, thread a `ToCss`-style bound
+                    // (or per-`R` vtable) so `Custom(x)` dispatches to
+                    // `x.to_css(dest)` and only the error path maps through
+                    // `add_fmt_error()`; that bound cascades through every nested
+                    // `CssRuleList<R>` printer (media, supports, layer, document,
+                    // nesting, starting_style, style, scope, container).
                     CssRule::Custom(_x) => Err(dest.add_fmt_error()),
                     CssRule::Ignored => Ok(()),
                 }
             }
 
-            /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
-            /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
+            /// Variant-wise dispatch to each leaf rule's `deep_clone`. Hand-written (not
             /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
             /// as **inherent** methods rather than `DeepClone` trait impls;
             /// method-syntax dispatch here picks up either.
@@ -157,17 +147,16 @@ css_rule_variants! {
 // `bun_alloc::ArenaVec<'bump, T>` (raw `NonNull<T>` + `&Bump`) deep in
 // leaf rule payloads, both of which suppress the auto-traits. Those containers
 // uniquely own their storage exactly like `Vec<T>`, and post-parse the tree is
-// shared read-only across the bundler thread pool (mirrors Zig, which freely
-// hands the arena-backed AST between threads). Thread-safety therefore follows
-// `R`'s auto-traits.
+// shared read-only across the bundler thread pool. Thread-safety therefore
+// follows `R`'s auto-traits.
 unsafe impl<R: Send> Send for CssRule<R> {}
 // SAFETY: see the `Send` impl above — uniquely-owned storage; `Sync` follows `R: Sync`.
 unsafe impl<R: Sync> Sync for CssRule<R> {}
 
-/// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
+/// Ordered list of CSS rules, generic over the custom at-rule type `R`.
 pub struct CssRuleList<R> {
-    // PERF(port): was `bun_alloc::ArenaVec<'bump, CssRule<'bump, R>>`;
-    // arena threading restored when leaf rules un-gate.
+    // PERF: re-thread to `bun_alloc::ArenaVec<'bump, CssRule<'bump, R>>`
+    // when leaf rules un-gate.
     pub v: Vec<CssRule<R>>,
 }
 
@@ -191,7 +180,7 @@ impl<R> Default for CssRuleList<R> {
 // wise / variant-wise port of `css.implementDeepClone`. `CssRule::deep_clone`
 // (below) dispatches via method-syntax so it picks up the inherent impl.
 //
-// PORT NOTE: most leaf rules can't use `#[derive(DeepClone)]` directly yet
+// Most leaf rules can't use `#[derive(DeepClone)]` directly yet
 // because two field types still lack an arena-aware `deep_clone(&self,
 // &Arena) -> Self`: `SelectorList` (selectors/parser.rs uses no-arg
 // `deep_clone()`) and `Property` (properties_generated.rs — per-variant body
@@ -210,7 +199,7 @@ pub(super) mod dc {
     /// through `dc::property` so the only remaining bottleneck is the
     /// per-variant `Property::deep_clone` body.
     ///
-    /// PORT NOTE: threads the real `'bump` lifetime instead of fabricating
+    /// Threads the real `'bump` lifetime instead of fabricating
     /// `'static` (PORTING.md §Forbidden: `unsafe { &*(p as *const _) }` to
     /// extend a lifetime). Callers whose storage is still pinned to
     /// `DeclarationBlock<'static>` must fix that storage type — the lie
@@ -239,7 +228,7 @@ pub(super) mod dc {
     ///
     /// SAFETY: `DeclarationBlock<'static>` is the crate-wide `'bump`-erasure
     /// placeholder until `CssRule<'bump, R>` re-threads the arena lifetime
-    /// (see `style.rs` struct PORT NOTE). `bumpalo::Vec` is invariant in
+    /// (see the note on `StyleRule.declarations` in `style.rs`). `bumpalo::Vec` is invariant in
     /// `'bump`, so any `DeclarationBlock<'static>` constructor must observe a
     /// `&'static Arena`. The arena outlives every rule that borrows it (it
     /// owns them); lifetimes re-thread together when the rule structs grow a
@@ -261,11 +250,10 @@ pub(super) mod dc {
         decl_block(this, unsafe { arena_static(bump) })
     }
 
-    /// Empty `DeclarationBlock<'static>` — Zig spec writes `css.DeclarationBlock{}`.
+    /// Empty `DeclarationBlock<'static>`.
     ///
-    /// Exists so call-sites that need an empty block (rules.zig:363
-    /// `nested_rule.declarations = .{}`) route through ONE centralized
-    /// erasure helper. Delete with `decl_block_static` once
+    /// Exists so call-sites that need an empty block route through ONE
+    /// centralized erasure helper. Delete with `decl_block_static` once
     /// `CssRule<'bump, R>` re-threads the arena lifetime.
     #[inline]
     pub(crate) fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
@@ -275,8 +263,8 @@ pub(super) mod dc {
 
     /// `'bump`-erasure adaptor for `&mut DeclarationHandler<'_>`.
     ///
-    /// SAFETY: `DeclarationBlock<'static>` on `StyleRule` (see style.rs struct
-    /// PORT NOTE) forces `DeclarationBlock::minify` to expect
+    /// SAFETY: `DeclarationBlock<'static>` on `StyleRule` (see the note on
+    /// `StyleRule.declarations` in style.rs) forces `DeclarationBlock::minify` to expect
     /// `DeclarationHandler<'static>`; the handlers in `MinifyContext` carry the
     /// real `'bump`. Both reference the same arena. Centralized here so the
     /// erasure lives in ONE place; collapses together with `decl_block_static`
@@ -325,8 +313,7 @@ pub(super) mod dc {
     }
 
     /// `Property::deep_clone` — routes to the real inherent
-    /// `Property::deep_clone` in properties_generated.rs (faithful per-variant
-    /// port of .zig:6307-6558).
+    /// `Property::deep_clone` in properties_generated.rs.
     #[inline]
     pub(crate) fn property(
         this: &crate::properties::Property,
@@ -339,7 +326,6 @@ pub(super) mod dc {
 // `Location` is plain `Copy` data; the derive expands to field-wise
 // `u32::deep_clone` (identity). Doubles as the in-tree smoke test that the
 // `#[derive(DeepClone)]` proc-macro round-trips through a real CSS type.
-// (The Zig `implementDeepClone` returns `this.*` for simple-copy types.)
 
 // ─── shared serialization helpers for leaf rules ──────────────────────────
 // Several leaf-rule `to_css` bodies bottom out on helpers whose canonical
@@ -349,8 +335,8 @@ pub(super) mod dc {
 // 12 leaf rules can serialize for real. Once the upstream gates drop, callers
 // switch back and these are deleted.
 
-/// Port of `DeclarationBlock.toCssBlock` (declaration.zig). The real impl is
-/// gated in `declaration.rs`; `Property::to_css` is un-gated so the body is
+/// `DeclarationBlock` block serialization. The real impl is gated in
+/// `declaration.rs`; `Property::to_css` is un-gated so the body is
 /// trivially inlinable here.
 pub(super) fn decl_block_to_css(
     decls: &css::DeclarationBlock<'_>,
@@ -362,7 +348,6 @@ pub(super) fn decl_block_to_css(
 
     let length = decls.len();
     let mut i: usize = 0;
-    // Zig: `inline for (.{"declarations","important_declarations"}) |field|` — unrolled.
     for decl in decls.declarations.iter() {
         dest.newline()?;
         decl.to_css(dest, false)?;
@@ -385,7 +370,7 @@ pub(super) fn decl_block_to_css(
     dest.write_char(b'}')
 }
 
-/// Port of `VendorPrefix.toCss` (css_parser.zig:182). Lives here because the
+/// `VendorPrefix` serialization. Lives here because the
 /// canonical `impl VendorPrefix` block in lib.rs hasn't grown a `to_css` yet
 /// and `rules/` is the only un-gated caller.
 #[inline]
@@ -445,7 +430,7 @@ pub(super) fn dashed_ident_to_css(
 /// rule should be dropped. NOTE: `never_matches()` is a *drop condition*, not
 /// merely an optimization — omitting it diverges output (e.g. `@media not all
 /// { a{color:red} }` must be removed). `MediaList::never_matches` is un-gated,
-/// so call it here to match the spec (`media.zig:19-23`).
+/// so call it here.
 impl<R> media::MediaRule<R> {
     pub fn minify(
         &mut self,
@@ -559,20 +544,20 @@ impl<R> CssRuleList<R> {
         // DeclarationBlock::deep_clone — all `` in their leaves.
 
         let mut style_rules = StyleRuleKeyMap::default();
+        let mut merge_state = StyleRuleMergeState::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
 
         for rule in self.v.iter_mut() {
             // NOTE Anytime you push `rule` into `rules`, set `moved_rule = true`
-            // so the source slot is replaced with `Ignored` (mirrors Zig's
-            // `defer if (moved_rule) rule.* = .ignored`).
+            // so the source slot is replaced with `Ignored`.
             let mut moved_rule = false;
 
             'arm: {
                 match rule {
                     CssRule::Keyframes(_keyframez) => {
-                        // TODO(port): KeyframesRule minify (unused-symbol drop +
-                        // same-name merge + vendor-prefix downlevel + fallbacks).
-                        // Zig leaves this as a debug-TODO fallthrough today.
+                        // KeyframesRule minify (unused-symbol drop + same-name
+                        // merge + vendor-prefix downlevel + fallbacks) is
+                        // not implemented; fall through.
                     }
                     CssRule::CustomMedia(_) => {
                         if context.custom_media.is_some() {
@@ -599,7 +584,7 @@ impl<R> CssRuleList<R> {
                         if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
                             && last_rule.condition.eql(&supp.condition)
                         {
-                            // Zig drops the duplicate-condition rule outright.
+                            // Drop the duplicate-condition rule outright.
                             break 'arm;
                         }
                         supp.minify(context, parent_is_unused)?;
@@ -623,7 +608,7 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::LayerStatement(_lay) => {
-                        // TODO(port): LayerStatementRule minify — Zig fallthrough.
+                        // LayerStatementRule minify is not implemented; fall through.
                     }
                     CssRule::MozDocument(doc) => {
                         // See `Container` above: recurse so nested style rules
@@ -642,13 +627,14 @@ impl<R> CssRuleList<R> {
                                 rule,
                                 &mut rules,
                                 &mut style_rules,
+                                &mut merge_state,
                                 context,
                                 parent_is_unused,
                             )?;
                             break 'arm;
                         }
                     }
-                    CssRule::CounterStyle(_) => { /* TODO(port): Zig fallthrough */ }
+                    CssRule::CounterStyle(_) => {}
                     CssRule::Scope(scpe) => {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
@@ -676,11 +662,15 @@ impl<R> CssRuleList<R> {
                         // count against the selector-expansion cap.
                         rl.rules.minify(context, parent_is_unused)?;
                     }
-                    CssRule::FontPaletteValues(_) => { /* TODO(port): Zig fallthrough */ }
-                    CssRule::Property(_) => { /* TODO(port): Zig fallthrough */ }
+                    CssRule::FontPaletteValues(_) => {}
+                    CssRule::Property(_) => {}
                     _ => {}
                 }
 
+                // Appending a non-style rule ends the current style-rule merge
+                // run, so settle any pending declaration merge first.
+                flush_pending_style_merge(&mut rules, &mut merge_state, context);
+                merge_state.last_compat = None;
                 rules.push(core::mem::replace(rule, CssRule::Ignored));
                 moved_rule = true;
 
@@ -699,13 +689,14 @@ impl<R> CssRuleList<R> {
             }
         }
 
-        // Zig: css.deepDeinit(CssRule(AtRule), context.arena, &this.v);
-        // Rust drops the old Vec on assignment.
+        // The last merge run may still have a pending declaration merge.
+        flush_pending_style_merge(&mut rules, &mut merge_state, context);
+
+        // The old Vec is dropped on assignment.
         self.v = rules;
         Ok(())
     }
 
-    /// Zig: `css.implementDeepClone(@This(), this, arena)`.
     pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: css::generics::DeepClone<'bump>,
@@ -723,6 +714,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
     style_rules: &mut StyleRuleKeyMap,
+    merge_state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
@@ -780,26 +772,68 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 
     sty.update_prefix(context);
 
+    // The declaration merge below drains `sty.declarations`, but the rules
+    // built for the partitioned-out incompatible selectors clone it after the
+    // merge. Snapshot it first, or a merge would silently drop the
+    // incompatible selectors' styling.
+    let incompatible_decls: Option<css::DeclarationBlock> = if incompatible.len() > 0 {
+        Some(dc::decl_block_static(&sty.declarations, context.arena))
+    } else {
+        None
+    };
+
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
+    let mut sty_compat: Option<bool> = None;
+    let had_pending = merge_state.pending_minify;
     if let Some(CssRule::Style(last_style_rule)) = rules.last_mut()
-        && merge_style_rules(sty, last_style_rule, context)
+        && merge_style_rules(
+            sty,
+            last_style_rule,
+            context,
+            &mut merge_state.pending_minify,
+            &mut sty_compat,
+            &mut merge_state.last_compat,
+        )
     {
         // If that was successful, then the last rule has been updated to include the
         // selectors/declarations of the new rule. This might mean that we can merge it
         // with the previous rule, so continue trying while we have style rules available.
-        while rules.len() >= 2 {
-            let len = rules.len();
-            let (a, b) = rules.split_at_mut(len - 1);
-            if let (CssRule::Style(prev), CssRule::Style(last)) = (&mut a[len - 2], &mut b[0])
-                && merge_style_rules(last, prev, context)
-            {
-                rules.pop();
-                continue;
-            }
-            break;
+        // A declaration merge defers both the re-minify and this cascade to
+        // the end of the merge run (see `flush_pending_style_merge`).
+        if !merge_state.pending_minify {
+            cascade_merge_with_previous(rules, merge_state, context);
         }
         merged = true;
+    }
+
+    if !merged && had_pending {
+        // The failed merge settled the previous run's pending declarations
+        // (merge_style_rules re-minifies before its declaration comparison);
+        // run the merge-with-previous cascade that settling enables, which the
+        // per-merge re-minify used to drive at the end of that run.
+        debug_assert!(!merge_state.pending_minify);
+        cascade_merge_with_previous(rules, merge_state, context);
+        // A selector merge in the cascade can make the next pair's selectors
+        // equal and start a new declaration merge, which the cascade returns
+        // on. Settle it now: `sty` is pushed below, which would bury the
+        // pending rule one slot down where no later flush can find it.
+        flush_pending_style_merge(rules, merge_state, context);
+    }
+
+    // If this iteration staged handler-context rules (e.g. the merged-in rule
+    // carried a `color-scheme` declaration needing dark-mode fallback vars),
+    // settle the pending merge before collecting those rules below: the
+    // re-minify re-runs the staging declarations and stages their rules
+    // again, and the per-merge re-minify this replaces also ran before
+    // collection, so the re-staged entries belong in this rule's extras.
+    if merge_state.pending_minify
+        && !(context.handler_context.supports.is_empty()
+            && context.handler_context.ltr.is_empty()
+            && context.handler_context.rtl.is_empty()
+            && context.handler_context.dark.is_empty())
+    {
+        flush_pending_style_merge(rules, merge_state, context);
     }
 
     // Create additional rules for logical properties, @supports overrides, and incompatible selectors.
@@ -821,7 +855,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let mut clone = style::StyleRule::<R> {
             selectors: list,
             vendor_prefix: sty.vendor_prefix,
-            declarations: dc::decl_block_static(&sty.declarations, context.arena),
+            declarations: dc::decl_block_static(
+                incompatible_decls.as_ref().unwrap_or(&sty.declarations),
+                context.arena,
+            ),
             rules: sty.rules.deep_clone(context.arena),
             loc: sty.loc,
         };
@@ -846,8 +883,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     {
         let mut rulesss = CssRuleList::<R>::default();
         core::mem::swap(&mut sty.rules, &mut rulesss);
-        // Zig: `.declarations = css.DeclarationBlock{}` — empty block. Route
-        // through the centralized `'bump`-erasure helper instead of fabricating
+        // Empty block: route through the centralized `'bump`-erasure helper
+        // instead of fabricating
         // `&'static Arena` here (PORTING.md §Forbidden).
         Some(style::StyleRule {
             selectors: sty.selectors.deep_clone(),
@@ -865,7 +902,13 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         let has_no_rules = sty.rules.v.is_empty();
         let idx = rules.len();
 
+        // A failed merge settles any pending declaration merge on the previous
+        // last rule (and an unattempted one means it was never pending), so
+        // every rule already in the list is fully minified here, which the
+        // duplicate check below relies on.
+        debug_assert!(!merge_state.pending_minify);
         rules.push(core::mem::replace(rule, CssRule::Ignored));
+        merge_state.last_compat = sty_compat;
 
         // Check if this rule is a duplicate of an earlier rule, meaning it has
         // the same selectors and defines the same properties. If so, remove the
@@ -882,6 +925,17 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             }
             style_rules.insert(key);
         }
+    }
+
+    // Appending anything below ends the current merge run, so settle any
+    // pending declaration merge on the last rule first.
+    if !logical.is_empty()
+        || !supps.is_empty()
+        || incompatible_rules.len() > 0
+        || nested_rule.is_some()
+    {
+        flush_pending_style_merge(rules, merge_state, context);
+        merge_state.last_compat = None;
     }
 
     if !logical.is_empty() {
@@ -914,9 +968,8 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 /// duplicates. It stores an index into the live `rules` Vec plus a
 /// pre-computed hash for fast lookups.
 ///
-/// PORT NOTE: the Zig spec (`rules.zig:StyleRuleKey`) additionally stores
-/// `list: *const ArrayList(CssRule(R))` and dereferences it inside `eql()`.
-/// That pattern is unsound in Rust under Stacked/Tree Borrows — keys persist
+/// NOTE: storing a `*const Vec<CssRule<R>>` in the key and dereferencing it
+/// during equality would be unsound under Stacked/Tree Borrows — keys persist
 /// in the dedup map across iterations of `minify_style_arm`, and between
 /// iterations the same `Vec` is written through fresh `&mut` reborrows
 /// (`rules.push`, `rules[i] = Ignored`), invalidating any previously-derived
@@ -939,21 +992,20 @@ impl StyleRuleKey {
     }
 }
 
-/// Dedup table for [`StyleRuleKey`]s — the Rust-side equivalent of Zig's
-/// `StyleRuleKey(R).HashMap(usize)`.
+/// Dedup table for [`StyleRuleKey`]s.
 ///
 /// Buckets keyed by the pre-computed `StyleRule::hash_key()` hold indices into
 /// the caller's `rules` Vec; equality (`StyleRule::is_duplicate`) is evaluated
 /// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
-/// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
+/// raw pointer across `&mut rules` writes (see the note on `StyleRuleKey`).
 #[derive(Default)]
 pub(crate) struct StyleRuleKeyMap {
     buckets: bun_collections::HashMap<u64, Vec<usize>>,
 }
 
 impl StyleRuleKeyMap {
-    /// Zig `style_rules.fetchSwapRemove(key)` — find and remove an earlier
-    /// index whose rule `is_duplicate` of `rules[key.index]`.
+    /// Find and remove an earlier index whose rule `is_duplicate` of
+    /// `rules[key.index]`.
     pub(crate) fn remove_duplicate<R>(
         &mut self,
         rules: &[CssRule<R>],
@@ -964,17 +1016,23 @@ impl StyleRuleKeyMap {
             return None;
         };
         let pos = bucket.iter().position(|&other_idx| {
-            // Mirrors `StyleRuleKey.eql` from rules.zig: bounds-check + .style
-            // tag-check + `isDuplicate`.
-            match rules.get(other_idx) {
-                Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
-                _ => false,
-            }
+            // `other_idx != key.index`: the merge-with-previous cascade pops
+            // rules without purging their indices from the buckets, so a
+            // stale entry can alias the slot the checked rule was just pushed
+            // into, and a rule trivially `is_duplicate` of itself. Erasing it
+            // silently dropped the rule. (A live entry can never equal
+            // `key.index`: the key is only inserted after this check.)
+            // Bounds-check + Style tag-check + `is_duplicate`.
+            other_idx != key.index
+                && match rules.get(other_idx) {
+                    Some(CssRule::Style(other_rule)) => rule.is_duplicate(other_rule),
+                    _ => false,
+                }
         })?;
         Some(bucket.swap_remove(pos))
     }
 
-    /// Zig `style_rules.put(ctx.arena, key, idx)`.
+    /// Record the rule's index under its style-rule key for later dedup lookups.
     pub(crate) fn insert(&mut self, key: StyleRuleKey) {
         self.buckets.entry(key.hash).or_default().push(key.index);
     }
@@ -986,19 +1044,138 @@ impl StyleRuleKeyMap {
 
 // ─── merge_style_rules ─────────────────────────────────────────────────────
 
+/// Cross-iteration state for the style-rule merge fast path in
+/// [`CssRuleList::minify`].
+///
+/// `pending_minify` marks the last rule in the output list as a style rule
+/// whose declarations were concatenated by one or more declaration merges but
+/// not yet re-run through the property handlers. Re-minifying after every
+/// single merge made a run of n same-selector rules re-feed the accumulated
+/// declaration list through the handlers n times; handlers that emit one
+/// output declaration per input declaration (custom properties, color-scheme,
+/// prefixed background images, ...) keep that list O(n) long, so the total
+/// work was O(n^2), and worse for handlers whose re-processing re-expands
+/// their own output. Deferring to one re-minify per merge run keeps it O(n).
+/// The flag must be cleared (via [`flush_pending_style_merge`]) before
+/// anything reads the merged declarations or appends another rule.
+///
+/// `last_compat` caches `StyleRule::is_compatible` for the current last rule.
+/// Selector merges grow the last rule's selector list by one selector per
+/// merged rule, and re-walking every accumulated selector on each merge was
+/// the same O(n^2) shape on the selector side. The cache is invalidated
+/// whenever the last rule changes and updated incrementally on selector
+/// merges (the merged result is compatible iff both inputs were).
+#[derive(Default)]
+pub(crate) struct StyleRuleMergeState {
+    pending_minify: bool,
+    last_compat: Option<bool>,
+}
+
+/// Re-run the declaration minifier on the last rule if it has pending merged
+/// declarations, then attempt the merge-with-previous cascade that a
+/// declaration merge enables (the re-minified declarations may now equal the
+/// previous rule's, allowing a selector merge, and so on).
+pub(crate) fn flush_pending_style_merge<R>(
+    rules: &mut Vec<CssRule<R>>,
+    state: &mut StyleRuleMergeState,
+    context: &mut MinifyContext<'_, '_>,
+) {
+    while state.pending_minify {
+        state.pending_minify = false;
+        let Some(CssRule::Style(last)) = rules.last_mut() else {
+            debug_assert!(false, "pending declaration merge without a style rule last");
+            return;
+        };
+        // The re-minify can re-stage handler-context rules: `color-scheme`
+        // re-emits itself and pushes its dark-mode fallback vars on every
+        // pass. `minify_style_arm` therefore settles a pending merge before
+        // collecting extras whenever the handler context has staged entries,
+        // so re-staged entries land in the same iteration's extras exactly as
+        // the per-merge re-minify produced. At every other flush point the
+        // handler context has already been drained and the merged block
+        // cannot contain a staging declaration (its own iteration's extras
+        // would have ended the merge run right after it).
+        last.declarations.minify(
+            dc::decl_handler_static(&mut *context.handler),
+            dc::decl_handler_static(&mut *context.important_handler),
+            &mut context.handler_context,
+        );
+        cascade_merge_with_previous(rules, state, context);
+    }
+}
+
+/// Try to merge the last style rule into the one before it, repeatedly, while
+/// merges keep succeeding. A declaration merge leaves `state.pending_minify`
+/// set, in which case the caller ([`flush_pending_style_merge`]) re-minifies
+/// before cascading further.
+fn cascade_merge_with_previous<R>(
+    rules: &mut Vec<CssRule<R>>,
+    state: &mut StyleRuleMergeState,
+    context: &mut MinifyContext<'_, '_>,
+) {
+    // The last rule was settled before cascading, so `merge_style_rules`'s
+    // pending flush (which targets its second argument) can't fire here.
+    debug_assert!(!state.pending_minify);
+    while rules.len() >= 2 {
+        let len = rules.len();
+        let (a, b) = rules.split_at_mut(len - 1);
+        if let (CssRule::Style(prev), CssRule::Style(last)) = (&mut a[len - 2], &mut b[0]) {
+            let mut prev_compat: Option<bool> = None;
+            if merge_style_rules(
+                last,
+                prev,
+                context,
+                &mut state.pending_minify,
+                &mut state.last_compat,
+                &mut prev_compat,
+            ) {
+                rules.pop();
+                // `prev` is the last rule now.
+                state.last_compat = prev_compat;
+                if state.pending_minify {
+                    return;
+                }
+                continue;
+            }
+        }
+        break;
+    }
+}
+
+/// Compute (or reuse) `rule.is_compatible(targets)` through the merge-state
+/// cache.
+fn cached_is_compatible<R>(
+    rule: &style::StyleRule<R>,
+    cache: &mut Option<bool>,
+    targets: &css::targets::Targets,
+) -> bool {
+    *cache.get_or_insert_with(|| rule.is_compatible(targets))
+}
+
 /// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
 /// Returns `true` if merged (caller should drop `sty`).
+///
+/// A declaration merge only concatenates the declaration lists and sets
+/// `pending_minify`; the re-minify is deferred to the end of the merge run
+/// (see [`StyleRuleMergeState`]). `pending_minify` may only be set on entry
+/// when `last_style_rule` is the rule it tracks (the forward merge in
+/// `minify_style_arm`); the cascade always settles it first.
+/// `sty_compat` / `last_compat` cache `is_compatible` for the respective
+/// argument.
 pub(crate) fn merge_style_rules<R>(
     sty: &mut style::StyleRule<R>,
     last_style_rule: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_, '_>,
+    pending_minify: &mut bool,
+    sty_compat: &mut Option<bool>,
+    last_compat: &mut Option<bool>,
 ) -> bool {
     use css::VendorPrefix;
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if sty.selectors.eql(&last_style_rule.selectors)
-        && sty.is_compatible(context.targets)
-        && last_style_rule.is_compatible(context.targets)
+        && cached_is_compatible(sty, sty_compat, context.targets)
+        && cached_is_compatible(last_style_rule, last_compat, context.targets)
         && sty.rules.v.is_empty()
         && last_style_rule.rules.v.is_empty()
         && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
@@ -1011,13 +1188,22 @@ pub(crate) fn merge_style_rules<R>(
             .declarations
             .important_declarations
             .extend(sty.declarations.important_declarations.drain(..));
+        *pending_minify = true;
+        return true;
+    }
+
+    // The declaration comparison below must see the canonical (minified)
+    // form, so settle any pending merged declarations first.
+    if *pending_minify {
+        *pending_minify = false;
         last_style_rule.declarations.minify(
             dc::decl_handler_static(&mut *context.handler),
             dc::decl_handler_static(&mut *context.important_handler),
             &mut context.handler_context,
         );
-        return true;
-    } else if sty.declarations.eql(&last_style_rule.declarations)
+    }
+
+    if sty.declarations.eql(&last_style_rule.declarations)
         && sty.rules.v.is_empty()
         && last_style_rule.rules.v.is_empty()
     {
@@ -1041,15 +1227,20 @@ pub(crate) fn merge_style_rules<R>(
         }
 
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if sty.is_compatible(context.targets) && last_style_rule.is_compatible(context.targets) {
+        if cached_is_compatible(sty, sty_compat, context.targets)
+            && cached_is_compatible(last_style_rule, last_compat, context.targets)
+        {
             let moved = core::mem::take(&mut sty.selectors.v);
             // `reserve` (not `ensure_total_capacity`) so capacity grows
-            // super-linearly across repeated merges — matches .zig
-            // `appendSlice` and keeps the N-way merge amortized O(N).
+            // super-linearly across repeated merges, keeping the N-way merge
+            // amortized O(N).
             last_style_rule.selectors.v.reserve(moved.len());
             for sel in moved {
                 last_style_rule.selectors.v.append_assume_capacity(sel);
             }
+            // Both sides were just proven compatible, so the combined selector
+            // list is too.
+            *last_compat = Some(true);
             if sty.vendor_prefix.contains(VendorPrefix::NONE)
                 && context.targets.should_compile_selectors()
             {
@@ -1065,9 +1256,8 @@ pub(crate) fn merge_style_rules<R>(
 
 // ─── Location / StyleContext / MinifyContext ──────────────────────────────
 
-// Zig spec: `css.Location = css_rules.Location` is a TYPE ALIAS (one nominal
-// type). Re-export the crate-root struct so `css_rules::Location` and
-// `crate::Location` are interchangeable.
+// Re-export the crate-root struct so `css_rules::Location` and
+// `crate::Location` are interchangeable (one nominal type).
 pub use crate::Location;
 
 /// Printer's nesting cursor — linked list of parent selector lists used to
@@ -1094,10 +1284,9 @@ pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
-/// PORT NOTE: Zig carried `arena: std.mem.Allocator` for the AST arena;
-/// here that is `&'a Arena` (bumpalo). All sub-allocations during minify go
+/// All sub-allocations during minify go
 /// through it so the whole transformed tree is bulk-freed with the arena.
-// PORT NOTE: split lifetimes — `'bump` is the parser arena (long), `'a` is the
+// Split lifetimes — `'bump` is the parser arena (long), `'a` is the
 // per-minify borrow scope (short). `&'a mut DeclarationHandler<'a>` would force
 // the handler borrow to outlive the arena (invariance via `bumpalo::Vec`),
 // making `Stylesheet::minify`'s stack-local handlers unusable.
@@ -1109,7 +1298,6 @@ pub struct MinifyContext<'a, 'bump> {
     pub important_handler: &'a mut css::DeclarationHandler<'bump>,
     pub handler_context: css::PropertyHandlerContext<'bump>,
     /// Class/id names known to be unused (tree-shaking input).
-    // PORT NOTE: Zig `*const std.StringArrayHashMapUnmanaged(void)`.
     // `selector::is_unused` currently borrows `&ArrayHashMap<&[u8], ()>`; the
     // owning `MinifyOptions` stores `Box<[u8]>` keys — reconcile when
     // `style.rs::minify` un-gates (single key type, `Borrow<[u8]>` lookup).
@@ -1119,7 +1307,7 @@ pub struct MinifyContext<'a, 'bump> {
         Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule>>,
     pub extra: &'a css::StylesheetExtra,
     pub css_modules: bool,
-    /// First minification error encountered (Zig surfaced this out-of-band).
+    /// First minification error encountered (surfaced out-of-band).
     pub err: Option<css::error::MinifyError>,
     /// How many copies of the current rule's selectors compiling the enclosing
     /// nesting for the targets will produce — the product of the enclosing
@@ -1129,5 +1317,3 @@ pub struct MinifyContext<'a, 'bump> {
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
 }
-
-// ported from: src/css/rules/rules.zig

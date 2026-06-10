@@ -1,7 +1,7 @@
 /// Represents JavaScript runtime value types
-// PORT NOTE: Zig `enum(u16) { ... , _ }` is non-exhaustive — any u16 bit-pattern is a
-// valid value (and the discriminants are bitflags). A `#[repr(u16)] enum` would be UB
-// for unlisted values, so map to a transparent newtype with associated consts instead.
+// Any u16 bit-pattern is a valid value (the discriminants are bitflags). A
+// `#[repr(u16)] enum` would be UB for unlisted values, so this is a transparent
+// newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct JSRuntimeType(pub u16);
@@ -19,5 +19,3 @@ impl JSRuntimeType {
     pub const SYMBOL: Self = Self(0x100);
     pub const BIG_INT: Self = Self(0x200);
 }
-
-// ported from: src/jsc/JSRuntimeType.zig

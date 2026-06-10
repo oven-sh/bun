@@ -7,9 +7,9 @@ use std::sync::Arc;
 use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
-use bun_ptr::tagged_pointer::{TagType, TaggedPtr};
+use bun_ptr::tagged_pointer::TagType;
 use bun_sourcemap::internal_source_map::FindCache;
-use bun_sourcemap::parsed_source_map::{AnySourceProvider, ErasedGetSourceMap};
+use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
@@ -18,12 +18,6 @@ pub struct SavedSourceMap {
     /// This is a pointer to the map located on the VirtualMachine struct
     pub map: *mut HashTable,
     pub mutex: Mutex,
-
-    /// Dispatch fns for entries stored under the provider tags
-    /// (`PROVIDER_TAG_BASE - slot`): a table value has room for the provider
-    /// handle only, so its `get_source_map` dispatch is interned here and
-    /// recovered from the tag. Slots are append-only; guarded by `mutex`.
-    provider_dispatch: [Option<ErasedGetSourceMap>; PROVIDER_SLOTS],
 
     /// Warm cache for `remapStackFramePositions`: the last decoded sync window and
     /// the last (path_hash -> ISM) resolution. Guarded by `mutex`. Invalidated on
@@ -38,7 +32,6 @@ impl Default for SavedSourceMap {
         Self {
             map: ptr::null_mut(),
             mutex: Mutex::default(),
-            provider_dispatch: [None; PROVIDER_SLOTS],
             find_cache: FindCache::default(),
             last_path_hash: 0,
             last_ism: None,
@@ -52,7 +45,6 @@ impl SavedSourceMap {
         this.write(Self {
             map,
             mutex: Mutex::default(),
-            provider_dispatch: [None; PROVIDER_SLOTS],
             find_cache: FindCache::default(),
             last_path_hash: 0,
             last_ism: None,
@@ -90,26 +82,26 @@ impl SavedSourceMap {
 }
 
 /// `InternalSourceMap` is the storage for runtime-transpiled modules.
-/// `ParsedSourceMap` is materialized lazily from a registered external source
-/// provider for sources that ship their own external `.map`.
+/// `AnySourceProvider` (boxed — the box is table-owned, the provider FFI
+/// handle inside it borrowed) is a registered lazy external source provider.
+/// `ParsedSourceMap` is materialized lazily from such a provider for sources
+/// that ship their own external `.map`.
 pub type Value = TaggedPtrUnion<ValueTypes>;
 
 /// Local type-list marker so `TypeList`/`UnionMember` impls satisfy orphan
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
-/// types (both typed members live in `bun_sourcemap`), which the coherence
-/// checker rejects from this crate. Tags are `1024 - i`; the gap between the
-/// two typed members holds the erased provider slots (see
-/// [`PROVIDER_TAG_BASE`]).
+/// types (all three members live in `bun_sourcemap`), which the coherence
+/// checker rejects from this crate. Tags are `1024 - i`.
 pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
-    const LEN: usize = 2 + PROVIDER_SLOTS;
-    const MIN_TAG: TagType = 1024 - 4;
+    const LEN: usize = 3;
+    const MIN_TAG: TagType = 1024 - 2;
     fn type_name_from_tag(tag: TagType) -> Option<&'static str> {
         match tag {
             1024 => Some("ParsedSourceMap"),
-            1021..=1023 => Some("AnySourceProvider"),
-            1020 => Some("InternalSourceMap"),
+            1023 => Some("AnySourceProvider"),
+            1022 => Some("InternalSourceMap"),
             _ => None,
         }
     }
@@ -118,56 +110,40 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
     const NAME: &'static str = "ParsedSourceMap";
 }
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
+    const TAG: TagType = 1023;
+    const NAME: &'static str = "AnySourceProvider";
+}
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
-    const TAG: TagType = 1020;
+    const TAG: TagType = 1022;
     const NAME: &'static str = "InternalSourceMap";
 }
 
-/// Tags `PROVIDER_TAG_BASE - slot` for `slot < PROVIDER_SLOTS` (1021..=1023)
-/// hold lazy external source providers, erased to the raw handle (the tagged
-/// word) plus its dispatch fn (`SavedSourceMap::provider_dispatch[slot]`).
-/// Provider entries are borrowed: the owner unregisters the handle via
-/// [`SavedSourceMap::remove_source_provider`] before freeing it, so replace /
-/// remove / drop paths release nothing for them.
-const PROVIDER_TAG_BASE: TagType = 1023;
-/// One slot per `ErasedGetSourceMap` monomorphization that can reach
-/// [`SavedSourceMap::put_source_provider`]. Three provider kinds exist, and
-/// each kind's `AnySourceProvider::new` registration call lives in exactly
-/// one crate (monomorphization is per-crate), so at most three distinct
-/// dispatch fns register.
-const PROVIDER_SLOTS: usize = 3;
-
 impl SavedSourceMap {
-    /// Mutex must be held. Interns `dispatch` and returns the provider tag
-    /// whose slot recovers it.
-    fn provider_tag_for_dispatch(&mut self, dispatch: ErasedGetSourceMap) -> TagType {
-        for (slot, entry) in self.provider_dispatch.iter_mut().enumerate() {
-            let tag = PROVIDER_TAG_BASE - slot as TagType;
-            match entry {
-                Some(f) => {
-                    if core::ptr::fn_addr_eq(*f, dispatch) {
-                        return tag;
-                    }
-                }
-                None => {
-                    *entry = Some(dispatch);
-                    return tag;
-                }
-            }
+    /// Releases whatever ownership a table value carries: the table's strong
+    /// ref for a `ParsedSourceMap`, the blob for an `InternalSourceMap`, or
+    /// the box for an `AnySourceProvider` (whose provider FFI handle is
+    /// borrowed and stays with its owner; see [`Self::put_source_provider`]).
+    ///
+    /// # Safety
+    /// `value` must have been stored in the table by us, be live, and not be
+    /// released again.
+    unsafe fn release_value(value: Value) {
+        if let Some(parsed) = value.get::<ParsedSourceMap>() {
+            // SAFETY: per fn contract — the table held one strong ref.
+            unsafe { ParsedSourceMap::deref(parsed) };
+        } else if let Some(ism) = value.get::<InternalSourceMap>() {
+            // The blob was heap-allocated via `put_mappings`
+            // (`Box<[u8]>::into_raw`); the tagged pointer's address IS the
+            // blob's data pointer (InternalSourceMap is a thin view).
+            (InternalSourceMap {
+                data: ism as *const u8,
+            })
+            .free_owned();
+        } else if let Some(provider) = value.get::<AnySourceProvider>() {
+            // SAFETY: the box was allocated by `put_source_provider`.
+            unsafe { bun_core::heap::destroy(provider) };
         }
-        panic!("SavedSourceMap: more distinct source-provider dispatch fns than provider slots");
-    }
-
-    /// Mutex must be held. Recovers the erased provider for a table value
-    /// stored under a provider tag, or `None` if `value` is not a provider
-    /// entry.
-    fn provider_from_value(&self, value: Value) -> Option<AnySourceProvider> {
-        let slot = usize::from(PROVIDER_TAG_BASE.checked_sub(value.tag())?);
-        let dispatch = (*self.provider_dispatch.get(slot)?)?;
-        Some(AnySourceProvider::from_raw_parts(
-            value.as_uintptr() as usize as *mut c_void,
-            dispatch,
-        ))
     }
 }
 
@@ -187,19 +163,17 @@ pub mod missing_source_map_note_info {
 
 impl SavedSourceMap {
     /// Registers a lazy external source provider for `path`, replacing any
-    /// existing entry. The handle is borrowed (see [`PROVIDER_TAG_BASE`]).
+    /// existing entry. The provider FFI handle is borrowed — its owner
+    /// unregisters it via [`Self::remove_source_provider`] before freeing it —
+    /// while the box holding the erased pair is owned by the table and freed
+    /// by [`Self::release_value`] on replace / remove / drop.
     pub fn put_source_provider(&mut self, provider: AnySourceProvider, path: &[u8]) {
-        let (provider_ptr, dispatch) = provider.into_raw_parts();
-        self.lock();
-        let tag = self.provider_tag_for_dispatch(dispatch);
-        self.unlock();
-        // The slot index stays valid after unlocking: `provider_dispatch` is
-        // append-only.
+        let boxed = bun_core::heap::into_raw(Box::new(provider));
         // bun.handleOom → drop wrapper; Rust HashMap insert aborts on OOM.
-        let _ = self.put_value(
-            path,
-            Value::from(Some(TaggedPtr::init(provider_ptr, tag).to())),
-        );
+        if self.put_value(path, Value::init(boxed)).is_err() {
+            // SAFETY: the failed insert did not consume `boxed`.
+            unsafe { bun_core::heap::destroy(boxed) };
+        }
     }
 
     /// Drops the entry for `path` if it still refers to
@@ -217,20 +191,23 @@ impl SavedSourceMap {
             return;
         };
         let old_value = Value::from(Some(ptr));
-        if let Some(prov) = self.provider_from_value(old_value) {
-            if core::ptr::eq(prov.ptr(), opaque_source_provider) {
-                // there is nothing to unref or deinit
-                self.map_mut().remove(&key);
-            }
+        let refers_to_provider = if let Some(provider) = old_value.get::<AnySourceProvider>() {
+            // SAFETY: the box was stored by `put_source_provider` and is live
+            // while in the table.
+            core::ptr::eq(unsafe { (*provider).ptr() }, opaque_source_provider)
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
-            if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
-                    self.map_mut().remove(&key);
-                    // SAFETY: we held a strong ref while in the table; release it.
-                    unsafe { ParsedSourceMap::deref(parsed) };
-                }
-            }
+            unsafe { (*parsed).underlying_provider }
+                .provider()
+                .is_some_and(|prov| core::ptr::eq(prov.ptr(), opaque_source_provider))
+        } else {
+            false
+        };
+        if refers_to_provider {
+            self.map_mut().remove(&key);
+            // SAFETY: `old_value` was stored by us; the table's ownership of
+            // it ends here.
+            unsafe { Self::release_value(old_value) };
         }
         self.unlock();
     }
@@ -262,20 +239,9 @@ impl Drop for SavedSourceMap {
             let map = self.map_mut();
             for val in map.values() {
                 let value = Value::from(Some(*val));
-                // Provider-tagged entries are borrowed handles — nothing to
-                // release for them.
-                if let Some(source_map) = value.get::<ParsedSourceMap>() {
-                    // SAFETY: pointer was stored by us and is live until table teardown.
-                    unsafe { ParsedSourceMap::deref(source_map) };
-                } else if let Some(ism) = value.get::<InternalSourceMap>() {
-                    // SAFETY: blob was heap-allocated via `put_mappings`
-                    // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
-                    // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap {
-                        data: ism as *const u8,
-                    })
-                    .free_owned();
-                }
+                // SAFETY: values were stored by us and are live until table
+                // teardown.
+                unsafe { Self::release_value(value) };
             }
             self.unlock();
         }
@@ -354,20 +320,9 @@ impl SavedSourceMap {
         match self.map_mut().entry(hash(path)) {
             Entry::Occupied(mut o) => {
                 let old_value = Value::from(Some(*o.get()));
-                // Provider-tagged entries are borrowed handles — nothing to
-                // release for them.
-                if let Some(parsed_source_map) = old_value.get::<ParsedSourceMap>() {
-                    // SAFETY: pointer was stored by us and is live until replaced.
-                    unsafe { ParsedSourceMap::deref(parsed_source_map) };
-                } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
-                    // SAFETY: blob was heap-allocated via `put_mappings`
-                    // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
-                    // the blob's data pointer (InternalSourceMap is a thin view).
-                    (InternalSourceMap {
-                        data: ism as *const u8,
-                    })
-                    .free_owned();
-                }
+                // SAFETY: `old_value` was stored by us and is live until
+                // replaced here.
+                unsafe { Self::release_value(old_value) };
                 *o.get_mut() = value.ptr();
             }
             Entry::Vacant(v) => {
@@ -427,7 +382,12 @@ impl SavedSourceMap {
                 map: Some(result),
                 ..Default::default()
             };
-        } else if let Some(provider) = self.provider_from_value(tagged) {
+        } else if let Some(provider) = tagged.get::<AnySourceProvider>() {
+            // Copy the erased pair out while the lock is held: once unlocked,
+            // a concurrent put/remove may free the box.
+            // SAFETY: the box was stored by `put_source_provider` and is live
+            // while in the table.
+            let provider = unsafe { *provider };
             self.unlock();
 
             // Do not lock the mutex while we're parsing JSON!
@@ -437,7 +397,8 @@ impl SavedSourceMap {
             if let Some(parse) = provider.get_source_map(path, Default::default(), hint) {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.
-                    // Leak one strong ref into the table.
+                    // Leak one strong ref into the table; `put_value` releases
+                    // the replaced provider box.
                     let _ =
                         self.put_value(path, Value::init(Arc::into_raw(Arc::clone(parsed_map))));
 
@@ -447,7 +408,11 @@ impl SavedSourceMap {
 
             self.lock();
             // does not have a valid source map. let's not try again
-            self.map_mut().remove(&h);
+            if let Some(removed) = self.map_mut().remove(&h) {
+                // SAFETY: whatever occupies the slot now was stored by us;
+                // the table's ownership of it ends here.
+                unsafe { Self::release_value(Value::from(Some(removed))) };
+            }
 
             // Store path for a user note.
             missing_source_map_note_info::record(path);

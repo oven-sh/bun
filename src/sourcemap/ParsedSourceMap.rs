@@ -83,7 +83,7 @@ impl Default for ParsedSourceMap {
 /// [`SourceContentPtr`]: one monomorphization of [`erased_get_source_map`]
 /// per [`SourceProvider`] impl. The handle round-trips as a plain pointer
 /// without this module naming any concrete provider type.
-pub type ErasedGetSourceMap = unsafe fn(
+type ErasedGetSourceMap = unsafe fn(
     provider: *mut c_void,
     source_filename: &[u8],
     load_hint: SourceMapLoadHint,
@@ -106,9 +106,11 @@ unsafe fn erased_get_source_map<P: SourceProvider>(
     crate::get_source_map_impl(provider, source_filename, load_hint, result)
 }
 
-/// An erased source provider recovered from a [`SourceContentPtr`]: the raw
-/// FFI handle plus the `get_source_map` dispatch monomorphized for its
-/// concrete type.
+/// An erased source provider: the raw FFI handle plus the `get_source_map`
+/// dispatch monomorphized for its concrete type. Recovered from a
+/// [`SourceContentPtr`], or stored whole (boxed) where the pair must travel
+/// together (`bun_jsc::SavedSourceMap`'s provider entries).
+#[derive(Clone, Copy)]
 pub struct AnySourceProvider {
     ptr: *mut c_void,
     get_source_map: ErasedGetSourceMap,
@@ -116,29 +118,12 @@ pub struct AnySourceProvider {
 
 impl AnySourceProvider {
     /// Erases a provider handle. Like [`SourceContentPtr::from_source_provider`],
-    /// `p` must stay live for as long as the returned value is dispatched
-    /// through.
+    /// `p` must stay live for as long as the returned value (or any copy of
+    /// it) is dispatched through.
     pub fn new<P: SourceProvider>(p: *const P) -> AnySourceProvider {
         AnySourceProvider {
             ptr: p.cast_mut().cast::<c_void>(),
             get_source_map: erased_get_source_map::<P>,
-        }
-    }
-
-    /// Splits into the raw handle and its dispatch fn, for storage that has
-    /// no room for the pair (see `bun_jsc::SavedSourceMap`'s tagged table
-    /// words). Inverse of [`Self::from_raw_parts`].
-    pub fn into_raw_parts(self) -> (*mut c_void, ErasedGetSourceMap) {
-        (self.ptr, self.get_source_map)
-    }
-
-    /// Rebuilds a provider from an [`Self::into_raw_parts`] pair. The pair
-    /// must originate from the same erased provider, with the handle still
-    /// live.
-    pub fn from_raw_parts(ptr: *mut c_void, get_source_map: ErasedGetSourceMap) -> Self {
-        Self {
-            ptr,
-            get_source_map,
         }
     }
 

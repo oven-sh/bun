@@ -96,8 +96,8 @@ export function debugCommand(command: string) {
   vscode.debug.startDebugging(undefined, {
     ...DEBUG_CONFIGURATION,
     program: command,
-    cwd: workspaceFolder?.uri.fsPath ?? RUN_CONFIGURATION.cwd,
-    runtime: getRuntime(),
+    cwd: workspaceFolder?.uri.fsPath ?? DEBUG_CONFIGURATION.cwd,
+    runtime: getRuntime(workspaceFolder),
   });
 }
 

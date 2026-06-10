@@ -543,6 +543,7 @@ static DEV_SERVER_SLOT_VTABLE: crate::server::DevServerSlotVTable =
         set_inspector_server_id: |ptr, id| {
             unsafe { ptr.cast::<DevServer>().as_mut() }.inspector_server_id = id;
         },
+        is_allowed_host: |ptr, req| unsafe { ptr.cast::<DevServer>().as_ref() }.is_allowed_host(req),
         put_html_route: |ptr, path, route| {
             unsafe { ptr.cast::<DevServer>().as_mut() }
                 .html_router
@@ -606,6 +607,30 @@ impl AnyServer {
     #[allow(clippy::mut_from_ref)] // dispatched through the tagged raw `self.ptr`
     pub fn dev_server_mut(&self) -> Option<&mut DevServer> {
         crate::server::any_server_dispatch_mut!(self, |s| s.dev_server.as_deref_mut())
+    }
+}
+
+// Likewise for `AnyRequestContext`: the typed views over its erased
+// `dev_server_ptr()` accessor, for the JS entry points below that recover the
+// dev server from a `Request`.
+impl crate::server::AnyRequestContext {
+    pub fn dev_server(self) -> Option<&'static DevServer> {
+        // SAFETY: every slot pointer is the `Box<DevServer>` leaked by
+        // `__bun_dev_server_from_server_config`; the server backref outlives
+        // any `AnyRequestContext` (held only for the duration of a request
+        // callback), and `self` is a by-value tagged pointer, so there is no
+        // input lifetime to tie the borrow to.
+        self.dev_server_ptr()
+            .map(|ptr| unsafe { ptr.cast::<DevServer>().as_ref() })
+    }
+
+    /// Mutable access to the attached DevServer. The accessor above hands out
+    /// `&` only. The boxed dev server behind the slot has a stable address, so
+    /// deriving `&mut` from this is sound as long as the caller upholds the
+    /// usual single-writer rule on the JS thread.
+    pub fn dev_server_mut(self) -> Option<*mut DevServer> {
+        self.dev_server_ptr()
+            .map(|ptr| ptr.cast::<DevServer>().as_ptr())
     }
 }
 
@@ -2431,7 +2456,7 @@ impl DevServer {
                                     // Materialize the JS request through bake's
                                     // `JSBunRequest` wrapper (carries the route
                                     // params object).
-                                    CreateJsRequest::Bake,
+                                    CreateJsRequest::Custom(WebRequest::to_js_for_bake),
                                     Some(method),
                                 )? {
                                 Some(saved) => saved,
@@ -2924,7 +2949,7 @@ impl DevServer {
                 ],
                 // Materialize the JS request through bake's `JSBunRequest`
                 // wrapper (carries the route params object).
-                CreateJsRequest::Bake,
+                CreateJsRequest::Custom(WebRequest::to_js_for_bake),
             );
         Ok(())
     }

@@ -470,3 +470,81 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
 });
+
+// https://github.com/oven-sh/bun/issues/32067
+it.if(!isWindows)(
+  "spawn with pipe fds above Darwin OPEN_MAX reports EBADF instead of losing output",
+  async () => {
+    const script = /* js */ `
+      const fs = require("fs");
+      const { spawn, spawnSync } = require("child_process");
+
+      // Occupy fd numbers up to ~11000 so the stdio pipes created by spawn
+      // get fd numbers above Darwin's OPEN_MAX (10240).
+      let opened = 0;
+      let setup = "ok";
+      try {
+        for (; opened < 11000; opened++) fs.openSync("/dev/null", "r");
+      } catch (err) {
+        setup = err.code + " after " + opened + " fds";
+      }
+
+      const r = spawnSync("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe"] });
+      const sync = {
+        status: r.status ?? null,
+        stdout: r.stdout?.toString() ?? null,
+        error: r.error?.code ?? null,
+      };
+
+      let asyncResult;
+      try {
+        const child = spawn("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe"] });
+        asyncResult = await new Promise(resolve => {
+          child.on("error", err => resolve({ outcome: "error-event", code: err.code }));
+          child.on("exit", code => resolve({ outcome: "exit", code }));
+        });
+      } catch (err) {
+        asyncResult = { outcome: "throw", code: err.code };
+      }
+
+      console.log(JSON.stringify({ setup, sync, async: asyncResult }));
+    `;
+
+    await using proc = Bun.spawn({
+      // The repro needs more open fds than some environments allow by
+      // default; raise the soft limit before exec'ing bun (which raises it
+      // further on startup).
+      cmd: ["/bin/sh", "-c", `ulimit -Sn 12000 2>/dev/null; exec "$1" -e "$2"`, "sh", bunExe(), script],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let result: any;
+    try {
+      result = JSON.parse(stdout);
+    } catch {
+      throw new Error(`child did not produce a result; stdout: ${JSON.stringify(stdout)} stderr: ${stderr}`);
+    }
+
+    if (process.platform === "darwin") {
+      // Darwin's posix_spawn file actions reject fds >= OPEN_MAX (10240)
+      // with EBADF. The spawn must fail the way node's does, not run a child
+      // with closed stdio that looks like a successful run with empty output.
+      expect(result).toEqual({
+        setup: "ok",
+        sync: { status: null, stdout: null, error: "EBADF" },
+        async: { outcome: "throw", code: "EBADF" },
+      });
+    } else {
+      expect(result).toEqual({
+        setup: "ok",
+        sync: { status: 0, stdout: "hi\n", error: null },
+        async: { outcome: "exit", code: 0 },
+      });
+    }
+    expect(exitCode).toBe(0);
+  },
+);

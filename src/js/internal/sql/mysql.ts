@@ -359,21 +359,23 @@ class PooledMySQLConnection {
       // onclose callback only fires when the slot actually closes.
       this.connectAttempts++;
       const delay = Math.min(20 * 2 ** this.connectAttempts, 1000);
-      this.retryTimer = setTimeout(() => {
-        this.retryTimer = null;
-        // conditions may have changed during the backoff (pool closing,
-        // waiters gone, retry budget elapsed) — re-check before dialing
-        if (this.#canKeepRetrying()) {
-          this.#startConnection();
-        } else {
-          this.#finishClose(this.storedError);
-        }
-      }, delay);
+      this.retryTimer = setTimeout(PooledMySQLConnection.#retryTimerFired, delay, this);
       return;
     }
     // this connect cycle is over; a later retry() starts a fresh one
     this.connectStartedAt = 0;
     this.#finishClose(err);
+  }
+
+  static #retryTimerFired(self: PooledMySQLConnection) {
+    self.retryTimer = null;
+    // conditions may have changed during the backoff (pool closing, waiters
+    // gone, retry budget elapsed), so re-check before dialing
+    if (self.#canKeepRetrying()) {
+      self.#startConnection();
+    } else {
+      self.#finishClose(self.storedError);
+    }
   }
 
   #finishClose(err) {
@@ -429,7 +431,9 @@ class PooledMySQLConnection {
   /// handshake errors) and closes of established connections are not
   /// retried here.
   #shouldRetryConnecting(err: Error | null): boolean {
-    if ((err as any)?.code !== "ERR_MYSQL_CONNECTION_FAILED") {
+    // connect failures come from the native layer as options objects that
+    // wrapError turned into MySQLError instances with a typed code
+    if (!(err instanceof MySQLError) || err.code !== "ERR_MYSQL_CONNECTION_FAILED") {
       return false;
     }
     return this.#canKeepRetrying();

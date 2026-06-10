@@ -41,14 +41,12 @@ impl BunFrontendDevServerAgent {
 
     /// `nextConnectionID` — wrapping post-increment.
     pub fn next_connection_id(&self) -> i32 {
-        let id = self.0.sequence.get();
-        self.0.sequence.set(id.wrapping_add(1));
-        id
+        self.0.post_increment_sequence()
     }
 
     #[inline]
     pub fn is_enabled(&self) -> bool {
-        !self.0.agent.get().is_null()
+        !self.0.agent_ptr().is_null()
     }
 
     /// `&mut Handle` accessor for the FFI shims. The pointer is set by the
@@ -57,7 +55,7 @@ impl BunFrontendDevServerAgent {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
-        let handle = self.0.agent.get();
+        let handle = self.0.agent_ptr();
         if handle.is_null() {
             return None;
         }
@@ -197,7 +195,7 @@ pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDev
     if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
         // `dbg: &mut Debugger`, so safe `UnsafeCell::get_mut` applies — no
         // raw-pointer deref needed.
-        dbg.extension_agent.get_mut().agent.set(agent.cast());
+        dbg.extension_agent.get_mut().set_agent_ptr(agent.cast());
     }
 }
 

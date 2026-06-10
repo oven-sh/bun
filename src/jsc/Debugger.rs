@@ -38,12 +38,37 @@ pub use crate::http_server_agent::HTTPServerAgent;
 /// domain enable (null while disabled) through a `HOST_EXPORT` defined next
 /// to the slot's owner; `sequence` is a free-running counter for the owner's
 /// use. `Debugger` only stores the slot — it never interprets either field.
+/// The fields are private so every outside access flows through the named
+/// accessors below, keeping the owning module's interpretation the only one.
 ///
 /// Both fields are `Copy`, so `Cell<T>` gives interior mutability with zero
 /// `unsafe`.
 pub struct ErasedAgentSlot {
-    pub agent: Cell<*mut c_void>,
-    pub sequence: Cell<i32>,
+    agent: Cell<*mut c_void>,
+    sequence: Cell<i32>,
+}
+
+impl ErasedAgentSlot {
+    /// The opaque agent pointer (null while the inspector domain is disabled).
+    #[inline]
+    pub fn agent_ptr(&self) -> *mut c_void {
+        self.agent.get()
+    }
+
+    /// Set the opaque agent pointer. Called by the slot owner's `HOST_EXPORT`
+    /// on domain enable/disable.
+    #[inline]
+    pub fn set_agent_ptr(&self, ptr: *mut c_void) {
+        self.agent.set(ptr);
+    }
+
+    /// Wrapping post-increment of the owner's free-running counter.
+    #[inline]
+    pub fn post_increment_sequence(&self) -> i32 {
+        let id = self.sequence.get();
+        self.sequence.set(id.wrapping_add(1));
+        id
+    }
 }
 
 impl Default for ErasedAgentSlot {

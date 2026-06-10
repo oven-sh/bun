@@ -70,7 +70,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if c.options.output_format == OutputFormat::InternalBakeDev {
         'brk: {
             if part_range.source_index.is_runtime() {
-                debug_assert!(c.dev_server.is_none());
+                debug_assert!(!c.has_dev_server);
                 break 'brk; // this is from `bun build --format=internal_bake_dev`
             }
 

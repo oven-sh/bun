@@ -207,9 +207,10 @@ pub struct LinkerContext<'a> {
     ///
     pub has_any_css_locals: AtomicU32,
 
-    /// Used by Bake to extract []CompileResult before it is joined.
-    /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
-    pub dev_server: Option<crate::dispatch::DevServerHandle>,
+    /// True when a dev server is driving this bundle. Chunk generation only
+    /// branches on the fact; all dispatch goes through the erased handle on
+    /// `BundleV2.dev_server`, which is the single owner of that seam.
+    pub has_dev_server: bool,
     pub framework: Option<FrameworkInfo>,
 
     pub mangled_props: MangledProps,
@@ -243,7 +244,7 @@ impl<'a> Default for LinkerContext<'a> {
             source_maps: Default::default(),
             pending_task_count: AtomicU32::new(0),
             has_any_css_locals: AtomicU32::new(0),
-            dev_server: None,
+            has_dev_server: false,
             framework: None,
             mangled_props: Default::default(),
         }

@@ -543,7 +543,9 @@ static DEV_SERVER_SLOT_VTABLE: crate::server::DevServerSlotVTable =
         set_inspector_server_id: |ptr, id| {
             unsafe { ptr.cast::<DevServer>().as_mut() }.inspector_server_id = id;
         },
-        is_allowed_host: |ptr, req| unsafe { ptr.cast::<DevServer>().as_ref() }.is_allowed_host(req),
+        is_allowed_host: |ptr, req| {
+            unsafe { ptr.cast::<DevServer>().as_ref() }.is_allowed_host(req)
+        },
         put_html_route: |ptr, path, route| {
             unsafe { ptr.cast::<DevServer>().as_mut() }
                 .html_router
@@ -3502,7 +3504,7 @@ impl DevServer {
         bv2.asynchronous = true;
         let dev_handle = self.bundler_handle();
         bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        bv2.linker.has_dev_server = true;
 
         {
             self.graph_safety_lock.lock();

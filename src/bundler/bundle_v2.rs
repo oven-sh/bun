@@ -256,7 +256,7 @@ impl<'a> BundleV2<'a> {
         // the only case that doesn't return the main transpiler is a
         // browser-target request from a server-side build, which lazily
         // spins up a client transpiler.
-        if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
+        if !self.transpiler.options.server_components && !self.linker.has_dev_server {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
                 if let Some(p) = self.client_transpiler {
                     // SAFETY: client_transpiler is live for `'a` (set in `init`);
@@ -2498,7 +2498,7 @@ pub mod bv2_impl {
             this.linker.options.metafile_markdown_path =
                 unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
-            this.linker.dev_server = this.dev_server;
+            this.linker.has_dev_server = this.dev_server.is_some();
 
             // Arena-owned. Coerce to `*mut`
             // immediately so the `&this` borrow from `arena()` ends before

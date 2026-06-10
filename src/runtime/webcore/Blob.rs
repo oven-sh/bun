@@ -29,23 +29,6 @@ use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams}
 
 bun_core::define_scoped_log!(debug, Blob, visible);
 
-/// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
-/// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
-/// `href` slice to a `&mut Loader` borrow that we cannot keep open across the
-/// S3 request setup.
-#[inline]
-fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
-    // `Transpiler::env_mut` is the safe accessor for the process-singleton
-    // dotenv loader (initialised before any JS runs).
-    global
-        .bun_vm()
-        .as_mut()
-        .transpiler
-        .env_mut()
-        .get_http_proxy(true, None, None)
-        .map(|p| p.href.to_vec())
-}
-
 #[path = "blob/Store.rs"]
 pub mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
@@ -610,7 +593,6 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive::default(),
             });
             t.poll.ref_(bun_io::js_vm_ctx());
-            let proxy = http_proxy_href(global);
             // reshaped for borrowck — `heap::alloc(t)` moves `t`,
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
@@ -644,18 +626,10 @@ impl BlobExt for Blob {
                     len,
                     Task::<H>::cb,
                     t_ptr,
-                    proxy.as_deref(),
                     payer,
                 )?;
             } else {
-                crate::webcore::__s3_client::download(
-                    &cred,
-                    path,
-                    Task::<H>::cb,
-                    t_ptr,
-                    proxy.as_deref(),
-                    payer,
-                )?;
+                crate::webcore::__s3_client::download(&cred, path, Task::<H>::cb, t_ptr, payer)?;
             }
             return Ok(());
         }
@@ -1439,12 +1413,6 @@ impl BlobExt for Blob {
             };
 
             let path = s3.path();
-            // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
-            // is a live `*mut Loader` owned by the transpiler.
-            let proxy = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            let proxy_url = proxy.map(|p| p.href);
 
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload (`upload_stream` consumes an
@@ -1467,7 +1435,7 @@ impl BlobExt for Blob {
                 // backing storage is owned by `aws_options` which outlives this call.
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
-                proxy_url,
+                None,
                 aws_options.request_payer,
                 None,
                 core::ptr::null_mut(),
@@ -1752,16 +1720,6 @@ impl BlobExt for Blob {
             // content-type writes below don't conflict.
             let s3 = store.data.as_s3();
             let path = s3.path();
-            // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
-            // is the process-singleton dotenv loader, never null once init'd.
-            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            // Copy the href out of the env map before any reentrant JS (the
-            // `get_truthy`/credential getters below) can mutate `process.env`
-            // and free the backing allocation.
-            let proxy_owned: Option<Vec<u8>> = proxy_url.as_ref().map(|p| p.href.to_vec());
-            let proxy = proxy_owned.as_deref();
 
             if has_args && arg0.is_object() {
                 let options = arg0;
@@ -1831,7 +1789,6 @@ impl BlobExt for Blob {
                     self.content_type_or_mime_type(),
                     content_disposition_str.as_ref().map(|s| s.slice()),
                     content_encoding_str.as_ref().map(|s| s.slice()),
-                    proxy,
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
                 );
@@ -1845,7 +1802,6 @@ impl BlobExt for Blob {
                 self.content_type_or_mime_type(),
                 None,
                 None,
-                proxy,
                 None,
                 s3.request_payer,
             );
@@ -4671,8 +4627,6 @@ fn write_file_with_empty_source_to_destination(
 
             let promise = jsc::JSPromiseStrong::init(ctx);
             let promise_value = promise.value();
-            let proxy_owned = http_proxy_href(ctx);
-            let proxy_url = proxy_owned.as_deref();
             s3_client::upload(
                 &aws_options.credentials,
                 s3.path(),
@@ -4683,7 +4637,6 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.content_disposition.as_deref(),
                 aws_options.content_encoding.as_deref(),
                 aws_options.acl,
-                proxy_url,
                 aws_options.storage_class,
                 aws_options.request_payer,
                 Wrapper::resolve,
@@ -4875,8 +4828,6 @@ pub fn write_file_with_source_destination(
                 );
             }
         };
-        let proxy_owned = http_proxy_href(ctx);
-        let proxy_url = proxy_owned.as_deref();
         match &source_store.data {
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
@@ -4905,7 +4856,7 @@ pub fn write_file_with_source_destination(
                             // fields on `aws_options`, which outlives this call.
                             aws_options.content_disposition.as_deref(),
                             aws_options.content_encoding.as_deref(),
-                            proxy_url,
+                            None,
                             aws_options.request_payer,
                             None,
                             core::ptr::null_mut(),
@@ -4964,7 +4915,6 @@ pub fn write_file_with_source_destination(
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
                         aws_options.acl,
-                        proxy_url,
                         aws_options.storage_class,
                         aws_options.request_payer,
                         Wrapper::resolve,
@@ -5005,7 +4955,7 @@ pub fn write_file_with_source_destination(
                         // on `aws_options`, which outlives this call.
                         aws_options.content_disposition.as_deref(),
                         aws_options.content_encoding.as_deref(),
-                        proxy_url,
+                        None,
                         aws_options.request_payer,
                         None,
                         core::ptr::null_mut(),
@@ -5239,8 +5189,6 @@ pub fn write_file_internal(
                                         "ReadableStream has already been used"
                                     )));
                                 }
-                                let proxy_owned = http_proxy_href(global_this);
-                                let proxy_url = proxy_owned.as_deref();
                                 return Ok(ControlFlow::Break(s3_client::upload_stream(
                                     if options.extra_options.is_some() {
                                         aws_options.credentials.dupe()
@@ -5259,7 +5207,7 @@ pub fn write_file_internal(
                                     // outlives this call.
                                     aws_options.content_disposition.as_deref(),
                                     aws_options.content_encoding.as_deref(),
-                                    proxy_url,
+                                    None,
                                     aws_options.request_payer,
                                     None,
                                     core::ptr::null_mut(),
@@ -5936,8 +5884,6 @@ impl S3BlobDownloadTask {
         let path = s3_store.path();
 
         this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
-        let proxy_owned = http_proxy_href(global_this);
-        let proxy = proxy_owned.as_deref();
 
         // Adapter: S3 download callback ABI takes `*mut c_void` context — cast
         // back to the boxed task.
@@ -5962,7 +5908,6 @@ impl S3BlobDownloadTask {
                 len,
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         } else if blob.size.get() == MAX_SIZE {
@@ -5971,7 +5916,6 @@ impl S3BlobDownloadTask {
                 path,
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         } else {
@@ -5984,7 +5928,6 @@ impl S3BlobDownloadTask {
                 Some(len),
                 s3_cb,
                 this.cast::<c_void>(),
-                proxy,
                 s3_store.request_payer,
             )?;
         }

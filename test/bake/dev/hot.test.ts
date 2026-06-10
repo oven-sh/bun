@@ -528,6 +528,7 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
   },
 });
 devTest("hot reload of an imported json file updates the value", {
+  // https://github.com/oven-sh/bun/issues/24067
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -549,6 +550,7 @@ devTest("hot reload of an imported json file updates the value", {
   },
 });
 devTest("hot reload of a CommonJS module updates exports seen by importers", {
+  // https://github.com/oven-sh/bun/issues/24067
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],

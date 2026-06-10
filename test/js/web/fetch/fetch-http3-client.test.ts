@@ -32,7 +32,9 @@ beforeAll(async () => {
       "/big": () => new Response(big),
       "/status": req => {
         const u = new URL(req.url);
-        return new Response(u.searchParams.get("body"), { status: Number(u.searchParams.get("code")) });
+        // null body statuses (204) reject a body in the Response constructor
+        const body = u.searchParams.get("body") || null;
+        return new Response(body, { status: Number(u.searchParams.get("code")) });
       },
       "/gzip": () =>
         new Response(gzipSync("compressed body over h3"), {

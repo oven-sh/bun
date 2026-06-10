@@ -18,7 +18,6 @@ use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
 use bun_js_parser::lexer as js_lexer;
 
 use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
-use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
@@ -77,12 +76,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            let input_files = &c.parse_graph().input_files;
+            let loaders = input_files.items_loader();
+            let sources = input_files.items_source();
+
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
-                if let Err(err) =
-                    convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
-                {
+                if let Err(err) = crate::convert_stmts_for_chunk_hmr(
+                    stmts, part_stmts, arena, &mut ast, loaders, sources,
+                ) {
                     return PrintResult::Err(err.into());
                 }
             }

@@ -261,6 +261,115 @@ impl UserOptions {
             arena,
         })
     }
+
+    /// Build the dev-server options for `Bun.serve` when HTML imports or
+    /// framework routers appear in the `routes` object. `router_types` and
+    /// `allocations` are collected by the server's route parsing; the
+    /// framework (via [`Framework::auto`]) and the per-graph env/define
+    /// bundler options are derived here from the VM's transpiler options.
+    pub fn from_serve_routes(
+        global: &JSGlobalObject,
+        router_types: Vec<super::FileSystemRouterType>,
+        allocations: StringRefList,
+    ) -> JsResult<UserOptions> {
+        // NOTE: the arena is created here and moved into `UserOptions`
+        // (lives until the options are dropped).
+        let arena = Arena::new();
+
+        let root = arena_dupe_z(&arena, paths::fs::FileSystem::instance().top_level_dir());
+
+        // Convert the keystone `bake::FileSystemRouterType` (Cow-backed) into
+        // the body shape (`&'static` slices) by duping every string into the
+        // arena. Type duplication; remove once the two structs unify.
+        let router_types: Vec<FileSystemRouterType> = router_types
+            .into_iter()
+            .map(|t| convert_file_system_router_type(&arena, t))
+            .collect();
+
+        // SAFETY: `bun_vm()` returns the live VM for this global; we need
+        // `&mut Resolver` for `Framework::auto`.
+        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+        let framework = Framework::auto(&arena, resolver, router_types)
+            .map_err(|e| throw_core_error(global, e, "Framework::auto"))?;
+
+        let mut user_options = UserOptions {
+            arena,
+            allocations,
+            root,
+            framework,
+            bundler_options: SplitBundlerOptions::default(),
+        };
+
+        use bun_schema::api::DotEnvBehavior;
+        let o = &global.bun_vm().transpiler.options.transform_options;
+
+        match o.serve_env_behavior {
+            DotEnvBehavior::prefix => {
+                // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>` owned by the
+                // long-lived `transform_options`; dupe into the arena so the
+                // `&'static [u8]` field is backed by `UserOptions.arena`.
+                user_options.bundler_options.client.env_prefix = o
+                    .serve_env_prefix
+                    .as_deref()
+                    .map(|p| arena_dupe_z(&user_options.arena, p).as_bytes());
+                user_options.bundler_options.client.env = DotEnvBehavior::prefix;
+            }
+            DotEnvBehavior::load_all => {
+                user_options.bundler_options.client.env = DotEnvBehavior::load_all;
+            }
+            DotEnvBehavior::disable => {
+                user_options.bundler_options.client.env = DotEnvBehavior::disable;
+            }
+            _ => {}
+        }
+
+        if let Some(define) = &o.serve_define {
+            user_options.bundler_options.client.define = define.clone();
+            user_options.bundler_options.server.define = define.clone();
+            user_options.bundler_options.ssr.define = define.clone();
+        }
+
+        Ok(user_options)
+    }
+}
+
+/// Bridge the keystone `bake::FileSystemRouterType` (Cow-backed, populated by
+/// `server_body::AnyRoute::from_js`) into the body `FileSystemRouterType`
+/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is
+/// a layering wart and this conversion stands in for an arena-dupe until the
+/// two structs unify. All bytes are duped into `arena` so the resulting
+/// `&'static` slices live as long as `UserOptions.arena`.
+fn convert_file_system_router_type(
+    arena: &Arena,
+    src: super::FileSystemRouterType,
+) -> FileSystemRouterType {
+    // NOTE: `arena_erase` is the single sanctioned `'bump → 'static` erasure
+    // for the `UserOptions.arena` self-referential pattern; `Framework::from_js`
+    // / `resolve` use it identically.
+    // TODO(refactor): thread a real `'bump` through `Framework`/
+    // `FileSystemRouterType` and remove this together with `arena_erase`.
+    fn dupe(arena: &Arena, bytes: &[u8]) -> &'static [u8] {
+        arena_erase(arena.alloc_slice_copy(bytes))
+    }
+    fn dupe_slice_of(
+        arena: &Arena,
+        v: &[std::borrow::Cow<'static, [u8]>],
+    ) -> &'static [&'static [u8]] {
+        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
+        arena_erase(arena.alloc_slice_copy(&inner))
+    }
+
+    FileSystemRouterType {
+        root: dupe(arena, src.root.as_ref()),
+        prefix: dupe(arena, src.prefix.as_ref()),
+        entry_server: dupe(arena, src.entry_server.as_ref()),
+        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
+        ignore_underscores: src.ignore_underscores,
+        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
+        extensions: dupe_slice_of(arena, &src.extensions),
+        style: src.style,
+        allow_layouts: src.allow_layouts,
+    }
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC

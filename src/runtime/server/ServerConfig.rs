@@ -641,46 +641,6 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
     Ok(None)
 }
 
-/// Bridge `crate::bake::FileSystemRouterType` (Cow-backed, populated by
-/// `server_body::AnyRoute::from_js`) into `bake_body::FileSystemRouterType`
-/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is a
-/// layering wart and this conversion stands in for an arena-dupe until the two
-/// structs unify. All bytes are duped into `arena` so the resulting `&'static`
-/// slices live as long as `UserOptions.arena`.
-fn convert_file_system_router_type(
-    arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
-) -> crate::bake::bake_body::FileSystemRouterType {
-    use crate::bake::bake_body as bb;
-    // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
-    // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
-    // own `Framework::from_js` / `resolve` use it identically.
-    // TODO(refactor): thread a real `'bump` through `bb::Framework`/
-    // `bb::FileSystemRouterType` and remove this together with `arena_erase`.
-    fn dupe(arena: &bun_alloc::Arena, bytes: &[u8]) -> &'static [u8] {
-        bb::arena_erase(arena.alloc_slice_copy(bytes))
-    }
-    fn dupe_slice_of(
-        arena: &bun_alloc::Arena,
-        v: &[std::borrow::Cow<'static, [u8]>],
-    ) -> &'static [&'static [u8]] {
-        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
-        bb::arena_erase(arena.alloc_slice_copy(&inner))
-    }
-
-    bb::FileSystemRouterType {
-        root: dupe(arena, src.root.as_ref()),
-        prefix: dupe(arena, src.prefix.as_ref()),
-        entry_server: dupe(arena, src.entry_server.as_ref()),
-        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
-        ignore_underscores: src.ignore_underscores,
-        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
-        extensions: dupe_slice_of(arena, &src.extensions),
-        style: src.style,
-        allow_layouts: src.allow_layouts,
-    }
-}
-
 impl ServerConfig {
     pub fn from_js(
         global: &JSGlobalObject,
@@ -831,17 +791,16 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                // NOTE: bake owns the arena (created below and moved into
-                // `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
                 framework_router_list: Vec::new(),
-                js_string_allocations: crate::bake::StringRefList::EMPTY,
+                js_string_allocations: Default::default(),
                 user_routes: &mut args.static_routes,
                 global,
             };
             let init_ctx = &mut init_ctx_;
-            // arena/Vec are owned locals; drop on `?` automatically. Ownership
-            // transfers to args.bake on the success path via mem::take below.
+            // Fields are owned locals; drop on `?` automatically. The router
+            // list and string allocations transfer to args.bake on the success
+            // path via mem::take below.
             // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // Vec<StaticRouteEntry> drops elements (which deref route)
@@ -994,81 +953,15 @@ impl ServerConfig {
                 || !init_ctx.framework_router_list.is_empty()
             {
                 if args.development.is_hmr_enabled() {
-                    use crate::bake::bake_body as bb;
-                    use bun_options_types::schema::api::DotEnvBehavior;
-
-                    // NOTE: the arena is created here and moved into
-                    // `UserOptions` (lives until `args.bake` is dropped).
-                    let arena = bun_alloc::Arena::new();
-
-                    let root = bb::arena_dupe_z(
-                        &arena,
-                        bun_paths::fs::FileSystem::instance().top_level_dir(),
-                    );
-
-                    // Convert `crate::bake::FileSystemRouterType` (Cow-backed)
-                    // into `bake_body::FileSystemRouterType` (`&'static` slices)
-                    // by duping every string into the arena. Type
-                    // duplication; remove once the two structs unify.
-                    let router_types: Vec<bb::FileSystemRouterType> =
-                        core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
-                            .map(|t| convert_file_system_router_type(&arena, t))
-                            .collect();
-
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
-
-                    let mut user_options = crate::bake::UserOptions {
-                        arena,
-                        allocations: core::mem::replace(
-                            &mut init_ctx.js_string_allocations,
-                            crate::bake::StringRefList::EMPTY,
-                        ),
-                        root,
-                        framework,
-                        bundler_options: bb::SplitBundlerOptions::default(),
-                    };
-
-                    let o = &vm.transpiler.options.transform_options;
-
-                    match o.serve_env_behavior {
-                        DotEnvBehavior::prefix => {
-                            // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
-                            // owned by the long-lived `transform_options`; dupe
-                            // into the arena so the `&'static [u8]` field is
-                            // backed by `UserOptions.arena`.
-                            user_options.bundler_options.client.env_prefix = o
-                                .serve_env_prefix
-                                .as_deref()
-                                .map(|p| bb::arena_dupe_z(&user_options.arena, p).as_bytes());
-                            user_options.bundler_options.client.env = DotEnvBehavior::prefix;
-                        }
-                        DotEnvBehavior::load_all => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::load_all;
-                        }
-                        DotEnvBehavior::disable => {
-                            user_options.bundler_options.client.env = DotEnvBehavior::disable;
-                        }
-                        _ => {}
-                    }
-
-                    if let Some(define) = &o.serve_define {
-                        user_options.bundler_options.client.define = define.clone();
-                        user_options.bundler_options.server.define = define.clone();
-                        user_options.bundler_options.ssr.define = define.clone();
-                    }
-
-                    args.bake = Some(user_options);
-                } else {
-                    if !init_ctx.framework_router_list.is_empty() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "FrameworkRouter is currently only supported when `development: true`",
-                        )));
-                    }
+                    args.bake = Some(crate::bake::UserOptions::from_serve_routes(
+                        global,
+                        core::mem::take(&mut init_ctx.framework_router_list),
+                        core::mem::take(&mut init_ctx.js_string_allocations),
+                    )?);
+                } else if !init_ctx.framework_router_list.is_empty() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "FrameworkRouter is currently only supported when `development: true`",
+                    )));
                 }
             }
         }

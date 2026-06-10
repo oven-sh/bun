@@ -89,6 +89,10 @@ pub struct BundleV2<'a> {
     pub ssr_transpiler: *mut Transpiler<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub framework: Option<bake::Framework>,
+    /// Set together with `framework` (from `BakeOptions`); names the two
+    /// virtual manifest modules synthesized when
+    /// `framework.server_components` is configured.
+    pub server_component_manifests: Option<bake::ServerComponentsManifests>,
     pub graph: Graph<'a>,
     // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`.
     pub linker: LinkerContext<'a>,
@@ -153,6 +157,10 @@ pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
+    /// Names of the two virtual manifest modules the bundler synthesizes when
+    /// `framework.server_components` is configured. Supplied by the caller so
+    /// the bundler hardcodes no framework-specific module specifiers.
+    pub server_component_manifests: bake::ServerComponentsManifests,
     pub client_transpiler: NonNull<Transpiler<'a>>,
     pub ssr_transpiler: NonNull<Transpiler<'a>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
@@ -998,9 +1006,6 @@ pub mod bv2_impl {
         #[derive(Default, Clone, Copy)]
         pub struct SavedFile;
     }
-
-    // ── crate-root re-exports for forward-refs left by move-out ───────────────
-    pub use crate::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 
     /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
     pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
@@ -2375,6 +2380,7 @@ pub mod bv2_impl {
                 owned_client_transpiler: None,
                 ssr_transpiler: ssr_alias,
                 framework: None,
+                server_component_manifests: None,
                 graph: Graph {
                     pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()), // set below
                     heap,
@@ -2415,6 +2421,7 @@ pub mod bv2_impl {
                     .map(|sc| sc.separate_ssr_graph)
                     .unwrap_or(false);
                 this.framework = Some(bo.framework);
+                this.server_component_manifests = Some(bo.server_component_manifests);
                 this.linker.framework =
                     this.framework
                         .as_ref()
@@ -2591,7 +2598,7 @@ pub mod bv2_impl {
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             // (variant != .dev_server)
-            self.reserve_source_indexes_for_bake()?;
+            self.reserve_source_indexes_for_server_components()?;
 
             // Setup entry points
             let num_entry_points = data.len();
@@ -2776,7 +2783,7 @@ pub mod bv2_impl {
             entry_points: &[(&[u8], options::Target)],
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
-            self.reserve_source_indexes_for_bake()?;
+            self.reserve_source_indexes_for_server_components()?;
 
             let num_entry_points = entry_points.len();
             self.graph.entry_points.reserve(num_entry_points);
@@ -2866,14 +2873,19 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
-        /// at the same time in one pass over the SCB list.
+        /// This generates the asts for the two server-components manifest
+        /// virtual modules (named by `server_component_manifests`). Both are
+        /// generated at the same time in one pass over the SCB list.
         pub fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
             // If a server components is not configured, do nothing
             let Some(fw) = &self.framework else {
                 return Ok(());
             };
             let Some(sc) = &fw.server_components else {
+                return Ok(());
+            };
+            // Set together with `framework` in `init` (both come from `BakeOptions`).
+            let Some(manifests) = self.server_component_manifests else {
                 return Ok(());
             };
 
@@ -2888,8 +2900,10 @@ pub mod bv2_impl {
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
             let hmr = self.transpiler.options.hot_module_reloading;
-            let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
-            let mut client = AstBuilder::init(alloc, &bake::CLIENT_VIRTUAL_SOURCE, hmr)?;
+            let server_source = manifests.server.to_source(Index::BAKE_SERVER_DATA);
+            let client_source = manifests.client.to_source(Index::BAKE_CLIENT_DATA);
+            let mut server = AstBuilder::init(alloc, &server_source, hmr)?;
+            let mut client = AstBuilder::init(alloc, &client_source, hmr)?;
 
             let mut server_manifest_props: Vec<G::Property> = Vec::new();
             let mut client_manifest_props: Vec<G::Property> = Vec::new();
@@ -5193,13 +5207,17 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
+        fn reserve_source_indexes_for_server_components(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
             };
             if fw.server_components.is_none() {
                 return Ok(());
             }
+            // Set together with `framework` in `init` (both come from `BakeOptions`).
+            let Some(manifests) = self.server_component_manifests else {
+                return Ok(());
+            };
 
             // Call this after
             debug_assert!(self.graph.input_files.len() == 1);
@@ -5208,19 +5226,8 @@ pub mod bv2_impl {
             self.graph.ast.ensure_unused_capacity(2)?;
             self.graph.input_files.ensure_unused_capacity(2)?;
 
-            // The statics are `LazyLock<Source>` and `Source` is not `Clone`, so
-            // rebuild an owned `Source` from the static's clonable fields
-            // (`path`, `index`).
-            let server_source = bun_ast::Source {
-                path: bake::SERVER_VIRTUAL_SOURCE.path,
-                index: bake::SERVER_VIRTUAL_SOURCE.index,
-                ..Default::default()
-            };
-            let client_source = bun_ast::Source {
-                path: bake::CLIENT_VIRTUAL_SOURCE.path,
-                index: bake::CLIENT_VIRTUAL_SOURCE.index,
-                ..Default::default()
-            };
+            let server_source = manifests.server.to_source(Index::BAKE_SERVER_DATA);
+            let client_source = manifests.client.to_source(Index::BAKE_CLIENT_DATA);
 
             // OOM/capacity: fire-and-forget
             let _ = self.graph.input_files.append(crate::Graph::InputFile {
@@ -5422,15 +5429,17 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if let Some(fw) = &self.framework {
+                if let (Some(fw), Some(manifests)) =
+                    (&self.framework, self.server_component_manifests)
+                {
                     if fw.server_components.is_some() {
                         let is_server = ctx.target.is_server_side();
-                        let src = if is_server {
-                            &bake::SERVER_VIRTUAL_SOURCE
+                        let (manifest, reserved_index) = if is_server {
+                            (manifests.server, Index::BAKE_SERVER_DATA)
                         } else {
-                            &bake::CLIENT_VIRTUAL_SOURCE
+                            (manifests.client, Index::BAKE_CLIENT_DATA)
                         };
-                        if import_record.path.text == src.path.pretty {
+                        if import_record.path.text == manifest.specifier {
                             if self.dev_server.is_some() {
                                 import_record.flags.insert(
                                     bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -5442,8 +5451,9 @@ pub mod bv2_impl {
                                 } else {
                                     self.graph.kit_referenced_client_data = true;
                                 }
-                                import_record.path.namespace = b"bun";
-                                import_record.source_index = Index::source(src.index.0);
+                                import_record.path.namespace = manifest.namespace;
+                                import_record.source_index =
+                                    Index::source(reserved_index.get());
                             }
                             continue;
                         }

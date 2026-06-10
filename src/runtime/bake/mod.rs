@@ -173,6 +173,26 @@ impl Default for Framework {
     }
 }
 
+/// Bake's names for the two server-components manifest virtual modules,
+/// passed to the bundler through `BakeOptions.server_component_manifests`
+/// (the bundler synthesizes the modules but hardcodes no specifier strings).
+/// The `specifier`s are the contract with framework JS
+/// (`import ... from "bun:bake/server"`); the `path`s are the stable internal
+/// names used for chunk naming and sourcemaps.
+pub(crate) const SERVER_COMPONENTS_MANIFESTS: bun_bundler::bake_types::ServerComponentsManifests =
+    bun_bundler::bake_types::ServerComponentsManifests {
+        server: bun_bundler::bake_types::VirtualModule {
+            specifier: b"bun:bake/server",
+            path: b"_bun/bake/server",
+            namespace: b"bun",
+        },
+        client: bun_bundler::bake_types::VirtualModule {
+            specifier: b"bun:bake/client",
+            path: b"_bun/bake/client",
+            namespace: b"bun",
+        },
+    };
+
 impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a

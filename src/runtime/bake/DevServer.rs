@@ -3384,6 +3384,7 @@ impl DevServer {
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
+                server_component_manifests: super::SERVER_COMPONENTS_MANIFESTS,
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.
                 client_transpiler: unsafe {

@@ -6,7 +6,6 @@ pub enum Error {
     #[error("Fail")]
     Fail,
 }
-// TODO(port): impl From<Error> for bun_core::Error
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -24,7 +23,6 @@ pub struct SourceLocationBytes {
 
 #[inline(always)]
 fn auto_disable() {
-    // TODO(port): bun_core::feature_flags::DISABLE_LOLHTML — comptime flag in Zig
     if bun_core::feature_flags::DISABLE_LOLHTML {
         unreachable!();
     }
@@ -141,8 +139,8 @@ impl HTMLRewriter {
         Ok(())
     }
 
-    // TODO(port): opaque FFI handle freed via C — cannot impl Drop on zero-sized opaque marker.
-    // Consider an owning newtype `OwnedRewriter(NonNull<HTMLRewriter>)` with Drop.
+    // Opaque FFI handle freed via C — Drop cannot be implemented on the
+    // zero-sized opaque marker, so freeing stays an explicit call.
     pub unsafe fn destroy(this: *mut HTMLRewriter) {
         auto_disable();
         // SAFETY: caller guarantees `this` was returned by lol_html_rewriter_build and not yet freed
@@ -154,7 +152,7 @@ impl HTMLRewriter {
 
 bun_opaque::opaque_ffi! { pub struct HTMLRewriterBuilder; }
 
-pub type OutputSinkFn = unsafe extern "C" fn(*const u8, usize, *mut c_void);
+pub(crate) type OutputSinkFn = unsafe extern "C" fn(*const u8, usize, *mut c_void);
 
 unsafe extern "C" {
     fn lol_html_rewriter_builder_new() -> *mut HTMLRewriterBuilder;
@@ -192,7 +190,7 @@ unsafe extern "C" {
 }
 
 impl HTMLRewriterBuilder {
-    // TODO(port): opaque FFI handle — see HTMLRewriter::destroy note re: owning wrapper + Drop
+    // Opaque FFI handle — see HTMLRewriter::destroy note.
     pub unsafe fn destroy(this: *mut HTMLRewriterBuilder) {
         auto_disable();
         // SAFETY: caller guarantees `this` came from lol_html_rewriter_builder_new and not yet freed
@@ -222,9 +220,7 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
-    // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
-    // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
+    // handler-data params are `Option<NonNull<H>>`, not
     // `Option<&mut H>` — callers routinely pass the SAME allocation for
     // multiple slots (one `DocumentHandler` services doctype/comment/text/end),
     // and materializing several live `&mut` to one object is UB under Stacked
@@ -285,11 +281,10 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): comptime fn-value params → trait-based trampolines (see add_document_content_handlers)
-    // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
+    // The trait
     // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
     // is unrepresentable here.
-    // PORT NOTE: see `add_document_content_handlers` — `Option<NonNull<H>>` to
+    // see `add_document_content_handlers` — `Option<NonNull<H>>` to
     // permit the same handler allocation in multiple slots without aliased
     // `&mut`.
     pub fn add_element_content_handlers<EL, CM, TX>(
@@ -327,9 +322,7 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
-    //
-    // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
+    // takes `*mut S` (not `&mut S`) so the userdata pointer stored
     // in the C rewriter retains the caller's raw-pointer provenance (typically
     // a `heap::alloc` root). If we took `&mut S`, the userdata would carry a
     // tag derived from that short-lived Unique borrow, and any subsequent
@@ -366,7 +359,7 @@ impl HTMLRewriterBuilder {
     }
 }
 
-/// Trait modeling Zig's `comptime Writer/Done` fn-value pair for `build`.
+/// Writer/Done callback pair for `build`.
 pub trait OutputSink {
     fn write(&mut self, bytes: &[u8]);
     fn done(&mut self);
@@ -379,7 +372,6 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(
 ) {
     auto_disable();
 
-    // Zig: @setRuntimeSafety(false)
     // SAFETY: user_data was set to &mut S in build(); ptr[0..len] is valid for the duration of this call
     let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
     match len {
@@ -402,7 +394,7 @@ unsafe extern "C" {
 
 impl HTMLSelector {
     /// Frees the memory held by the parsed selector object.
-    // TODO(port): opaque FFI handle — see HTMLRewriter::destroy note
+    // Opaque FFI handle — see HTMLRewriter::destroy note.
     pub unsafe fn destroy(selector: *mut HTMLSelector) {
         auto_disable();
         // SAFETY: caller guarantees `selector` was returned by parse() and not yet freed
@@ -876,11 +868,11 @@ pub struct HTMLString {
 
 unsafe extern "C" {
     fn lol_html_str_free(str: HTMLString);
-    pub fn lol_html_take_last_error(...) -> HTMLString;
+    pub(crate) fn lol_html_take_last_error(...) -> HTMLString;
 }
 
 impl HTMLString {
-    // TODO(port): #[repr(C)] value crosses FFI by-value; explicit deinit kept instead of Drop
+    // #[repr(C)] value crosses FFI by-value; explicit deinit kept instead of Drop.
     pub fn deinit(self) {
         auto_disable();
         // if (this.len > 0) {
@@ -897,7 +889,6 @@ impl HTMLString {
 
     pub fn slice(&self) -> &[u8] {
         auto_disable();
-        // Zig: @setRuntimeSafety(false)
         // lol_html.h: several getters (lol_html_take_last_error, lol_html_element_get_attribute,
         // lol_html_doctype_*_get) return { data: NULL, len: 0 } to mean "absent". `ffi::slice`
         // tolerates the (null, 0) shape.
@@ -1063,7 +1054,7 @@ impl AttributeIterator {
         }
     }
 
-    // TODO(port): opaque FFI handle — see HTMLRewriter::destroy note
+    // Opaque FFI handle — see HTMLRewriter::destroy note.
     pub fn destroy(&mut self) {
         auto_disable();
         lol_html_attributes_iterator_free(self);
@@ -1086,6 +1077,12 @@ unsafe extern "C" {
         is_html: bool,
     ) -> c_int;
     fn lol_html_comment_after(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
+    fn lol_html_comment_replace(
         comment: *mut Comment,
         content: *const u8,
         content_len: usize,
@@ -1126,10 +1123,9 @@ impl Comment {
 
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
         match unsafe {
-            lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
+            lol_html_comment_replace(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
             -1 => Err(Error::Fail),
@@ -1172,14 +1168,17 @@ pub enum Directive {
 }
 
 #[allow(non_camel_case_types)]
-pub type lol_html_comment_handler_t = unsafe extern "C" fn(*mut Comment, *mut c_void) -> Directive;
+pub(crate) type lol_html_comment_handler_t =
+    unsafe extern "C" fn(*mut Comment, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_text_handler_handler_t =
+pub(crate) type lol_html_text_handler_handler_t =
     unsafe extern "C" fn(*mut TextChunk, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_element_handler_t = unsafe extern "C" fn(*mut Element, *mut c_void) -> Directive;
+pub(crate) type lol_html_element_handler_t =
+    unsafe extern "C" fn(*mut Element, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
-pub type lol_html_doc_end_handler_t = unsafe extern "C" fn(*mut DocEnd, *mut c_void) -> Directive;
+pub(crate) type lol_html_doc_end_handler_t =
+    unsafe extern "C" fn(*mut DocEnd, *mut c_void) -> Directive;
 #[allow(non_camel_case_types)]
 pub type lol_html_end_tag_handler_t = unsafe extern "C" fn(*mut EndTag, *mut c_void) -> Directive;
 
@@ -1212,24 +1211,18 @@ impl DocEnd {
 
 // ─── Directive handler trampolines ────────────────────────────────────────
 
-pub type DirectiveFunctionType<Container> =
+pub(crate) type DirectiveFunctionType<Container> =
     unsafe extern "C" fn(*mut Container, *mut c_void) -> Directive;
 
-// Zig: fn DirectiveFunctionTypeForHandler(comptime Container, comptime UserDataType) type
-//      = *const fn (*UserDataType, *Container) bool;
-// Rust models this as a trait the user-data type implements per container.
+// A trait the user-data type implements per container.
 pub trait DirectiveCallback<Container> {
     fn call(&mut self, container: &mut Container) -> bool;
 }
 
-// Zig: fn DocTypeHandlerCallback(comptime UserDataType) type — unused alias, kept for parity
-pub type DocTypeHandlerCallback<U> = fn(&mut DocType, &mut U) -> bool;
-
-// Zig: pub fn DirectiveHandler(comptime Container, comptime UserDataType, comptime Callback) DirectiveFunctionType(Container)
-// Rust: monomorphized extern "C" trampoline per <Container, UserDataType>.
-// TODO(port): Zig took the callback as a comptime fn-value (multiple callbacks per type possible).
-// Rust trait dispatch allows one callback per (UserDataType, Container) pair. If callers need
-// multiple, add a const-generic fn-pointer wrapper or distinct ZST marker types.
+// Monomorphized extern "C" trampoline per <Container, UserDataType>.
+// Trait dispatch allows one callback per
+// (UserDataType, Container) pair. If callers ever need multiple, add a
+// const-generic fn-pointer wrapper or distinct ZST marker types.
 pub unsafe extern "C" fn directive_handler<Container, U: DirectiveCallback<Container>>(
     this: *mut Container,
     user_data: *mut c_void,
@@ -1259,8 +1252,6 @@ unsafe extern "C" {
     safe fn lol_html_doctype_is_removed(doctype: &DocType) -> bool;
     safe fn lol_html_doctype_source_location_bytes(doctype: &DocType) -> SourceLocationBytes;
 }
-
-pub type DocTypeCallback = unsafe extern "C" fn(*mut DocType, *mut c_void) -> Directive;
 
 impl DocType {
     pub fn get_name(&self) -> HTMLString {
@@ -1298,8 +1289,7 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    // Zig: std.enums.EnumMap(Encoding, []const u8) populated at comptime.
-    // For 2 entries a plain match is equivalent and avoids the EnumMap dependency.
+    // For 2 entries a plain match is sufficient.
     pub fn label(self) -> &'static [u8] {
         match self {
             Encoding::UTF8 => b"UTF-8",
@@ -1307,5 +1297,3 @@ impl Encoding {
         }
     }
 }
-
-// ported from: src/lolhtml_sys/lol_html.zig

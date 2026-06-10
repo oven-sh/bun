@@ -57,34 +57,32 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: takes `NonNull<VirtualMachine>` (not `&mut`) — these are called
+// Note: takes `NonNull<VirtualMachine>` (not `&mut`) — these are called
 // from the transpiler worker thread while the JS thread is concurrently live on
 // the same VM, so a `&mut VirtualMachine` would be a data race AND would alias
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
-pub fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
+pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
-        bun_core::output::debug_warn(format_args!("Failed to dump source string: {}", e.name()));
+        bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
 
-// Zig: local `struct { pub var dir; pub var lock; }` — module statics in Rust.
 // PORTING.md §Global mutable state: lazily-opened debug-dump dir, guarded by a
 // mutex. `Guarded` fuses the lock and the payload so the per-access body is
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub fn dump_source_string_failiable(
+pub(crate) fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         return Ok(());
     }
@@ -101,7 +99,6 @@ pub fn dump_source_string_failiable(
 
     if holder.is_none() {
         let base_name: &[u8] = if cfg!(windows) {
-            // Spec: bun.fs.FileSystem.RealFS.platformTempDir() ++ "\\bun-debug-src"
             let temp = Fs::RealFS::platform_temp_dir();
             let suffix = b"\\bun-debug-src";
             path_buf.0[..temp.len()].copy_from_slice(temp);
@@ -129,10 +126,10 @@ pub fn dump_source_string_failiable(
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
-            bun_core::output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
                 bun_core::Error::from(e).name()
-            ));
+            );
             return Ok(());
         }
 
@@ -158,7 +155,7 @@ pub fn dump_source_string_failiable(
 
             use core::fmt::Write as _;
             let mut out = std::string::String::new();
-            // PORT NOTE: closures can't unify input/output lifetimes for the
+            // Note: closures can't unify input/output lifetimes for the
             // `JSONFormatterUTF8<'_>` borrow — local fn item works.
             fn json(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
                 bun_core::fmt::format_json_string_utf8(
@@ -166,9 +163,8 @@ pub fn dump_source_string_failiable(
                     bun_core::fmt::JSONFormatterUTF8Options::default(),
                 )
             }
-            // PORT NOTE: Zig used a 4 KiB buffered writer streaming to the fd;
-            // building the whole document in memory then `write_all` is
-            // observationally identical for this debug-only dump.
+            // Building the whole document in memory then `write_all` is
+            // fine for this debug-only dump.
             write!(
                 out,
                 "{{\n  \"version\": 3,\n  \"file\": {},\n  \"sourceRoot\": \"\",\n  \"sources\": [{}],\n  \"sourcesContent\": [{}],\n  \"names\": [],\n  \"mappings\": \"{}\"\n}}",
@@ -183,13 +179,16 @@ pub fn dump_source_string_failiable(
     } else {
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
-        // Zig: `dir.writeFile(...) catch return;`
         let _ = File::write_file(dir.fd, base_z, written);
     }
 
     Ok(())
 }
 
+// `pub`: also consumed cross-crate by bun_runtime's ModuleLoader transpile path
+// (runtime/jsc_hooks.rs). The one-shot AtomicBool
+// must stay shared between that path and this store — whichever transpiles the
+// main module first consumes it.
 pub fn set_break_point_on_first_line() -> bool {
     static SET_BREAK_POINT: AtomicBool = AtomicBool::new(true);
     SET_BREAK_POINT.swap(false, Ordering::SeqCst)
@@ -225,9 +224,8 @@ impl Taskable for RuntimeTranspilerStore {
 
 impl RuntimeTranspilerStore {
     pub fn init() -> RuntimeTranspilerStore {
-        // PORT NOTE: Zig passed `bun.typedAllocator(TranspilerJob)` to
-        // `Store.init`; the Rust HiveArrayFallback uses the global mimalloc
-        // (PORTING.md §Allocators), so the allocator arg drops.
+        // The HiveArrayFallback uses the global mimalloc
+        // (PORTING.md §Allocators).
         Self::default()
     }
 
@@ -236,11 +234,11 @@ impl RuntimeTranspilerStore {
     /// uninitialized — its bytes are never read until `used.set()` claims a
     /// slot, so any bit pattern is valid.
     ///
-    /// PERF(port): `out.write(Self::init())` materialises a stack temporary
+    /// PERF: `out.write(Self::init())` materialises a stack temporary
     /// of `size_of::<Self>()` (≈ 64 × `size_of::<TranspilerJob>()`) and
     /// `memcpy`s it; rustc cannot elide the copy through the `MaybeUninit`
-    /// payload. Zig's `Store.init()` left `buffer` `undefined` and only
-    /// zeroed the bitset — this restores that.
+    /// payload. This leaves `buffer` uninitialized and only
+    /// zeroes the bitset.
     ///
     /// On return, `*out` is fully initialized.
     pub fn init_in_place(out: &mut core::mem::MaybeUninit<Self>) {
@@ -260,7 +258,7 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    // PORT NOTE: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
+    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
@@ -386,15 +384,15 @@ impl RuntimeTranspilerStore {
 // TranspilerJob
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: bun.heap_breakdown.enabled gate on inline capacity — the Rust
+// Note: bun.heap_breakdown.enabled gate on inline capacity — the Rust
 // `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments builds, so
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-pub type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
+pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // PORT NOTE: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
+    // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
@@ -404,8 +402,8 @@ pub struct TranspilerJob {
     pub non_threadsafe_referrer: OwnedString,
     pub loader: Loader,
     pub promise: StrongOptional,
-    // PORT NOTE: struct is stored in a HiveArray and crosses to a worker thread;
-    // Zig used `*VirtualMachine` / `*JSGlobalObject` (BACKREF — VM owns the
+    // Note: struct is stored in a HiveArray and crosses to a worker thread;
+    // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub vm: *mut VirtualMachine,
     pub global_this: BackRef<JSGlobalObject>,
@@ -438,9 +436,8 @@ pub enum Fetcher {
     File,
 }
 
-// PORT NOTE: Zig `Fetcher.deinit` called `.deref()` on the contained `bun.String`.
-// In the Rust port `bun_core::String` is `Copy` with manual `.deref()`; matching
-// Zig, decrement explicitly when replacing the enum value.
+// Note: `bun_core::String` is `Copy` with manual `.deref()`;
+// decrement explicitly when replacing the enum value.
 impl Fetcher {
     fn deinit(&mut self) {
         if let Fetcher::VirtualModule(s) = self {
@@ -449,15 +446,14 @@ impl Fetcher {
     }
 }
 
-/// Per-worker output buffer (Zig: `threadlocal var source_code_printer:
-/// ?*js_printer.BufferPrinter = null`). The printer is the **only** state
+/// Per-worker output buffer. The printer is the **only** state
 /// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth
 /// reusing (capped at 512 K / 2 M below). The parse arena and AST memory
 /// store, by contrast, are stack-local per call and bulk-freed on return; see
 /// the RSS-regression note in `run()`.
 //
-// `#[thread_local]` not `thread_local!`: Zig `threadlocal var` is bare
-// `__thread`; the macro's `LocalKey::__getit` wrapper showed up on the
+// `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
+// wrapper showed up on the
 // async-import hot path. Const-init `Cell<ptr>` (no dtor).
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
@@ -486,12 +482,12 @@ fn tls_get_or_leak<T>(
 }
 
 impl TranspilerJob {
-    /// Zig `deinit` — kept as a private inherent fn (not `impl Drop`) because the
+    /// Kept as a private inherent fn (not `impl Drop`) because the
     /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
     /// `run_from_js_thread`.
     ///
-    /// PORT NOTE: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
-    /// hive_array.rs PORT NOTE), so the Drop-carrying fields — `OwnedString` ×2,
+    /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
+    /// hive_array.rs note), so the Drop-carrying fields — `OwnedString` ×2,
     /// `OwnedResolvedSource`, `Log`, `StrongOptional` — are torn down *there*,
     /// not here. This function handles only the teardown that field drop glue
     /// does **not** cover: the leaked `path.text` Box, `poll_ref.disable()`,
@@ -517,7 +513,7 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub fn dispatch_to_main_thread(&mut self) {
+    pub(crate) fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
         // SAFETY: vm outlives the job (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
@@ -531,14 +527,14 @@ impl TranspilerJob {
             .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub fn run_from_js_thread(&mut self) -> JsResult<()> {
+    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
         // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
         // `fulfill` call site instead.
         let global_this = self.global_this;
-        // PORT NOTE: Zig `poll_ref.unref(vm)` — the Rust KeepAlive takes an `EventLoopCtx`
+        // Note: the KeepAlive takes an `EventLoopCtx`
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
@@ -587,15 +583,15 @@ impl TranspilerJob {
         )
     }
 
-    pub fn schedule(&mut self) {
-        // PORT NOTE: Zig `poll_ref.ref(this.vm)` — the Rust KeepAlive takes an
+    pub(crate) fn schedule(&mut self) {
+        // Note: the KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
@@ -604,11 +600,8 @@ impl TranspilerJob {
         this.run();
     }
 
-    pub fn run(&mut self) {
-        // Zig: `var arena = bun.ArenaAllocator.init(bun.default_allocator);
-        //       defer arena.deinit();`
-        //
-        // Stack-local per call, bulk-freed on return. An earlier port hoisted
+    pub(crate) fn run(&mut self) {
+        // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
         // the *start* of the next call. On a 64-core box ~40 thread-pool
@@ -633,7 +626,7 @@ impl TranspilerJob {
         }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
-        // PORT NOTE: kept as a raw pointer — never form `&mut VirtualMachine`
+        // Note: kept as a raw pointer — never form `&mut VirtualMachine`
         // here. (a) the JS thread is concurrently live on the same VM, so a
         // `&mut` would be a data race; (b) `self` is stored *inside*
         // `(*vm).transpiler_store.store` (HiveArray inline slot), so a
@@ -643,7 +636,7 @@ impl TranspilerJob {
         // expressions / leaf-field borrows) only.
         let vm: *mut VirtualMachine = self.vm;
 
-        // SAFETY: `vm` is the live owning VM (BACKREF — see PORT NOTE above);
+        // SAFETY: `vm` is the live owning VM (BACKREF — see note above);
         // atomic load on a leaf field, no `&VirtualMachine` formed.
         let store_generation = unsafe {
             (*vm)
@@ -656,18 +649,10 @@ impl TranspilerJob {
             return;
         }
 
-        // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
-        // PORT NOTE: Zig's per-thread `ast_memory_store` was a `StackFallback
-        // Allocator` that *borrowed* the per-call `arena` above as its
-        // fallback, so its allocations were bulk-freed by `arena.deinit()`. The
-        // Rust `ASTMemoryAllocator` owns its own `MimallocArena` instead (see
-        // ast_memory_allocator.rs), so it must be stack-local too — its `Drop`
-        // (via the owned `Arena` field) `mi_heap_destroy`s the AST-node heap
-        // when `run()` returns. `Scope` restores the previous
-        // `Expr/Stmt.Data.Store.memory_allocator` on Drop and runs *before*
-        // `ast_memory_store` drops (reverse declaration order), so the
-        // thread-local AST heap pointer never dangles.
-        let mut ast_memory_store = ASTMemoryAllocator::new(&arena);
+        // `borrowing()`: the AST node store and the
+        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
+        // drops at the end of `run()`.
+        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 
         let path = self.path;
@@ -675,8 +660,7 @@ impl TranspilerJob {
         let loader = self.loader;
         let this_tag = self.resolved_source.get().tag;
 
-        // PORT NOTE: Zig threaded the arena into `output_code_allocator`; the Rust port of
-        // RuntimeTranspilerCache dropped the per-allocator fields (Box<[u8]> + global mimalloc).
+        // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
         // LAYERING: this is the canonical `bun_ast::RuntimeTranspilerCache`
         // wired with the JSC vtable so the parser's `cache.get()` reaches the
         // disk-backed `Entry` loader; on a hit `cache.entry` holds a type-erased
@@ -699,13 +683,13 @@ impl TranspilerJob {
             },
         );
 
-        // PORT NOTE: Zig copies the whole Transpiler by value (`transpiler = vm.transpiler`).
+        // The whole Transpiler is copied by value here.
         // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
-        // a bytewise copy mirroring the Zig value-copy. SAFETY: `vm.transpiler` is read via
+        // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
         // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
-        // Zig did not `deinit` the by-value copy; `ManuallyDrop` suppresses Drop so owned
+        // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
@@ -719,13 +703,11 @@ impl TranspilerJob {
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
-        // PORT NOTE: reshaped for borrowck — Zig: transpiler.resolver.opts = transpiler.options
-        // (BundleOptions value copy). The Rust resolver already shares opts with the parent
+        // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
-        // PORT NOTE: Zig's `MacroContext.init` is a value-type with no heap
-        // allocation, so re-creating it per-iteration (as `parse_maybe` does
-        // when `macro_context.is_none()`) is free. The Rust port boxes a
+        // Note: `parse_maybe` re-creates the macro context per-iteration
+        // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
         // is intentionally leaked for the long-lived `vm.transpiler`, but here
         // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
@@ -746,7 +728,7 @@ impl TranspilerJob {
                     ctx.deinit();
                 }
             });
-        // Zig: `transpiler.linker.resolver = &transpiler.resolver` — the bytewise copy left
+        // The bytewise copy left
         // `linker.resolver` pointing at `vm.transpiler.resolver` (wrong allocator/log); rewire
         // it at the local copy so `print_with_source_map` resolves through the arena-backed
         // resolver.
@@ -765,7 +747,7 @@ impl TranspilerJob {
         // (BACKREF — when non-null it points at the process-lifetime watcher
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
-        // projection avoids forming `&VirtualMachine` per the `vm` PORT NOTE.
+        // projection avoids forming `&VirtualMachine` per the `vm` note.
         let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
@@ -773,8 +755,7 @@ impl TranspilerJob {
             // `flush_evictions` closes fds and `swap_remove`s), so snapshot
             // under the watcher mutex — see
             // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes (port improves on Zig spec; Zig
-            // `RuntimeTranspilerStore.zig:344` reads unlocked).
+            // race this closes.
             (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
             // On Linux, `addFileByPathSlow` inserts watchlist entries with
             // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
@@ -790,18 +771,18 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
+        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let macro_remappings = if unsafe { (*vm).macro_mode }
             || !unsafe { (*vm).has_any_macro_remappings }
             || is_node_override
         {
             MacroRemap::default()
         } else {
-            // PORT NOTE: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
+            // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
             // has no nested `Clone` impl (the inherent `clone()` requires
-            // `V: Clone`); the Zig copied it by value. Re-key shallowly here
+            // `V: Clone`). Re-key shallowly here
             // matching the build-command conversion (transpiler.rs:2616).
-            // Spec (Zig l.363) is an infallible value-copy, so OOM during the
+            // OOM during the
             // inner `clone()` must abort — never silently drop a remapping.
             let mut m = MacroRemap::default();
             for (k, v) in transpiler.options.macro_remap.iter() {
@@ -810,10 +791,10 @@ impl TranspilerJob {
             m
         };
 
-        // Zig: `var fallback_source: logger.Source = undefined;` — only
+        // Only
         // initialised on the `is_node_override` branch and only read through
-        // `parse_options.virtual_source` (raw-ptr borrow). `MaybeUninit` mirrors
-        // the `= undefined` exactly; the write is `Cow::Borrowed`/borrowed-path
+        // `parse_options.virtual_source` (raw-ptr borrow).
+        // The write is `Cow::Borrowed`/borrowed-path
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
@@ -822,14 +803,14 @@ impl TranspilerJob {
         // If we're re-using the file descriptor from the fs watcher
         // Do not close it because that will break the kqueue-based watcher
         //
-        // PORT NOTE: stored in a `Cell` so the scopeguard closure can capture
+        // Note: stored in a `Cell` so the scopeguard closure can capture
         // `&Cell<bool>` and the post-parse writes are visible to it without
         // raw-pointer laundering (which the unused-assignment lint can't see).
         let should_close_input_file_fd = Cell::new(fd.is_none());
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` PORT NOTE above.
+        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
         let is_main = vm_main.len() == path.text.len()
             && vm_main_hash == hash
@@ -862,7 +843,7 @@ impl TranspilerJob {
             dont_bundle_twice: true,
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
-            // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` PORT NOTE above.
+            // SAFETY: leaf-field `&` borrow on `*vm.debugger`; see `vm` note above.
             set_breakpoint_on_first_line: unsafe { &(*vm).debugger }
                 .as_ref()
                 .map(|d| d.set_breakpoint_on_first_line)
@@ -877,7 +858,7 @@ impl TranspilerJob {
             } else {
                 None
             },
-            // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` PORT NOTE above.
+            // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
             remove_cjs_module_wrapper: is_main
                 && unsafe { (*vm).module_loader.eval_source.is_some() },
             module_type,
@@ -919,8 +900,8 @@ impl TranspilerJob {
             }
         }
 
-        // Zig spec: `vm.isWatcherEnabled()` ⇔ `vm.bun_watcher != .none`. The
-        // Rust field is a type-erased `*mut ImportWatcher`, so a non-null
+        // `vm.isWatcherEnabled()` ⇔ watcher present. The
+        // field is a nullable `*mut ImportWatcher`, so a non-null
         // pointer may still hold `ImportWatcher::None`; both must be ruled out
         // or we'd skip closing `input_file_fd` without a watcher to adopt it.
         // Discriminant read on the BACKREF captured above; only the JS thread
@@ -979,7 +960,7 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` PORT NOTE above. Inlined
+        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
         // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
         // `&VirtualMachine`.
         let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
@@ -1002,7 +983,7 @@ impl TranspilerJob {
             );
 
             if bun_core::env::DUMP_SOURCE {
-                // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` PORT NOTE above).
+                // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
                 let vm = unsafe { NonNull::new_unchecked(vm) };
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
@@ -1092,9 +1073,8 @@ impl TranspilerJob {
             bp
         });
 
-        // PORT NOTE: Zig copies BufferPrinter by value here (`var printer = source_code_printer.?.*`)
-        // and writes it back later. We swap the buffer out instead and write it back via the
-        // _writeback guard — same observable effect (the thread-local's buffer is reused).
+        // Swap the buffer out and write it back via the
+        // _writeback guard (the thread-local's buffer is reused).
         let mut printer = core::mem::replace(
             source_code_printer,
             BufferPrinter::init(BufferWriter::init()),
@@ -1127,7 +1107,7 @@ impl TranspilerJob {
             } else {
                 None
             };
-        // Spec ModuleLoader.zig:523 — propagate top-level-await to the cached
+        // Propagate top-level-await to the cached
         // module record. Without this, modules cached via the isolation source
         // provider (used under --isolate / --parallel) are reported to JSC as
         // having no TLA, so the module's evaluation promise resolves before the
@@ -1136,7 +1116,7 @@ impl TranspilerJob {
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-        // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
+        // Note: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
         // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
         // closure returns; the raw pointer stays valid until `module_info` is
         // moved/touched again (after `print_with_source_map`).
@@ -1144,7 +1124,7 @@ impl TranspilerJob {
             module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
-            // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw
+            // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
             // pointer and only borrows leaf fields (`source_mappings`, `debugger`)
             // inside `get()`. No `&mut VirtualMachine` is ever formed.
             let mut mapper = unsafe { SourceMapHandlerGetter::from_raw(vm, &raw mut printer) };
@@ -1181,7 +1161,7 @@ impl TranspilerJob {
         }
 
         if bun_core::env::DUMP_SOURCE {
-            // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` PORT NOTE above).
+            // SAFETY: `vm` is the live owning VM (BACKREF — see `vm` note above).
             let vm = unsafe { NonNull::new_unchecked(vm) };
             dump_source(vm, specifier, source_code_printer);
         }
@@ -1195,7 +1175,7 @@ impl TranspilerJob {
             debug_assert!(cache.output_code.is_none());
             let result = String::clone_latin1(written);
 
-            // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
+            // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
@@ -1235,5 +1215,3 @@ impl TranspilerJob {
         // this point — `source_code` above is a fresh WTF::String copy.
     }
 }
-
-// ported from: src/jsc/RuntimeTranspilerStore.zig

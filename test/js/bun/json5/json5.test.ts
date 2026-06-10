@@ -2,6 +2,7 @@
 // Expected values verified against json5@2.2.3 reference implementation.
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -1569,5 +1570,92 @@ describe("round-trip: stringify → parse → stringify", () => {
       expect(s2).toBe(s1);
       expect(parsed).toEqual([1, null, 3]);
     });
+  });
+});
+
+describe("deeply nested parse results", () => {
+  test("JSON5.parse and JSONC.parse near the nesting depth limit either return the value or throw a catchable error", async () => {
+    // Probes array nesting depths right at the boundary the parser still accepts.
+    // The deepest accepted AST must convert back to JS values either successfully
+    // or by throwing a catchable error, and shallow inputs must keep working.
+    // The sweep runs in a child process so the parent test can observe whether it
+    // ran to completion.
+    const script = `
+      function makeInput(depth) {
+        return Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+      }
+      function isExpectedNestedArray(value, depth) {
+        let d = 0;
+        let cur = value;
+        while (Array.isArray(cur)) {
+          if (cur.length !== 1) return false;
+          cur = cur[0];
+          d++;
+        }
+        return d === depth && cur === 1;
+      }
+      function probe(parse, depth) {
+        const input = makeInput(depth);
+        let value;
+        try {
+          value = parse(input);
+        } catch (err) {
+          if (!(err instanceof Error)) {
+            console.log("non-Error thrown at depth " + depth);
+            process.exit(1);
+          }
+          return "error";
+        }
+        if (!isExpectedNestedArray(value, depth)) {
+          console.log("wrong shape at depth " + depth);
+          process.exit(1);
+        }
+        return "ok";
+      }
+      const parsers = [
+        ["JSON5", input => Bun.JSON5.parse(input)],
+        ["JSONC", input => Bun.JSONC.parse(input)],
+      ];
+      for (const [name, parse] of parsers) {
+        // Legitimate shallow input must still parse to the right shape.
+        if (probe(parse, 64) !== "ok") {
+          console.log(name + " rejected shallow input");
+          process.exit(1);
+        }
+        // Find a depth the parser refuses, then binary-search the deepest depth it
+        // still accepts. Every accepted probe converts the full AST to JS values,
+        // so the probes converge on (and repeatedly exercise) the deepest AST the
+        // parser will ever hand to the converter.
+        let hi = 1024;
+        while (hi <= 4000000 && probe(parse, hi) === "ok") {
+          hi *= 2;
+        }
+        if (hi <= 4000000) {
+          let lo = hi >> 1;
+          while (lo + 1 < hi) {
+            const mid = (lo + hi) >> 1;
+            if (probe(parse, mid) === "ok") lo = mid;
+            else hi = mid;
+          }
+          for (let d = Math.max(64, lo - 2); d <= lo + 2; d++) {
+            probe(parse, d);
+          }
+        }
+        console.log(name + " probed");
+      }
+      console.log("done");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.replaceAll("\r\n", "\n").trim()).toBe("JSON5 probed\nJSONC probed\ndone");
+    expect(exitCode).toBe(0);
   });
 });

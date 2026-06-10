@@ -3,7 +3,7 @@ use bun_jsc::virtual_machine::GCLevel;
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     // NB: helper sizes inline capacity from `fns.len()`, fixing the prior
     // `len = 3` vs 4-entry drift.
     jsc::create_host_function_object(
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
@@ -37,7 +37,10 @@ pub fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn array_buffer_to_string(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let args_buf = frame.arguments_old::<2>();
     let args = args_buf.slice();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
@@ -57,7 +60,6 @@ pub fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn dump_zone_malloc_stats();
     safe fn Bun__memoryFootprint() -> usize;
@@ -80,16 +82,19 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
 }
 
 #[bun_jsc::host_fn]
-fn dump_mimalloc(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global.
-    let _vm = global.bun_vm();
-    // TODO(port): blocked_on: bun_alloc::Arena::dump_stats — `VirtualMachine.arena` is now
-    // `Option<NonNull<bumpalo::Bump>>` and bumpalo has no `dump_stats()`; the original
-    // mimalloc-arena stat dump needs a dedicated shim once the arena type lands.
+fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    // Print the process-wide mimalloc stats to stderr via
+    // `mi_stats_print_out` directly.
+    extern "C" fn dump(text: *const core::ffi::c_char, _arg: *mut core::ffi::c_void) {
+        // SAFETY: mimalloc passes a valid NUL-terminated string.
+        let text = unsafe { core::ffi::CStr::from_ptr(text) };
+        let _ = bun_core::Output::error_writer().write_all(text.to_bytes());
+    }
+    // SAFETY: `dump` matches `mi_output_fun` and does not unwind.
+    unsafe { bun_alloc::mimalloc::mi_stats_print_out(Some(dump), core::ptr::null_mut()) };
+    bun_core::Output::flush();
     if bun_alloc::heap_breakdown::ENABLED {
         dump_zone_malloc_stats();
     }
     Ok(JSValue::UNDEFINED)
 }
-
-// ported from: src/runtime/api/UnsafeObject.zig

@@ -1,7 +1,5 @@
-//! JSC bridges for `bun_install::Dependency`. In Zig this was aliased back into
-//! `src/install/dependency.zig` so call sites were unchanged; in Rust the
-//! `to_js`/`from_js` surface lives here as extension-trait methods on the base
-//! type (see PORTING.md "Idiom map" — `*_jsc` alias lines are deleted).
+//! JSC bridges for `bun_install::Dependency`. The `to_js`/`from_js` surface
+//! lives here as extension-trait methods on the base type.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
@@ -18,7 +16,7 @@ fn semver_string_to_js(
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.slice(buf))
 }
 
-pub fn version_to_js(
+pub(crate) fn version_to_js(
     dep: &bun_install::dependency::Version,
     buf: &[u8],
     global: &JSGlobalObject,
@@ -33,7 +31,7 @@ pub fn version_to_js(
         BunString::static_(<&'static str>::from(dep.tag).as_bytes()).to_js(global)?,
     );
 
-    // PORT NOTE: `dependency::Version` keeps `Value` as a `#[repr(C)] union`
+    // `dependency::Version` keeps `Value` as a `#[repr(C)] union`
     // (discriminant in `Version.tag`); the tag-checked accessors on
     // `DependencyVersion` (`npm()`, `git()`, …) wrap the union read.
     match dep.tag {
@@ -105,7 +103,6 @@ pub fn version_to_js(
     Ok(object)
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_core::String as BunString;
     use bun_install::dependency::{TagExt, version::Tag};
@@ -134,7 +131,6 @@ pub(crate) fn log_to_js(
     bun_ast_jsc::log_to_js(log, global, msg)
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Log;
     use bun_install::dependency;
@@ -145,8 +141,6 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if arguments.len() == 1 {
         return crate::update_request_jsc::from_js(global, arguments[0]);
     }
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if hot
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile if hot
 
     let alias_value: JSValue = if !arguments.is_empty() {
         arguments[0]
@@ -170,8 +164,6 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let name_slice = name_value.to_slice(global)?;
 
-    // PORT NOTE: reshaped for borrowck — Zig built `name`/`alias`/`buf` as
-    // overlapping slices into a StringBuilder's single allocation. Rust's
     // `StringBuilder::append` returns `&[u8]` borrowing `&mut self`, so we
     // can't hold two appended slices at once. Instead, build into an owned
     // `Vec<u8>` and reslice by offset (same memory layout, no aliasing fight).
@@ -222,5 +214,3 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
     version_to_js(&dep, buf, global)
 }
-
-// ported from: src/install_jsc/dependency_jsc.zig

@@ -1,7 +1,10 @@
 #include "IsolatedModuleCache.h"
 #include "BunClientData.h"
 #include "ModuleLoader.h"
+#include "ZigGlobalObject.h"
 #include "ZigSourceProvider.h"
+#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSFunction.h>
 
 namespace Bun {
 
@@ -43,6 +46,41 @@ void IsolatedModuleCache::evict(JSC::VM& vm, const WTF::String& key)
 void IsolatedModuleCache::clear(JSC::VM& vm)
 {
     WebCore::clientData(vm)->isolationSourceProviderCache.clear();
+}
+
+// Test-only (bun:internal-for-testing). Returns the cached provider's
+// JSC::SourceProviderSourceType name for a resolved specifier, or null when
+// the key isn't cached. Lets tests assert that transpiled ESM enters the
+// cache as BunTranspiledModule (module_info attached — record rebuilt without
+// re-parsing) rather than a plain Module.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedModuleCacheSourceType, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto key = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* provider = IsolatedModuleCache::lookup(vm, key);
+    if (!provider)
+        return JSC::JSValue::encode(JSC::jsNull());
+    switch (provider->sourceType()) {
+    case JSC::SourceProviderSourceType::Program:
+        return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "Program"_s));
+    case JSC::SourceProviderSourceType::Module:
+        return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "Module"_s));
+    case JSC::SourceProviderSourceType::BunTranspiledModule:
+        return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "BunTranspiledModule"_s));
+    default:
+        // Unreachable today (isTagCacheable only admits JS-ish tags, whose
+        // providers are Program/Module/BunTranspiledModule), but keep the
+        // `string | null` contract if that ever widens.
+        return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "Unknown"_s));
+    }
+}
+
+JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSC::JSFunction::create(vm, globalObject, 1, "isolatedModuleCacheSourceType"_s, jsFunctionIsolatedModuleCacheSourceType, JSC::ImplementationVisibility::Public);
 }
 
 } // namespace Bun

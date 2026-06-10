@@ -2,14 +2,15 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_array_of_size(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_be_array_of_size(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — scopeguard::defer! would hold &mut *this for the whole fn.
+    // scopeguard::defer! would hold &mut *this for the whole fn, so use the
+    // post-match guard instead.
     let this = this.post_match_guard(global);
 
     let this_value = frame.this();
@@ -43,11 +44,9 @@ pub fn to_be_array_of_size(
     }
 
     let mut formatter = super::make_formatter(global);
-    // Zig: `defer formatter.deinit();` — handled by Drop.
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        // PERF(port): was comptime getSignature.
         let signature = get_signature("toBeArrayOfSize", "", true);
         return this.throw_fmt(
             global,
@@ -57,7 +56,6 @@ pub fn to_be_array_of_size(
         );
     }
 
-    // PERF(port): was comptime getSignature.
     let signature = get_signature("toBeArrayOfSize", "", false);
     this.throw_fmt(
         global,
@@ -67,4 +65,3 @@ pub fn to_be_array_of_size(
     )
 }
 
-// ported from: src/test_runner/expect/toBeArrayOfSize.zig

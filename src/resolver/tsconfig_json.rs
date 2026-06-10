@@ -6,32 +6,28 @@ use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
-// the canonical `bun_options_types::jsx` module. The previous local `Pragma`
-// (with `Vec` factory/fragment + empty defaults) diverged from spec — Zig
-// `JSX.Pragma{}` defaults to `["React","createElement"]`/`["React","Fragment"]`.
-// Unification corrects that; `merge_jsx` already uses `JsxFieldSet` (not
-// emptiness) to track was-set, so behavior is preserved.
+// the canonical `bun_options_types::jsx` module. `merge_jsx` uses
+// `JsxFieldSet` (not emptiness) to track was-set.
 pub mod options {
     pub use bun_options_types::jsx;
 }
 
-/// Port of the anonymous `enum { json, jsonc }` parameter to
-/// `cache::Json.parseJSON` (cache.zig:296).
+/// Selects strict JSON vs JSONC (comments + trailing commas) parsing in
+/// `JsonCache::parse_json`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum JsonMode {
     Json,
     Jsonc,
 }
 
-/// Port of `cache::Json` (cache.zig:283). Moved down from `bun_bundler::cache`
-/// so the resolver names it directly — `bun_parsers::json_parser` is
-/// lower-tier than the resolver, so no cycle exists.
+/// JSON parse cache. Lives below `bun_bundler::cache` so the resolver names it
+/// directly — `bun_parsers::json_parser` is lower-tier than the resolver, so no
+/// cycle exists.
 ///
-/// Zig's `Json` is stateless and threads `bun.default_allocator` through every
-/// call; the Rust `json_parser` arena-allocates into a `&bun_alloc::Arena`, so
-/// this struct owns one. The arena is **never reset** — package.json/tsconfig
-/// ASTs are cached process-long ("DirInfo cache is reused globally / so we
-/// cannot free these", package_json.zig).
+/// `json_parser` arena-allocates into a `&bun_alloc::Arena`, so this struct
+/// owns one. The arena is **never reset** — package.json/tsconfig ASTs are
+/// cached process-long (the DirInfo cache is reused globally, so these cannot
+/// be freed).
 ///
 /// The arena is lazy-initialized on first `parse()`. `Resolver::for_worker`
 /// creates one `CacheSet` (and thus one `JsonCache`) per bundler worker thread,
@@ -47,7 +43,6 @@ impl JsonCache {
         JsonCache { bump: None }
     }
 
-    /// Port of `cache::Json::parse` (cache.zig:287).
     #[inline]
     fn parse(
         &mut self,
@@ -61,14 +56,13 @@ impl JsonCache {
     ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
-        // runs after the `func() catch null` body; here the append is hoisted past the match.
         let result = func(source, &mut temp_log, bump).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
     }
 
-    /// Port of `cache::Json.parseTSConfig` (cache.zig:311).
+    /// Parses tsconfig.json/jsconfig.json source as JSONC into the cache
+    /// arena.
     #[inline]
     pub fn parse_tsconfig(
         &mut self,
@@ -78,7 +72,8 @@ impl JsonCache {
         self.parse(log, source, json_parser::parse_ts_config::<true>)
     }
 
-    /// Port of `cache::Json.parsePackageJSON` (cache.zig:307).
+    /// Parses package.json source into the cache arena, optionally forcing
+    /// UTF-8 string allocation.
     #[inline]
     pub fn parse_package_json(
         &mut self,
@@ -93,7 +88,8 @@ impl JsonCache {
         }
     }
 
-    /// Port of `cache::Json.parseJSON` (cache.zig:296).
+    /// Parses JSON source into the cache arena using `mode` to pick strict
+    /// JSON vs JSONC.
     #[inline]
     pub fn parse_json(
         &mut self,
@@ -122,13 +118,12 @@ impl JsonCache {
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
-// TODO(port): bun.StringArrayHashMap — confirm bun_collections key/value ownership for byte-slice keys
-pub type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
+// Both keys and values are owned (`Box`/`Vec`) and freed when the map drops.
+pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
-// Zig: `fn FlagSet(comptime Type: type) type { return std.EnumSet(std.meta.FieldEnum(Type)); }`
-// Rust has no `FieldEnum` reflection; we hand-list the Pragma fields actually used below.
+// Hand-listed Pragma fields actually used below.
 #[derive(EnumSetType, Debug)]
-pub enum JsxField {
+pub(crate) enum JsxField {
     Factory,
     Fragment,
     ImportSource,
@@ -136,11 +131,9 @@ pub enum JsxField {
     Development,
 }
 
-pub type JsxFieldSet = EnumSet<JsxField>;
+pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
-    // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
-    // modeled here as owned Box<[u8]>. Revisit if profiling shows churn.
     pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
@@ -192,27 +185,26 @@ impl Default for TSConfigJSON {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ImportsNotUsedAsValue {
+pub(crate) enum ImportsNotUsedAsValue {
     Preserve,
     Err,
     Remove,
     Invalid,
 }
 
-// Zig: `pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, ...)`
-pub static IMPORTS_NOT_USED_AS_VALUE_LIST: phf::Map<&'static [u8], ImportsNotUsedAsValue> = phf::phf_map! {
-    b"preserve" => ImportsNotUsedAsValue::Preserve,
-    b"error" => ImportsNotUsedAsValue::Err,
-    b"remove" => ImportsNotUsedAsValue::Remove,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static IMPORTS_NOT_USED_AS_VALUE_LIST: ImportsNotUsedAsValue = {
+        b"preserve" => ImportsNotUsedAsValue::Preserve,
+        b"error" => ImportsNotUsedAsValue::Err,
+        b"remove" => ImportsNotUsedAsValue::Remove,
+    };
+}
 
-// Zig: `Output.scoped(.alloc, .visibleIf(hasDecl(T, "log_allocations")))` — hidden by
-// default, enabled via `BUN_DEBUG_alloc=1`. Tests count `new(TSConfigJSON)` /
+// Hidden by default, enabled via `BUN_DEBUG_alloc=1`. Tests count `new(TSConfigJSON)` /
 // `destroy(TSConfigJSON)` lines to assert the extends-chain merge frees intermediates.
 bun_core::declare_scope!(alloc, hidden);
 
 impl TSConfigJSON {
-    // Zig: `pub const new = bun.TrivialNew(@This());` → `bun.new` logs under `.alloc`.
     #[inline]
     pub fn new(v: Self) -> Box<Self> {
         let boxed = Box::new(v);
@@ -222,7 +214,7 @@ impl TSConfigJSON {
         boxed
     }
 
-    // Zig: `bun.destroy(this)` — logs under `.alloc` then frees.
+    // Logs under `.alloc` then frees.
     #[inline]
     pub fn destroy(boxed: Box<Self>) {
         if cfg!(debug_assertions) {
@@ -311,17 +303,15 @@ impl TSConfigJSON {
         // The extra null-byte here is unnecessary. But it's kind of nice in the debugger sometimes.
         let _ = string_builder.append_z(remaining);
 
-        // PERF(port): Zig returned a sub-slice into the builder's single allocation; Rust copies once.
         let len = string_builder.len - 1;
         let written = string_builder.allocated_slice();
         Ok(Box::from(&written[..len]))
     }
 
-    // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
-    // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query
-    // API exposes `as_utf8_string_literal() -> Option<&[u8]>` instead — the
-    // tsconfig parser forces UTF-8 (cache.zig:313 `force_utf8=true`), so every
-    // `EString` is already a flat UTF-8 slice and we can copy at the boundary.
+    // NOTE: the `Expr` query API exposes `as_utf8_string_literal() ->
+    // Option<&[u8]>` — the tsconfig parser forces UTF-8 (`force_utf8=true`),
+    // so every `EString` is already a flat UTF-8 slice and we can copy at the
+    // boundary.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -347,9 +337,7 @@ impl TSConfigJSON {
             paths: PathsMap::default(),
             ..Default::default()
         };
-        // errdefer allocator.free(result.paths) — handled by Drop on `result`.
-        //
-        // PERF(port): Zig (and the first Rust port) re-scans each JSON object's
+        // PERF: avoid re-scanning each JSON object's
         // property vector once per field — `expr.asProperty(...)` is an O(n)
         // linear scan, and there are ~11 of them on `compilerOptions` plus 2 on
         // the top-level object, so a typical tsconfig walks `compilerOptions`
@@ -495,11 +483,12 @@ impl TSConfigJSON {
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if let Some(jsx_prop) = jsx_v {
                 if let Some(str) = jsx_prop.as_utf8_string_literal() {
-                    // PERF(port): Zig allocs `vec![0u8; str.len()]` to lowercase
-                    // before the map lookup. `RUNTIME_MAP`'s keys are all
-                    // lowercase ASCII and the longest (`b"react-jsxdev"`) is 12
-                    // bytes, so a longer value can't match — lowercase into a
-                    // fixed stack buffer (returns `None` when it can't fit).
+                    // PERF: lowercase into a fixed stack buffer instead of
+                    // allocating before the map lookup. `RUNTIME_MAP`'s keys
+                    // are all lowercase ASCII and the longest
+                    // (`b"react-jsxdev"`) is 12 bytes, so a longer value can't
+                    // match (`ascii_lowercase_buf` returns `None` when it
+                    // can't fit).
                     if let Some((str_lower, len)) = strings::ascii_lowercase_buf::<12>(str) {
                         // - We don't support "preserve" yet
                         if let Some(runtime) = options::jsx::RUNTIME_MAP.get(&str_lower[..len]) {
@@ -590,8 +579,6 @@ impl TSConfigJSON {
             // Parse "paths"
             if let Some(paths_prop) = paths_v {
                 if let bun_ast::ExprData::EObject(paths) = &paths_prop.data {
-                    // PORT NOTE: Zig `defer { Features.tsconfig_paths += 1 }` hoisted to top of block;
-                    // it runs on every exit path either way.
                     bun_analytics::features::tsconfig_paths
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -670,9 +657,9 @@ impl TSConfigJSON {
                                     if !values.is_empty() {
                                         // Invalid patterns are filtered out above, so count <= array.len.
                                         // Shrink the allocation so the slice stored in the map is exactly
-                                        // what was allocated — callers that later free these values (the
-                                        // extends-merge in resolver.zig) pass the stored slice to
-                                        // Allocator.free, which requires the original length.
+                                        // what was allocated — callers that later free these values
+                                        // (the extends-merge in the resolver) pass the stored slice
+                                        // to the allocator, which requires the original length.
                                         values.shrink_to_fit();
                                         let _ = result.paths.put(Box::from(key), values);
                                     }
@@ -736,7 +723,6 @@ impl TSConfigJSON {
         loc: bun_ast::Loc,
         text: &[u8],
     ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
-        // TODO(port): narrow error set
         if text.is_empty() {
             return Ok(Box::default());
         }
@@ -763,8 +749,6 @@ impl TSConfigJSON {
                 return Ok(Box::default());
             }
 
-            // PERF(port): was appendAssumeCapacity
-            // PERF(port): Zig stored a borrowed slice into `text`; Rust clones into Box<[u8]>.
             parts.push(Box::from(text));
             return Ok(parts.into_boxed_slice());
         }
@@ -784,7 +768,6 @@ impl TSConfigJSON {
                 );
                 return Ok(Box::default());
             }
-            // PERF(port): was appendAssumeCapacity
             parts.push(Box::from(part));
         }
 
@@ -853,8 +836,6 @@ impl TSConfigJSON {
         false
     }
 
-    // Zig `deinit` only freed `paths` and `bun.destroy(this)`. In Rust, `Box<TSConfigJSON>`
-    // drop handles both: PathsMap has Drop, and Box frees the allocation. No explicit Drop needed.
+    // `Box<TSConfigJSON>` drop handles cleanup: PathsMap has Drop, and Box
+    // frees the allocation. No explicit Drop needed.
 }
-
-// ported from: src/resolver/tsconfig_json.zig

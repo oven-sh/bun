@@ -2,22 +2,17 @@
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
-// `__thread` slot like Zig's `threadlocal var`, vs the `thread_local!`
+// `__thread` slot, vs the `thread_local!`
 // macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
 // destructor, const init).
 #![feature(thread_local)]
-//! Port of `src/logger/logger.zig`.
-//!
-//! TODO(port): OWNERSHIP — almost every `[]const u8` field in this module has
-//! mixed/ambiguous ownership in the Zig original (see the comment on
-//! `Location::deinit`: "don't really know what's safe to deinit here!"). Strings
-//! are sometimes literals, sometimes `allocator.dupe` results, sometimes slices
-//! into `Source.contents` or a `StringBuilder` arena. They are kept as
-//! `&'static [u8]` to mirror the Zig `[]const u8` shape without lifetime params;
-//! a real ownership story (likely `bun_core::String` or a `'source` lifetime
-//! threaded through `Location`/`Data`/`Msg`) is still needed.
+//! TODO: OWNERSHIP — almost every byte-slice field in this module has
+//! mixed/ambiguous ownership. Strings are sometimes literals, sometimes heap
+//! copies, sometimes slices into `Source.contents` or a `StringBuilder` arena.
+//! They are kept as `&'static [u8]` to avoid lifetime params; a real ownership
+//! story (likely `bun_core::String` or a `'source` lifetime threaded through
+//! `Location`/`Data`/`Msg`) is still needed.
 
-#![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
 
@@ -25,7 +20,7 @@ use std::borrow::Cow;
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
 
-// TODO(port): swap to `bun_core::StringBuilder` once `clone_with_builder` is
+// TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
 // reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
@@ -40,8 +35,7 @@ impl StringBuilder {
     pub fn allocate(&mut self) {}
 }
 
-// Variants mirror src/options_types/import_record.zig:1-25 exactly
-// (discriminants are wire-stable for serialization).
+// Discriminants are wire-stable for serialization.
 #[repr(u8)]
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, enum_map::Enum, strum::IntoStaticStr,
@@ -84,11 +78,8 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-pub type ImportKindLabel = enum_map::EnumMap<ImportKind, &'static [u8]>;
-
-// E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
-// is folded into match arms inside label()/error_label() below — same lookup
-// table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
+// E0015: EnumMap indexing isn't const; the lookup table is folded into match
+// arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
 // when the data is pure const).
 //
 // If these are changed, make sure to update
@@ -137,16 +128,6 @@ impl ImportKind {
         matches!(self, Self::Require | Self::RequireResolve)
     }
 
-    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol; replace
-    // with a `serde::Serialize` impl or the project's JSON writer trait. For now
-    // emit the quoted string directly — every tag name is a plain ASCII
-    // identifier with no chars that need JSON escaping.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> core::fmt::Result {
-        writer.write_char('"')?;
-        writer.write_str(<&'static str>::from(self))?;
-        writer.write_char('"')
-    }
-
     pub fn is_from_css(self) -> bool {
         self == Self::AtConditional
             || self == Self::At
@@ -160,10 +141,9 @@ impl ImportKind {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Ref / Symbol
-// Zig: src/js_parser/ast/{base,Symbol,G}.zig + js_parser.zig (ImportItemStatus).
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Tag bits of `Ref` (Zig: anonymous `enum(u2)` field).
+/// Tag bits of `Ref`.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -176,14 +156,11 @@ pub enum RefTag {
 
 /// Packed-u64 symbol reference: `{inner_index: u28, user: u3, tag: u2, source_index: u31}`.
 ///
-/// Layout matches `src/js_parser/ast/base.zig:Ref` LSB-first packing for the
-/// `tag`/`source_index` fields so `as_u64()` hashes identically to the Zig
-/// original for all normally-constructed refs (user bits = 0). The Rust port
-/// steals 3 bits from `inner_index` (Zig u31 → u28, max 268M symbols/file —
+/// LSB-first packing for the `tag`/`source_index` fields, with 3 bits stolen
+/// from `inner_index` (31 → 28 bits, max 268M symbols/file —
 /// three.js peaks at ~50K) so that `E::Identifier` / `E::ImportIdentifier` /
 /// `E::CommonJSExportIdentifier` can pack their boolean side-flags inline,
-/// shrinking `expr::Data` from 24→16 bytes and `Expr` from 32→24. This is the
-/// structural noalias-shrink advantage Rust has over the Zig layout: the
+/// shrinking `expr::Data` from 24→16 bytes and `Expr` from 32→24. The
 /// rarely-set flags (`with`-stmt guard, known-pure-global hints) ride in
 /// otherwise-dead bits instead of forcing 8 bytes of struct padding on every
 /// identifier node.
@@ -198,12 +175,12 @@ pub enum RefTag {
 #[derive(Clone, Copy)]
 pub struct Ref(u64);
 
-/// Zig `Ref.Int = u31`; we mask to 31 bits for `source_index`, 28 for `inner_index`.
+/// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
 
 impl Ref {
     const INNER_MASK: u64 = (1u64 << 31) - 1;
-    /// `inner_index` width — Zig u31, narrowed to u28 to free 3 user bits.
+    /// `inner_index` width — 28 bits, leaving 3 user bits.
     /// `debug_assert!` in `pack()` catches any source large enough to overflow
     /// (would require >268M symbols or a >268MB source-contents-slice offset).
     const INNER_BITS: u64 = (1u64 << 28) - 1;
@@ -319,7 +296,6 @@ impl Ref {
     }
     #[inline]
     pub fn hash64(self) -> u64 {
-        // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` — wyhash of the 8 bytes.
         bun_wyhash::hash(&self.as_u64().to_ne_bytes())
     }
 
@@ -359,9 +335,8 @@ impl Ref {
     }
     /// Replace the identity bits with those of `self` while keeping `src`'s
     /// user-bit lane. Used by `handle_identifier`'s `id_clone.ref_ = result.ref`
-    /// port — in Zig the flags are separate struct fields and survive the ref
-    /// assignment; here they ride in `ref_` and would be silently zeroed by a
-    /// whole-word write.
+    /// assignment — the flags ride in `ref_` and would otherwise be silently
+    /// zeroed by a whole-word write.
     #[inline]
     pub const fn with_user_bits_from(self, src: Ref) -> Ref {
         Ref((self.0 & !Self::USER_BITS_MASK) | (src.0 & Self::USER_BITS_MASK))
@@ -425,10 +400,10 @@ impl fmt::Debug for Ref {
     }
 }
 
-// TODO(port): bun_paths must define `PathContentsPair` (TYPE_ONLY from bun_resolver::fs).
-// Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
+// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
+// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
 // `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file` (transpiler.zig:852).
+// `Source::init_recycled_file`.
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
 #[derive(Clone, Copy)]
@@ -436,21 +411,19 @@ pub struct PathContentsPair {
     pub path: bun_paths::fs::Path<'static>,
     pub contents: &'static [u8],
 }
-// TODO(port): bun_schema::api — `to_api` methods gated behind .
 
-// In Zig: `const string = []const u8;`
 type Str = &'static [u8];
-// TODO(port): lifetime — see module-level note. `Str` is a stand-in for the Zig
-// `[]const u8` struct-field pattern; TODO(port): replace with the real type.
+// `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
+// note for the real ownership story.
 
 // ───────────────────────────────────────────────────────────────────────────
-// api — hand-ported slice of `bun.schema.api` (src/options_types/schema.zig
-// :2295–2509) consumed by `Kind/Location/Data/Msg/Log::to_api`. The full
+// api — hand-written slice of `bun.schema.api` consumed by
+// `Kind/Location/Data/Msg/Log::to_api`. The full
 // peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
 // faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
 // ───────────────────────────────────────────────────────────────────────────
 pub mod api {
-    /// schema.zig:2295 `MessageLevel` (u32 enum, 1-based; `_none` = 0).
+    /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
     #[repr(u32)]
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub enum MessageLevel {
@@ -463,7 +436,6 @@ pub mod api {
         Debug = 5,
     }
 
-    /// schema.zig:2319 `Location`.
     #[derive(Clone, Default, Debug)]
     pub struct Location {
         pub file: Vec<u8>,
@@ -474,21 +446,18 @@ pub mod api {
         pub offset: u32,
     }
 
-    /// schema.zig:2360 `MessageData`.
     #[derive(Clone, Default, Debug)]
     pub struct MessageData {
         pub text: Option<Vec<u8>>,
         pub location: Option<Location>,
     }
 
-    /// schema.zig:2403 `MessageMeta`.
     #[derive(Clone, Default, Debug)]
     pub struct MessageMeta {
         pub resolve: Option<Vec<u8>>,
         pub build: Option<bool>,
     }
 
-    /// schema.zig:2446 `Message`.
     #[derive(Clone, Default, Debug)]
     pub struct Message {
         pub level: MessageLevel,
@@ -497,7 +466,6 @@ pub mod api {
         pub on: MessageMeta,
     }
 
-    /// schema.zig:2477 `Log`.
     #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,
@@ -508,8 +476,9 @@ pub mod api {
 
 /// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
-/// string flavour compile against the same Zig-shaped signatures.
-/// TODO(port): lifetime — remove with `Str` once `'source` is threaded through.
+/// string flavour compile against the same signatures.
+/// Removable together with `Str` once a `'source` lifetime is threaded through
+/// (see the module-level OWNERSHIP note).
 pub trait IntoStr {
     fn into_str(self) -> Str;
 }
@@ -671,8 +640,6 @@ impl Kind {
 // Loc
 // ───────────────────────────────────────────────────────────────────────────
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Loc {
     pub start: i32,
@@ -692,7 +659,6 @@ impl Loc {
         if self.start == -1 { None } else { Some(self) }
     }
 
-    // Zig: `pub const toUsize = i;`
     #[inline]
     pub fn to_usize(self) -> usize {
         self.i()
@@ -712,28 +678,6 @@ impl Loc {
     pub fn is_empty(self) -> bool {
         self.eql(Self::EMPTY)
     }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_i32(self.start)
-    }
-}
-
-// TODO(port): `writer: anytype` for jsonStringify — the Zig calls
-// `writer.write(value)` for arbitrary `value`. Model as a single generic
-// `write<V>` until the real serializer exists.
-pub trait JsonWriter {
-    fn write<V: ?Sized>(&mut self, value: &V) -> core::result::Result<(), bun_core::Error>;
-
-    // Legacy specialised entry points (Loc/Range) — default to `write`.
-    #[inline]
-    fn write_i32(&mut self, v: i32) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
-    #[inline]
-    fn write_i32_pair(&mut self, v: [i32; 2]) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -747,9 +691,9 @@ pub struct Location {
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
     //
-    // PORT NOTE: `file` / `line_text` are `Cow` (not `Str`) because
-    // `Location::clone()` must deep-dupe them (Zig: `allocator.dupe(u8, ..)`,
-    // logger.zig:113) so a `BuildMessage`/`ResolveMessage` that outlives the
+    // `file` / `line_text` are `Cow` (not `Str`) because
+    // `Location::clone()` must deep-dupe them so a
+    // `BuildMessage`/`ResolveMessage` that outlives the
     // `Source.contents` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
     // arena-owned source text.
@@ -773,13 +717,12 @@ pub struct Location {
     pub column: i32,
 }
 
-// PORT NOTE: NOT `#[derive(Clone)]`. `file` / `line_text` are
+// NOT `#[derive(Clone)]`. `file` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
 // into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
-// could outlive the source buffer and read poisoned memory. Mirror the Zig
-// `Location.clone` (`allocator.dupe`, logger.zig:113) for the trait impl too —
+// could outlive the source buffer and read poisoned memory. Instead,
 // every `Clone` of a `Location` deep-dupes its borrowed bytes.
 impl Clone for Location {
     fn clone(&self) -> Self {
@@ -829,16 +772,14 @@ impl Location {
     }
 
     pub fn clone(&self) -> Location {
-        // Zig (logger.zig:113): `allocator.dupe(u8, this.file)` /
-        // `allocator.dupe(u8, this.line_text.?)` — the duped bytes outlive the
-        // original `Source.contents`. The trait `Clone` impl above does the
-        // deep-dupe; this inherent shim forwards to it.
+        // The trait `Clone` impl above does the deep-dupe (so the duped bytes
+        // outlive the original `Source.contents`); this inherent shim forwards
+        // to it.
         <Self as Clone>::clone(self)
     }
 
     pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
-        // PORT NOTE: Zig's `string_builder.append` copies into a buffer owned
-        // by the destination `Log`'s allocator (StringBuilder.zig). The local
+        // The local
         // `StringBuilder` stub above is a no-op that returns its input, so a
         // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
         // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
@@ -866,9 +807,7 @@ impl Location {
         }
     }
 
-    // don't really know what's safe to deinit here!
-    // Zig: `pub fn deinit(_: *Location, _: std.mem.Allocator) void {}`
-    // → no Drop impl needed.
+    // No Drop impl needed.
 
     pub fn init(
         file: Str,
@@ -890,6 +829,25 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
+        Self::init_or_null_impl(_source, r, None)
+    }
+
+    /// `init_or_null`, but computing the line/column through a
+    /// [`LineColumnTracker`] so repeated diagnostics against the same source
+    /// don't rescan it from the start for every message.
+    fn init_or_null_tracked(
+        _source: Option<&Source>,
+        r: Range,
+        tracker: &mut LineColumnTracker,
+    ) -> Option<Location> {
+        Self::init_or_null_impl(_source, r, Some(tracker))
+    }
+
+    fn init_or_null_impl(
+        _source: Option<&Source>,
+        r: Range,
+        tracker: Option<&mut LineColumnTracker>,
+    ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
@@ -902,7 +860,10 @@ impl Location {
                     offset: 0,
                 });
             }
-            let data = source.init_error_position(r.loc);
+            let data = match tracker {
+                Some(tracker) => tracker.error_position(source, r.loc),
+                None => source.init_error_position(r.loc),
+            };
             let mut full_line = &source.contents[data.line_start..data.line_end];
             if full_line.len() > 80 + data.column_count {
                 full_line = &full_line[data.column_count.max(40) - 40
@@ -919,14 +880,12 @@ impl Location {
                 } else {
                     1
                 },
-                // PORT NOTE: Zig borrows `source.contents` here and relies on the
-                // arena outliving the `Log` (transpiler.zig:853 — `entry.contents`
-                // is arena-allocated and never explicitly freed on `return null`).
-                // Rust's `source_backing` in `Transpiler::parse_*` is RAII and
+                // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead. `full_line` is bounded (≤ ~120 bytes) and only
-                // materialized on diagnostic paths.
+                // instead of borrowing `source.contents`. `full_line` is
+                // bounded (≤ ~120 bytes) and only materialized on diagnostic
+                // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
@@ -964,10 +923,8 @@ impl Data {
         cost
     }
 
-    // Zig `deinit` frees `text` and calls `location.deinit()` (no-op).
-    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop` (matches Zig
-    // `allocator.free(d.text)`), `Borrowed` is a `&'static` literal — nothing to
-    // free. No explicit `Drop` body needed.
+    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop`, `Borrowed` is a
+    // `&'static` literal — nothing to free. No explicit `Drop` body needed.
 
     pub fn clone_line_text(&self, should: bool) -> Data {
         if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
@@ -975,7 +932,6 @@ impl Data {
             return self.clone();
         }
 
-        // Zig (logger.zig:217): `allocator.dupe(u8, this.location.?.line_text.?)`.
         let new_line_text = self
             .location
             .as_ref()
@@ -995,7 +951,6 @@ impl Data {
     pub fn clone(&self) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                // Zig (logger.zig:231): `try allocator.dupe(u8, this.text)`.
                 // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
                 // so a `Borrowed` `text` (rare today, but the type permits it)
                 // can't alias recycled storage in the cloned `Msg`.
@@ -1010,8 +965,7 @@ impl Data {
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                // Zig: `builder.append(this.text)` copies into the destination
-                // `Log`'s arena (StringBuilder.zig). The local `StringBuilder`
+                // The local `StringBuilder`
                 // is a no-op stub (returns its input), so a bare `Cow::clone`
                 // would leave a `Borrowed` arm aliasing `self`'s storage and
                 // dangle after `self.msgs.clear()` in
@@ -1053,9 +1007,8 @@ impl Data {
         }
 
         // Local wrapper around `bun_core::pretty_fmt!` so the const-generic
-        // `ENABLE_ANSI_COLORS` selects the right comptime template at each call
+        // `ENABLE_ANSI_COLORS` selects the right compile-time template at each call
         // site (the macro pattern-matches a literal `true`/`false` token).
-        // PERF(port): was comptime bool dispatch — profile.
         macro_rules! pretty_write {
             ($fmt:literal $(, $arg:expr)* $(,)?) => {
                 if ENABLE_ANSI_COLORS {
@@ -1092,7 +1045,6 @@ impl Data {
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
                         // bold the line number for error but dim for the attached note
-                        // PERF(port): was comptime bool dispatch on `bold` — profile
                         if bold {
                             pretty_write!("<b>{} | <r>", location.line)?;
                         } else {
@@ -1163,20 +1115,6 @@ impl Data {
                 } else if location.line > -1 {
                     pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
                 }
-
-                if cfg!(debug_assertions) {
-                    // TODO(port): the Zig gates this on
-                    // `std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null` —
-                    // i.e. comptime reflection on the writer's type name to detect
-                    // a real file writer (vs Bun.inspect). No Rust equivalent;
-                    // TODO(port): plumb an explicit flag.
-                    if false
-                        && Output::ENABLE_ANSI_COLORS_STDERR
-                            .load(core::sync::atomic::Ordering::Relaxed)
-                    {
-                        pretty_write!(" <d>byte={}<r>", location.offset)?;
-                    }
-                }
             }
         }
 
@@ -1184,7 +1122,6 @@ impl Data {
     }
 }
 
-// Helper: Zig `to.splatByteAll(b, n)`
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
     for _ in 0..n {
         to.write_char(b as char)?;
@@ -1196,7 +1133,6 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
 // BabyString
 // ───────────────────────────────────────────────────────────────────────────
 
-// Zig: `packed struct(u32) { offset: u16, len: u16 }`
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct BabyString(u32);
@@ -1204,7 +1140,7 @@ pub struct BabyString(u32);
 impl BabyString {
     #[inline]
     pub const fn new(offset: u16, len: u16) -> Self {
-        // Zig packed-struct field order is LSB-first: offset = low 16, len = high 16.
+        // LSB-first packing: offset = low 16 bits, len = high 16.
         BabyString((offset as u32) | ((len as u32) << 16))
     }
 
@@ -1219,8 +1155,13 @@ impl BabyString {
     }
 
     pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
-        // TODO(port): bun_core::index_of missing — inline bstr fallback.
-        let off = bstr::ByteSlice::find(parent, text).expect("unreachable");
+        // bun_core::strings::index_of deliberately returns None for an empty
+        // needle, but an empty `text` reaches this path via resolve errors for
+        // `import ""`, so short-circuit it here to offset 0.
+        if text.is_empty() {
+            return BabyString::new(0, 0);
+        }
+        let off = bun_core::strings::index_of(parent, text).expect("unreachable");
         BabyString::new(off as u16, text.len() as u16) // @truncate
     }
 
@@ -1264,8 +1205,7 @@ impl Msg {
         cost
     }
 
-    // Zig: `pub const fromJS/toJS = @import("../logger_jsc/...")`
-    // → deleted; `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
+    // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
 
     pub fn count(&self, builder: &mut StringBuilder) {
         self.data.count(builder);
@@ -1298,8 +1238,6 @@ impl Msg {
                     for (i, note) in self.notes.iter().enumerate() {
                         notes[i] = note.clone_with_builder(builder);
                     }
-                    // TODO(port): lifetime — Zig returns a sub-slice of the
-                    // caller-provided `notes` buffer; with `Box<[Data]>` we copy.
                     break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
                 }
             } else {
@@ -1322,10 +1260,9 @@ impl Msg {
                 resolve: if let Metadata::Resolve(r) = &self.metadata {
                     Some(r.specifier.slice(&self.data.text).to_vec())
                 } else {
-                    // Zig (logger.zig:457): `else ""` — coerces to a NON-NULL
-                    // `?[]const u8`, so peechy `MessageMeta.encode` still emits
-                    // field-ID 1 with an empty string. `None` would skip the
-                    // field entirely on the wire.
+                    // NON-NULL empty string so peechy `MessageMeta.encode`
+                    // still emits field-ID 1; `None` would skip the field
+                    // entirely on the wire.
                     Some(Vec::new())
                 },
                 build: Some(matches!(self.metadata, Metadata::Build)),
@@ -1334,8 +1271,6 @@ impl Msg {
     }
 
     pub fn to_api_from_list(list: &[Msg]) -> Box<[api::Message]> {
-        // PORT NOTE: Zig took `comptime ListType: type, list: ListType` and read
-        // `list.items`; collapsed to `&[Msg]`.
         let mut out_list = Vec::with_capacity(list.len());
         for item in list {
             out_list.push(item.to_api());
@@ -1343,8 +1278,7 @@ impl Msg {
         out_list.into_boxed_slice()
     }
 
-    // Zig `deinit` frees `data`, each `note`, and `notes` slice — all handled by Drop
-    // once ownership is real. No explicit Drop body needed beyond field drops.
+    // No explicit Drop body needed beyond field drops.
 
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1372,7 +1306,6 @@ impl Msg {
     }
 
     pub fn format_writer(&self, writer: &mut impl fmt::Write) -> fmt::Result {
-        // PORT NOTE: Zig had an unused `comptime _: bool` param; dropped.
         if let Some(location) = &self.data.location {
             write!(
                 writer,
@@ -1437,8 +1370,6 @@ impl Default for MetadataResolve {
 // Range
 // ───────────────────────────────────────────────────────────────────────────
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Range {
     pub loc: Loc,
@@ -1455,31 +1386,78 @@ impl Default for Range {
 }
 
 /// Was `bun_js_parser::lexer::rangeOfIdentifier`.
-/// Moved into logger to break logger→js_parser. Mirrors lexer.zig:3113-3148.
-/// TODO(port): full Unicode `isIdentifierStart/Continue` tables — currently
-/// ASCII + `#`/`\` only; non-ASCII identifiers get a Range with len up to the
-/// first non-ASCII byte (only affects error-highlight width, not correctness).
+/// Moved into logger to break logger→js_parser. Includes the full Unicode
+/// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
+/// `\u{...}` escape skipping.
 pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     if loc.start < 0 || (loc.start as usize) >= contents.len() {
         return Range::NONE;
     }
     let text = &contents[loc.start as usize..];
-    let mut i = 0usize;
-    if text.first() == Some(&b'#') {
-        i = 1;
+    let mut r = Range { loc, len: 0 };
+    if text.is_empty() {
+        return r;
     }
-    let is_start = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$' || c == b'\\';
-    let is_cont = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c == b'\\';
-    if i < text.len() && is_start(text[i]) {
-        i += 1;
-        while i < text.len() && is_cont(text[i]) {
-            i += 1;
+    let end = text.len() as u32;
+
+    let iter = bun_core::strings::CodepointIterator::init(text);
+    let mut cursor = bun_core::strings::Cursor::default();
+    if !iter.next(&mut cursor) {
+        return r;
+    }
+
+    // Handle private names
+    if cursor.c == '#' as i32 {
+        if !iter.next(&mut cursor) {
+            r.len = 1;
+            return r;
         }
     }
-    Range {
-        loc,
-        len: i32::try_from(i).expect("int cast"),
+
+    // Skip over bracketed unicode escapes such as "\u{10000}". The cursor is
+    // positioned on a `\`; advance `cursor.i` one past the closing `}` and
+    // zero `cursor.width` so the next decode starts exactly there (the manual
+    // advance already consumed the backslash's width — leaving `width` set
+    // would skip the byte after `}`).
+    let skip_bracketed_escape = |cursor: &mut bun_core::strings::Cursor| {
+        if cursor.i + 2 < end
+            && text[cursor.i as usize + 1] == b'u'
+            && text[cursor.i as usize + 2] == b'{'
+        {
+            cursor.i += 2;
+            while cursor.i < end {
+                if text[cursor.i as usize] == b'}' {
+                    cursor.i += 1;
+                    break;
+                }
+                cursor.i += 1;
+            }
+            cursor.width = 0;
+        }
+    };
+
+    if bun_core::identifier::is_identifier_start(cursor.c) || cursor.c == '\\' as i32 {
+        // An identifier may *start* with an escape (e.g. `\u{61}bc`); skip it
+        // here too, or the loop below reads the `u`/`{` as ordinary codepoints
+        // and truncates the range at the `{`.
+        if cursor.c == '\\' as i32 {
+            skip_bracketed_escape(&mut cursor);
+        }
+        while iter.next(&mut cursor) {
+            if cursor.c == '\\' as i32 {
+                skip_bracketed_escape(&mut cursor);
+            } else if !lexer_tables::is_identifier_continue(cursor.c) {
+                r.len = i32::try_from(cursor.i).expect("int cast");
+                return r;
+            }
+        }
+
+        // EOF inside the identifier: the cursor holds the *start* offset and
+        // width of the last codepoint read — include that codepoint.
+        r.len = i32::try_from(cursor.i + cursor.width as u32).expect("int cast");
     }
+
+    r
 }
 
 impl Range {
@@ -1514,12 +1492,8 @@ impl Range {
     }
 
     pub fn end_i(self) -> usize {
-        // std.math.lossyCast(usize, ...) — saturates negatives to 0.
+        // Saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
-    }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
     }
 }
 
@@ -1536,15 +1510,20 @@ pub struct Log {
     pub clone_line_text: bool,
 
     /// Owned backing storage for `Location.{file,line_text}` (and similar)
-    /// that came from transient buffers (e.g. native-plugin C strings). Zig
-    /// `log.msgs.allocator.dupe(u8, …)` allocates from the Log's allocator and
-    /// stores a raw slice in `Location` (logger.zig `Location.deinit` is a
-    /// no-op, so the bytes live as long as the Log). Rust models that as a
+    /// that came from transient buffers (e.g. native-plugin C strings): a
     /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
     /// lifetime-erased borrow into the just-pushed box. The borrow is valid
     /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
     /// growth. See PORTING.md §Allocators (arena pattern).
     pub owned_strings: Vec<Box<[u8]>>,
+
+    /// Incremental line/column scanner for the messages this log creates, so
+    /// a flood of diagnostics against one source doesn't rescan it from byte
+    /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
+    /// lazily by the first located diagnostic: most logs never report
+    /// anything, and `Log` is embedded by value in types that are sensitive
+    /// to its size (e.g. `TaskError` in the isolated installer).
+    pub line_column_tracker: Option<Box<LineColumnTracker>>,
 }
 
 impl Default for Log {
@@ -1560,12 +1539,13 @@ impl Default for Log {
             },
             clone_line_text: false,
             owned_strings: Vec::new(),
+            line_column_tracker: None,
         }
     }
 }
 
 impl Log {
-    /// Port of Zig's `log.msgs.allocator.dupe(u8, s)` pattern: copy `s` into
+    /// Copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The
     /// returned slice is valid for as long as `self` lives (the box is never
     /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
@@ -1604,7 +1584,6 @@ impl Level {
         (self as i8) <= (other as i8)
     }
 
-    // Zig: `pub const label: std.EnumArray(Level, string)`
     pub const LABEL: std::sync::LazyLock<enum_map::EnumMap<Level, &'static [u8]>> =
         std::sync::LazyLock::new(|| {
             enum_map::EnumMap::from_fn(|k| match k {
@@ -1616,26 +1595,52 @@ impl Level {
             })
         });
 
-    // Zig: `pub const Map = bun.ComptimeStringMap(Level, ...)`
-    pub const MAP: phf::Map<&'static [u8], Level> = phf::phf_map! {
+    pub const MAP: __ComptimeStringMap_LEVEL_MAP = __ComptimeStringMap_LEVEL_MAP(());
+
+    // `from_js` lives in `bun_logger_jsc`.
+}
+
+bun_core::comptime_string_map! {
+    /// Backing map for [`Level::MAP`].
+    pub static LEVEL_MAP: Level = {
         b"verbose" => Level::Verbose,
         b"debug" => Level::Debug,
         b"info" => Level::Info,
         b"warn" => Level::Warn,
         b"error" => Level::Err,
     };
-
-    // Zig: `pub const fromJS = @import("../logger_jsc/...")`
-    // → deleted; lives in `bun_logger_jsc`.
 }
 
-// Zig: `pub var default_log_level = Level.warn;`
 // PORTING.md §Global mutable state: written by CLI startup, read by every
 // `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
 // — Acquire/Release, no `unsafe` at call sites.
 pub static DEFAULT_LOG_LEVEL: bun_core::AtomicCell<Level> = bun_core::AtomicCell::new(Level::Warn);
 
 impl Log {
+    /// [`range_data`], but with the line/column computed through this log's
+    /// [`LineColumnTracker`] so successive diagnostics against the same
+    /// source resume the previous scan instead of restarting from byte 0.
+    fn tracked_range_data(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+    ) -> Data {
+        let location = if source.is_some() {
+            Location::init_or_null_tracked(
+                source,
+                r,
+                self.line_column_tracker.get_or_insert_default(),
+            )
+        } else {
+            Location::init_or_null(source, r)
+        };
+        Data {
+            text: text.into_text(),
+            location,
+        }
+    }
+
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         for msg in &self.msgs {
@@ -1653,6 +1658,10 @@ impl Log {
         self.msgs.clear();
         self.warnings = 0;
         self.errors = 0;
+        // Drop the per-source scan cache with the messages it was built for;
+        // its identity check is pointer-based, so don't let it outlive the
+        // logical reuse boundary.
+        self.line_column_tracker = None;
     }
 
     pub fn has_any(&self) -> bool {
@@ -1683,8 +1692,7 @@ impl Log {
         }
     }
 
-    /// Zig: `pub fn init(std.mem.Allocator param) Log` — Rust callers spell
-    /// this `Log::new()`; the allocator parameter is dropped (global allocator).
+    /// Alias of [`Log::init`].
     #[inline]
     pub fn new() -> Log {
         Log::init()
@@ -1720,23 +1728,23 @@ impl Log {
     #[cold]
     pub fn add_verbose(&mut self, source: Option<&Source>, loc: Loc, text: Str) {
         if Kind::Verbose.should_print(self.level) {
+            let data = self.tracked_range_data(
+                source,
+                Range {
+                    loc,
+                    ..Default::default()
+                },
+                text,
+            );
             self.add_msg(Msg {
                 kind: Kind::Verbose,
-                data: range_data(
-                    source,
-                    Range {
-                        loc,
-                        ..Default::default()
-                    },
-                    text,
-                ),
+                data,
                 ..Default::default()
             });
         }
     }
 
-    // Zig: `pub const toJS/toJSAggregateError/toJSArray = @import("../logger_jsc/...")`
-    // → deleted; live in `bun_logger_jsc`.
+    // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
     pub fn clone_to(&mut self, other: &mut Log) {
         let mut notes_count: usize = 0;
@@ -1748,17 +1756,14 @@ impl Log {
         }
 
         if notes_count > 0 {
-            // TODO(port): lifetime — Zig allocates one shared `[Data; notes_count]`
-            // buffer in `other`'s allocator and re-slices each `msg.notes` into it.
-            // With `Box<[Data]>` per-Msg we instead deep-copy each notes slice.
+            // Deep-copy each notes slice (per-Msg `Box<[Data]>` ownership).
             for msg in &mut self.msgs {
                 msg.notes = msg.notes.to_vec().into_boxed_slice();
             }
         }
 
         other.msgs.extend(self.msgs.iter().map(Msg::clone));
-        // PORT NOTE: reshaped for borrowck — Zig appendSlice moves the (now
-        // re-sliced) Msgs; here we clone since `self` retains them.
+        // Clone rather than move — `self` retains its msgs.
         other.warnings += self.warnings;
         other.errors += self.errors;
     }
@@ -1771,6 +1776,8 @@ impl Log {
         // backed by `self.owned_strings` (see `Log::dupe`); move the backing
         // boxes so they outlive the messages now in `other`.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
@@ -1791,8 +1798,8 @@ impl Log {
             let mut notes_buf = vec![Data::default(); notes_count];
             let mut note_i: usize = 0;
 
-            // PORT NOTE: reshaped for borrowck — Zig zips `self.msgs` with the
-            // tail of `other.msgs`; index instead.
+            // Index instead of zipping `self.msgs` with the tail of
+            // `other.msgs` to satisfy borrowck.
             for (k, msg) in self.msgs.iter().enumerate() {
                 let j = dest_start + k;
                 other.msgs[j] =
@@ -1808,6 +1815,8 @@ impl Log {
         self.msgs.shrink_to_fit();
         // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
@@ -1820,12 +1829,13 @@ impl Log {
         self.msgs.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 }
 
-// PORT NOTE: Zig `Log.deinit` only does `msgs.clearAndFree()` — field-free-only,
-// so per PORTING.md no `impl Drop` is emitted (Vec<Msg> drops automatically).
-// The mid-life semantic operation is exposed as `clear_and_free` above.
+// No `impl Drop` is needed (Vec<Msg> drops automatically). The mid-life
+// semantic operation is exposed as `clear_and_free` above.
 
 impl Log {
     #[cold]
@@ -1840,23 +1850,24 @@ impl Log {
             return;
         }
 
+        let data = self.tracked_range_data(
+            source,
+            Range {
+                loc,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Verbose,
-            data: range_data(
-                source,
-                Range {
-                    loc,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             notes,
             ..Default::default()
         })
     }
 
     /// Shared, non-generic tail for the `add*Fmt` family. The public wrappers
-    /// are `inline` and only do the per-call-site `allocPrint(fmt, args)`; the
+    /// are `inline` and only do the per-call-site formatting; the
     /// rest (counter bump, rangeData, cloneLineText, addMsg) lives here so it
     /// isn't re-stamped for every distinct format string. ~165 callers of
     /// `addErrorFmt` alone used to duplicate this body.
@@ -1877,7 +1888,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = range_data(source, r, text);
+        let mut data = self.tracked_range_data(source, r, text);
         if clone {
             data = data.clone_line_text(self.clone_line_text);
         }
@@ -1901,9 +1912,8 @@ impl Log {
         err: bun_core::Error,
     ) {
         let text = alloc_print(args);
-        // TODO: fix this. this is stupid, it should be returned in allocPrint.
-        // PORT NOTE: Zig reads `args.@"0"` (first tuple element) for the
-        // specifier; with `fmt::Arguments` that's opaque, so callers must pass
+        // TODO: fix this. this is stupid, the specifier should be returned by
+        // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
         // `specifier_arg` explicitly.
         let specifier = BabyString::r#in(&text, specifier_arg);
         if IS_ERR {
@@ -1914,21 +1924,19 @@ impl Log {
 
         let data = if DUPE_TEXT {
             'brk: {
-                let mut _data = range_data(source, r, text);
+                let mut _data = self.tracked_range_data(source, r, text);
                 if let Some(loc) = &mut _data.location {
                     if let Some(_line) = loc.line_text.as_deref() {
-                        // Zig: `try log.msgs.allocator.dupe(u8, line)`.
                         loc.line_text = Some(Cow::Owned(_line.to_vec()));
                     }
                 }
                 break 'brk _data;
             }
         } else {
-            range_data(source, r, text)
+            self.tracked_range_data(source, r, text)
         };
 
         let msg = Msg {
-            // .kind = if (comptime error_type == .err) Kind.err else Kind.warn,
             kind: if IS_ERR { Kind::Err } else { Kind::Warn },
             data,
             metadata: Metadata::Resolve(MetadataResolve {
@@ -1986,9 +1994,10 @@ impl Log {
     #[cold]
     pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
         self.errors += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, text),
+            data,
             ..Default::default()
         })
     }
@@ -2061,9 +2070,6 @@ impl Log {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
-        // TODO(port): Zig does comptime fmt-string concat `"{s}: " ++ fmt` and
-        // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
-        // value level instead.
         let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
         self.add_error_fmt(None, Loc::EMPTY, format_args!("{}: {}", prefix, args))
     }
@@ -2074,9 +2080,10 @@ impl Log {
 
         let notes: Box<[Data]> = Box::new([range_data(None, Range::NONE, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(None, Range::NONE, err.name().as_bytes());
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(None, Range::NONE, err.name().as_bytes()),
+            data,
             notes,
             ..Default::default()
         })
@@ -2088,9 +2095,12 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, text).clone_line_text(self.clone_line_text),
+            data,
             ..Default::default()
         })
     }
@@ -2145,8 +2155,8 @@ impl Log {
         let data = Data {
             text: alloc_print(args),
             location: Some(Location {
-                // TODO(port): lifetime — `Location.file` borrows `Str`; thread
-                // real ownership through (see module doc).
+                // `Location.file` borrows the lifetime-erased `Str`; see the
+                // module-level OWNERSHIP note.
                 file: Cow::Borrowed(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
@@ -2162,8 +2172,6 @@ impl Log {
             ..Default::default()
         })
     }
-
-    // (Zig has a large commented-out `addWarningFmtLineColWithNote` here — omitted.)
 
     #[inline]
     pub fn add_range_warning_fmt(
@@ -2193,11 +2201,13 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> =
+            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(source, r, alloc_print(args)),
+            data,
             notes,
             ..Default::default()
         })
@@ -2229,11 +2239,13 @@ impl Log {
         }
         self.errors += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(source, note_range, alloc_print(note_args))]);
+        let notes: Box<[Data]> =
+            Box::new([self.tracked_range_data(source, note_range, alloc_print(note_args))]);
 
+        let data = self.tracked_range_data(source, r, alloc_print(args));
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, alloc_print(args)),
+            data,
             notes,
             ..Default::default()
         })
@@ -2245,16 +2257,17 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self.tracked_range_data(
+            source,
+            Range {
+                loc: l,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(
-                source,
-                Range {
-                    loc: l,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             ..Default::default()
         })
     }
@@ -2272,7 +2285,7 @@ impl Log {
         }
         self.warnings += 1;
 
-        let notes: Box<[Data]> = Box::new([range_data(
+        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             source,
             Range {
                 loc: l,
@@ -2281,9 +2294,10 @@ impl Log {
             alloc_print(note_args),
         )]);
 
+        let data = self.tracked_range_data(None, Range::NONE, warn);
         self.add_msg(Msg {
             kind: Kind::Warn,
-            data: range_data(None, Range::NONE, warn),
+            data,
             notes,
             ..Default::default()
         })
@@ -2294,9 +2308,10 @@ impl Log {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Debug,
-            data: range_data(source, r, text),
+            data,
             ..Default::default()
         })
     }
@@ -2313,9 +2328,10 @@ impl Log {
             return;
         }
         // log.de += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Debug,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2330,9 +2346,10 @@ impl Log {
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2350,11 +2367,10 @@ impl Log {
             return;
         }
         self.warnings += 1;
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
-            // PORT NOTE: Zig has `.kind = .warning` here which doesn't exist in
-            // `Kind`; presumed dead code / typo for `.warn`.
             kind: Kind::Warn,
-            data: range_data(source, r, text),
+            data,
             notes,
             ..Default::default()
         })
@@ -2367,16 +2383,17 @@ impl Log {
     #[cold]
     pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
         self.errors += 1;
+        let data = self.tracked_range_data(
+            _source,
+            Range {
+                loc,
+                ..Default::default()
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(
-                _source,
-                Range {
-                    loc,
-                    ..Default::default()
-                },
-                text,
-            ),
+            data,
             ..Default::default()
         })
     }
@@ -2385,16 +2402,17 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
+        let data = self.tracked_range_data(
+            opts.source,
+            Range {
+                loc: opts.loc,
+                len: opts.len,
+            },
+            text,
+        );
         self.add_msg(Msg {
             kind: Kind::Err,
-            data: range_data(
-                opts.source,
-                Range {
-                    loc: opts.loc,
-                    len: opts.len,
-                },
-                text,
-            ),
+            data,
             redact_sensitive_information: opts.redact_sensitive_information,
             ..Default::default()
         })
@@ -2411,7 +2429,7 @@ impl Log {
             "\"{}\" was originally declared here",
             bstr::BStr::new(name)
         ));
-        let notes: Box<[Data]> = Box::new([range_data(
+        let notes: Box<[Data]> = Box::new([self.tracked_range_data(
             Some(source),
             source.range_of_identifier(old_loc),
             note_text,
@@ -2496,12 +2514,11 @@ pub struct AddErrorOptions<'a> {
 }
 
 /// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
-/// the option-struct as `bun_ast::ErrorOpts { .. }` (Zig: `Log.addError*` opts
-/// param). Same layout as `AddErrorOptions`; the canonical name is kept while
-/// the Zig side still calls it `addErrorOpts`.
+/// the option-struct as `bun_ast::ErrorOpts { .. }`. Same layout as
+/// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper that mirrors Zig `allocPrint`: rewrites `<red>..<r>` markup
+/// Call-site helper: rewrites `<red>..<r>` markup
 /// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
 /// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
 /// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
@@ -2530,8 +2547,8 @@ macro_rules! alloc_print {
     };
 }
 
-/// `add_error_pretty!(log, source, loc, "<red>...<r>", args..)` — call-site form
-/// of Zig `addErrorFmt`: rewrites `<tag>` markup in the *literal* format string
+/// `add_error_pretty!(log, source, loc, "<red>...<r>", args..)` — call-site
+/// helper that rewrites `<tag>` markup in the *literal* format string
 /// at compile time (via `bun_core::pretty_fmt!`) before interpolation, then
 /// calls `Log::add_error_fmt`. Use this instead of
 /// `add_error_fmt(.., format_args!("<red>..."))` so markup is converted/stripped
@@ -2582,9 +2599,8 @@ macro_rules! add_warning_pretty {
 
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
-    // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at
-    // comptime over the *format-string literal only*, then interpolates args
-    // afterward — interpolated values are never inspected for `<..>` markup.
+    // Markup conversion happens over the *format-string literal only*;
+    // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
     // conversion must go through `pretty_format_args!` / `alloc_print!` above
     // (which do the rewrite at the macro call site). The function form here
@@ -2594,9 +2610,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     use std::io::Write;
     let mut v = Vec::new();
     let _ = write!(&mut v, "{}", args);
-    // Zig returns an allocator-owned slice that the Log takes ownership of via
-    // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
-    // ownership: `Data` (via `Drop`) frees it.
+    // `Cow::Owned`: the `Log` takes ownership via `Data.text` and `Data`'s
+    // `Drop` frees it.
     Cow::Owned(v)
 }
 
@@ -2615,10 +2630,10 @@ pub fn usize2loc(loc: usize) -> Loc {
 pub struct Source {
     pub path: bun_paths::fs::Path<'static>,
 
-    /// PORT NOTE: `Cow` so `source_from_file` / `File::to_source_at` can hand
+    /// `Cow` so `source_from_file` / `File::to_source_at` can hand
     /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
-    /// arm covers the Zig `[]const u8`-field default (parser/transpiler feed
-    /// arena slices via `IntoStr`). Prefer the `.contents()` accessor at
+    /// arm covers parser/transpiler-fed
+    /// arena slices (via `IntoStr`). Prefer the `.contents()` accessor at
     /// call-sites — it derefs to `&[u8]` regardless of arm.
     pub contents: Cow<'static, [u8]>,
     pub contents_is_recycled: bool,
@@ -2626,10 +2641,9 @@ pub struct Source {
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
     ///
-    /// PORT NOTE: `Cow` because the cached value is produced by
-    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); the Zig
-    /// freed it in `deinit`, so per PORTING.md §Forbidden this cannot be
-    /// `&'static [u8]` + leak.
+    /// `Cow` because the cached value is produced by
+    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
+    /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
     pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,
@@ -2655,6 +2669,197 @@ pub struct ErrorPosition {
     pub line_count: usize,
 }
 
+/// Scanner state shared by [`Source::init_error_position`] and
+/// [`LineColumnTracker`] — the loop locals of the error-position scan,
+/// captured after consuming every codepoint before some byte offset.
+#[derive(Clone, Copy)]
+struct ErrorPositionState {
+    line_start: usize,
+    line_count: usize,
+    column_number: usize,
+    prev_code_point: i32,
+}
+
+impl Default for ErrorPositionState {
+    fn default() -> Self {
+        ErrorPositionState {
+            line_start: 0,
+            line_count: 1,
+            column_number: 1,
+            prev_code_point: 0,
+        }
+    }
+}
+
+impl ErrorPositionState {
+    /// Consume the codepoints of `contents[from..to]`, updating line/column
+    /// exactly the way `Source::init_error_position` always has (`\r` resets
+    /// the column to 0, `\r\n` counts as a single line break, U+2028/U+2029
+    /// are line breaks). Returns `true` if a line break was crossed.
+    fn advance(&mut self, contents: &[u8], from: usize, to: usize) -> bool {
+        use bun_core::immutable::{CodepointIterator, Cursor};
+        let iter_ = CodepointIterator::init(&contents[from..to]);
+        let mut iter = Cursor::default();
+        let mut crossed_line_break = false;
+
+        while iter_.next(&mut iter) {
+            match iter.c {
+                0x0A => {
+                    // '\n'
+                    self.column_number = 1;
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    if self.prev_code_point != ('\r' as i32) {
+                        self.line_count += 1;
+                    }
+                    crossed_line_break = true;
+                }
+                0x0D => {
+                    // '\r'
+                    self.column_number = 0;
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    self.line_count += 1;
+                    crossed_line_break = true;
+                }
+                0x2028 | 0x2029 => {
+                    // These take three bytes to encode in UTF-8
+                    self.line_start = from + iter.width as usize + iter.i as usize;
+                    self.line_count += 1;
+                    self.column_number = 1;
+                    crossed_line_break = true;
+                }
+                _ => {
+                    self.column_number += 1;
+                }
+            }
+
+            self.prev_code_point = iter.c;
+        }
+
+        crossed_line_break
+    }
+
+    fn to_error_position(self, line_end: usize) -> ErrorPosition {
+        ErrorPosition {
+            line_start: if self.line_start > 0 {
+                self.line_start - 1
+            } else {
+                self.line_start
+            },
+            line_end,
+            line_count: self.line_count,
+            column_count: self.column_number,
+        }
+    }
+}
+
+/// Byte offset of the line break at or after `offset` (the end of the line
+/// containing `offset`), or the end of the file if this is the last line.
+fn scan_line_end(contents: &[u8], offset: usize) -> usize {
+    use bun_core::immutable::{CodepointIterator, Cursor};
+    let iter_ = CodepointIterator::init(&contents[offset..]);
+    let mut iter = Cursor::default();
+
+    while iter_.next(&mut iter) {
+        match iter.c {
+            0x0D | 0x0A | 0x2028 | 0x2029 => return offset + iter.i as usize,
+            _ => {}
+        }
+    }
+
+    contents.len()
+}
+
+/// Clamp a diagnostic `Loc` into `contents` the way `init_error_position`
+/// always has.
+#[inline]
+fn clamp_error_offset(contents: &[u8], offset_loc: Loc) -> usize {
+    (usize::try_from(offset_loc.start).expect("int cast")).min(contents.len().max(1) - 1)
+}
+
+/// Incremental line/column scanner for diagnostics (the esbuild
+/// `LineColumnTracker` approach). [`Source::init_error_position`] walks the
+/// source from byte 0 on every call, so a parse that reports many diagnostics
+/// against one file pays O(diagnostics × file size) just computing their
+/// positions — a few hundred KB of malformed JSONC that errors on nearly
+/// every token used to take minutes. The [`Log`] owns one of these:
+/// diagnostics for the same source at non-decreasing offsets resume the
+/// previous scan, so N diagnostics cost O(file size + N) in total. Results
+/// are identical to `Source::init_error_position`.
+#[derive(Default)]
+pub struct LineColumnTracker {
+    /// Identity of the tracked source (`contents` and `path.text` pointers +
+    /// lengths, stored as `usize` so the tracker stays `Send`). A diagnostic
+    /// for a different source resets the scan.
+    contents_ptr: usize,
+    contents_len: usize,
+    path_ptr: usize,
+    path_len: usize,
+    cursors: [ScanCursor; 4],
+}
+
+#[derive(Clone, Copy, Default)]
+struct ScanCursor {
+    offset: usize,
+    state: ErrorPositionState,
+    line_end: Option<usize>,
+}
+
+impl LineColumnTracker {
+    fn matches(&self, source: &Source) -> bool {
+        self.contents_ptr == source.contents.as_ptr() as usize
+            && self.contents_len == source.contents.len()
+            && self.path_ptr == source.path.text.as_ptr() as usize
+            && self.path_len == source.path.text.len()
+    }
+
+    fn reset_for(&mut self, source: &Source) {
+        *self = LineColumnTracker {
+            contents_ptr: source.contents.as_ptr() as usize,
+            contents_len: source.contents.len(),
+            path_ptr: source.path.text.as_ptr() as usize,
+            path_len: source.path.text.len(),
+            ..Default::default()
+        };
+    }
+
+    /// [`Source::init_error_position`], resuming from the previous call's
+    /// offset when possible instead of rescanning from the start.
+    pub fn error_position(&mut self, source: &Source, offset_loc: Loc) -> ErrorPosition {
+        debug_assert!(!offset_loc.is_empty());
+        let contents: &[u8] = &source.contents;
+        let offset = clamp_error_offset(contents, offset_loc);
+
+        if !self.matches(source) {
+            self.reset_for(source);
+        }
+
+        if offset < contents.len() && contents[offset] & 0xC0 == 0x80 {
+            return source.init_error_position(offset_loc);
+        }
+
+        let Some(index) = self.cursors.iter().position(|c| c.offset <= offset) else {
+            return source.init_error_position(offset_loc);
+        };
+        let cursor = &mut self.cursors[index];
+
+        if cursor.state.advance(contents, cursor.offset, offset) {
+            cursor.line_end = None;
+        }
+        cursor.offset = offset;
+
+        let line_end = match cursor.line_end {
+            Some(line_end) => line_end,
+            None => {
+                let line_end = scan_line_end(contents, offset);
+                cursor.line_end = Some(line_end);
+                line_end
+            }
+        };
+
+        cursor.state.to_error_position(line_end)
+    }
+}
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2664,8 +2869,7 @@ impl Source {
         &self.contents
     }
 
-    /// Owned copy of the source bytes. Mirrors the Zig pattern of
-    /// `allocator.dupe(u8, source.contents)` at call-sites that need to retain
+    /// Owned copy of the source bytes, for call-sites that need to retain
     /// the bytes past the `Source`'s lifetime.
     #[inline]
     pub fn contents_owned(&self) -> Vec<u8> {
@@ -2677,7 +2881,6 @@ impl Source {
     }
 
     pub fn identifier_name(&mut self) -> Result<&[u8], bun_core::Error> {
-        // TODO(port): narrow error set
         if !self.identifier_name.is_empty() {
             return Ok(&self.identifier_name);
         }
@@ -2691,8 +2894,7 @@ impl Source {
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {
-        // Local impl mirrors src/js_parser/lexer.zig:range_of_identifier — scan from `loc`
-        // while bytes are JS identifier-part.
+        // Scan from `loc` while bytes are JS identifier-part.
         range_of_identifier(&self.contents, loc)
     }
 
@@ -2834,76 +3036,15 @@ impl Source {
     }
 
     pub fn init_error_position(&self, offset_loc: Loc) -> ErrorPosition {
-        use bun_core::immutable::{CodepointIterator, Cursor};
         debug_assert!(!offset_loc.is_empty());
-        let mut prev_code_point: i32 = 0;
-        let offset: usize = (usize::try_from(offset_loc.start).expect("int cast"))
-            .min(self.contents.len().max(1) - 1);
-
         let contents: &[u8] = &self.contents;
+        let offset = clamp_error_offset(contents, offset_loc);
 
-        let mut iter_ = CodepointIterator::init(&self.contents[0..offset]);
-        let mut iter = Cursor::default();
+        let mut state = ErrorPositionState::default();
+        state.advance(contents, 0, offset);
 
-        let mut line_start: usize = 0;
-        let mut line_count: usize = 1;
-        let mut column_number: usize = 1;
-
-        while iter_.next(&mut iter) {
-            match iter.c {
-                0x0A => {
-                    // '\n'
-                    column_number = 1;
-                    line_start = iter.width as usize + iter.i as usize;
-                    if prev_code_point != ('\r' as i32) {
-                        line_count += 1;
-                    }
-                }
-                0x0D => {
-                    // '\r'
-                    column_number = 0;
-                    line_start = iter.width as usize + iter.i as usize;
-                    line_count += 1;
-                }
-                0x2028 | 0x2029 => {
-                    line_start = iter.width as usize + iter.i as usize; // These take three bytes to encode in UTF-8
-                    line_count += 1;
-                    column_number = 1;
-                }
-                _ => {
-                    column_number += 1;
-                }
-            }
-
-            prev_code_point = iter.c;
-        }
-
-        iter_ = CodepointIterator::init(&self.contents[offset..]);
-
-        iter = Cursor::default();
         // Scan to the end of the line (or end of file if this is the last line)
-        let mut line_end: usize = contents.len();
-
-        'loop_: while iter_.next(&mut iter) {
-            match iter.c {
-                0x0D | 0x0A | 0x2028 | 0x2029 => {
-                    line_end = offset + iter.i as usize;
-                    break 'loop_;
-                }
-                _ => {}
-            }
-        }
-
-        ErrorPosition {
-            line_start: if line_start > 0 {
-                line_start - 1
-            } else {
-                line_start
-            },
-            line_end,
-            line_count,
-            column_count: column_number,
-        }
+        state.to_error_position(scan_line_end(contents, offset))
     }
 
     pub fn line_col_to_byte_offset(
@@ -2969,7 +3110,7 @@ pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Dat
 
 // ───────────────────────────────────────────────────────────────────────────
 // File → Source helpers — `bun_sys` (T1) cannot name `Source` (this crate),
-// so the body of `src/sys/File.zig:toSourceAt/toSource` lives here as free fns.
+// so the file→Source conversions live here as free fns.
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -2983,17 +3124,15 @@ pub type ToSourceOpts = ToSourceOptions;
 
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
 ///
-/// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
-/// `src/sys/File.zig:toSource`.
+/// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2).
 pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Maybe<Source> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 ///
-/// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
-/// `src/sys/File.zig:toSourceAt`.
-pub fn source_from_file_at(
+/// MOVE_DOWN from `bun_sys::File::to_source_at` (T1 cannot name T2).
+pub(crate) fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -3010,16 +3149,7 @@ pub fn source_from_file_at(
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
-pub fn to_source_at(
-    dir_fd: bun_sys::Fd,
-    path: &bun_core::ZStr,
-    opts: ToSourceOptions,
-) -> bun_sys::Result<Source> {
-    source_from_file_at(dir_fd, path, opts)
-}
-
-/// `to_source_at` rooted at the process CWD.
+/// `source_from_file_at` rooted at the process CWD.
 pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file(path, opts)
 }
@@ -3107,7 +3237,7 @@ pub use ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceScope};
 pub use use_directive::UseDirective;
 
 /// `Part.{SymbolUseMap, SymbolPropertyUseMap, List}` — module-style alias so
-/// `crate::part::{SymbolUseMap, List}` resolves at the Zig nested-decl path.
+/// `crate::part::{SymbolUseMap, List}` resolves.
 pub mod part {
     pub use crate::nodes::{
         Part, PartList as List, PartSymbolPropertyUseMap as SymbolPropertyUseMap,
@@ -3161,8 +3291,6 @@ pub mod flags {
 /// Detected indentation of a [`Source`] (tab vs N-space). The JSON/TOML lexers
 /// record this so a `package.json` round-trip preserves the user's formatting;
 /// `bun_js_printer::Options.indent` consumes it. Default: 2 spaces.
-///
-/// Zig: `src/js_printer/js_printer.zig:434` `Options.Indentation`.
 #[derive(Clone, Copy)]
 pub struct Indentation {
     pub scalar: usize,
@@ -3186,28 +3314,61 @@ pub enum IndentationCharacter {
     Space,
 }
 
-// ported from: src/logger/logger.zig
-
 // ───────────────────────────────────────────────────────────────────────────
 // Store helpers — debug guards + thread-local side-arena lifecycle for the
 // AST `NewStore` slabs.
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `bun.DebugOnlyDisabler(T)` — debug-build re-entrancy guard around Store
-/// access. No-op in release; in debug, asserts `!disabled`.
+/// `DebugOnlyDisabler<T>` — debug-build re-entrancy guard around Store
+/// access. No-op in release; in debug, `assert()` panics while the per-type
+/// disable count is non-zero.
+///
+/// Rust cannot declare a generic `#[thread_local]` static, so the debug
+/// build keeps one thread-local `TypeId` multiset (each `disable()`
+/// pushes `TypeId::of::<T>()`, each `enable()` pops one occurrence; the
+/// membership count is the per-type counter).
 pub struct DebugOnlyDisabler<T>(core::marker::PhantomData<T>);
-impl<T> DebugOnlyDisabler<T> {
+
+#[cfg(debug_assertions)]
+mod debug_disabler_state {
+    std::thread_local! {
+        /// Multiset of currently-disabled store types (one entry per
+        /// outstanding `disable()`); debug builds only.
+        pub(super) static DISABLED: core::cell::RefCell<Vec<core::any::TypeId>> =
+            const { core::cell::RefCell::new(Vec::new()) };
+    }
+}
+
+impl<T: 'static> DebugOnlyDisabler<T> {
     #[inline]
     pub fn assert() {
-        // TODO(port): wire to a thread-local `disabled: bool` if any caller
-        // actually toggles it; Zig sites only call `assert()`.
+        #[cfg(debug_assertions)]
+        debug_disabler_state::DISABLED.with(|d| {
+            assert!(
+                !d.borrow().contains(&core::any::TypeId::of::<T>()),
+                "[{}] called while disabled (did you forget to call enable?)",
+                core::any::type_name::<T>(),
+            );
+        });
     }
     #[inline]
-    pub fn disable() {}
+    pub fn disable() {
+        #[cfg(debug_assertions)]
+        debug_disabler_state::DISABLED.with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
+    }
     #[inline]
-    pub fn enable() {}
-    /// RAII scope: `disable()` now, `enable()` on drop. Replaces the Zig idiom
-    /// `Disabler.disable(); defer Disabler.enable();`.
+    pub fn enable() {
+        #[cfg(debug_assertions)]
+        debug_disabler_state::DISABLED.with(|d| {
+            let mut v = d.borrow_mut();
+            let pos = v
+                .iter()
+                .rposition(|t| *t == core::any::TypeId::of::<T>())
+                .expect("DebugOnlyDisabler::enable without matching disable");
+            v.remove(pos);
+        });
+    }
+    /// RAII scope: `disable()` now, `enable()` on drop.
     #[inline]
     pub fn scope() -> DebugOnlyDisablerScope<T> {
         Self::disable();
@@ -3217,92 +3378,82 @@ impl<T> DebugOnlyDisabler<T> {
 
 /// Guard returned by [`DebugOnlyDisabler::scope`]; re-enables on drop.
 #[must_use = "disabler is re-enabled on drop; bind to a named local"]
-pub struct DebugOnlyDisablerScope<T>(core::marker::PhantomData<T>);
-impl<T> Drop for DebugOnlyDisablerScope<T> {
+pub struct DebugOnlyDisablerScope<T: 'static>(core::marker::PhantomData<T>);
+impl<T: 'static> Drop for DebugOnlyDisablerScope<T> {
     #[inline]
     fn drop(&mut self) {
         DebugOnlyDisabler::<T>::enable();
     }
 }
 
-/// Per-thread side `MimallocArena` that backs `AstAlloc` while the bundler's
-/// `Stmt.Data.Store` / `Expr.Data.Store` block-store is active and **no**
-/// `ASTMemoryAllocator` scope is in effect. See `NewStore::reset` for the
-/// leak this closes.
+/// Per-thread side [`bun_alloc::ast_alloc::AstAllocState`] that backs
+/// `AstAlloc` while the bundler's `Stmt.Data.Store` / `Expr.Data.Store`
+/// block-store is active and **no** `ASTMemoryAllocator` scope is in effect.
+/// See `NewStore::reset` for the leak this closes.
 pub mod store_ast_alloc_heap {
     use core::cell::Cell;
     use core::ptr;
 
-    use bun_alloc::MimallocArena;
+    use bun_alloc::ast_alloc::{self, AstAllocState};
 
+    /// Address of this thread's installed side state (the "entered" flag and
+    /// the identity check for `reset()`/`exit()`). Never dereferenced.
     #[thread_local]
-    static ARENA: Cell<*mut MimallocArena> = Cell::new(ptr::null_mut());
+    static STATE_ID: Cell<*const AstAllocState> = Cell::new(ptr::null());
+    /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
+    #[thread_local]
+    static PREVIOUS: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
-    /// Reborrow the thread-local arena. Centralises the back-ref deref so
-    /// `enter` / `reset` / `current_heap` stay safe (mirrors
-    /// `Stmt::Data::Store::instance_mut`). `None` iff `enter()` has not run
-    /// (or `exit()` cleared it).
-    #[inline]
-    fn arena_mut<'a>() -> Option<&'a mut MimallocArena> {
-        // SAFETY: `ARENA` is thread-local; the `*mut MimallocArena` it holds is
-        // either null or a live `Box::into_raw` allocation owned by this thread
-        // and freed only by `exit()` (on this thread). No other `&`/`&mut` to
-        // the arena is reachable: this module is its sole accessor.
-        unsafe { ARENA.get().as_mut() }
+    /// `true` iff the state this module installed is the one currently active
+    /// (i.e. no other scope is stacked on top of it).
+    fn owns_active_state() -> bool {
+        core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
     }
 
-    pub fn enter() {
+    pub(crate) fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
-        let arena = match arena_mut() {
-            Some(a) => a,
-            None => {
-                let p = Box::into_raw(Box::new(MimallocArena::new()));
-                ARENA.set(p);
-                arena_mut().expect("just set")
-            }
-        };
-        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+        if !STATE_ID.get().is_null() {
+            return;
+        }
+        let state = ast_alloc::acquire_state();
+        STATE_ID.set(&raw const *state);
+        PREVIOUS.set(ast_alloc::swap_state(Some(state)));
     }
 
     pub fn reset() {
-        let Some(arena) = arena_mut() else {
+        if STATE_ID.get().is_null() {
             enter();
             return;
-        };
-        // This is the `AstAlloc` side-heap holding `Ast.named_exports`,
-        // `AstVec` buffers, etc. — data that is intentionally NEVER `Drop`'d
-        // (the whole point of routing through `AstAlloc` is bulk-free here).
-        // `9ae903e` changed this to `reset_retain_with_limit(8M)` to avoid
-        // the per-file `mi_heap_new` bitmap memset, but that is WRONG for
-        // this heap: the previous file's allocations are never individually
-        // freed, so under the limit they accumulate as unreachable garbage.
-        // With `AstAlloc` bypassing `track_alloc` (calls `mi_heap_malloc`
-        // directly via the raw `*mut mi_heap_t`) AND `heap_committed_exceeds`
-        // being unreliable on darwin (OS-backed pages not walked by
-        // `mi_heap_visit_blocks`), the limit never trips → 83→61 MB on
-        // require-cache "long export names". Zig's
-        // `arena.reset(.{.retain_with_limit=..})` is on a BUMP allocator
-        // where reset always rewinds the cursor (= bulk-free); only the
-        // backing buffer is retained. `MimallocArena` is not a bump
-        // allocator, so the only correct mapping is destroy+new.
-        arena.reset();
-        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+        }
+        // Skip if another scope's state is stacked on top — resetting it
+        // would free that scope's live data.
+        if !owns_active_state() {
+            debug_assert!(
+                false,
+                "store_ast_alloc_heap::reset while another AstAllocState is installed"
+            );
+            return;
+        }
+        ast_alloc::reset_active_state();
     }
 
-    #[inline]
-    pub fn current_heap() -> *mut bun_alloc::mimalloc::Heap {
-        arena_mut().map_or(ptr::null_mut(), |a| a.heap_ptr())
-    }
-
-    pub fn exit() {
-        let arena = ARENA.replace(ptr::null_mut());
-        bun_alloc::ast_alloc::set_thread_heap(ptr::null_mut());
-        if !arena.is_null() {
-            // SAFETY: `arena` was `Box::into_raw`'d in `enter()` on this
-            // thread and is now being reclaimed exactly once.
-            drop(unsafe { Box::from_raw(arena) });
+    pub(crate) fn exit() {
+        if STATE_ID.get().is_null() {
+            return;
+        }
+        // Skip if another scope's state is stacked on top.
+        if !owns_active_state() {
+            debug_assert!(
+                false,
+                "store_ast_alloc_heap::exit while another AstAllocState is installed"
+            );
+            return;
+        }
+        STATE_ID.set(ptr::null());
+        if let Some(state) = ast_alloc::swap_state(PREVIOUS.take()) {
+            ast_alloc::release_state(state);
         }
     }
 }
@@ -3310,7 +3461,7 @@ pub mod store_ast_alloc_heap {
 // ── DATA_STORE_OVERRIDE ────────────────────────────────────────────────────
 // Thread-local override arena for `Expr`/`Stmt` boxed payloads.
 //
-// Zig: `Expr.Data.Store.memory_allocator` — when non-null, `Expr::init`
+// When non-null, `Expr::init`
 // allocates boxed payloads into this arena instead of the long-lived block
 // store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
 // tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
@@ -3319,18 +3470,17 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub fn data_store_override() -> *const bun_alloc::Arena {
+pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub fn set_data_store_override(p: *const bun_alloc::Arena) {
+pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 
 /// Copy `bytes` into the active AST arena so the slice shares the same
 /// lifetime as the `StoreRef`-backed `Expr` nodes that reference it
-/// (bulk-freed on Store reset). Mirrors Zig call sites that write
-/// `Expr.init(E.String, .{ .data = try allocator.dupe(u8, …) }, …)`: callers
+/// (bulk-freed on Store reset). Callers
 /// building an `EString` from a scratch buffer must intern the bytes here, not
 /// into a function-local bump, or `EString.data` dangles when that bump drops.
 /// The lifetime is erased per the `StoreStr` convention — arena ownership, not
@@ -3406,9 +3556,6 @@ impl Drop for StoreResetGuard {
 /// no-op once the slab (or an `ASTMemoryAllocator` override) is installed,
 /// so no `Once` guard is needed (and a process-global `Once` would be wrong
 /// anyway: the backing `INSTANCE` is `#[thread_local]`).
-///
-/// Zig: open-coded `Expr.Data.Store.create(); Stmt.Data.Store.create();`
-/// at every CLI entry point (transpiler.zig, run_command.zig, …).
 #[inline]
 pub fn initialize_store() {
     expr::data::Store::create();
@@ -3419,8 +3566,6 @@ pub fn initialize_store() {
 /// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
 /// slab, so callers that re-enter — e.g. the install pipeline parsing many
 /// `package.json`s — get a fresh arena each time without re-allocating.
-///
-/// Zig: install.zig `initializeStore()` (`if (initialized_store) reset else create`).
 #[inline]
 pub fn initialize_store_or_reset() {
     expr::data::Store::begin();
@@ -3444,5 +3589,216 @@ impl Drop for DisableStoreReset {
     fn drop(&mut self) {
         expr::data::Store::set_disable_reset(false);
         stmt::data::Store::set_disable_reset(false);
+    }
+}
+
+#[cfg(test)]
+mod range_of_identifier_tests {
+    use super::*;
+
+    fn len_of(src: &[u8]) -> i32 {
+        range_of_identifier(src, Loc { start: 0 }).len
+    }
+
+    #[test]
+    fn terminated_identifier() {
+        assert_eq!(len_of(b"foo = 1"), 3);
+        assert_eq!(len_of(b"x;"), 1);
+    }
+
+    #[test]
+    fn identifier_at_eof_includes_last_codepoint() {
+        assert_eq!(len_of(b"foo"), 3);
+        assert_eq!(len_of(b"x"), 1);
+        // Multibyte final codepoint: 'é' is 2 bytes.
+        assert_eq!(len_of("aé".as_bytes()), 3);
+    }
+
+    #[test]
+    fn private_names() {
+        assert_eq!(len_of(b"#"), 1);
+        assert_eq!(len_of(b"#foo = 1"), 4);
+        assert_eq!(len_of(b"#foo"), 4);
+    }
+
+    #[test]
+    fn bracketed_escape_does_not_swallow_terminator() {
+        // `a\u{41}` is 7 bytes; the `.` must terminate the range.
+        assert_eq!(len_of(b"a\\u{41}.x"), 7);
+        assert_eq!(len_of(b"a\\u{41} = 1"), 7);
+    }
+
+    #[test]
+    fn leading_bracketed_escape() {
+        assert_eq!(len_of(b"\\u{61}bc = 1"), 8);
+        assert_eq!(len_of(b"\\u{61}"), 6);
+    }
+
+    #[test]
+    fn non_identifier_start() {
+        assert_eq!(len_of(b"1abc"), 0);
+        assert_eq!(len_of(b" foo"), 0);
+    }
+}
+
+#[cfg(test)]
+mod line_column_tracker_tests {
+    use super::*;
+
+    fn check_corpus_entry(contents: &[u8]) {
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents);
+        let len = contents.len();
+
+        // Non-decreasing offsets (the parser/lexer pattern): every result must
+        // match a from-scratch scan.
+        let mut tracker = LineColumnTracker::default();
+        for offset in 0..len.max(1) {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "forward scan diverged at offset {offset} of {contents:?}"
+            );
+        }
+
+        // Repeated, backwards, and strided offsets against a reused tracker.
+        let mut tracker = LineColumnTracker::default();
+        let mut offsets: Vec<usize> = (0..len.max(1)).step_by(3).collect();
+        offsets.extend((0..len.max(1)).rev().step_by(7));
+        offsets.extend([0, len.max(1) - 1, 0, len / 2, len / 2]);
+        for offset in offsets {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "mixed-order scan diverged at offset {offset} of {contents:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_matches_full_scan() {
+        let corpus: &[&[u8]] = &[
+            b"",
+            b"x",
+            b"hello world, no newline at all but a reasonably long single line of text",
+            b"line one\nline two\nline three\n",
+            b"crlf one\r\ncrlf two\r\nno trailing",
+            b"lone\rcarriage\rreturns\r",
+            b"\n\n\n\n",
+            b"\r\n\r\n\r\r\n\n",
+            "unicode \u{2028} separator \u{2029} and emoji \u{1F600}\u{1F600} plus \u{00E9}\u{4E2D}\u{6587}\nsecond line \u{00E9}\n".as_bytes(),
+            b"mixed\ninvalid \xff\xfe bytes \x80 here\r\nlast line",
+            b"[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":[{\"\":",
+        ];
+        for contents in corpus {
+            check_corpus_entry(contents);
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
+        let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        let mut contents = Vec::new();
+        for _ in 0..12 {
+            contents.extend_from_slice(statement);
+        }
+        let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
+
+        let mut offsets = Vec::new();
+        for statement_index in 0..12usize {
+            let start = statement_index * statement.len();
+            let first_binding = start + 15;
+            offsets.push(start + statement.len() - 6);
+            for duplicate in 1..12usize {
+                offsets.push(first_binding);
+                offsets.push(first_binding + duplicate * 2);
+            }
+        }
+
+        let mut tracker = LineColumnTracker::default();
+        for offset in offsets {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(&source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "interleaved scan diverged at offset {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_column_tracker_resets_for_a_different_source() {
+        let a = Source::init_path_string(b"a.js" as &[u8], b"first\nsource\nhere" as &[u8]);
+        let b = Source::init_path_string(
+            b"b.js" as &[u8],
+            b"a totally different\r\nsecond source\r\nwith more lines\r\n" as &[u8],
+        );
+
+        let mut tracker = LineColumnTracker::default();
+        for (source, offset) in [
+            (&a, 8usize),
+            (&b, 30),
+            (&a, 10),
+            (&b, 40),
+            (&b, 45),
+            (&a, 2),
+        ] {
+            let loc = usize2loc(offset);
+            let expected = source.init_error_position(loc);
+            let got = tracker.error_position(source, loc);
+            assert_eq!(
+                (
+                    expected.line_start,
+                    expected.line_end,
+                    expected.line_count,
+                    expected.column_count
+                ),
+                (
+                    got.line_start,
+                    got.line_end,
+                    got.line_count,
+                    got.column_count
+                ),
+                "diverged at offset {offset} of {:?}",
+                bstr::BStr::new(source.contents())
+            );
+        }
     }
 }

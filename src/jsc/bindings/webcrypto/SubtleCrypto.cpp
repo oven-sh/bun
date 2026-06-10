@@ -106,6 +106,29 @@ static bool isSafeCurvesEnabled(JSGlobalObject& state)
     // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
 
+// The lazy *Vector() accessors on the parameter classes copy these dictionary members into
+// Vector<uint8_t> with no size check, and exceeding the Vector capacity cap CRASH()es in
+// allocateBuffer. Validate them while normalizing so an oversized member rejects instead.
+static bool isAcceptableVectorSource(const BufferSource& data)
+{
+    return WTF::isValidCapacityForVector<uint8_t>(data.length());
+}
+
+static bool isAcceptableVectorSource(const std::optional<BufferSource::VariantType>& data)
+{
+    if (!data)
+        return true;
+    auto length = std::visit([](auto& buffer) -> size_t { return buffer ? buffer->byteLength() : 0; }, *data);
+    return WTF::isValidCapacityForVector<uint8_t>(length);
+}
+
+// RsaKeyGenParams.publicExponent is a WebIDL BigInteger (a Uint8Array, not a
+// BufferSource), but publicExponentVector() does the same unguarded append.
+static bool isAcceptableVectorSource(const RefPtr<Uint8Array>& data)
+{
+    return !data || WTF::isValidCapacityForVector<uint8_t>(data->byteLength());
+}
+
 static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAlgorithmParameters(JSGlobalObject& state, SubtleCrypto::AlgorithmIdentifier algorithmIdentifier, Operations operation)
 {
     VM& vm = state.vm();
@@ -143,6 +166,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.label))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmRsaOaepParams>(params);
             break;
         }
@@ -150,18 +175,24 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_CFB: {
             auto params = convertDictionary<CryptoAlgorithmAesCbcCfbParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.iv))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesCbcCfbParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::AES_CTR: {
             auto params = convertDictionary<CryptoAlgorithmAesCtrParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.counter))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesCtrParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::AES_GCM: {
             auto params = convertDictionary<CryptoAlgorithmAesGcmParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.iv) || !isAcceptableVectorSource(params.additionalData))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesGcmParams>(params);
             break;
         }
@@ -220,6 +251,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
                 return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
             auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.publicExponent))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params);
             break;
         }
@@ -228,6 +261,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.publicExponent))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
@@ -309,6 +344,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::HKDF: {
             auto params = convertDictionary<CryptoAlgorithmHkdfParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.salt) || !isAcceptableVectorSource(params.info))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
@@ -319,6 +356,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::PBKDF2: {
             auto params = convertDictionary<CryptoAlgorithmPbkdf2Params>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.salt))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
@@ -530,7 +569,11 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                     promise->reject(Exception { TypeError });
                     return std::nullopt;
                 },
-                [](auto& bufferSource) -> std::optional<KeyData> {
+                [&promise](auto& bufferSource) -> std::optional<KeyData> {
+                    if (!WTF::isValidCapacityForVector<uint8_t>(bufferSource->byteLength())) {
+                        promise->reject(OperationError, "Input data is too large"_s);
+                        return std::nullopt;
+                    }
                     return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
                 }),
             keyDataVariant);
@@ -551,9 +594,16 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Vector<uint8_t> copyToVector(BufferSource&& data)
+// WTF::Vector capacity is capped below the maximum legal ArrayBuffer size, and exceeding the cap
+// CRASH()es inside Vector::allocateBuffer. Validate the length before copying and reject the
+// promise instead, mirroring the toKeyData contract: nullopt means the promise was already rejected.
+static std::optional<Vector<uint8_t>> copyToVector(BufferSource&& data, Ref<DeferredPromise>& promise)
 {
-    return std::span { data.data(), data.length() };
+    if (!WTF::isValidCapacityForVector<uint8_t>(data.length())) {
+        promise->reject(OperationError, "Input data is too large"_s);
+        return std::nullopt;
+    }
+    return Vector<uint8_t> { std::span { data.data(), data.length() } };
 }
 
 static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifier identifier)
@@ -630,7 +680,9 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     }
     auto params = paramsOrException.releaseReturnValue();
 
-    auto data = copyToVector(WTF::move(dataBufferSource));
+    auto data = copyToVector(WTF::move(dataBufferSource), promise);
+    if (!data)
+        return;
 
     if (params->identifier != key.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
@@ -656,7 +708,7 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->encrypt(*params, key, WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    algorithm->encrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -673,7 +725,9 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
     }
     auto params = paramsOrException.releaseReturnValue();
 
-    auto data = copyToVector(WTF::move(dataBufferSource));
+    auto data = copyToVector(WTF::move(dataBufferSource), promise);
+    if (!data)
+        return;
 
     if (params->identifier != key.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
@@ -699,7 +753,7 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->decrypt(*params, key, WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    algorithm->decrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -711,7 +765,9 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
     }
     auto params = paramsOrException.releaseReturnValue();
 
-    auto data = copyToVector(WTF::move(dataBufferSource));
+    auto data = copyToVector(WTF::move(dataBufferSource), promise);
+    if (!data)
+        return;
 
     if (params->identifier != key.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
@@ -737,7 +793,7 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->sign(*params, key, WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    algorithm->sign(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& key, BufferSource&& signatureBufferSource, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -749,8 +805,12 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     }
     auto params = paramsOrException.releaseReturnValue();
 
-    auto signature = copyToVector(WTF::move(signatureBufferSource));
-    auto data = copyToVector(WTF::move(dataBufferSource));
+    auto signature = copyToVector(WTF::move(signatureBufferSource), promise);
+    if (!signature)
+        return;
+    auto data = copyToVector(WTF::move(dataBufferSource), promise);
+    if (!data)
+        return;
 
     if (params->identifier != key.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
@@ -776,7 +836,7 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->verify(*params, key, WTF::move(signature), WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    algorithm->verify(*params, key, WTF::move(*signature), WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, BufferSource&& dataBufferSource, Ref<DeferredPromise>&& promise)
@@ -791,7 +851,9 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     }
     auto params = paramsOrException.releaseReturnValue();
 
-    auto data = copyToVector(WTF::move(dataBufferSource));
+    auto data = copyToVector(WTF::move(dataBufferSource), promise);
+    if (!data)
+        return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
@@ -807,7 +869,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    algorithm->digest(WTF::move(data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    algorithm->digest(WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
@@ -1170,7 +1232,9 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
 
 void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, BufferSource&& wrappedKeyBufferSource, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithmIdentifier, AlgorithmIdentifier&& unwrappedKeyAlgorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
 {
-    auto wrappedKey = copyToVector(WTF::move(wrappedKeyBufferSource));
+    auto wrappedKey = copyToVector(WTF::move(wrappedKeyBufferSource), promise);
+    if (!wrappedKey)
+        return;
 
     bool isDecryption = false;
 
@@ -1284,11 +1348,11 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
         // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-unwrapKey
         // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
-        unwrapAlgorithm->unwrapKey(unwrappingKey, WTF::move(wrappedKey), WTF::move(callback), WTF::move(exceptionCallback));
+        unwrapAlgorithm->unwrapKey(unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback));
         return;
     }
 
-    unwrapAlgorithm->decrypt(*unwrapParams, unwrappingKey, WTF::move(wrappedKey), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
+    unwrapAlgorithm->decrypt(*unwrapParams, unwrappingKey, WTF::move(*wrappedKey), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue);
 }
 
 }

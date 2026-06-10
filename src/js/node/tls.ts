@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { validateString } = require("internal/validators");
+const { validateString, validateFunction } = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -396,7 +396,7 @@ function checkServerIdentity(hostname, cert) {
 }
 
 // Native SSL_CTX wrapper. `intern()` is WeakGCMap-memoised by config digest
-// (the native `SSLContextCache` underneath is shared with every Zig consumer
+// (the native `SSLContextCache` underneath is shared with every native consumer
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
@@ -532,6 +532,9 @@ function TLSSocket(socket?, options?) {
   this.secureConnecting = true;
   this._secureEstablished = false;
   this._securePending = true;
+  if (options.checkServerIdentity !== undefined) {
+    validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  }
   this[kcheckServerIdentity] = options.checkServerIdentity || checkServerIdentity;
   this[ksession] = options.session || null;
 }
@@ -664,7 +667,7 @@ TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated
 };
 
 TLSSocket.prototype.getCertificate = function getCertificate() {
-  // need to implement certificate on socket.zig
+  // getCertificate is not yet implemented on the native socket
   const cert = this._handle?.getCertificate?.();
   if (cert) {
     // It's not a peer cert, but the formatting is identical.
@@ -735,7 +738,7 @@ function Server(options, secureConnectionListener): void {
     }
     if (this._handle) {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
-      // the Zig side detects it via SecureContext.fromJS and up_refs.
+      // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(this._handle, hostname, context.context);
     } else {
       if (!contexts) contexts = new Map();

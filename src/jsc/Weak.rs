@@ -14,11 +14,11 @@ pub enum WeakRefType {
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle (C++ `Bun::WeakRef`).
-    pub struct WeakImpl;
+    pub(crate) struct WeakImpl;
 }
 
 impl WeakImpl {
-    pub fn init(
+    pub(crate) fn init(
         global_this: &JSGlobalObject,
         value: JSValue,
         ref_type: WeakRefType,
@@ -40,7 +40,7 @@ impl WeakImpl {
     /// [`WeakImpl::destroy`] before releasing the slot — so any
     /// `NonNull<WeakImpl>` reachable here is a live C++ `JSC::Weak` handle.
     /// Same contract as [`crate::strong::Impl::get`].
-    pub fn get(this: NonNull<WeakImpl>) -> JSValue {
+    pub(crate) fn get(this: NonNull<WeakImpl>) -> JSValue {
         Bun__WeakRef__get(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
@@ -48,18 +48,16 @@ impl WeakImpl {
     ///
     /// Safe for the same reason as [`WeakImpl::get`] — the handle is live by
     /// construction; `clear` is idempotent and does not invalidate `this`.
-    pub fn clear(this: NonNull<WeakImpl>) {
+    pub(crate) fn clear(this: NonNull<WeakImpl>) {
         Bun__WeakRef__clear(WeakImpl::opaque_ref(this.as_ptr()))
     }
 
-    pub unsafe fn destroy(this: NonNull<WeakImpl>) {
+    pub(crate) unsafe fn destroy(this: NonNull<WeakImpl>) {
         // SAFETY: `this` is a live WeakImpl handle; consumed here.
         unsafe { Bun__WeakRef__delete(this.as_ptr()) }
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `WeakImpl` is an opaque `UnsafeCell`-backed ZST handle (`&WeakImpl` is
 // ABI-identical to non-null `*const WeakImpl`; C++ slot mutation is interior).
 // `new` is `safe fn`: `&JSGlobalObject` is the non-null handle proof, and `ctx`
@@ -103,8 +101,6 @@ impl<T> Weak<T> {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        // PORT NOTE: Zig source (Weak.zig:50) calls `function.call(global, args)`
-        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
         function
             .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
             .unwrap_or(JSValue::ZERO)
@@ -193,5 +189,3 @@ impl<T> Drop for Weak<T> {
         unsafe { WeakImpl::destroy(r#ref) };
     }
 }
-
-// ported from: src/jsc/Weak.zig

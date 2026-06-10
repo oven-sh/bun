@@ -1,34 +1,30 @@
 //! Forward-decl shell task types referenced by `runtime::dispatch::run_task`.
 //!
-//! The Zig spec (`src/jsc/Task.zig`) names ~16 shell task structs in its
-//! 96-arm switch. The Rust shell port collapsed several into the NodeId-arena
-//! state machine (`interpreter.rs`) and gated the rest behind
-//! `interpreter_body_gated.rs`. The high-tier dispatcher must still cast the
-//! erased `Task.ptr` to a concrete type and call the per-type entry point, so
-//! the shapes are declared here. Bodies that already exist elsewhere re-export
-//! through this module; the rest carry the spec-faithful body inline (mostly
-//! `runFromMainThread()` → resume the parent state via NodeId).
-//!
-//! Spec: `src/shell/interpreter.zig` + per-builtin `src/shell/interpreter/*.zig`.
+//! Several shell task types collapsed into the NodeId-arena state machine
+//! (`interpreter.rs`); the rest are gated behind `interpreter_body_gated.rs`.
+//! The high-tier dispatcher must still cast the erased `Task.ptr` to a
+//! concrete type and call the per-type entry point, so the shapes are
+//! declared here. Bodies that already exist elsewhere re-export through this
+//! module; the rest carry the body inline (mostly `run_from_main_thread()` →
+//! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
-/// bounce back to the main thread. In Zig the `Async` state struct *is* the
-/// task; in the Rust NodeId-arena port the state lives in `interp.nodes`, so
+/// bounce back to the main thread. The state lives in `interp.nodes`, so
 /// the enqueued payload is `(interp, node)`.
 #[repr(C)]
-pub struct ShellAsyncTask {
+pub(crate) struct ShellAsyncTask {
     pub interp: *mut Interpreter,
     pub node: NodeId,
     pub concurrent_task: ConcurrentTask,
 }
 
-/// Spec: `Interpreter.Cmd.ShellAsyncSubprocessDone`. Posted from the
+/// Posted from the
 /// subprocess exit handler back to the JS thread to resume the owning `Cmd`.
 #[repr(C)]
-pub struct ShellAsyncSubprocessDone {
+pub(crate) struct ShellAsyncSubprocessDone {
     pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub exit_code: crate::shell::ExitCode,
@@ -36,8 +32,6 @@ pub struct ShellAsyncSubprocessDone {
 }
 
 impl ShellAsyncSubprocessDone {
-    /// Spec: interpreter.zig `ShellAsyncSubprocessDone.runFromMainThread`.
-    ///
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellAsyncSubprocessDone`, which always passes the
     /// `heap::alloc` payload enqueued by `ShellSubprocess::on_process_exit`.
@@ -49,7 +43,7 @@ impl ShellAsyncSubprocessDone {
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by `dispatch.rs`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_main_thread(this: *mut Self) {
+    pub(crate) fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `ShellSubprocess::on_process_exit`; `interp` outlives
         // every spawned subprocess.
@@ -62,11 +56,11 @@ impl ShellAsyncSubprocessDone {
     }
 }
 
-/// Spec: `Interpreter.AsyncDeinitWriter` (`IOWriter.AsyncDeinit`). Defers
+/// Defers
 /// dropping an [`IOWriter`](crate::shell::io_writer::IOWriter) to the main
 /// thread so its `Drop` doesn't race the writer thread.
 #[repr(C)]
-pub struct AsyncDeinitWriter {
+pub(crate) struct AsyncDeinitWriter {
     pub writer: *mut crate::shell::io_writer::IOWriter,
     pub concurrent_task: ConcurrentTask,
 }
@@ -82,7 +76,7 @@ impl AsyncDeinitWriter {
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by `dispatch.rs`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_main_thread(this: *mut Self) {
+    pub(crate) fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOWriter::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -90,9 +84,10 @@ impl AsyncDeinitWriter {
     }
 }
 
-/// Spec: `Interpreter.AsyncDeinitReader` (`IOReader.AsyncDeinit`).
+/// Defers dropping an [`IOReader`](crate::shell::io_reader::IOReader) to the
+/// main thread so its `Drop` doesn't race the reader thread.
 #[repr(C)]
-pub struct AsyncDeinitReader {
+pub(crate) struct AsyncDeinitReader {
     pub reader: *mut crate::shell::io_reader::IOReader,
     pub concurrent_task: ConcurrentTask,
 }
@@ -108,7 +103,7 @@ impl AsyncDeinitReader {
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by `dispatch.rs`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_main_thread(this: *mut Self) {
+    pub(crate) fn run_from_main_thread(this: *mut Self) {
         // SAFETY: dispatch contract — `this` is the live `heap::alloc` payload
         // enqueued by `IOReader::async_deinit`.
         let owned = unsafe { bun_core::heap::take(this) };
@@ -116,19 +111,23 @@ impl AsyncDeinitReader {
     }
 }
 
-/// Spec: `Interpreter.CondExpr.ShellCondExprStatTask`. Wraps an inner
-/// [`ShellTask`] (the Zig spec dispatches via `.task.runFromMainThread()`).
+/// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an
+/// inner [`ShellTask`].
 #[repr(C)]
-pub struct ShellCondExprStatTask {
+pub(crate) struct ShellCondExprStatTask {
     pub task: CondExprStatInner,
 }
 
 #[repr(C)]
-pub struct CondExprStatInner {
+pub(crate) struct CondExprStatInner {
     pub task: ShellTask,
     pub cond: NodeId,
     pub stat: bun_sys::Result<bun_sys::Stat>,
     pub path: Vec<u8>,
+    /// The shell env's cwd fd, captured at schedule time so
+    /// `run_from_thread_pool` can
+    /// `statat` without touching the interpreter off-thread.
+    pub cwd_fd: bun_sys::Fd,
 }
 
 impl ShellCondExprStatTask {
@@ -138,7 +137,7 @@ impl ShellCondExprStatTask {
     // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
     // contract; signature is fixed by `dispatch.rs`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    pub(crate) fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
         let owned = unsafe { bun_core::heap::take(this) };
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
@@ -150,15 +149,15 @@ impl ShellCondExprStatTask {
     }
 }
 
-/// Spec: `Interpreter.Expansion.ShellGlobTask.Err`.
+/// Error result of a glob-expansion task.
 pub enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(bun_core::Error),
 }
 
-/// Spec: `Interpreter.Expansion.ShellGlobTask`.
+/// Glob-expansion task run off the JS thread during word expansion.
 #[repr(C)]
-pub struct ShellGlobTask {
+pub(crate) struct ShellGlobTask {
     pub task: ShellTask,
     pub expansion: NodeId,
     pub walker: bun_glob::BunGlobWalkerZ,
@@ -195,8 +194,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
 }
 
 impl ShellGlobTask {
-    /// Spec: Expansion.zig `ShellGlobTask.createOnMainThread` + `schedule`.
-    pub fn create_and_schedule(
+    /// Heap-allocate the glob task for `expansion` and schedule it on the
+    /// work pool; the allocation is freed in `run_from_main_thread`.
+    pub(crate) fn create_and_schedule(
         interp: &Interpreter,
         expansion: NodeId,
         walker: bun_glob::BunGlobWalkerZ,
@@ -215,7 +215,6 @@ impl ShellGlobTask {
         unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
     }
 
-    /// Spec: Expansion.zig `ShellGlobTask.walkImpl`.
     fn walk_impl(
         walker: &mut bun_glob::BunGlobWalkerZ,
         result: &mut Vec<Vec<u8>>,
@@ -243,11 +242,9 @@ impl ShellGlobTask {
     }
 }
 
-/// Spec: `Interpreter.Builtin.Rm.ShellRmTask.DirTask`. A child node in the
+/// A child node in the
 /// recursive rm tree-walk; posts back to main when its subtree is empty.
 /// Re-export: the real DirTask lives in `builtins::rm` (full recursive
 /// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
 /// for the verbose-write bounce-back.
 pub use crate::shell::builtins::rm::DirTask as ShellRmDirTask;
-
-// ported from: src/shell/interpreter.zig

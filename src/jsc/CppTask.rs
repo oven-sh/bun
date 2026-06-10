@@ -4,7 +4,6 @@ use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-// TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
@@ -86,7 +85,7 @@ impl ConcurrentCppTask {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
@@ -98,5 +97,3 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
         workpool_task: WorkPoolTask::default(),
     });
 }
-
-// ported from: src/jsc/CppTask.zig

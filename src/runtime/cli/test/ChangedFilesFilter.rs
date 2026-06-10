@@ -20,8 +20,8 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
+use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
-use bun_core::{PathString, strings};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
@@ -32,6 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
@@ -40,13 +41,12 @@ use bun_which::which;
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
 
-// PORT NOTE: named `Result` in Zig; kept verbatim for side-by-side diffing.
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
 pub struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
-    pub test_files: &'a mut [PathString],
+    pub test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
     pub changed_count: usize,
     /// Number of test files before filtering.
@@ -62,11 +62,10 @@ pub struct Result<'a> {
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
-// TODO(port): narrow error set
-pub fn filter<'a>(
+pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
-    test_files: &'a mut [PathString],
+    test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
     let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -110,7 +109,6 @@ pub fn filter<'a>(
     // With a clean working tree and no --watch, nothing can be affected and
     // there is no watcher to seed, so skip the module-graph scan entirely.
     if changed_files.count() == 0 && ctx.debug.hot_reload != HotReload::Watch {
-        // TODO(port): `HotReload::Watch` enum path — confirm crate::cli::Command::HotReload
         let total = test_files.len();
         return Ok(Result {
             test_files: &mut test_files[0..0],
@@ -120,19 +118,17 @@ pub fn filter<'a>(
         });
     }
 
-    // Convert PathString list to []const []const u8 for the bundler.
-    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.slice()).collect();
+    // Convert the interned-path list to []const []const u8 for the bundler.
+    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
 
     // Build a dedicated transpiler for scanning. We do not reuse the VM's
     // transpiler because BundleV2.init takes ownership of the allocator and
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
     //
-    // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
+    // `BundleV2::scan_module_graph_from_cli` takes
     // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. The Zig original does the same — see the comment
-    // after the call about intentionally leaving the ThreadLocalArena and
-    // worker pool alive. Route through the shared CLI arena.
+    // are process-lifetime. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
@@ -159,8 +155,8 @@ pub fn filter<'a>(
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    // Zig assigns `resolver.opts = options` by value; `Transpiler::init`
-    // already projected resolver.opts, so sync only the fields we changed above.
+    // `Transpiler::init` already projected resolver.opts, so sync only the
+    // fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
@@ -179,10 +175,10 @@ pub fn filter<'a>(
         Ok(b) => b,
         Err(err) => {
             // Fall back to running every test rather than aborting the run.
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "--changed: failed to build module graph ({}); running all tests",
                 err.name()
-            ));
+            );
             Output::flush();
             let total = test_files.len();
             return Ok(Result {
@@ -227,11 +223,9 @@ pub fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        // PERF(port): was putAssumeCapacity — profile if it shows up on a hot path.
         path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
-        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         graph_files.push(Box::<[u8]>::from(path_text));
     }
 
@@ -255,7 +249,7 @@ pub fn filter<'a>(
     let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
-        *out = path_to_index.get(tf.slice()).copied();
+        *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
     // BFS backward from every changed file that participates in the graph.
@@ -263,7 +257,6 @@ pub fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        // TODO(port): StringSet iteration API — Zig accesses `.map.iterator()`
         for changed_path in changed_files.keys() {
             if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
@@ -288,13 +281,13 @@ pub fn filter<'a>(
     // affected, or (b) the test file itself is in the changed set (covers
     // test files that failed to enter the graph for any reason).
     let mut write: usize = 0;
-    // PORT NOTE: reshaped for borrowck — capture len before re-borrowing test_files
+    // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.slice())
+        let keep = changed_files.contains(tf.as_bytes())
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
@@ -303,9 +296,7 @@ pub fn filter<'a>(
         }
     }
 
-    // The Zig original left the BundleV2 alive for the rest of the process —
-    // its AST payload lived in `graph.heap`. In the Rust port `to_ast()`
-    // materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
+    // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
     // everything needed has been copied out above. The scan transpiler itself
@@ -325,12 +316,6 @@ pub fn filter<'a>(
     })
 }
 
-/// Env var carrying the absolute path of the temp file that the
-/// previous process's watcher wrote its changed-path list into before
-/// exec()ing. Set once by `initWatchTrigger` in the first process and
-/// inherited through every restart. The value is a short path, never
-/// the list itself, so there is no env size concern.
-pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
 #[cfg(not(windows))]
 const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
@@ -340,7 +325,7 @@ const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
 /// the hot-reloader collector to record changed paths. The collector
 /// and the path string intentionally live for the rest of the process;
 /// --watch exec()s on reload so nothing accumulates across restarts.
-pub fn init_watch_trigger() {
+pub(crate) fn init_watch_trigger() {
     #[cfg(windows)]
     {
         // Windows --watch restarts via TerminateProcess + parent
@@ -355,13 +340,12 @@ pub fn init_watch_trigger() {
         let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
             ZBox::from_bytes(existing)
         } else {
-            // TODO(port): std.Random.DefaultPrng / std.time.milliTimestamp / std.c.getpid —
-            // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
             // SAFETY: getpid is always safe.
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
+            // wyhash of a time^pid seed; only used to make a unique temp
+            // trigger-file name.
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
-            // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
@@ -378,7 +362,7 @@ pub fn init_watch_trigger() {
             let fresh = ZBox::from_vec(fresh);
             // Export once so every exec()'d descendant inherits the same
             // path. Adding (not removing) an env var is safe w.r.t.
-            // `std.os.environ`; it simply won't be visible to code that
+            // the environ snapshot; it simply won't be visible to code that
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
@@ -400,9 +384,9 @@ pub fn init_watch_trigger() {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
-    pub fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
+    #[allow(dead_code)]
+    pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
 }
 
 /// If the previous process's watcher recorded which files triggered
@@ -448,7 +432,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
             if !sys::exists(path) {
                 continue;
             }
-            let _ = set.insert(path); // OOM-only Result (Zig: catch unreachable)
+            let _ = set.insert(path); // OOM-only Result
         }
         // If every triggering path was a deletion, fall back to git so the
         // user at least gets the same behaviour as the initial run rather
@@ -461,13 +445,11 @@ fn consume_watch_trigger() -> Option<StringSet> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum GitError {
+pub(crate) enum GitError {
     #[error("GitNotFound")]
     GitNotFound,
     #[error("GitFailed")]
     GitFailed,
-    // PORT NOTE: Zig union'd `std.mem.Allocator.Error` here; allocator params
-    // were dropped (global mimalloc aborts on OOM), so OutOfMemory is gone.
 }
 
 bun_core::named_error_set!(GitError);
@@ -605,7 +587,7 @@ fn get_changed_files(
 }
 
 #[derive(Default)]
-pub struct GitResult {
+pub(crate) struct GitResult {
     pub ok: bool,
     /// Set when the git process could not be spawned at all. The failure
     /// has already been reported; callers should not print a second
@@ -617,7 +599,6 @@ pub struct GitResult {
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
-    // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
     // and emits octal escapes. We want raw UTF-8 paths so they match the
@@ -637,12 +618,9 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // PORT NOTE: Zig `EventLoopHandle.init(anytype)` accepted a
-            // `*VirtualMachine` and called `vm.eventLoop()` internally; the
-            // Rust split keeps `init` taking the erased `*mut ()` event-loop
-            // pointer directly, so unwrap it here.
-            // SAFETY: `VirtualMachine::get().event_loop()` is the live per-thread `jsc::EventLoop`.
-            loop_: unsafe { EventLoopHandle::init(VirtualMachine::get().event_loop().cast()) },
+            // `init` takes the erased `*mut ()` event-loop pointer
+            // directly, so unwrap it here.
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
             ..Default::default()
         },
         ..Default::default()
@@ -701,11 +679,8 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.
-        let _ = set.insert(abs); // OOM-only Result (Zig: catch unreachable)
+        let _ = set.insert(abs); // OOM-only Result
     }
 }
 
-// TODO(port): `HotReload` enum import — placeholder for `ctx.debug.hot_reload != .watch` check
 use crate::Command::HotReload;
-
-// ported from: src/cli/test/ChangedFilesFilter.zig

@@ -1,13 +1,12 @@
 use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
-use bun_core::Output;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
-// PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
-// are both rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067),
-// so the parent-module alias is spelled via its crate path instead.
+// `use super::{self as lockfile, ...}` and bare `use super as lockfile;` are both
+// rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067), so the
+// parent-module alias is spelled via its crate path instead.
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
     StringBuffer, Tree, assert_no_uninitialized_padding, tree,
@@ -31,12 +30,11 @@ pub struct Buffers {
     pub string_bytes: StringBuffer,
 }
 
-// PORT NOTE: Zig `deinit` only freed owned ArrayListUnmanaged fields; in Rust the
-// Vec-backed field types drop automatically, so no explicit `Drop` impl is needed.
+// The Vec-backed field types drop automatically; no explicit `Drop` impl is
+// needed.
 
 impl Buffers {
     pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
-        // TODO(port): narrow error set
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
         self.resolutions.reserve(
@@ -64,37 +62,25 @@ impl Buffers {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `sizes` — comptime field-order table
+// `sizes` — serialized field-order table
 //
-// PORT NOTE: the Zig computed this with `std.meta.fields` + an insertion sort
-// by descending `@alignOf(field.type)`. Every field is an `ArrayListUnmanaged`,
-// whose alignment is `@alignOf(usize)`, so the stable sort is a no-op and the
-// result is declaration order. We hard-code that order here. `types[0]` (used
-// only for `Aligner.write`) was `Tree.List.Slice` i.e. `[]Tree`; Zig's
-// `@alignOf([]Tree)` is the alignment of the SLICE fat-pointer (ptr+len), i.e.
-// `@alignOf(usize)`, NOT the element alignment — so we keep that as
-// `ALIGN_TYPE_0`.
+// Array payloads are written in field declaration order, each aligned to
+// `ALIGN_TYPE_0` (pointer alignment, NOT the element alignment).
 // ──────────────────────────────────────────────────────────────────────────
 mod sizes {
     use super::*;
 
-    /// Alignment used by `Aligner::write` for every array payload (Zig: `sizes.types[0]`).
+    /// Alignment used by `Aligner::write` for every array payload.
     ///
-    /// `sizes.types[0]` in Zig is `[]Tree` (a slice type), and `@alignOf([]Tree)` is the
-    /// alignment of the slice descriptor (a `(*T, usize)` fat pointer) — i.e. `@alignOf(usize)`,
-    /// not `@alignOf(Tree)`. This 8-byte boundary is load-bearing for on-disk parity AND for
+    /// This is the alignment of a slice descriptor (a `(*T, usize)` fat
+    /// pointer) — i.e. pointer alignment, not element alignment. This 8-byte
+    /// boundary is load-bearing for on-disk parity AND for
     /// `read_array::<ExternalString>` (which has a `u64` field) to produce an aligned `&[T]`.
-    pub const ALIGN_TYPE_0: usize = align_of::<usize>();
+    pub(super) const ALIGN_TYPE_0: usize = align_of::<usize>();
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
-
-    // `sizes.bytes` was never read in the Zig; omitted.
-    // TODO(port): if another file reads `Buffers.sizes.bytes`, add it back.
 }
 
 pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Error> {
-    // TODO(port): narrow error set (CorruptLockfile | OOM)
-    // PORT NOTE: Zig went through `stream.reader()`; `FixedBufferStream` exposes
-    // `read_int_le` directly, so the intermediate reader handle is elided.
     let start_pos = stream.read_int_le::<u64>()?;
 
     // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
@@ -143,8 +129,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     if byte_len == 0 {
         // Empty arrays are written by `write_array`'s else-branch without an
         // `Aligner::write_with_align` pad, so their recorded start offset need not
-        // be aligned. Match Zig's `readArray`, which returns the empty slice
-        // before any alignment checks.
+        // be aligned.
         return Ok(Vec::new());
     }
 
@@ -155,8 +140,7 @@ pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Erro
     let start_pos = start_pos as usize;
     let end_pos = end_pos as usize;
     // SAFETY: `start_pos..end_pos` is in-bounds (checked above) and the lockfile
-    // writer aligned the payload to `align_of::<T>()` via `Aligner::write`. Zig
-    // used `@alignCast` here with the same precondition.
+    // writer aligned the payload to `align_of::<T>()` via `Aligner::write`.
     let misaligned: &[T] = unsafe {
         bun_core::ffi::slice(
             stream.buffer.as_ptr().add(start_pos).cast::<T>(),
@@ -173,20 +157,20 @@ pub fn write_array<S, T>(
     prefix: &'static str,
 ) -> Result<(), bun_core::Error>
 where
-    // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over the
-    // same buffer. Two `&mut` to one object is UB in Rust regardless of access
-    // order, so the port collapses both roles onto one type — `StreamType` impls
-    // both `PositionalStream` (get_pos/pwrite) and `bun_io::Write` (append).
+    // One type plays both the positional-stream and append-writer roles —
+    // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
+    // `bun_io::Write` (append) — so there are never two `&mut` to one buffer.
     S: lockfile::PositionalStream + bun_io::Write,
-    // TODO(port): narrow error set
 {
-    // TODO(port): comptime `assertNoUninitializedPadding(@TypeOf(array))` — needs
-    // a const-eval padding check on `T`; could add a `const _: () = assert!(...)`
-    // per call site or a `NoPadding` marker trait.
+    // This call is a zero-cost intent marker only — it carries no trait bound (see the
+    // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
+    // enforcement is the per-type `const` field-offset asserts and the
+    // `layout_asserts` size/align pins in src/install/padding_checker.rs; any new
+    // `T` serialized through here must be added to that audit.
     assert_no_uninitialized_padding(array);
 
-    // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
-    // its bytes is sound. Matches `std.mem.sliceAsBytes`.
+    // SAFETY: `T` has no uninitialized padding (audited via the per-type layout
+    // asserts in padding_checker.rs); reading its bytes is sound.
     let bytes: &[u8] =
         unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
 
@@ -194,12 +178,10 @@ where
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
 
-    // PORT NOTE: Zig built this with `std.fmt.comptimePrint` over
-    // `@typeName/@sizeOf/@alignOf(std.meta.Child(ArrayList))`. The reader skips
-    // this prefix by absolute offset so it is semantically inert, but we emit the
-    // exact bytes Zig produces so that re-saving an unchanged lockfile is a byte
-    // no-op across the Zig→Rust migration. Call sites pass the verbatim Zig
-    // `@typeName` string (including its sizeof/alignof suffix) as a literal.
+    // The reader skips this prefix by absolute offset so it is semantically
+    // inert, but we emit the exact historical bytes so that re-saving an
+    // unchanged lockfile is a byte no-op. Call sites pass the verbatim
+    // type-name string (including its sizeof/alignof suffix) as a literal.
     stream.write_all(prefix.as_bytes())?;
 
     if !bytes.is_empty() {
@@ -211,7 +193,7 @@ where
         let real_end_pos = stream.get_pos()? as u64;
         let positioned: [u64; 2] = [real_start_pos, real_end_pos];
         // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the same `std.mem.asBytes` view without `unsafe`.
+        // gives the byte view without `unsafe`.
         let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
         let mut written: usize = 0;
         while written < 16 {
@@ -221,7 +203,7 @@ where
         let real_end_pos = stream.get_pos()? as u64;
         let positioned: [u64; 2] = [real_end_pos, real_end_pos];
         // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the same `std.mem.asBytes` view without `unsafe`.
+        // gives the byte view without `unsafe`.
         let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
         let mut written: usize = 0;
         while written < 16 {
@@ -237,32 +219,22 @@ pub fn save<S>(
     stream: &mut S,
 ) -> Result<(), bun_core::Error>
 where
-    // PORT NOTE: see `write_array` — Zig's separate stream/writer aliased one
-    // buffer; collapsed to a single bound to avoid two `&mut` to the same object.
+    // See `write_array` — a single bound avoids two `&mut` to the same object.
     S: lockfile::PositionalStream + bun_io::Write,
 {
     let buffers = &lockfile.buffers;
 
-    // PORT NOTE: Zig used `inline for (sizes.names) |name|` + `@field(buffers, name)`.
-    // Rust has no field-name reflection, so the loop is unrolled in declaration
-    // order (see `sizes` module note — the comptime sort was a no-op).
+    // The fields are saved unrolled in declaration order (see `sizes` module
+    // note).
 
     macro_rules! save_generic_field {
         ($field:ident, $name:literal, $elem:ty, $prefix:literal) => {{
             if options.log_level.is_verbose() {
-                Output::pretty_errorln(format_args!(
-                    "Saving {} {}",
-                    buffers.$field.len(),
-                    $name
-                ));
+                bun_core::pretty_errorln!("Saving {} {}", buffers.$field.len(), $name);
             }
-            // PORT NOTE: the Zig had `if (comptime Type == Tree)` here, but `Type`
-            // was `@TypeOf(list.items)` i.e. `[]Elem`, never `Tree`, so that arm
-            // was dead. We port only the live `else` arm.
             // We duplicate it here so that alignment bytes are zeroed out
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
-            // PERF(port): was appendSliceAssumeCapacity
             write_array(stream, clone.as_slice(), $prefix)?;
             #[cfg(debug_assertions)]
             {
@@ -274,16 +246,12 @@ where
     // -- trees --
     {
         if options.log_level.is_verbose() {
-            Output::pretty_errorln(format_args!("Saving {} {}", buffers.trees.len(), "trees"));
+            bun_core::pretty_errorln!("Saving {} {}", buffers.trees.len(), "trees");
         }
-        // PORT NOTE: Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
-        // never fires because `Type` is `[]Tree`, so Zig writes raw `Tree`
-        // bytes — which works only because Zig's auto-layout for `Tree` happens
-        // to match the `[id|dep_id|parent|off|len]` encoding that `load`
-        // decodes via `Tree.toTree`. We instead write the explicit
-        // `Tree.External` form so the on-disk layout is independent of
-        // `repr(Rust)` field order. This is byte-identical to what Zig emits
-        // (both are 20 bytes/tree, same field order).
+        // Write the explicit `Tree.External` form so the on-disk layout is
+        // independent of `repr(Rust)` field order: 20 bytes/tree, fields in
+        // the `[id|dep_id|parent|off|len]` order that `load` decodes via
+        // `Tree.toTree`.
         let mut clone: Vec<tree::External> = Vec::with_capacity(buffers.trees.len());
         for &item in buffers.trees.as_slice() {
             clone.push(Tree::to_external(item));
@@ -291,10 +259,9 @@ where
         write_array(
             stream,
             clone.as_slice(),
-            // Verbatim Zig `@typeName(Tree)` output. Zig writes raw `Tree` (the
-            // `Type == Tree` branch is dead — see PORT NOTE above), so it reports
-            // `4 alignof` even though we serialize `tree::External` (`[u8;20]`,
-            // align 1). The reader ignores this string; we match Zig's bytes.
+            // Verbatim historical type-name string. It reports `4 alignof` even
+            // though we serialize `tree::External` (`[u8;20]`, align 1). The
+            // reader ignores this string; only the exact bytes matter.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
         )?;
         #[cfg(debug_assertions)]
@@ -322,11 +289,7 @@ where
     // -- dependencies --
     {
         if options.log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
-                "Saving {} {}",
-                buffers.dependencies.len(),
-                "dependencies"
-            ));
+            bun_core::pretty_errorln!("Saving {} {}", buffers.dependencies.len(), "dependencies");
         }
 
         // Dependencies have to be converted to .toExternal first
@@ -379,13 +342,11 @@ where
         let mut to_clone: Vec<dependency::External> = Vec::with_capacity(remaining.len());
         for dep in remaining {
             to_clone.push(dependency::to_external(dep));
-            // PERF(port): was appendAssumeCapacity
         }
 
         write_array(
             stream,
             to_clone.as_slice(),
-            // Zig: `@typeName(Dependency.External)` where `External = [26]u8`.
             "\n<[26]u8> 26 sizeof, 1 alignof\n",
         )?;
 
@@ -424,8 +385,8 @@ impl Buffers {
             0 => return Ok(tree::ROOT_DEP_ID),
             id if id == invalid_package_id => return Ok(invalid_package_id),
             _ => {
-                // PORT NOTE: reshaped for borrowck — `dependency_visited` is
-                // captured once outside the loop instead of re-matched per iter.
+                // `dependency_visited` is captured once outside the loop
+                // instead of re-matched per iteration (borrowck).
                 let mut visited = dependency_visited;
                 for (dep_id, &pkg_id) in self.resolutions.iter().enumerate() {
                     if pkg_id == package_id {
@@ -444,7 +405,7 @@ impl Buffers {
     }
 }
 
-pub fn load(
+pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,
@@ -452,7 +413,8 @@ pub fn load(
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 
-    // PORT NOTE: Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
+    // The fields are loaded unrolled in declaration order (see `sizes` module
+    // note).
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
@@ -462,11 +424,7 @@ pub fn load(
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
-                    Output::pretty_errorln(format_args!(
-                        "Loaded {} {}",
-                        this.$field.len(),
-                        $name
-                    ));
+                    bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
             // #[cfg(debug_assertions)]
@@ -480,10 +438,8 @@ pub fn load(
         let _pos: usize = stream.pos;
 
         let tree_list: Vec<tree::External> = read_array(stream)?;
-        // PORT NOTE: Zig did `initCapacity` + `items.len = N` + write each slot.
-        // In Rust, `set_len` then `iter_mut()` would form `&mut Tree` to
-        // uninitialized memory (UB), so we push into the reserved capacity
-        // instead — same allocation pattern, no uninit reads.
+        // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
+        // memory (UB), so we push into the reserved capacity instead.
         this.trees = tree::List::with_capacity(tree_list.len());
         for from in &tree_list {
             this.trees.push(Tree::to_tree(*from));
@@ -505,11 +461,11 @@ pub fn load(
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Loaded {} {}",
                     external_dependency_list_.len(),
                     "dependencies"
-                ));
+                );
             }
         }
     }
@@ -531,14 +487,9 @@ pub fn load(
         buffer: string_buf,
         package_manager: pm_,
     };
-    // TODO(port): `Dependency::Context` borrows `log`, `string_buf`, and `pm_`
-    // simultaneously with `&mut this`; may need to restructure borrows.
-
-    // PORT NOTE: Zig did `expandToCapacity` + `items.len = N` then wrote each
-    // slot via `*dep = ...`. In Rust, `set_len` then `as_mut_slice()` would form
-    // `&mut Dependency` to uninitialized memory (UB even when write-only), so we
-    // push into the reserved capacity instead — same single allocation, same
-    // element order, no uninit references.
+    // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
+    // uninitialized memory (UB even when write-only), so we push into the
+    // reserved capacity instead.
     for ext in external_dependency_list {
         this.dependencies
             .push(dependency::to_dependency(*ext, &mut extern_context));
@@ -548,7 +499,7 @@ pub fn load(
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
-        // PORT NOTE: reshaped for borrowck — iterate by index so
+        // Iterate by index so
         // `legacy_package_to_dependency_id` can borrow `&self` while we hold
         // `&mut this.trees[i]`.
         for i in 0..this.trees.len() {
@@ -573,5 +524,3 @@ pub fn load(
 
     Ok(this)
 }
-
-// ported from: src/install/lockfile/Buffers.zig

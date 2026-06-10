@@ -18,19 +18,18 @@ use bun_url::URL; // bumpalo::Bump re-export
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
-pub fn view(
+pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
     property_path: Option<&[u8]>,
     json_output: bool,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
             if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
-                // PORT NOTE: reshaped for borrowck — copy into the function-scope
+                // Note: reshaped for borrowck — copy into the function-scope
                 // bump so `name` doesn't keep `manager` borrowed across the
                 // `&mut self` calls (`http_proxy`, `tls_reject_unauthorized`) below.
                 break 'brk &*bump
@@ -40,8 +39,7 @@ pub fn view(
             // Try our best to get the package.json name they meant
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
-                // into the resolver's directory cache for the process lifetime;
-                // mirrors Zig's non-optional `*DirEntry` field.
+                // into the resolver's directory cache for the process lifetime.
                 if !manager.root_dir.has_comptime_query(b"package.json") {
                     break 'from_package_json;
                 }
@@ -53,8 +51,8 @@ pub fn view(
                     Ok(s) => s,
                     Err(_) => break 'from_package_json,
                 };
-                // PORT NOTE: copy into the function-scope bump so the slice
-                // outlives this block (Zig never frees this allocation either).
+                // Note: copy into the function-scope bump so the slice
+                // outlives this block.
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
@@ -74,13 +72,12 @@ pub fn view(
         break 'brk spec_;
     });
 
-    // PORT NOTE: reshaped for borrowck — clone the registry scope so it doesn't
+    // Note: reshaped for borrowck — clone the registry scope so it doesn't
     // keep `manager` borrowed across `http_proxy` / `tls_reject_unauthorized`
     // (`&mut self`) below; matches `outdated_command` / `update_interactive_command`.
     let scope = manager.scope_for_package_name(name).clone();
 
     let mut url_buf = PathBuffer::uninit();
-    // TODO(port): std.fmt.bufPrint — `buf_print` returns the written slice
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
@@ -189,7 +186,7 @@ pub fn view(
 
     let versions_len: usize;
 
-    // PORT NOTE: reshaped for borrowck — Zig used a labeled block returning a tuple to reassign (version, manifest)
+    // Note: reshaped for borrowck.
     'brk: {
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
@@ -206,7 +203,7 @@ pub fn view(
                     if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
                         break 'brk2 result.version;
                     } else {
-                        // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                        // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
                         // `defer query.deinit()` — handled by Drop
@@ -264,16 +261,13 @@ pub fn view(
             versions_to_display =
                 &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
             if !versions_to_display.is_empty() {
-                Output::pretty_errorln("\nRecent versions:<r>");
+                bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {
-                    Output::pretty_errorln(format_args!(
-                        "<d>-<r> {}",
-                        v.fmt(&parsed_manifest.string_buf)
-                    ));
+                    bun_core::pretty_errorln!("<d>-<r> {}", v.fmt(&parsed_manifest.string_buf));
                 }
 
                 if start_index > 0 {
-                    Output::pretty_errorln(format_args!("  <d>... and {} more<r>", start_index));
+                    bun_core::pretty_errorln!("  <d>... and {} more<r>", start_index);
                 }
             }
         }
@@ -580,5 +574,3 @@ pub fn view(
 
     Ok(())
 }
-
-// ported from: src/cli/pm_view_command.zig

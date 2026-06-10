@@ -1,14 +1,8 @@
 use core::ffi::c_void;
 
 use crate::{default_alloc, mimalloc};
-// TODO(port): `Allocator`/`AllocatorVTable`/`Alignment` are the bun_alloc crate's
-// equivalents of `std.mem.Allocator`, its `VTable`, and `std.mem.Alignment`.
 // TODO(refactor): consider reshaping the vtable struct into `trait Allocator` impls.
 use crate::{Alignment, AllocatorVTable, StdAllocator};
-
-// Zig: `const log = bun.Output.scoped(.mimalloc, .hidden);` — `Output.scoped`
-// lives in `bun_core`, which depends on this crate, so the hidden-scope debug
-// tracing is dropped here rather than re-declared as a no-op stub.
 
 /// # Safety
 /// `ptr` must have been allocated by mimalloc with the given `size`/`align`.
@@ -181,10 +175,10 @@ pub(crate) mod memory_allocator_tags {
     use core::ffi::c_void;
 
     const DEFAULT_ALLOCATOR_TAG: usize = 0xBEEFA110C; // "BEEFA110C"  beef a110c i guess
-    pub const DEFAULT_ALLOCATOR_TAG_PTR: *mut c_void = DEFAULT_ALLOCATOR_TAG as *mut c_void;
+    pub(crate) const DEFAULT_ALLOCATOR_TAG_PTR: *mut c_void = DEFAULT_ALLOCATOR_TAG as *mut c_void;
 
     const Z_ALLOCATOR_TAG: usize = 0x2a11043470123; // "z4110c4701" (Z ALLOCATOR in 1337 speak)
-    pub const Z_ALLOCATOR_TAG_PTR: *mut c_void = Z_ALLOCATOR_TAG as *mut c_void;
+    pub(crate) const Z_ALLOCATOR_TAG_PTR: *mut c_void = Z_ALLOCATOR_TAG as *mut c_void;
 }
 
 pub static Z_ALLOCATOR: StdAllocator = StdAllocator {
@@ -206,5 +200,3 @@ pub unsafe fn free_without_size(ptr: *mut c_void) {
     // SAFETY: caller contract — ptr is null or was allocated by mimalloc; mi_free accepts null
     unsafe { mimalloc::mi_free(ptr) }
 }
-
-// ported from: src/bun_alloc/basic.zig

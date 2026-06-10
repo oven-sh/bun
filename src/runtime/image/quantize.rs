@@ -11,8 +11,7 @@
 
 use bun_alloc::AllocError;
 
-// PORT NOTE: Zig named this `Result`; renamed to avoid shadowing `core::result::Result`.
-pub struct QuantizeResult {
+pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette.
     pub palette: Box<[u8]>,
     /// One palette index per input pixel.
@@ -23,10 +22,9 @@ pub struct QuantizeResult {
     pub has_alpha: bool,
 }
 
-// Zig `deinit` only freed `palette`/`indices`; both are now `Box<[u8]>`, so
+// `palette`/`indices` are `Box<[u8]>`, so
 // `Drop` is automatic — no explicit impl needed.
 
-// PORT NOTE: Zig named this `Box`; renamed to avoid shadowing `std::boxed::Box`.
 #[derive(Clone, Copy)]
 struct ColorBox {
     /// Slice into the shared `order` index buffer.
@@ -38,7 +36,6 @@ struct ColorBox {
 
 impl ColorBox {
     fn widest_channel(self) -> u8 {
-        // PORT NOTE: Zig `u2` → `u8` (Rust has no sub-byte integer types).
         let mut best: u8 = 0;
         let mut span: i32 = -1;
         for c in 0..4usize {
@@ -52,7 +49,6 @@ impl ColorBox {
     }
 }
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
     -> u32;
@@ -64,12 +60,17 @@ pub struct Options {
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's
     /// `palette:true` default.
-    // PORT NOTE: Zig field default `= false`; Rust has no per-field defaults,
-    // callers must pass explicitly.
+    // No `Default` impl — callers must
+    // pass this explicitly.
     pub dither: bool,
 }
 
-pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeResult, AllocError> {
+pub(crate) fn quantize(
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+    opts: Options,
+) -> Result<QuantizeResult, AllocError> {
     let max_colors = opts.max_colors;
     let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
     let want: u16 = 1.max(max_colors.min(256));
@@ -82,7 +83,6 @@ pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeRe
     }
 
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
-    // PERF(port): was appendAssumeCapacity
     boxes.push(shrink(rgba, &order, 0, n));
 
     while boxes.len() < want as usize {
@@ -109,14 +109,11 @@ pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeRe
         let ch = b.widest_channel();
         // Partial sort by the chosen channel, then cut at the midpoint.
         let slice = &mut order[b.lo as usize..b.hi as usize];
-        // PORT NOTE: std.sort.pdq + SortCtx.less → slice::sort_unstable_by_key
-        // (also pdqsort). Zig's SortCtx struct is captured by the closure.
         // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
         // `maxPixels`); the other order-index sites already widen first.
         slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
         let mid = b.lo + (b.hi - b.lo) / 2;
         boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        // PERF(port): was appendAssumeCapacity
         boxes.push(shrink(rgba, &order, mid, b.hi));
     }
 
@@ -199,7 +196,6 @@ fn map_floyd_steinberg(
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];
-    // (Zig @memset to 0 is folded into vec! init above.)
 
     let mut y: u32 = 0;
     while y < h {
@@ -284,5 +280,3 @@ fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
     }
     ColorBox { lo, hi, min, max }
 }
-
-// ported from: src/runtime/image/quantize.zig

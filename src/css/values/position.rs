@@ -15,7 +15,7 @@ pub struct Position {
 }
 
 impl Position {
-    pub fn parse(input: &mut css::Parser) -> CssResult<Position> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Position> {
         // Try parsing a horizontal position first
         if let Ok(horizontal_pos) = input.try_parse(HorizontalPosition::parse) {
             match horizontal_pos {
@@ -147,9 +147,7 @@ impl Position {
         Ok(Position { x, y })
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
-        // PORT NOTE: reshaped for borrowck — Zig used tag-then-payload-access (`this.x == .side and this.x.side.side != .left`);
-        // Rust uses if-let pattern matching to bind payloads.
+    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         if let (PositionComponent::Side(xs), PositionComponent::Length(yl)) = (&self.x, &self.y) {
             if xs.side != HorizontalPositionKeyword::Left {
                 self.x.to_css(dest)?;
@@ -267,18 +265,18 @@ impl Position {
     }
 
     /// Returns whether both the x and y positions are centered.
-    pub fn is_center(&self) -> bool {
+    pub(crate) fn is_center(&self) -> bool {
         self.x.is_center() && self.y.is_center()
     }
 
-    pub fn center() -> Position {
+    pub(crate) fn center() -> Position {
         Position {
             x: PositionComponent::Center,
             y: PositionComponent::Center,
         }
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         self.x.is_zero() && self.y.is_zero()
     }
 }
@@ -312,11 +310,10 @@ pub enum PositionComponent<S> {
     Side(PositionComponentSide<S>),
 }
 
-// PORT NOTE: Zig used duck-typed `S.parse`/`S.toCss`; Rust bounds on the
-// values-local `protocol::{Parse,ToCss}` shapes until `generics::Parse`
-// un-gates.
+// `S` is bounded on the values-local `protocol::{Parse,ToCss}` shapes until
+// `generics::Parse` un-gates.
 impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent<S> {
-    pub fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         if let PositionComponent::Length(l) = self {
             if l.is_zero() {
                 return true;
@@ -325,7 +322,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         false
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if input
             .try_parse(|i: &mut css::Parser| i.expect_ident_matching(b"center"))
             .is_ok()
@@ -345,7 +342,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         }))
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut css::Printer) -> Result<(), css::PrintErr> {
         match self {
             PositionComponent::Center => {
                 if dest.minify {
@@ -366,7 +363,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
         }
     }
 
-    pub fn is_center(&self) -> bool {
+    pub(crate) fn is_center(&self) -> bool {
         match self {
             PositionComponent::Center => return true,
             PositionComponent::Length(l) => {
@@ -389,7 +386,7 @@ pub enum HorizontalPositionKeyword {
 }
 
 impl HorizontalPositionKeyword {
-    pub fn into_length_percentage(self) -> LengthPercentage {
+    pub(crate) fn into_length_percentage(self) -> LengthPercentage {
         match self {
             HorizontalPositionKeyword::Left => LengthPercentage::zero(),
             HorizontalPositionKeyword::Right => {
@@ -408,7 +405,7 @@ pub enum VerticalPositionKeyword {
 }
 
 impl VerticalPositionKeyword {
-    pub fn into_length_percentage(self) -> LengthPercentage {
+    pub(crate) fn into_length_percentage(self) -> LengthPercentage {
         match self {
             VerticalPositionKeyword::Top => LengthPercentage::zero(),
             VerticalPositionKeyword::Bottom => {
@@ -418,7 +415,5 @@ impl VerticalPositionKeyword {
     }
 }
 
-pub type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
-pub type VerticalPosition = PositionComponent<VerticalPositionKeyword>;
-
-// ported from: src/css/values/position.zig
+pub(crate) type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
+pub(crate) type VerticalPosition = PositionComponent<VerticalPositionKeyword>;

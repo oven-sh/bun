@@ -3,8 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
 use super::{Expect, get_signature};
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_nth_returned_with(
+pub(crate) fn to_have_nth_returned_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -70,7 +69,6 @@ pub fn to_have_nth_returned_with(
     let mut formatter2 = super::make_formatter(global);
     // defer formatter.deinit() — handled by Drop
 
-    // TODO(port): get_signature should be a const fn returning &'static str (was `comptime getSignature(...)`)
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.get().not() {
@@ -138,5 +136,3 @@ pub fn to_have_nth_returned_with(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveNthReturnedWith.zig

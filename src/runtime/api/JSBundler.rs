@@ -8,7 +8,7 @@ use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
 use bun_bundler::BundleV2;
 use bun_bundler::options;
-use bun_collections::{StringArrayHashMap, StringMap, StringSet};
+use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
@@ -52,7 +52,7 @@ pub mod js_bundler {
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
     /// Uses async (`from_js_async`) parsing so the resulting bytes are owned —
     /// the bundler runs on a separate thread and must not borrow JS heap memory.
-    pub fn file_map_from_js(
+    pub(crate) fn file_map_from_js(
         global_this: &JSGlobalObject,
         files_value: JSValue,
     ) -> JsResult<FileMap> {
@@ -96,8 +96,6 @@ pub mod js_bundler {
             // copied, JS strings are decoded). Extract them into the lower-tier
             // map and release the wrapper immediately so no JSC handle crosses
             // threads.
-            // PERF(port): Zig stores the `BlobOrStringOrBuffer` directly; here we
-            // make one extra owned copy to keep `bun_bundler` free of JSC types.
             let bytes: Box<[u8]> = blob_or_string.slice().to_vec().into_boxed_slice();
             drop(blob_or_string);
 
@@ -111,7 +109,6 @@ pub mod js_bundler {
                 key.as_mut_slice(),
             );
 
-            // PERF(port): was assume_capacity
             this.map.put_assume_capacity(&key, bytes);
         }
 
@@ -268,7 +265,7 @@ pub mod js_bundler {
     }
 
     impl CompileOptions {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             compile_target: Option<CompileTarget>,
@@ -434,8 +431,6 @@ pub mod js_bundler {
             Ok(Some(this))
         }
     }
-
-    pub type ConfigList = StringArrayHashMap<Config>;
 
     impl Config {
         pub fn from_js(
@@ -842,7 +837,6 @@ pub mod js_bundler {
                     }
 
                     if entry_points.len() == 1 {
-                        // TODO(port): std.fs.path.dirname → bun_paths::dirname
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
@@ -853,7 +847,7 @@ pub mod js_bundler {
                         });
                     }
 
-                    // PORT NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
+                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
@@ -863,7 +857,6 @@ pub mod js_bundler {
                     );
                 };
 
-                // TODO(port): std.fs.cwd().openDir — banned std::fs; use bun_sys
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
@@ -953,23 +946,12 @@ pub mod js_bundler {
                 }
             }
 
-            // if (try config.getOptional(globalThis, "dir", ZigString.Slice)) |slice| {
-            //     defer slice.deinit();
-            //     this.appendSliceExact(slice.slice()) catch unreachable;
-            // } else {
-            //     this.appendSliceExact(globalThis.bunVM().transpiler.fs.top_level_dir) catch unreachable;
-            // }
-
             if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }
 
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
-                // Zig kept a separate `owned_*: OwnedString` buffer per template
-                // and pointed `template.data` (a `[]const u8`) into it. Rust's
-                // `PathTemplate.data` is already `Box<[u8]>` (owned), so build
-                // straight into it — no self-referential borrow, no clone.
                 let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
                     if s.starts_with(b"./") {
                         Box::<[u8]>::from(s)
@@ -1082,7 +1064,6 @@ pub mod js_bundler {
                     }
                     drop(prop_slice);
 
-                    // PERF(port): was assume_capacity
                     loader_values.push(loader_iter.value.to_enum_from_map(
                         global_this,
                         "loader",
@@ -1205,17 +1186,15 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // PORT NOTE (diverges from Zig spec — flake fix): when no
-                        // `outdir`/`outfile` was given, the Zig path stores only
-                        // the basename here and `doCompilation` later resolves it
-                        // against the process-wide `top_level_dir`. Under the JS
-                        // API that means every `Bun.build({compile: true,
-                        // entrypoints: [tmp + "/app.js"]})` from any test process
-                        // writes the *same* `<cwd>/app`, so concurrently-running
-                        // test files race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). Placing the
+                        // NOTE: when no `outdir`/`outfile` was given, place the
                         // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied — keeps each
+                        // only path the caller actually supplied. Resolving the
+                        // basename against the process-wide cwd instead would
+                        // make every `Bun.build({compile: true, entrypoints:
+                        // [tmp + "/app.js"]})` from any test process write the
+                        // *same* `<cwd>/app`, so concurrently-running test files
+                        // would race on the executable (observed flake in
+                        // bun-build-compile-sourcemap.test.ts). This keeps each
                         // build's output inside its own (temp) directory and is
                         // also the more intuitive default for a programmatic API.
                         // Explicit `outfile`/`outdir` are unaffected.
@@ -1271,9 +1250,9 @@ pub mod js_bundler {
     // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
     // `MutableString`, `Strong`); no manual `Drop` needed.
 
-    /// Zig kept a separate `owned_*: OwnedString` per template and pointed
-    /// `template.data: []const u8` into it (self-referential). Rust's
-    /// `PathTemplate.data` is `Box<[u8]>` (owned), so the indirection is gone.
+    /// Output path templates for entry points, chunks, and assets. Each
+    /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
+    /// string per template is needed.
     pub struct Names {
         pub entry_point: options::PathTemplate,
         pub chunk: options::PathTemplate,
@@ -1354,12 +1333,15 @@ pub mod js_bundler {
 
     /// `Bun.build(config)`
     #[bun_jsc::host_fn]
-    pub fn build_fn(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn build_fn(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         build(global_this, arguments.slice())
     }
 
-    // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
+    // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
     // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
     // `run_on_js_thread()` are also inherent methods there — they only need
@@ -1402,12 +1384,11 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: *mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
@@ -1449,7 +1430,7 @@ pub mod js_bundler {
     /// JSC-aware plumbing for `Load` (upstream owns `init`/`dispatch`/
     /// `run_on_js_thread`/`bake_graph`). Only `on_defer` lives here because it
     /// returns a `JSValue` and throws on the `JSGlobalObject`.
-    pub trait LoadJsExt {
+    pub(crate) trait LoadJsExt {
         fn on_defer(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue>;
     }
 
@@ -1520,13 +1501,12 @@ pub mod js_bundler {
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `load` must be the live `*mut Load` previously handed to C++ via
     /// `Load::dispatch`, and `global` must be the plugin's owning
     /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__onDefer(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
         global: *mut JSGlobalObject,
     ) -> JSValue {
@@ -1534,9 +1514,8 @@ pub mod js_bundler {
         unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
-    // TODO(port): move to runtime_sys
     #[unsafe(no_mangle)]
-    pub extern "C" fn JSBundlerPlugin__onLoadAsync(
+    pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
@@ -1558,8 +1537,6 @@ pub mod js_bundler {
                         )),
                     );
                 }
-                // Zig: this.deinit() — explicit drop
-                // TODO(port): Load is not Box-allocated here; Zig deinit only resets value
                 this.value = LoadValue::Consumed;
                 return;
             }
@@ -1691,11 +1668,10 @@ pub mod js_bundler {
                 Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
-            // Zig (JSBundler.zig:1572-1582) opens an explicit `TopExceptionScope`
-            // before the FFI call and `returnIfException`s after; the C++ side has
-            // a `DECLARE_THROW_SCOPE` whose dtor sets `m_needExceptionCheck` under
-            // `BUN_JSC_validateExceptionChecks=1`, so a post-hoc `has_exception()`
-            // (whose own scope ctor asserts) is wrong.
+            // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets
+            // `m_needExceptionCheck` under `BUN_JSC_validateExceptionChecks=1`,
+            // so a post-hoc `has_exception()` (whose own scope ctor asserts) is
+            // wrong; open a top-level exception scope around the FFI call.
             bun_jsc::top_scope!(scope, global_this);
             let value = JSBundlerPlugin__runOnEndCallbacks(
                 self,
@@ -1769,9 +1745,8 @@ pub mod js_bundler {
     /// pending-item counter is decremented. Returning early here would cause
     /// `Bun.build` to hang forever waiting on the counter.
     ///
-    /// Runs on the JS thread, so allocations go through the global heap (Zig
-    /// passes `bun.default_allocator`); the bundler arena is owned by another
-    /// thread.
+    /// Runs on the JS thread, so allocations go through the global heap; the
+    /// bundler arena is owned by another thread.
     fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
         match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
@@ -1801,14 +1776,13 @@ pub mod js_bundler {
         }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
     /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
     /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
     /// the JS thread.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn JSBundlerPlugin__addError(
+    pub(crate) unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
@@ -1862,10 +1836,10 @@ pub struct BuildArtifact {
 /// callers stay unchanged.
 pub use bun_bundler::options::OutputKind;
 
-/// `JSValue::as(Blob)` BuildArtifact fallback (JSValue.zig:467) — declared
+/// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-pub fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
+pub(crate) fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
     <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
         // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
         // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
@@ -1888,7 +1862,6 @@ impl BuildArtifact {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PERF(port): was @call(bun.callmod_inline, ...)
         this.blob.get_text(global_this, callframe)
     }
 
@@ -1996,31 +1969,25 @@ impl BuildArtifact {
             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>BuildArtifact "),
         )?;
 
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            Output::pretty_fmt_args(
-                "(<blue>{}<r>) {{\n",
-                ENABLE_ANSI_COLORS,
-                (<&'static str>::from(self.output_kind),),
-            ),
+            ENABLE_ANSI_COLORS,
+            "(<blue>{s}<r>) {{\n",
+            <&'static str>::from(self.output_kind),
         )?;
 
         {
             formatter.indent_inc();
-            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
+            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
             // `formatter` while it is also borrowed for the body; decrement
             // after the block instead.
 
             formatter.write_indent(writer)?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>path<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (bstr::BStr::new(&self.path),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>path<r>: <green>\"{s}\"<r>",
+                bstr::BStr::new(&self.path),
             )?;
             formatter
                 .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
@@ -2028,14 +1995,11 @@ impl BuildArtifact {
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>loader<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (<&'static str>::from(self.loader),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>loader<r>: <green>\"{s}\"<r>",
+                <&'static str>::from(self.loader),
             )?;
 
             formatter
@@ -2045,14 +2009,11 @@ impl BuildArtifact {
 
             formatter.write_indent(writer)?;
 
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>kind<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (<&'static str>::from(self.output_kind),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>kind<r>: <green>\"{s}\"<r>",
+                <&'static str>::from(self.output_kind),
             )?;
 
             if self.hash != 0 {
@@ -2062,14 +2023,11 @@ impl BuildArtifact {
                 writer.write_str("\n")?;
 
                 formatter.write_indent(writer)?;
-                write!(
+                bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<r>hash<r>: <green>\"{}\"<r>",
-                        ENABLE_ANSI_COLORS,
-                        (bun_core::fmt::truncated_hash32(self.hash),),
-                    ),
+                    ENABLE_ANSI_COLORS,
+                    "<r>hash<r>: <green>\"{f}\"<r>",
+                    bun_core::fmt::truncated_hash32(self.hash),
                 )?;
             }
 
@@ -2120,5 +2078,3 @@ impl BuildArtifact {
         Ok(())
     }
 }
-
-// ported from: src/runtime/api/JSBundler.zig

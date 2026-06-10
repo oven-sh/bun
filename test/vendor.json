@@ -2,6 +2,9 @@
   {
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
-    "tag": "1.4.12"
+    "tag": "1.4.28",
+    "skipTests": {
+      "ws*connection.test.ts": "TEMPORARY: elysia 1.4.28 asserts wasClean=false for a server-initiated ws.close(), but that's a clean Close handshake — Bun now reports wasClean=true to match Node/WHATWG (oven-sh/bun#31518). Fixed upstream in elysiajs/elysia#1908; remove this skip on the next elysia bump. (glob * = path separator, so it also matches Windows backslash paths)"
+    }
   }
 ]

@@ -11,23 +11,20 @@ use crate::expr::{Data as ExprData, Expr};
 use crate::{ExprNodeList, flags};
 use crate::{e as E, g as G};
 
-/// Zig: `Binding.Data` is the `union(Tag)` payload. In the Rust port that
-/// union lives at `crate::b::B`; re-export it under the Zig-path name
+/// `Binding`'s payload union lives at `crate::b::B`; re-export it as `Data`
 /// so downstream crates can `use crate::binding::Data`.
 pub use crate::b::B as Data;
 
-// Zig file-as-struct: top-level fields `loc`, `data` define `Binding`.
 #[derive(Copy, Clone, Default)]
 pub struct Binding {
     pub loc: crate::Loc,
     pub data: B,
 }
 
-// Zig: `enum(u5)` — Rust has no u5; use u8 repr (values fit).
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Tag {
-    // strum serialize = Zig @tagName output (JSON/snapshot compat).
+    // strum serialize = snake_case tag names (JSON/snapshot compat).
     #[strum(serialize = "b_identifier")]
     BIdentifier,
     #[strum(serialize = "b_array")]
@@ -38,25 +35,14 @@ pub enum Tag {
     BMissing,
 }
 
-impl Tag {
-    pub fn json_stringify<W: crate::JsonWriter>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
-}
-
-// Zig: `pub var icount: usize = 0;` — mutable global counter, never read.
 // Debug-only so release doesn't pay a contended `lock xadd` per Binding.
 #[cfg(debug_assertions)]
-pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
-// `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B` variant.
-// In Rust the comptime type-switch is a pair of small traits implemented for
-// each payload type; `Binding::init` / `Binding::alloc` stay monomorphic
-// per call-site like the Zig original.
+// `init` / `alloc` — a pair of small traits implemented for each payload
+// type pick the `B` variant; `Binding::init` / `Binding::alloc` stay
+// monomorphic per call-site.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait BindingInit {
@@ -137,19 +123,15 @@ impl Binding {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ToExpr — Zig: `fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type`
-// returns a struct holding `context: *ExprType` + `arena` whose
-// `wrapIdentifier` calls the comptime `func_type`.
-//
-// Rust cannot store `*mut P<'a, const ..>` in a non-generic field nor take a
-// fn item as a const generic, so the wrapper is type-erased: `wrap` is a plain
-// fn pointer that casts the erased `ctx` back to the concrete `P` instantiation.
-// Unlike Zig's struct, the `*ExprType` context is **not** stored — it is
-// supplied at call time (`Binding::to_expr(.., ctx, ..)`) so the raw pointer's
-// Stacked-Borrows tag is a child of the *live* `&mut P` at the call site rather
-// than a stale tag captured during `prepare_for_visit_pass` (which every later
-// `&mut self` retag would invalidate). The struct is `Copy` so the recursive
-// `to_expr` can pass it by value like Zig's `wrapper: anytype`.
+// ToExpr — Rust cannot store `*mut P<'a, const ..>` in a non-generic field
+// nor take a fn item as a const generic, so the wrapper is type-erased:
+// `wrap` is a plain fn pointer that casts the erased `ctx` back to the
+// concrete `P` instantiation. The `*ExprType` context is **not** stored — it
+// is supplied at call time (`Binding::to_expr(.., ctx, ..)`) so the raw
+// pointer's Stacked-Borrows tag is a child of the *live* `&mut P` at the call
+// site rather than a stale tag captured during `prepare_for_visit_pass`
+// (which every later `&mut self` retag would invalidate). The struct is
+// `Copy` so the recursive `to_expr` can pass it by value.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
@@ -172,11 +154,10 @@ impl ToExprWrapper {
         }
     }
 
-    /// Zig: `Context.init(context)` — captures `*ExprType` and its arena.
     /// `ExprType` is erased to `c_void`; callers (P.rs) supply a trampoline
     /// closure that casts back to `*mut P<..>` and dispatches to
     /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
-    /// coerce to fn pointers, so this stays zero-cost like Zig's comptime fn.
+    /// coerce to fn pointers, so this stays zero-cost.
     /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
     #[inline]
     pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
@@ -202,15 +183,12 @@ impl ToExprWrapper {
     }
 }
 
-/// Zig: `Binding.ToExpr(expr_type, func_type)` returned a *type*; Rust callers
-/// that want the same per-(P, func) nominal type use this alias and construct
-/// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
-/// `P` can store two of these without threading its own generics through.
+/// Alias for `ToExprWrapper`; construct via `ToExprWrapper::new`. Kept as a
+/// type alias (not a generic struct) so `P` can store two of these without
+/// threading its own generics through.
 pub type ToExpr = ToExprWrapper;
 
 impl Binding {
-    /// Zig: `pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr`.
-    ///
     /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*
     /// `&mut P` (e.g. `core::ptr::addr_of_mut!(*p) as *mut c_void`). Threading
     /// it per-call keeps the raw pointer's provenance under the active Unique
@@ -299,46 +277,3 @@ impl Binding {
         }
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// jsonStringify — Zig wrote a `Serializable` aggregate via the std.json
-// protocol. The Rust JSON-writer trait is still shape-agnostic (`write<T>`),
-// so we mirror the Zig body 1:1 and let the writer impl decide how to emit
-// the aggregate. `Serializable` is a private layout-only carrier.
-// ──────────────────────────────────────────────────────────────────────────
-
-// Fields are the JSON-serialization payload (Zig std.json wrote each via
-// `@typeInfo` reflection). No `BindingJsonWriter` implementor exists yet, so
-// rustc correctly proves they are never *read*; they are the data contract for
-// when the writer lands, not dead code.
-#[expect(dead_code)]
-pub struct Serializable {
-    r#type: Tag,
-    object: &'static [u8],
-    value: B,
-    loc: crate::Loc,
-}
-
-impl Binding {
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
-    where
-        W: BindingJsonWriter,
-    {
-        writer.write(Serializable {
-            r#type: self.data.tag(),
-            object: b"binding",
-            value: self.data,
-            loc: self.loc,
-        })
-    }
-}
-
-/// Stand-in for Zig's `anytype` json writer used by `Binding::json_stringify`.
-/// Kept local (not `crate::JsonWriter`) because the crate-level trait is
-/// currently `&str`-only; this preserves the Zig call-shape until the JSON
-/// layer settles.
-pub trait BindingJsonWriter {
-    fn write(&mut self, value: Serializable) -> Result<(), bun_core::Error>;
-}
-
-// ported from: src/js_parser/ast/Binding.zig

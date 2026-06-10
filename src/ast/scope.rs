@@ -1,5 +1,5 @@
 use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
+use bun_collections::{StringHashMap, VecExt};
 
 use crate::StrictModeKind;
 use crate::base::Ref;
@@ -10,13 +10,11 @@ use crate::ts::TSNamespaceScope;
 /// Backed by `AstAlloc` so the table allocation *and* the per-key boxes land
 /// in the thread-local AST `mi_heap` and are reclaimed by the same
 /// `mi_heap_destroy` that frees the arena-allocated `Scope` holding the map.
-/// In Zig this was `bun.StringHashMapUnmanaged(Member)` whose backing array
-/// lived in the parser arena; the original Rust port placed both on the
-/// global heap, and since `Scope` itself sits in an arena slot whose `Drop`
-/// never runs, every member map leaked.
-pub type MemberHashMap = StringHashMap<Member, AstAlloc>;
+/// `Scope` itself sits in an arena slot whose `Drop` never runs, so a
+/// global-heap-backed map here would leak.
+pub(crate) type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
-// PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
+// `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
 // hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
 // longer derives `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.
@@ -27,12 +25,11 @@ pub struct Scope {
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
     // `unsafe { &*parent.as_ptr() }` at every walk site.
     pub parent: Option<StoreRef<Scope>>,
-    /// `AstVec` for the same reason as `members` above — Zig's
-    /// `ArrayListUnmanaged(*Scope)` was arena-backed. Elements are `StoreRef`
+    /// `AstVec` for the same reason as `members` above. Elements are `StoreRef`
     /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
-    /// `AstVec`: Zig `ArrayListUnmanaged(Ref)`, arena-backed.
+    /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -90,8 +87,6 @@ impl Default for Scope {
     }
 }
 
-pub type NestedScopeMap = ArrayHashMap<u32, Vec<StoreRef<Scope>>>;
-
 impl Scope {
     // Must agree with `StringHashMap`'s `BuildHasher` (`bun_wyhash::BuildHasher`,
     // i.e. `BuildHasherDefault<OneShotHasher>`) so the precomputed hash can be
@@ -113,16 +108,16 @@ impl Scope {
         name: &[u8],
         hash_value: u64,
     ) -> bun_collections::array_hash_map::StringHashMapGetOrPut<'_, Member> {
-        // PERF(port): `get_or_put_borrowed` doesn't accept a precomputed hash;
+        // PERF: `get_or_put_borrowed` doesn't accept a precomputed hash;
         // this path is once-per-declared-symbol (not per-scope-per-identifier),
         // so the redundant rehash is left as-is.
         let _ = hash_value;
         // SAFETY: `name` is always a slice into either the source-file contents
         // or the lexer string-table (the only producers of identifier text in
         // the parser). Both outlive the `AstAlloc` arena that owns this
-        // `Scope`, so storing the slice by reference (Zig's
-        // `StringHashMapUnmanaged` semantics) is sound — the map is freed by
-        // the same arena reset that would invalidate the source/string-table.
+        // `Scope`, so storing the slice by reference is sound — the map is
+        // freed by the same arena reset that would invalidate the
+        // source/string-table.
         // This avoids one `mi_heap_malloc` per declared identifier per scope,
         // which profiling showed as the parser's hottest slow-path allocation.
         unsafe { self.members.get_or_put_borrowed(name) }
@@ -270,7 +265,6 @@ pub struct Member {
 impl Member {
     #[inline]
     pub fn eql(a: Member, b: Member) -> bool {
-        // PERF(port): Zig used @call(bun.callmod_inline, Ref.eql, ...) — forced inline.
         a.ref_.eql(b.ref_) && a.loc.start == b.loc.start
     }
 }
@@ -302,13 +296,3 @@ pub enum Kind {
     FunctionBody,
     ClassStaticInit,
 }
-
-impl Kind {
-    // TODO(port): std.json.Stringify protocol — confirm Rust-side json writer trait.
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: writer.write(@tagName(self)) — std.json writer wraps strings in quotes.
-        write!(writer, "\"{}\"", <&'static str>::from(self))
-    }
-}
-
-// ported from: src/js_parser/ast/Scope.zig

@@ -36,8 +36,7 @@ pub struct Theme<'a> {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
-    // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
+    // LIFETIMES.tsv: BORROW_PARAM. Keys are URL bytes,
     // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
     /// Base directory used to resolve relative image `src` paths. When
@@ -78,7 +77,6 @@ impl ImageUrlCollector {
     }
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for ImageUrlCollector {
     fn enter_block(&mut self, _: BlockType, _: u32, _: u32) -> JsResult<()> {
         Ok(())
@@ -102,7 +100,8 @@ impl RendererImpl for ImageUrlCollector {
         // detail.href is a slice into the parser's reusable buffer, which
         // is freed when renderWithRenderer returns (p.deinit). Dupe it so
         // callers can safely read collector.urls after rendering finishes.
-        let owned = Box::<[u8]>::from(detail.href);
+        let mut scratch: Vec<u8> = Vec::new();
+        let owned = Box::<[u8]>::from(sanitize_source_text(detail.href, &mut scratch));
         self.urls.push(owned);
         Ok(())
     }
@@ -116,6 +115,11 @@ pub struct AnsiRenderer<'a> {
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
     block_stack: Vec<BlockContext>,
+    /// Number of Quote entries currently in block_stack. Kept in sync with
+    /// push/pop so per-line indentation doesn't rescan the whole stack.
+    quote_depth: u32,
+    /// Sum of `indent` over the non-Quote entries currently in block_stack.
+    list_indent_cols: u32,
     /// Currently open span styles (bit flags).
     span_flags: u32,
     /// Non-null when we're inside a link span; the href to emit in OSC 8.
@@ -213,6 +217,14 @@ const SPAN_DEL: u32 = 1 << 2;
 const SPAN_U: u32 = 1 << 3;
 const SPAN_CODE: u32 = 1 << 4;
 
+/// Upper bound on the visible indentation (blockquote bars + list indent)
+/// emitted at the start of each rendered line. Nesting deeper than this is
+/// unreadable on any terminal, and without a cap every line's prefix grows
+/// with the nesting depth — a document of pathologically nested lists or
+/// quotes (e.g. `- - - - …` repeated thousands of times) would otherwise
+/// produce output quadratic in the input size.
+const MAX_INDENT_COLS: u32 = 128;
+
 struct InlineStyle {
     flag: u32,
     on: &'static [u8],
@@ -257,8 +269,7 @@ impl OutputBuffer {
         if self.oom {
             return;
         }
-        // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator.
+        // Vec::extend aborts on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 
@@ -280,6 +291,8 @@ impl<'a> AnsiRenderer<'a> {
             src_text,
             theme,
             block_stack: Vec::new(),
+            quote_depth: 0,
+            list_indent_cols: 0,
             span_flags: 0,
             link_href: None,
             link_depth: 0,
@@ -327,7 +340,7 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Doc => {}
             BlockType::Quote => {
                 self.ensure_blank_line();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Quote,
                     indent: 2,
                     ..Default::default()
@@ -335,7 +348,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ul => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ul,
                     data,
                     indent: 2,
@@ -344,7 +357,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ol => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ol,
                     data,
                     indent: 3,
@@ -358,9 +371,9 @@ impl<'a> AnsiRenderer<'a> {
                     kind: BlockKind::Li,
                     ..Default::default()
                 };
-                // PORT NOTE: reshaped for borrowck — find_parent_list returns
-                // an index instead of `&mut BlockContext` so we can call
-                // self.write_styled() afterwards without an aliasing borrow.
+                // find_parent_list returns an index instead of
+                // `&mut BlockContext` so we can call self.write_styled()
+                // afterwards without an aliasing borrow.
                 let parent_list = self.find_parent_list();
                 let task_mark = types::task_mark_from_data(data);
                 if let Some(idx) = parent_list {
@@ -405,7 +418,7 @@ impl<'a> AnsiRenderer<'a> {
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
                 entry.indent = u32::try_from(visible_width(glyph)).expect("int cast");
-                self.block_stack.push(entry);
+                self.push_block(entry);
             }
             BlockType::Hr => {
                 self.ensure_blank_line();
@@ -503,7 +516,7 @@ impl<'a> AnsiRenderer<'a> {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
-                let _ = self.block_stack.pop();
+                self.pop_block();
                 self.ensure_newline();
             }
             BlockType::Hr => {}
@@ -577,9 +590,8 @@ impl<'a> AnsiRenderer<'a> {
                     if self.theme.colors && self.theme.hyperlinks {
                         if let Some(href) = &self.link_href {
                             // OSC 8 hyperlink start
-                            // PORT NOTE: reshaped for borrowck — clone the
-                            // bytes so write_raw_no_color(&mut self) doesn't
-                            // alias `&self.link_href`.
+                            // Clone the bytes so write_raw_no_color(&mut self)
+                            // doesn't alias `&self.link_href`.
                             let href = href.clone();
                             self.write_raw_no_color(b"\x1b]8;;");
                             self.write_raw_no_color(&href);
@@ -593,8 +605,16 @@ impl<'a> AnsiRenderer<'a> {
             SpanType::Img => {
                 self.image_depth += 1;
                 if self.image_depth == 1 {
-                    self.image_src = Some(Box::<[u8]>::from(detail.href));
-                    self.image_title = Some(Box::<[u8]>::from(detail.title));
+                    let mut src_scratch: Vec<u8> = Vec::new();
+                    self.image_src = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.href,
+                        &mut src_scratch,
+                    )));
+                    let mut title_scratch: Vec<u8> = Vec::new();
+                    self.image_title = Some(Box::<[u8]>::from(sanitize_source_text(
+                        detail.title,
+                        &mut title_scratch,
+                    )));
                     self.image_alt.clear();
                 }
             }
@@ -686,6 +706,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+        let mut sanitized: Vec<u8> = Vec::new();
+        let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
             TextType::NullChar => self.write_content(b"\xEF\xBF\xBD"),
             TextType::Br => self.write_content(b"\n"),
@@ -702,6 +724,8 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
+                let mut decoded_sanitized: Vec<u8> = Vec::new();
+                let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
             }
             // Inline code spans are atomic — don't let writeWrapped split
@@ -1137,19 +1161,46 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
+    /// Track a block push so indentation stays O(1) per line instead of
+    /// rescanning the whole block_stack.
+    fn push_block(&mut self, entry: BlockContext) {
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_add(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_add(entry.indent);
+            }
+        }
+        self.block_stack.push(entry);
+    }
+
+    fn pop_block(&mut self) {
+        let Some(entry) = self.block_stack.pop() else {
+            return;
+        };
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_sub(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_sub(entry.indent);
+            }
+        }
+    }
+
+    /// Quote bars and indent spaces to draw for the current block stack,
+    /// capped at MAX_INDENT_COLS visible columns total. writeIndent and
+    /// currentIndent must agree on these numbers so the wrap math matches
+    /// what was actually emitted.
+    fn indent_counts(&self) -> (u32, u32) {
+        let quote_bars = self.quote_depth.min(MAX_INDENT_COLS / 2);
+        let other_indent = self.list_indent_cols.min(MAX_INDENT_COLS - quote_bars * 2);
+        (quote_bars, other_indent)
+    }
+
     fn write_indent(&mut self) {
         // writeIndent is called at the start of every content line, so
         // this is the right place to clear the "blank line just emitted"
         // flag ensureBlankLine uses for dedup.
         self.blank_emitted = false;
-        let mut quote_bars: u32 = 0;
-        let mut other_indent: u32 = 0;
-        for entry in &self.block_stack {
-            match entry.kind {
-                BlockKind::Quote => quote_bars += 1,
-                _ => other_indent += entry.indent,
-            }
-        }
+        let (quote_bars, other_indent) = self.indent_counts();
         let bar: &[u8] = if self.theme.colors {
             "│ ".as_bytes()
         } else {
@@ -1179,15 +1230,8 @@ impl<'a> AnsiRenderer<'a> {
     }
 
     fn current_indent(&self) -> u32 {
-        let mut total: u32 = 0;
-        for entry in &self.block_stack {
-            total += if entry.kind == BlockKind::Quote {
-                2
-            } else {
-                entry.indent
-            };
-        }
-        total
+        let (quote_bars, other_indent) = self.indent_counts();
+        quote_bars * 2 + other_indent
     }
 
     fn update_col_from_text(&mut self, data: &[u8]) {
@@ -1214,12 +1258,7 @@ impl<'a> AnsiRenderer<'a> {
     /// current block_stack. Used by ensureBlankLine so the inter-block
     /// gap inside a blockquote keeps its visual border.
     fn write_quote_bars(&mut self) {
-        let mut quote_bars: u32 = 0;
-        for entry in &self.block_stack {
-            if entry.kind == BlockKind::Quote {
-                quote_bars += 1;
-            }
-        }
+        let (quote_bars, _) = self.indent_counts();
         if quote_bars == 0 {
             return;
         }
@@ -1281,9 +1320,8 @@ impl<'a> AnsiRenderer<'a> {
 
     /// Find the nearest enclosing ul/ol in the block stack (walking
     /// from innermost outward, skipping the current li at the top).
-    // PORT NOTE: reshaped for borrowck — returns an index into
-    // block_stack instead of `&mut BlockContext` so callers can call
-    // other &mut self methods between accesses.
+    // Returns an index into block_stack instead of `&mut BlockContext`
+    // so callers can call other &mut self methods between accesses.
     fn find_parent_list(&self) -> Option<usize> {
         let len = self.block_stack.len();
         if len == 0 {
@@ -1311,8 +1349,8 @@ impl<'a> AnsiRenderer<'a> {
         // inside a blockquote the bold+color writes reach heading_buf and
         // may realloc its backing array, dangling the `content` slice below.
         self.heading_level = 0;
-        // PORT NOTE: reshaped for borrowck — take ownership of heading_buf
-        // so write_indent(&mut self) doesn't alias `content`.
+        // Take ownership of heading_buf so write_indent(&mut self)
+        // doesn't alias `content`.
         let content = core::mem::take(&mut self.heading_buf);
         self.write_indent();
         if self.theme.colors {
@@ -1374,8 +1412,8 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     fn flush_code_block(&mut self) {
-        // PORT NOTE: reshaped for borrowck — take ownership of code_buf so
-        // self.write_indent() etc. don't alias it.
+        // Take ownership of code_buf so self.write_indent() etc.
+        // don't alias it.
         let src = core::mem::take(&mut self.code_buf);
         // Strip exactly one trailing newline (parser adds one).
         let body: &[u8] = if !src.is_empty() && src[src.len() - 1] == b'\n' {
@@ -1410,8 +1448,9 @@ impl<'a> AnsiRenderer<'a> {
             self.out.write(ansi_b::DIM);
         }
         self.write_indent();
+        let mut badge_scratch: Vec<u8> = Vec::new();
         let badge: &[u8] = if !self.code_lang.is_empty() {
-            self.code_lang
+            sanitize_source_text(self.code_lang, &mut badge_scratch)
         } else {
             b""
         };
@@ -1578,8 +1617,8 @@ impl<'a> AnsiRenderer<'a> {
         self.last_was_newline = true;
 
         let mut has_separated_header = false;
-        // PORT NOTE: reshaped for borrowck — take ownership of table_rows so
-        // self.write_row_cells(&mut self) doesn't alias it.
+        // Take ownership of table_rows so self.write_row_cells(&mut self)
+        // doesn't alias it.
         let rows = core::mem::take(&mut self.table_rows);
         for row in &rows {
             self.write_row_cells(row, &widths, &aligns);
@@ -1833,8 +1872,8 @@ impl<'a> AnsiRenderer<'a> {
         // Snapshot alt + link fields now — emitImage drops out of the
         // image context before writing, so image_alt / image_depth checks
         // in emitInline would otherwise still divert output.
-        // PORT NOTE: reshaped for borrowck — take ownership of buffered
-        // fields so &mut self methods below don't alias.
+        // Take ownership of the buffered fields so &mut self methods
+        // below don't alias.
         let alt = core::mem::take(&mut self.image_alt);
         let src = self.image_src.take();
         let title = self.image_title.take();
@@ -2301,6 +2340,66 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
 }
 
+fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
+    fn is_disallowed(c: u8) -> bool {
+        (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
+    }
+    fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
+        bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
+    }
+    fn needs_strip(bytes: &[u8], i: usize) -> bool {
+        is_disallowed(bytes[i]) || is_utf8_c1(bytes, i)
+    }
+    if !(0..bytes.len()).any(|i| needs_strip(bytes, i)) {
+        return bytes;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'[' {
+                i += 1;
+                while i < bytes.len() && (bytes[i] < 0x40 || bytes[i] > 0x7e) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else if i < bytes.len() && bytes[i] == b']' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if is_utf8_c1(bytes, i) {
+            i += 2;
+            continue;
+        }
+        if is_disallowed(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !needs_strip(bytes, i) {
+            i += 1;
+        }
+        scratch.extend_from_slice(&bytes[start..i]);
+    }
+    scratch
+}
+
 fn is_js_lang(lang: &[u8]) -> bool {
     const NAMES: [&[u8]; 10] = [
         b"js",
@@ -2347,7 +2446,8 @@ fn resolve_href(detail: &SpanDetail) -> Result<Box<[u8]>, bun_alloc::AllocError>
     if detail.autolink_www {
         buf.extend_from_slice(b"http://");
     }
-    buf.extend_from_slice(detail.href);
+    let mut scratch: Vec<u8> = Vec::new();
+    buf.extend_from_slice(sanitize_source_text(detail.href, &mut scratch));
     Ok(buf.into_boxed_slice())
 }
 
@@ -2430,7 +2530,6 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
     #[cfg(not(unix))]
     {
         return false;
@@ -2477,7 +2576,6 @@ fn probe_kitty_graphics() -> bool {
             events: bun_sys::posix::POLL_IN,
             revents: 0,
         }];
-        // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2593,7 +2691,6 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-// PORT NOTE: Zig manual VTable collapsed into RendererImpl trait.
 impl RendererImpl for AnsiRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         AnsiRenderer::enter_block(self, block_type, data, flags);
@@ -2637,5 +2734,3 @@ pub fn render_to_ansi<'a>(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
 }
-
-// ported from: src/md/ansi_renderer.zig

@@ -7,9 +7,8 @@ use core::ptr::NonNull;
 use super::codecs;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to libwebp_sys (or runtime_sys); extern fns declared inline here for now.
 unsafe extern "C" {
-    pub fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
+    pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
     fn WebPDecodeRGBA(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> *mut u8;
     fn WebPEncodeRGBA(
         rgba: *const u8,
@@ -26,7 +25,7 @@ unsafe extern "C" {
         stride: c_int,
         out: *mut *mut u8,
     ) -> usize;
-    pub fn WebPFree(ptr: *mut c_void);
+    pub(crate) fn WebPFree(ptr: *mut c_void);
 }
 
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
@@ -84,13 +83,12 @@ struct WebPChunkIterator {
 }
 
 bun_opaque::opaque_ffi! {
-    pub struct WebPDemuxer;
-    pub struct WebPMux;
+    pub(crate) struct WebPDemuxer;
+    pub(crate) struct WebPMux;
 }
 
 // `WebPDemux()` and `WebPMuxNew()` are `static inline` in the headers and
 // just forward to these version-checked entry points with the ABI constant.
-// TODO(port): move to libwebp_sys
 unsafe extern "C" {
     fn WebPDemuxInternal(
         data: *const WebPData,
@@ -225,7 +223,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     })
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,
@@ -338,5 +336,3 @@ pub fn encode(
         free: encoded_wrap_free!(WebPFree),
     })
 }
-
-// ported from: src/runtime/image/codec_webp.zig

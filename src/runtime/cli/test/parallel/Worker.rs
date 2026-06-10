@@ -5,13 +5,6 @@
 
 use core::ffi::c_void;
 
-use bun_core::{self, Output};
-use bun_io as r#async;
-use bun_io;
-use bun_jsc as jsc;
-use bun_sys;
-// `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
-// `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(unix)]
@@ -19,6 +12,11 @@ use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use bun_core::{self, Output};
+use bun_io as r#async;
+use bun_io;
+use bun_jsc as jsc;
+use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -26,16 +24,23 @@ use super::file_range::FileRange;
 use super::frame;
 
 pub struct Worker {
-    // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
-    // mutates through it (live_workers, onWorkerExit, frame). Should use either
-    // *mut or interior mutability on Coordinator.
-    // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
-    // erased to `'static` here because this is a raw backref pointer that is
-    // only ever dereferenced unsafely (constructor casts via `as *const _`).
+    // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
+    // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
+    // go through `cast_mut()`. The pointer is created from `&raw mut coord` in
+    // runner.rs, so it carries write provenance (preserved across const casts);
+    // that removes the read-only-provenance layer of UB but does NOT make the
+    // pattern fully sound: runner.rs takes a fresh `&mut coord` to call
+    // `coord.drive()` after the backref is stored, and every backref write
+    // happens during drive(), so the aliasing remains UB-adjacent under
+    // Stacked/Tree Borrows. The full fix is a `*mut` backref (or interior
+    // mutability) threaded through runner.rs/Coordinator.rs together.
+    // `Coordinator<'a>` carries borrowed slices; the lifetime is erased to
+    // `'static` here because this is a raw backref pointer that is only ever
+    // dereferenced unsafely.
     pub coord: *const Coordinator<'static>,
     pub idx: u32,
     // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
-    // `heap::alloc`ed `*mut Process`. Matches Zig `?*bun.spawn.Process`.
+    // `heap::alloc`ed `*mut Process`.
     pub process: Option<*mut Process>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
@@ -43,9 +48,6 @@ pub struct Worker {
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
-    // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
-    // field name for `container_of` recovery. Rust side likely uses
-    // `offset_of!(Worker, ipc)` or an explicit owner-ptr.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
     pub err: WorkerPipe,
@@ -59,7 +61,7 @@ pub struct Worker {
     /// range has the most remaining — the end is furthest from that worker's
     /// hot region.
     pub range: FileRange,
-    /// `std.time.milliTimestamp()` at the most recent dispatch; drives lazy
+    /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
     pub dispatched_at: i64,
     /// Worker stdout+stderr since the last `test_done`. Flushed atomically
@@ -73,7 +75,6 @@ pub struct Worker {
 }
 
 impl Worker {
-    // TODO(port): narrow error set
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
@@ -109,8 +110,10 @@ impl Worker {
             // Reset to fresh state after deinit so reapWorker's `!respawned`
             // cleanup (which can't tell whether start() ran) doesn't deinit on
             // undefined ArrayList memory.
-            // PORT NOTE: assignment drops the old value (≡ Zig deinit + reinit).
-            let self_ptr: *const Worker = std::ptr::from_ref::<Worker>(this);
+            // Assignment drops the old value. Take the
+            // backref from `&mut` so the stored `*const` keeps write provenance
+            // (on_read_chunk mutates `captured` through it).
+            let self_ptr: *const Worker = std::ptr::from_mut::<Worker>(this).cast_const();
             this.ipc = Channel::default();
             this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
             this.err = WorkerPipe::new(PipeRole::Stderr, self_ptr);
@@ -120,7 +123,7 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
@@ -140,8 +143,6 @@ impl Worker {
                 linux_pdeathsig: None,
                 ..Default::default()
             };
-            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
-            // anyerror, inner map for the bun_sys::Result.
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.
             let mut spawned = unsafe {
@@ -157,7 +158,6 @@ impl Worker {
             })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
-            // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
                 bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
@@ -197,7 +197,6 @@ impl Worker {
             use bun_sys::windows::libuv as uv;
 
             let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-            // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
             // The guard owns the raw Box ptr; `close_and_destroy` handles both
             // never-initialized (loop_ null → free directly) and initialized
             // (uv_close + free in callback). Disarmed only after `adopt_pipe`
@@ -209,7 +208,7 @@ impl Worker {
                 unsafe { uv::Pipe::close_and_destroy(p) };
             });
 
-            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
@@ -223,15 +222,12 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
-                    loop_: unsafe { jsc::EventLoopHandle::init(coord.vm.event_loop().cast()) },
+                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
                     ..Default::default()
                 },
                 stream: true,
                 ..Default::default()
             };
-            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
-            // anyerror, inner map for the bun_sys::Result.
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.
             let mut spawned = unsafe {
@@ -245,11 +241,9 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
             })?;
-            // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
-            // backing (items were raw `*uv.Pipe` with no destructor). The Rust
-            // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
+            // `WindowsStdioResult::Buffer` holds `Box<uv::Pipe>`, and
             // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
-            // the Vec now holds a second `Box` to the SAME heap address that
+            // `extra_pipes` holds a second `Box` to the SAME heap address that
             // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
             // each Box back to a raw ptr so the Vec drop is inert and
             // `ipc_pipe_guard` remains the sole owner across the
@@ -313,7 +307,9 @@ impl Worker {
             }
         }
         this.alive = true;
-        // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
+        // SAFETY: see coord_ptr note above; the backref carries write
+        // provenance, but see the `coord` field doc for the residual
+        // &mut-Coordinator-during-drive aliasing caveat.
         unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
@@ -346,7 +342,7 @@ impl Worker {
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
-        // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
+        // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
@@ -369,19 +365,18 @@ impl Worker {
     }
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
-        // SAFETY: coord backref valid; frame mutation — see field TODO.
+        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
         f.u32_(file_idx);
         f.str(file);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
-        // TODO(port): std.time.milliTimestamp() → confirm bun_core helper name.
         self.dispatched_at = bun_core::time::milli_timestamp();
     }
 
     pub fn shutdown(&mut self) {
-        // SAFETY: coord backref valid; frame mutation — see field TODO.
+        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
@@ -392,7 +387,7 @@ impl Worker {
 
     /// `Channel` owner callback: a decoded frame arrived.
     pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
@@ -408,7 +403,7 @@ impl Worker {
                 let _ = unsafe { (*p).kill(9) };
             }
         }
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
@@ -423,7 +418,7 @@ bun_spawn::link_impl_ProcessExit! {
 bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
@@ -436,7 +431,7 @@ impl ChannelOwner for Worker {
                 let _ = unsafe { (*p).kill(9) };
             }
         }
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
@@ -451,9 +446,6 @@ pub enum PipeRole {
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
 pub struct WorkerPipe {
-    // TODO(port): Zig default `BufferedReader.init(WorkerPipe)` passes the
-    // owner type for callback vtable wiring. Rust side likely a generic param
-    // or trait impl.
     pub reader: bun_io::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,
@@ -473,8 +465,14 @@ impl WorkerPipe {
 
     pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
-        // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
-        // may need *mut or Cell/UnsafeCell on Worker.captured.
+        // Mutating `captured` through cast_mut requires write provenance on
+        // the stored pointer; all backref creation sites (the runner.rs
+        // coord_ptr, the Worker.rs start() errdefer guard, and the
+        // Coordinator.rs spawn_worker/respawn sites via
+        // `std::ptr::from_mut(..).cast_const()`) now establish it. The
+        // residual `&mut Coordinator`-during-drive aliasing caveat described
+        // in the `Worker::coord` field doc applies to this backref too. No
+        // other reference to `captured` is live during the read callback.
         unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
@@ -484,14 +482,6 @@ impl WorkerPipe {
     pub fn on_reader_error(&mut self, _: bun_sys::Error) {
         self.done = true;
     }
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.event_loop() }
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.uv_loop() }
-    }
 }
 
 impl Default for WorkerPipe {
@@ -500,8 +490,7 @@ impl Default for WorkerPipe {
     }
 }
 
-// `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+// `bun_io::BufferedReader` vtable parent.
 // Callbacks touch only fields disjoint from `reader` (worker backref / done
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
@@ -517,9 +506,6 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for WorkerPipe {
     fn drop(&mut self) {
-        // Body intentionally empty: Zig `deinit` only calls `reader.deinit()`,
-        // which Rust handles via `BufferedReader: Drop`.
+        // Body intentionally empty: `BufferedReader: Drop` handles cleanup.
     }
 }
-
-// ported from: src/cli/test/parallel/Worker.zig

@@ -3106,7 +3106,7 @@ pub fn NewParser_(
                 0 => {},
                 1 => {
                     if (decls[0].value) |value| {
-                        if (is_var) {
+                        if (is_var and decls[0].binding.data == .b_identifier) {
 
                             // This is a weird special case. Initializers are allowed in "var"
                             // statements with identifier bindings.

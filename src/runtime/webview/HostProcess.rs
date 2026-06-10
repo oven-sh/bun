@@ -34,8 +34,8 @@ use {
 declare_scope!(WebViewHost, hidden);
 
 pub struct HostProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw to
-    // match Zig `*bun.spawn.Process`.
+    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
+    // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
 }
 
@@ -51,7 +51,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebViewHost__kill() {
+pub(crate) extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE
@@ -73,7 +73,7 @@ pub extern "C" fn Bun__WebViewHost__kill() {
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebViewHost__ensure(
+pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -95,7 +95,7 @@ pub extern "C" fn Bun__WebViewHost__ensure(
         // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
         // `*mut` because it threads through C ABI / event-loop dispatch.
         let fd = match spawn(
-            global.bun_vm() as *const _ as *mut _,
+            std::ptr::from_ref(global.bun_vm()).cast_mut(),
             stdout_inherit,
             stderr_inherit,
         ) {
@@ -137,8 +137,6 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     }
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
-
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
         // again after dup2 (socketpair flags are per-fd, not per-pair).
         let fds: [Fd; 2] = bun_sys::socketpair(
@@ -147,7 +145,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             0,
             true, // .nonblocking
         )?;
-        // errdefer fds[0].close() — rolls back on any error below.
+        // fd0_guard rolls back fds[0] on any error below.
         let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());
         // fds[1] is closed by spawnProcess after dup2 into the child.
 
@@ -155,7 +153,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
 
         // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
         // signal; no argv changes so `ps` shows a normal `bun` invocation.
-        // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.zig.
+        // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
         // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
         // `transpiler.env` is set during VM init and lives for VM lifetime.
         let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
@@ -164,9 +162,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // var, then re-terminate.
         let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
         let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
-        // PERF(port): was appendSliceAssumeCapacity.
         env.extend(base_entries.iter().copied());
-        // PERF(port): was appendAssumeCapacity.
         env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
         env.push(ptr::null());
 
@@ -221,13 +217,12 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             }
             Err(e) => {
                 scoped_log!(WebViewHost, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
-                // then reclaim the Box (Zig: `bun.destroy(self)`).
+                // SAFETY: drop the strong ref we hold, then reclaim the Box.
                 unsafe {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
                 }
-                // fd0_guard (errdefer at the top) closes fds[0]; don't double-close here.
+                // fd0_guard (declared at the top) closes fds[0]; don't double-close here.
                 return Err(bun_core::err!("WatchFailed"));
             }
         }
@@ -245,5 +240,3 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
 unsafe extern "C" {
     fn Bun__WebViewHost__childDied(signo: i32);
 }
-
-// ported from: src/runtime/webview/HostProcess.zig

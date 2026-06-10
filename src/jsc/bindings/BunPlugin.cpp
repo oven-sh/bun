@@ -160,7 +160,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     if (moduleIdValue.isString()) {
         auto idIdent = JSC::Identifier::fromString(vm, asString(moduleIdValue)->value(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
-        global->moduleLoader()->removeEntry(idIdent);
+        auto* moduleLoader = global->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so the removal can't race it.
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(idIdent);
     }
 
     return JSValue::encode(callframe->thisValue());
@@ -696,7 +700,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (removeFromESM) {
-        globalObject->moduleLoader()->removeEntry(specifierIdent);
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(specifierIdent);
     }
 
     if (removeFromCJS) {

@@ -67,3 +67,23 @@ test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", 
   const input = 'k = """a\r\nb\\tc"""';
   expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
 });
+
+// https://github.com/oven-sh/bun/issues/31252
+// `Lexer::expect` in the TOML lexer logs a mismatch via `add_range_error` and
+// then falls through to `next()` for error recovery, so the parser returned
+// `Ok` with a partial AST for inputs like `[1 2]` and `[1 2 3]`. The JS entry
+// point only inspected the `Result`, so the logged diagnostic was discarded
+// and bogus values like `{"a":[1]}` / `{"a":[1,3]}` leaked out. The entry
+// point now also checks `log.has_errors()` on the Ok path.
+test("Bun.TOML.parse rejects array values without comma separators (#31252)", () => {
+  expect(() => Bun.TOML.parse("a = [1 2]")).toThrow();
+  expect(() => Bun.TOML.parse("a = [1 2 3]")).toThrow();
+  expect(() => Bun.TOML.parse("a = [1, 2 3]")).toThrow();
+  expect(() => Bun.TOML.parse('a = ["x" "y"]')).toThrow();
+
+  // Valid comma-separated arrays still parse.
+  expect(Bun.TOML.parse("a = [1, 2]")).toEqual({ a: [1, 2] });
+  expect(Bun.TOML.parse("a = [1, 2, 3]")).toEqual({ a: [1, 2, 3] });
+  // Trailing comma is legal TOML.
+  expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
+});

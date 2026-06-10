@@ -1,10 +1,8 @@
 use crate::js_lexer::T;
 use crate::p::P;
 
-// Zig: `p: anytype` for the generic parser instance. Lowered NewParser_ →
-// `P<'a, const TS, const SCAN>` and converted to `impl P` methods (an unbounded
-// `<P>` cannot access fields). The `Metadata::*` methods that need
-// `p.load_name_from_ref` take a closure to avoid the impl-on-foreign-type problem.
+// The `Metadata::*` methods that need `p.load_name_from_ref` take a closure to
+// avoid the impl-on-foreign-type problem.
 
 // This function is taken from the official TypeScript compiler source code:
 // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
@@ -43,11 +41,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (can_follow_type_arguments_in_expression)
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    // TODO(port): narrow error set — only `lexer.next()` is fallible here.
     pub fn is_ts_arrow_fn_jsx(&mut self) -> Result<bool, bun_core::Error> {
         let p = self;
-        // PORT NOTE: Zig `const old = p.lexer` (value copy). Rust Lexer holds `&mut Log`
-        // so cannot Clone; use the LexerSnapshot POD via `snapshot()`/`restore()`.
+        // Lexer holds `&mut Log` so it cannot Clone; use the LexerSnapshot POD
+        // via `snapshot()`/`restore()`.
         let old_lexer = p.lexer.snapshot();
 
         p.lexer.next()?;
@@ -143,7 +140,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     fn look_ahead_next_token_is_open_paren_or_less_than_or_dot(&mut self) -> bool {
         let p = self;
-        // PORT NOTE: Zig value-copied the Lexer; use snapshot()/restore() (see is_ts_arrow_fn_jsx).
         let old_lexer = p.lexer.snapshot();
         let old_log_disabled = p.lexer.is_log_disabled;
         p.lexer.is_log_disabled = true;
@@ -152,8 +148,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
         let result = matches!(p.lexer.token, T::TOpenParen | T::TLessThan | T::TDot);
 
-        // PORT NOTE: Zig used `defer` for restore; reshaped to linear since there is
-        // no early return between the defer and end of scope.
         p.lexer.restore(&old_lexer);
         p.lexer.is_log_disabled = old_log_disabled;
 
@@ -162,7 +156,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
-    // PORT NOTE: renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
+    // renamed `ts_is_identifier` to avoid clash with lexer/P helpers of the same name.
     fn ts_is_identifier(&self) -> bool {
         use crate::parser::AwaitOrYield::AllowIdent;
         let p = self;
@@ -231,7 +225,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 } // end impl P (predicate fns)
 
 pub mod identifier {
-    pub enum StmtIdentifier {
+    #[derive(Clone, Copy)]
+    pub(crate) enum StmtIdentifier {
         SType,
 
         SNamespace,
@@ -245,122 +240,49 @@ pub mod identifier {
         SDeclare,
     }
 
-    pub fn for_str(str: &[u8]) -> Option<StmtIdentifier> {
-        match str.len() {
-            // "type".len
-            4 => {
-                if str == b"type" {
-                    Some(StmtIdentifier::SType)
-                } else {
-                    None
-                }
-            }
-            // "interface".len == "namespace".len
-            9 => {
-                if str == b"interface" {
-                    Some(StmtIdentifier::SInterface)
-                } else if str == b"namespace" {
-                    Some(StmtIdentifier::SNamespace)
-                } else {
-                    None
-                }
-            }
-            // "abstract".len
-            8 => {
-                if str == b"abstract" {
-                    Some(StmtIdentifier::SAbstract)
-                } else {
-                    None
-                }
-            }
-            // "declare".len
-            7 => {
-                if str == b"declare" {
-                    Some(StmtIdentifier::SDeclare)
-                } else {
-                    None
-                }
-            }
-            // "module".len
-            6 => {
-                if str == b"module" {
-                    Some(StmtIdentifier::SModule)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+    bun_core::comptime_string_map! {
+        static STMT_IDENTIFIER_MAP: StmtIdentifier = {
+            b"type" => StmtIdentifier::SType,
+            b"namespace" => StmtIdentifier::SNamespace,
+            b"abstract" => StmtIdentifier::SAbstract,
+            b"module" => StmtIdentifier::SModule,
+            b"interface" => StmtIdentifier::SInterface,
+            b"declare" => StmtIdentifier::SDeclare,
+        };
     }
 
-    // PERF(port): was `phf::Map<&[u8], Kind>`. phf hashes the full identifier
-    // (SipHash) on every TIdentifier in a TS type position — including the
-    // overwhelmingly-common miss case (a user-defined type name). With only
-    // 16 entries spanning lengths 3..=9, a length gate rejects almost every
-    // miss on a single usize compare, and hits resolve in ≤2 slice compares.
-    // Length 6 is the only cluster (6 entries) so it gets a first-byte
-    // sub-dispatch. Mirrors the `clap::find_param` pattern (12577e958d71).
+    pub(crate) fn for_str(str: &[u8]) -> Option<StmtIdentifier> {
+        STMT_IDENTIFIER_MAP.get(str).copied()
+    }
+
+    // PERF: hot path — probed for every TIdentifier in a TS type position,
+    // where the overwhelmingly-common case is a miss (a user-defined type
+    // name). The comptime_string_map lookup rejects most misses on the
+    // length dispatch alone and never hashes.
+    bun_core::comptime_string_map! {
+        static KIND_MAP: Kind = {
+            b"any" => Kind::PrimitiveAny,
+            b"keyof" => Kind::PrefixKeyof,
+            b"never" => Kind::PrimitiveNever,
+            b"infer" => Kind::Infer,
+            b"unique" => Kind::Unique,
+            b"object" => Kind::PrimitiveObject,
+            b"number" => Kind::PrimitiveNumber,
+            b"bigint" => Kind::PrimitiveBigint,
+            b"string" => Kind::PrimitiveString,
+            b"symbol" => Kind::PrimitiveSymbol,
+            b"unknown" => Kind::PrimitiveUnknown,
+            b"boolean" => Kind::PrimitiveBoolean,
+            b"asserts" => Kind::Asserts,
+            b"abstract" => Kind::Abstract,
+            b"readonly" => Kind::PrefixReadonly,
+            b"undefined" => Kind::PrimitiveUndefined,
+        };
+    }
+
     #[inline]
-    pub fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
-        match ident.len() {
-            3 => {
-                if ident == b"any" {
-                    return Some(Kind::PrimitiveAny);
-                }
-            }
-            5 => {
-                if ident == b"keyof" {
-                    return Some(Kind::PrefixKeyof);
-                }
-                if ident == b"never" {
-                    return Some(Kind::PrimitiveNever);
-                }
-                if ident == b"infer" {
-                    return Some(Kind::Infer);
-                }
-            }
-            6 => match ident[0] {
-                b'u' if ident == b"unique" => return Some(Kind::Unique),
-                b'o' if ident == b"object" => return Some(Kind::PrimitiveObject),
-                b'n' if ident == b"number" => return Some(Kind::PrimitiveNumber),
-                b'b' if ident == b"bigint" => return Some(Kind::PrimitiveBigint),
-                b's' => {
-                    if ident == b"string" {
-                        return Some(Kind::PrimitiveString);
-                    }
-                    if ident == b"symbol" {
-                        return Some(Kind::PrimitiveSymbol);
-                    }
-                }
-                _ => {}
-            },
-            7 => {
-                if ident == b"unknown" {
-                    return Some(Kind::PrimitiveUnknown);
-                }
-                if ident == b"boolean" {
-                    return Some(Kind::PrimitiveBoolean);
-                }
-                if ident == b"asserts" {
-                    return Some(Kind::Asserts);
-                }
-            }
-            8 => {
-                if ident == b"abstract" {
-                    return Some(Kind::Abstract);
-                }
-                if ident == b"readonly" {
-                    return Some(Kind::PrefixReadonly);
-                }
-            }
-            9 => {
-                if ident == b"undefined" {
-                    return Some(Kind::PrimitiveUndefined);
-                }
-            }
-            _ => {}
-        }
-        None
+    pub(crate) fn kind_for_identifier(ident: &[u8]) -> Option<Kind> {
+        KIND_MAP.get(ident).copied()
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -393,11 +315,7 @@ pub enum SkipTypeOptions {
     DisallowConditionalTypes,
 }
 
-// PORT NOTE: Zig nested `Bitset` and `empty` inside `SkipTypeOptions`. Rust
-// inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
+// Inherent associated types (`impl Foo { type Bar = ...; }`) are unstable
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
-pub type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
-pub const SKIP_TYPE_OPTIONS_EMPTY: SkipTypeOptionsBitset = enumset::EnumSet::empty();
-
-// ported from: src/js_parser/ast/TypeScript.zig
+pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;

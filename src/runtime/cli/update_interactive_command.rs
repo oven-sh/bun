@@ -23,7 +23,7 @@ use bun_install::{
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
 use bun_resolver::fs::FileSystem;
-// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
+// Layering: `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
 // types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
 // logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
 // helpers below must operate on that type. The earlier draft imported
@@ -37,14 +37,14 @@ use bun_semver::{self as semver, SlicedString};
 
 use crate::Command;
 
-pub struct TerminalHyperlink<'a> {
+pub(crate) struct TerminalHyperlink<'a> {
     link: &'a [u8],
     text: &'a [u8],
     enabled: bool,
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -71,7 +71,7 @@ impl fmt::Display for TerminalHyperlink<'_> {
     }
 }
 
-pub struct UpdateInteractiveCommand;
+pub(crate) struct UpdateInteractiveCommand;
 
 struct OutdatedPackage {
     name: Box<[u8]>,
@@ -86,9 +86,7 @@ struct OutdatedPackage {
     /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
     /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
     ///
-    /// PORT NOTE: Zig stores `*PackageManager` here and reads
-    /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
-    /// time. In Rust the caller's exclusive `&mut PackageManager` in
+    /// The caller's exclusive `&mut PackageManager` in
     /// `update_interactive` is live across the prompt loop, so any
     /// `&PackageManager` derived from a stored back-pointer would alias an
     /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
@@ -112,8 +110,9 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub struct CatalogUpdateRequest {
-    // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
+pub(crate) struct CatalogUpdateRequest {
+    // Owned copies keep the type lifetime-free (a few small allocations in
+    // an interactive UI).
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -173,9 +172,8 @@ impl UpdateInteractiveCommand {
     }
 
     // Helper to update a catalog entry at a specific path in the package.json AST
-    // PORT NOTE: Zig threads `*PackageManager` only for `manager.allocator`;
-    // the Rust port has no per-manager allocator, so the parameter is dropped.
-    // This also avoids overlapping `&mut PackageManager` with the live
+    // No `*PackageManager` parameter: there is no per-manager allocator,
+    // and dropping it avoids overlapping `&mut PackageManager` with the live
     // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
     // call sites (which the previous draft laundered via raw pointers — UB
     // under Stacked Borrows).
@@ -194,7 +192,7 @@ impl UpdateInteractiveCommand {
         buffer_writer.append_newline = preserve_trailing_newline;
         let mut package_json_writer = BufferPrinter::init(buffer_writer);
 
-        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_ast::Expr`;
+        // Layering: `MapEntry.root` is the T2 `bun_ast::Expr`;
         // `js_printer::print_json` consumes the T4 `bun_ast::Expr`. Lift via
         // the existing `From<T2> for T4` deep-rebuild (same as
         // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
@@ -217,8 +215,7 @@ impl UpdateInteractiveCommand {
             Box::from(package_json_writer.ctx.written_without_trailing_zero());
 
         // Write the updated package.json
-        // PORT NOTE: Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
-        // Rust port routes through `bun_sys::File::write_file` (cwd-relative
+        // Routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
@@ -235,7 +232,7 @@ impl UpdateInteractiveCommand {
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
         //
-        // PORT NOTE: cached `root` AST slices still borrow the *old*
+        // Cached `root` AST slices still borrow the *old*
         // `source.contents`; stash it instead of `mem::forget`-ing so it's
         // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
@@ -246,11 +243,11 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::prettyln(format_args!(
+    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+        bun_core::prettyln!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
-        ));
+        );
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
@@ -306,7 +303,7 @@ impl UpdateInteractiveCommand {
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json
-            // PORT NOTE: reshaped for borrowck — `log_mut()` returns a borrow
+            // Reshaped for borrowck — `log_mut()` returns a borrow
             // decoupled from `&self`, so it can overlap the disjoint
             // `workspace_package_json_cache` field borrow below.
             let log = manager.log_mut();
@@ -365,10 +362,8 @@ impl UpdateInteractiveCommand {
                     preserve_version_prefix(original_version, &update.target_version)?;
 
                 // Update the version using hash map put
-                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)` —
-                // the `.clone(manager.allocator)` re-allocates the `E.String`
-                // *node* outside the resettable Store. `Expr::init` would put
-                // it in the Store, which `install_with_manager` resets via
+                // `Expr::init` would put the `E.String` *node*
+                // in the Store, which `install_with_manager` resets via
                 // `initialize_store()` before re-reading this cached `root`.
                 // Allocate into the entry's own `json_arena` instead so the
                 // node lives as long as the cached AST. The string *bytes* go
@@ -479,7 +474,7 @@ impl UpdateInteractiveCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — capture `log_level` / `ctx.log`
+        // Reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
@@ -523,9 +518,8 @@ impl UpdateInteractiveCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). `load_lockfile_from_cwd` populates
-                // `manager.lockfile` (Box) in place, so no reassignment.
+                // `load_lockfile_from_cwd` populates `manager.lockfile` (Box)
+                // in place, so no reassignment is needed.
             }
         }
 
@@ -551,12 +545,12 @@ impl UpdateInteractiveCommand {
 
         // Get outdated packages
         let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
-        // PORT NOTE: `defer { allocator.free(...) }` is implicit via Drop on
+        // `defer { allocator.free(...) }` is implicit via Drop on
         // `Vec<OutdatedPackage>` (Box<[u8]> fields).
 
         if outdated_packages.is_empty() {
             // No packages need updating - just exit silently
-            Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
+            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(());
         }
 
@@ -643,18 +637,14 @@ impl UpdateInteractiveCommand {
         let has_catalog_updates = !catalog_updates.is_empty();
 
         if !has_package_updates && !has_catalog_updates {
-            Output::prettyln(format_args!(
-                "<r><yellow>!</r> No packages selected for update"
-            ));
+            bun_core::prettyln!("<r><yellow>!</r> No packages selected for update");
             return Ok(());
         }
 
         // Actually update the selected packages
         if has_package_updates || has_catalog_updates {
             if manager.options.dry_run {
-                Output::prettyln(format_args!(
-                    "\n<r><yellow>Dry run mode: showing what would be updated<r>"
-                ));
+                bun_core::prettyln!("\n<r><yellow>Dry run mode: showing what would be updated<r>");
 
                 // In dry-run mode, just show what would be updated without modifying files
                 for update in &package_updates {
@@ -663,31 +653,29 @@ impl UpdateInteractiveCommand {
                     } else {
                         b"root"
                     };
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "→ Would update {} to {} in {} ({})",
                         BStr::new(&update.name),
                         BStr::new(&update.target_version),
                         BStr::new(workspace_display),
                         BStr::new(&update.dep_type)
-                    ));
+                    );
                 }
 
                 if has_catalog_updates {
                     let mut it = catalog_updates.iter();
                     while let Some((catalog_key, catalog_update)) = it.next() {
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             "→ Would update catalog {} to {}",
                             BStr::new(catalog_key),
                             BStr::new(&catalog_update.version)
-                        ));
+                        );
                     }
                 }
 
-                Output::prettyln(format_args!(
-                    "\n<r><yellow>Dry run complete - no changes made<r>"
-                ));
+                bun_core::prettyln!("\n<r><yellow>Dry run complete - no changes made<r>");
             } else {
-                Output::prettyln(format_args!("\n<r><cyan>Installing updates...<r>"));
+                bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
                 Output::flush();
 
                 // Update catalog definitions first if needed
@@ -708,9 +696,8 @@ impl UpdateInteractiveCommand {
                 // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
                 // `PackageManager::init` (single-threaded CLI startup).
                 let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
-                // the Rust port of `install_with_manager` takes the original cwd
-                // path slice instead. Snapshot before the `&mut manager` borrow.
+                // `install_with_manager` takes the original cwd path slice.
+                // Snapshot before the `&mut manager` borrow.
                 let root_dir_path: &'static [u8] = manager.root_dir.dir;
                 install_with_manager::install_with_manager(
                     manager,
@@ -854,7 +841,7 @@ impl UpdateInteractiveCommand {
         }
 
         // Add grouped catalog dependencies
-        // PORT NOTE: `StringHashMap` is a Deref newtype over `std::HashMap` with no
+        // `StringHashMap` is a Deref newtype over `std::HashMap` with no
         // owning `IntoIterator`; `.drain()` (via `DerefMut`) yields owned `(K, V)`.
         let mut iter = catalog_map.drain();
         while let Some((_k, catalog_packages)) = iter.next() {
@@ -866,8 +853,8 @@ impl UpdateInteractiveCommand {
                 // Build combined workspace name
                 let mut workspace_names: Vec<u8> = Vec::new();
 
-                // PORT NOTE: Zig checks `if (catalog_packages.len > 0)` again here which is always
-                // true; preserve behavior of the true branch.
+                // `catalog_packages.len > 0` always holds here; this is the
+                // unconditional true branch of that check.
                 if let Some(catalog_name) = &first.catalog_name {
                     workspace_names.extend_from_slice(b"catalog:");
                     workspace_names.extend_from_slice(catalog_name);
@@ -901,9 +888,8 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
-        // Hoist the four scalars that path reads into a by-value
+        // Reshaped for borrowck —
+        // hoist the four scalars the manifest-lookup path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
         // (`&mut manager.manifests` against `&manager.lockfile` /
         // `&manager.options`). The returned `OutdatedPackage`s do *not*
@@ -950,8 +936,8 @@ impl UpdateInteractiveCommand {
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 // Snapshot for `OutdatedPackage.uses_default_registry` (see
-                // field PORT NOTE) — Zig defers this to render time via
-                // `pkg.manager`, which we cannot soundly alias.
+                // field comment) — cannot be deferred to render time, since a
+                // stored manager back-pointer cannot be soundly aliased.
                 let uses_default_registry = global_uses_default_registry
                     && manager.options.scope_for_package_name(name_slice).url_hash
                         == default_url_hash;
@@ -1183,18 +1169,8 @@ impl UpdateInteractiveCommand {
         // Try to get terminal size
         #[cfg(unix)]
         {
-            // TODO(port): replace std.posix.system.ioctl with bun_sys
-            // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
-            let mut size: bun_core::Winsize = bun_core::ffi::zeroed();
-            // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
-            if unsafe {
-                libc::ioctl(
-                    libc::STDOUT_FILENO,
-                    libc::TIOCGWINSZ,
-                    (&raw mut size).cast::<libc::c_void>(),
-                )
-            } == 0
-            {
+            // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
+            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
                 // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
                 let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
                 return TerminalSize {
@@ -1269,7 +1245,7 @@ impl UpdateInteractiveCommand {
         packages: &mut [OutdatedPackage],
     ) -> Result<Box<[bool]>, bun_core::Error> {
         if packages.is_empty() {
-            Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
+            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(Box::default());
         }
 
@@ -1314,7 +1290,7 @@ impl UpdateInteractiveCommand {
             Err(err) => {
                 if err == bun_core::err!("EndOfStream") {
                     Output::flush();
-                    Output::prettyln(format_args!("\n<r><red>x<r> Cancelled"));
+                    bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
                 }
                 return Err(err);
@@ -1322,8 +1298,7 @@ impl UpdateInteractiveCommand {
         };
 
         Output::flush();
-        // PORT NOTE: reshaped for borrowck — Zig returns the same `selected` slice via state;
-        // we clone the borrowed slice into an owned Box here.
+        // Reshaped for borrowck — clone the borrowed slice into an owned Box.
         Ok(Box::from(result))
     }
 
@@ -1438,8 +1413,6 @@ impl UpdateInteractiveCommand {
         let mut reprint_menu = true;
         let mut total_lines: usize = 0;
         let mut last_terminal_width = initial_terminal_size.width;
-        // TODO(port): errdefer reprint_menu = false; — handled inline below by setting before early return on error.
-        // TODO(port): defer block that uses state.selected — moved to explicit calls before each return.
 
         macro_rules! cleanup_and_reprint {
             ($reprint:expr) => {{
@@ -1454,11 +1427,11 @@ impl UpdateInteractiveCommand {
                             count += 1;
                         }
                     }
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><green>✓<r> Selected {} package{} to update",
                         count,
                         if count == 1 { "" } else { "s" }
-                    ));
+                    );
                 }
             }};
         }
@@ -1500,10 +1473,10 @@ impl UpdateInteractiveCommand {
                     current_size.width - b"? Select packages to update - ".len(),
                     true,
                 );
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<r><cyan>?<r> Select packages to update<d> - {}<r>",
                     BStr::new(&elipsised_help_text)
-                ));
+                );
 
                 // Calculate available space for packages (reserve space for scroll indicators if needed)
                 let needs_scrolling = state.packages.len() > state.viewport_height;
@@ -1519,11 +1492,11 @@ impl UpdateInteractiveCommand {
 
                 // Show top scroll indicator if needed
                 if show_top_indicator {
-                    Output::pretty(format_args!(
+                    bun_core::pretty!(
                         "  <d>↑ {} more package{} above<r>",
                         state.viewport_start,
                         if state.viewport_start == 1 { "" } else { "s" }
-                    ));
+                    );
                 }
 
                 // Calculate how many packages we can actually display
@@ -1562,16 +1535,13 @@ impl UpdateInteractiveCommand {
                         // Print dependency type - bold if any selected
                         Output::print(format_args!("\n  "));
                         if selected_count > 0 {
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "<r><b>{} {}<r>",
                                 BStr::new(pkg.dependency_type),
                                 selected_count
-                            ));
+                            );
                         } else {
-                            Output::pretty(format_args!(
-                                "<r>{}<r>",
-                                BStr::new(pkg.dependency_type)
-                            ));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(pkg.dependency_type));
                         }
 
                         // Calculate padding to align column headers with values
@@ -1714,7 +1684,7 @@ impl UpdateInteractiveCommand {
 
                     // Cursor and checkbox
                     if is_cursor {
-                        Output::pretty(format_args!("  <r><cyan>❯<r> "));
+                        bun_core::pretty!("  <r><cyan>❯<r> ");
                     } else {
                         Output::print(format_args!("    "));
                     }
@@ -1722,11 +1692,11 @@ impl UpdateInteractiveCommand {
                     // Checkbox with appropriate color
                     if selected {
                         if checkbox_color == "red" {
-                            Output::pretty(format_args!("<r><red>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><red>{}<r> ", checkbox);
                         } else if checkbox_color == "yellow" {
-                            Output::pretty(format_args!("<r><yellow>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><yellow>{}<r> ", checkbox);
                         } else {
-                            Output::pretty(format_args!("<r><green>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><green>{}<r> ", checkbox);
                         }
                     } else {
                         Output::print(format_args!("{} ", checkbox));
@@ -1776,23 +1746,23 @@ impl UpdateInteractiveCommand {
 
                     if selected {
                         if checkbox_color == "red" {
-                            Output::pretty(format_args!("<r><red>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><red>{}<r>", hyperlink);
                         } else if checkbox_color == "yellow" {
-                            Output::pretty(format_args!("<r><yellow>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
                         } else {
-                            Output::pretty(format_args!("<r><green>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><green>{}<r>", hyperlink);
                         }
                     } else {
-                        Output::pretty(format_args!("<r>{}<r>", hyperlink));
+                        bun_core::pretty!("<r>{}<r>", hyperlink);
                     }
 
                     // Print dev/peer/optional tag if applicable
                     if pkg.behavior.is_dev() {
-                        Output::pretty(format_args!("<r><d> dev<r>"));
+                        bun_core::pretty!("<r><d> dev<r>");
                     } else if pkg.behavior.is_peer() {
-                        Output::pretty(format_args!("<r><d> peer<r>"));
+                        bun_core::pretty!("<r><d> peer<r>");
                     } else if pkg.behavior.is_optional() {
-                        Output::pretty(format_args!("<r><d> optional<r>"));
+                        bun_core::pretty!("<r><d> optional<r>");
                     }
 
                     // Print padding after name (2 spaces)
@@ -1808,7 +1778,7 @@ impl UpdateInteractiveCommand {
                         state.max_current_len,
                         false,
                     );
-                    Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_current)));
+                    bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
 
                     // Print padding after current version (2 spaces)
                     let current_padding = if truncated_current.len() >= state.max_current_len {
@@ -1860,17 +1830,17 @@ impl UpdateInteractiveCommand {
                         }
                         if truncated_target.len() < pkg.update_version.len() {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_target)));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
                         } else {
                             // Use diffFmt for full versions
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "{}",
                                 target_full.diff_fmt(
                                     current_full,
                                     &pkg.update_version,
                                     &pkg.current_version,
                                 )
-                            ));
+                            );
                         }
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
@@ -1880,7 +1850,7 @@ impl UpdateInteractiveCommand {
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_target)));
+                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1933,17 +1903,17 @@ impl UpdateInteractiveCommand {
                         }
                         if truncated_latest.len() < pkg.latest_version.len() {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_latest)));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
                         } else {
                             // Use diffFmt for full versions
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "{}",
                                 latest_full.diff_fmt(
                                     current_full,
                                     &pkg.latest_version,
                                     &pkg.current_version,
                                 )
-                            ));
+                            );
                         }
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
@@ -1961,7 +1931,7 @@ impl UpdateInteractiveCommand {
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_latest)));
+                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1985,10 +1955,7 @@ impl UpdateInteractiveCommand {
                             state.max_workspace_len,
                             true,
                         );
-                        Output::pretty(format_args!(
-                            "<r><d>{}<r>",
-                            BStr::new(&truncated_workspace)
-                        ));
+                        bun_core::pretty!("<r><d>{}<r>", BStr::new(&truncated_workspace));
                     }
 
                     Output::print(format_args!("\x1B[0K\n"));
@@ -2000,7 +1967,7 @@ impl UpdateInteractiveCommand {
 
                 // Show bottom scroll indicator if needed
                 if show_bottom_indicator {
-                    Output::pretty(format_args!(
+                    bun_core::pretty!(
                         "  <d>↓ {} more package{} below<r>",
                         state.packages.len() - viewport_end,
                         if state.packages.len() - viewport_end == 1 {
@@ -2008,7 +1975,7 @@ impl UpdateInteractiveCommand {
                         } else {
                             "s"
                         }
-                    ));
+                    );
                     lines_displayed += 1;
                 }
 
@@ -2018,7 +1985,6 @@ impl UpdateInteractiveCommand {
             Output::flush();
 
             // Read input
-            // TODO(port): std.fs.File.stdin().readerStreaming — use bun_sys stdin byte reader
             let mut reader = bun_core::output::stdin_reader();
             let byte = match reader.take_byte() {
                 Ok(b) => b,
@@ -2251,25 +2217,24 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
 /// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
-/// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
+/// `&'static [u8]` until `'bump` is threaded through).
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
 /// Edit catalog definitions in package.json
-// PORT NOTE: Zig threads `manager` only for `manager.allocator`; the Rust port
-// uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
-// parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
-pub fn edit_catalog_definitions(
+// No `manager` parameter: a local `Bump` is used instead
+// (`E::Object::put` ignores its allocator arg), which keeps
+// `update_catalog_definitions` borrowck-clean.
+pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
 ) -> Result<(), bun_core::Error> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    // PORT NOTE: `Expr.Disabler` is a debug-only guard around the T4
+    // `Expr.Disabler` is a debug-only guard around the T4
     // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
     // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
     // toggling the parser-tier disabler is a no-op for these allocations.
@@ -2297,7 +2262,7 @@ pub fn edit_catalog_definitions(
 }
 
 /// Where `find_catalog_object` located the existing object — the lookup and
-/// the post-mutate placement use *different* predicates in Zig (see
+/// the post-mutate placement use *different* predicates (see
 /// `update_default_catalog`), so the source must be tracked.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CatalogSource {
@@ -2338,17 +2303,14 @@ fn update_default_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
-    // PORT NOTE: reshaped — Zig copies `data.e_object.*` (struct bytes,
-    // aliasing the `Vec` ptr) and writes the mutated copy back via
-    // `parent.put("catalog", Expr.allocate(obj))`. Rust `Vec<T>` has a
-    // `Drop` that frees its buffer, so a shallow copy would double-free.
-    // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
-    // is `Copy + DerefMut`). Crucially, Zig's *placement* check is looser
-    // than its lookup: it puts under `workspaces.<key>` whenever that key
-    // *exists* (any type), even when the lookup fell back to the root-level
-    // object. Track the lookup source so the in-place fast path is taken only
-    // when source == placement; otherwise re-`put` the mutated arena slot at
-    // the Zig-mandated location.
+    // Mutate the existing `StoreRef<E::Object>` in place (`StoreRef` is
+    // `Copy + DerefMut`); a shallow copy of the object would double-free its
+    // `Vec` buffer. Crucially, the *placement* check is looser than the
+    // lookup: put under `workspaces.<key>` whenever that key *exists* (any
+    // type), even when the lookup fell back to the root-level object. Track
+    // the lookup source so the in-place fast path is taken only when
+    // source == placement; otherwise re-`put` the mutated arena slot at the
+    // placement-mandated location.
     let mut fresh_obj = E::Object::default();
     let (existing, source) = find_catalog_object(package_json, b"catalog");
     {
@@ -2429,7 +2391,7 @@ fn update_named_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
-    // PORT NOTE: reshaped — see `update_default_catalog` for the
+    // Reshaped — see `update_default_catalog` for the
     // shallow-copy-vs-in-place + lookup-vs-placement rationale.
     let mut fresh_catalogs = E::Object::default();
     let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");
@@ -2595,5 +2557,3 @@ fn preserve_version_prefix(
     }
     Ok(Box::from(new_version))
 }
-
-// ported from: src/cli/update_interactive_command.zig

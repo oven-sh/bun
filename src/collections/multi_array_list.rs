@@ -1,9 +1,7 @@
-//! Port of `std.MultiArrayList` with the following Bun-specific additions:
+//! A struct-of-arrays `MultiArrayList` with the following Bun-specific additions:
 //!
 //! * `zero` method to zero-initialize memory.
 //! * `memory_cost` method, which returns the memory usage in bytes.
-//!
-//! Synchronized with std as of Zig 0.14.1.
 //!
 //! A MultiArrayList stores a list of a struct type. Instead of storing a
 //! single list of items, MultiArrayList stores separate lists for each field
@@ -58,7 +56,7 @@ use std::alloc::{Allocator, Global};
 use bun_alloc::AllocError;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
-/// element struct, mirroring Zig's `list.items(.field)` calling convention.
+/// element struct.
 ///
 /// ```ignore
 /// multi_array_columns! {
@@ -246,7 +244,7 @@ macro_rules! __mal_column_impl {
 /// cached in fixed-size `[_; MAX_FIELDS]` arrays so `Slice<T>` can be a plain
 /// value type without a `where [(); field_count::<T>()]:` bound propagating to
 /// every caller.
-pub const MAX_FIELDS: usize = 32;
+pub(crate) const MAX_FIELDS: usize = 32;
 
 // ──────────────────────── const-eval reflection helpers ───────────────────
 
@@ -270,7 +268,7 @@ const fn fields_of<T>() -> &'static [core::mem::type_info::Field] {
 
 /// Number of fields in `T`.
 #[inline(always)]
-pub const fn field_count<T>() -> usize {
+pub(crate) const fn field_count<T>() -> usize {
     fields_of::<T>().len()
 }
 
@@ -361,7 +359,7 @@ impl<T> Reflected<T> {
         out
     };
 
-    /// Zig `sizes`: `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
+    /// `(SIZES_BYTES, SIZES_FIELDS)` — field sizes sorted by
     /// alignment descending, paired with the original field index at each
     /// sorted position. Stable sort so equal-alignment fields keep order.
     const SIZES: ([usize; MAX_FIELDS], [usize; MAX_FIELDS]) = {
@@ -539,7 +537,6 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
-/// Zig: `ctx: anytype` with `fn lessThan(ctx, a_index: usize, b_index: usize) bool`.
 pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
@@ -715,8 +712,7 @@ impl<T> Slice<T> {
     /// The returned value is a **bitwise copy** — the SoA storage retains
     /// ownership of every field. Dropping the gathered struct would free
     /// columns the storage still owns (double-free on next `get` / `Drop`),
-    /// so it is wrapped in `ManuallyDrop`. Zig has no destructors so the
-    /// by-value copy is harmless there.
+    /// so it is wrapped in `ManuallyDrop`.
     pub fn get(&self, index: usize) -> ManuallyDrop<T> {
         assert!(
             index < self.len,
@@ -985,7 +981,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(())
     }
 
-    /// Alias for [`push`] (Zig: `append`).
+    /// Alias for [`push`].
     #[inline]
     pub fn append(&mut self, elem: T) -> Result<(), AllocError> {
         self.push(elem)
@@ -1278,9 +1274,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
 impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
     fn drop(&mut self) {
-        // Zig `deinit(self, gpa)`: `gpa.free(self.allocatedBytes())` — slab
-        // only, no per-element destructors. This is **intentionally preserved**:
-        // [`clone`] is a bitwise SoA memcpy (Zig semantics), so two live lists
+        // Frees the slab only — no per-element destructors. This is
+        // **intentionally preserved**:
+        // [`clone`] is a bitwise SoA memcpy, so two live lists
         // can alias the same column heap pointers — see `bundle_v2.rs`
         // `clone_ast` / `deinit_without_freeing_arena`, which drains exactly
         // one alias and relies on the other dropping slab-only. Running
@@ -1296,7 +1292,7 @@ impl<T, A: Allocator> Drop for MultiArrayList<T, A> {
 
 // ───────────────────────────── helpers ─────────────────────────────
 
-/// `std.atomic.cache_line` — **128** on x86_64 and aarch64, all native targets.
+/// Conservative cache-line size — **128** on x86_64 and aarch64, all native targets.
 const CACHE_LINE: usize = 128;
 
 const fn init_capacity<T>() -> usize {
@@ -1565,5 +1561,3 @@ mod tests {
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
 }
-
-// ported from: src/collections/multi_array_list.zig

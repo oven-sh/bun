@@ -11,7 +11,7 @@ pub struct NestingRule<R> {
 }
 
 impl<R> NestingRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         if dest.context().is_none() {
@@ -24,16 +24,13 @@ impl<R> NestingRule<R> {
 }
 
 impl<R> NestingRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             style: self.style.deep_clone(bump),
             loc: self.loc,
         }
     }
 }
-
-// ported from: src/css/rules/nesting.zig

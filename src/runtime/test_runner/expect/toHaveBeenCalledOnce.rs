@@ -2,8 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_called_once(
+pub(crate) fn to_have_been_called_once(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -59,5 +58,3 @@ pub fn to_have_been_called_once(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledOnce.zig

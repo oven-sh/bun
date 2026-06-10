@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::range::{Comparator, Op as RangeOp};
 use crate::{Range, SlicedString, Version, version};
 
-// Re-export sub-namespace mirroring Zig's `Query.Token.Wildcard` path so
+// Re-export sub-namespace so
 // `crate::query::token::Wildcard` resolves for sibling modules.
 pub mod token {
     pub use super::{Token, TokenTag, Wildcard};
@@ -25,12 +25,43 @@ pub enum Op {
     Or,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct Query {
     pub range: Range,
 
     // AND
     pub next: Option<Box<Query>>,
+}
+
+impl Clone for Query {
+    fn clone(&self) -> Self {
+        let mut out = Query {
+            range: self.range,
+            next: None,
+        };
+        let mut src = &self.next;
+        let mut dst = &mut out.next;
+        while let Some(node) = src {
+            let slot = dst.insert(Box::new(Query {
+                range: node.range,
+                next: None,
+            }));
+            src = &node.next;
+            dst = &mut slot.next;
+        }
+        out
+    }
+}
+
+impl Drop for Query {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long AND chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
 }
 
 pub struct QueryFormatter<'a> {
@@ -66,28 +97,38 @@ impl Query {
     }
 
     pub fn eql(&self, rhs: &Query) -> bool {
-        if !self.range.eql(&rhs.range) {
-            return false;
+        let mut lhs = self;
+        let mut rhs = rhs;
+        loop {
+            if !lhs.range.eql(&rhs.range) {
+                return false;
+            }
+
+            let lhs_next = match &lhs.next {
+                Some(n) => n,
+                None => return rhs.next.is_none(),
+            };
+            let rhs_next = match &rhs.next {
+                Some(n) => n,
+                None => return false,
+            };
+
+            lhs = lhs_next;
+            rhs = rhs_next;
         }
-
-        let lhs_next = match &self.next {
-            Some(n) => n,
-            None => return rhs.next.is_none(),
-        };
-        let rhs_next = match &rhs.next {
-            Some(n) => n,
-            None => return false,
-        };
-
-        lhs_next.eql(rhs_next)
     }
 
     pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
-        self.range.satisfies(version, query_buf, version_buf)
-            && match &self.next {
-                Some(next) => next.satisfies(version, query_buf, version_buf),
+        let mut node = self;
+        loop {
+            if !node.range.satisfies(version, query_buf, version_buf) {
+                return false;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return true,
             }
+        }
     }
 
     pub fn satisfies_pre(
@@ -100,12 +141,19 @@ impl Query {
         if cfg!(debug_assertions) {
             debug_assert!(version.tag.has_pre());
         }
-        self.range
-            .satisfies_pre(version, query_buf, version_buf, pre_matched)
-            && match &self.next {
-                Some(next) => next.satisfies_pre(version, query_buf, version_buf, pre_matched),
+        let mut node = self;
+        loop {
+            if !node
+                .range
+                .satisfies_pre(version, query_buf, version_buf, pre_matched)
+            {
+                return false;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return true,
             }
+        }
     }
 }
 
@@ -125,20 +173,31 @@ pub struct List {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `List` (see `and_range`); it never aliases data owned by another
-// thread. Zig models this as a plain `*Query` and freely sends `Group`/`List`
-// across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
+// thread, so the whole structure moves between threads as a unit (the lockfile
+// thread pool relies on this). Auto-`!Send` from `NonNull` is overly
 // conservative here.
 unsafe impl Send for List {}
 // SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
 // `&List` exposes no unsynchronized interior mutability.
 unsafe impl Sync for List {}
 
+impl Drop for List {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long OR chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
+
 impl Clone for List {
     fn clone(&self) -> Self {
         let mut out = List {
             head: self.head.clone(),
             tail: None,
-            next: self.next.clone(),
+            next: None,
         };
         if out.head.next.is_some() {
             let mut tail = NonNull::from(&mut out.head);
@@ -147,6 +206,26 @@ impl Clone for List {
                 tail = NonNull::from(next);
             }
             out.tail = Some(tail);
+        }
+
+        let mut src = &self.next;
+        let mut dst = &mut out.next;
+        while let Some(node) = src {
+            let slot = dst.insert(Box::new(List {
+                head: node.head.clone(),
+                tail: None,
+                next: None,
+            }));
+            if slot.head.next.is_some() {
+                let mut tail = NonNull::from(&mut slot.head);
+                // SAFETY: `tail` walks `slot.head`'s exclusively-owned Box chain.
+                while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
+                    tail = NonNull::from(next);
+                }
+                slot.tail = Some(tail);
+            }
+            src = &node.next;
+            dst = &mut slot.next;
         }
         out
     }
@@ -159,18 +238,14 @@ pub struct ListFormatter<'a> {
 
 impl<'a> fmt::Display for ListFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let this = self.list;
+        let mut this = self.list;
 
-        if let Some(ptr) = &this.next {
-            write!(
-                f,
-                "{} || {}",
-                this.head.fmt(self.buffer),
-                ptr.fmt(self.buffer)
-            )
-        } else {
-            write!(f, "{}", this.head.fmt(self.buffer))
+        while let Some(ptr) = &this.next {
+            write!(f, "{} || ", this.head.fmt(self.buffer))?;
+            this = ptr;
         }
+
+        write!(f, "{}", this.head.fmt(self.buffer))
     }
 }
 
@@ -183,11 +258,16 @@ impl List {
     }
 
     pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        self.head.satisfies(version, list_buf, version_buf)
-            || match &self.next {
-                Some(next) => next.satisfies(version, list_buf, version_buf),
+        let mut node = self;
+        loop {
+            if node.head.satisfies(version, list_buf, version_buf) {
+                return true;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return false,
             }
+        }
     }
 
     pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
@@ -200,32 +280,43 @@ impl List {
         // - if it does, also needs to match major, minor, patch with at least one of the other versions
         //   with a prerelease
         // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
-        let mut pre_matched = false;
-        (self
-            .head
-            .satisfies_pre(version, list_buf, version_buf, &mut pre_matched)
-            && pre_matched)
-            || match &self.next {
-                Some(next) => next.satisfies_pre(version, list_buf, version_buf),
+        let mut node = self;
+        loop {
+            let mut pre_matched = false;
+            if node
+                .head
+                .satisfies_pre(version, list_buf, version_buf, &mut pre_matched)
+                && pre_matched
+            {
+                return true;
+            }
+            match &node.next {
+                Some(next) => node = next,
                 None => return false,
             }
+        }
     }
 
     pub fn eql(&self, rhs: &List) -> bool {
-        if !self.head.eql(&rhs.head) {
-            return false;
+        let mut lhs = self;
+        let mut rhs = rhs;
+        loop {
+            if !lhs.head.eql(&rhs.head) {
+                return false;
+            }
+
+            let lhs_next = match &lhs.next {
+                Some(n) => n,
+                None => return rhs.next.is_none(),
+            };
+            let rhs_next = match &rhs.next {
+                Some(n) => n,
+                None => return false,
+            };
+
+            lhs = lhs_next;
+            rhs = rhs_next;
         }
-
-        let lhs_next = match &self.next {
-            Some(n) => n,
-            None => return rhs.next.is_none(),
-        };
-        let rhs_next = match &rhs.next {
-            Some(n) => n,
-            None => return false,
-        };
-
-        lhs_next.eql(rhs_next)
     }
 
     pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
@@ -253,7 +344,7 @@ impl List {
     }
 }
 
-pub type FlagsBitSet = IntegerBitSet<3>;
+pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 
 pub struct Flags;
 impl Flags {
@@ -265,8 +356,8 @@ pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer (Zig: `input: string = ""`).
-    /// Stored as a raw fat pointer per PORTING.md §`[]const u8` struct-field
+    /// Borrowed view into the caller's source buffer.
+    /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
     /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
     /// `json_stringify`; caller must keep the source buffer alive for that call.
@@ -277,10 +368,10 @@ pub struct Group {
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
 // by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer (PORTING.md §`[]const u8` struct-field) and is
+// the caller's source buffer and is
 // only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread. Zig models both as plain
-// pointers and freely sends `Group` across the lockfile/resolver thread pool;
+// pointer aliases data owned by another thread, so the whole structure moves
+// between threads as a unit (the lockfile/resolver thread pool relies on this);
 // auto-`!Send` from `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
 // SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
@@ -351,26 +442,21 @@ impl Group {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): Zig called `this.fmt()` with no buf arg (looks like a latent bug upstream).
-        // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
         let temp = {
             use std::io::Write as _;
             let mut v: Vec<u8> = Vec::new();
             // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (Zig
-            // stored a bare `[]const u8` with the same contract).
+            // caller must keep alive for the lifetime of this Group (see the
+            // `input` field doc).
             let input = unsafe { &*self.input };
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
-        // TODO(port): writes raw bytes; should JSON-escape.
-        writer.write_str("\"")?;
-        write!(writer, "{}", bstr::BStr::new(&temp))?;
-        writer.write_str("\"")
+        bun_core::fmt::encode_json_string(writer, &temp)
     }
 
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains.
+    // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;
@@ -402,7 +488,8 @@ impl Group {
                     },
                     next: None,
                 },
-                ..Default::default()
+                tail: None,
+                next: None,
             },
             ..Default::default()
         }
@@ -415,7 +502,6 @@ impl Group {
             && self.head.head.range.left.op == RangeOp::Eql
     }
 
-    /// Zig name: `@"is *"`
     pub fn is_star(&self) -> bool {
         let left = &self.head.head.range.left;
         self.head.head.range.right.op == RangeOp::Unset
@@ -995,6 +1081,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 }
 
                 i += second_parsed.len as usize + 1;
+            } else if token.tag == TokenTag::None {
+                // No pending comparator token for this chunk, so skip it instead of
+                // emitting a comparator, the same way skipped tags like "boop" in
+                // "1.0.0 || boop" are ignored (any pending "||" is preserved). This
+                // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
+                // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
+                // tag, like "1 || - foo".
+                token.wildcard = Wildcard::None;
+                continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
                     Wildcard::None => {
@@ -1005,14 +1100,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                 }
             } else if count == 0 {
-                // From a semver perspective, treat "--foo" the same as "-foo"
-                // example: foo/bar@1.2.3@--canary.24
-                //                         ^
-                if token.tag == TokenTag::None {
-                    is_or = false;
-                    token.wildcard = Wildcard::None;
-                    continue;
-                }
                 list.and_range(&token.to_range(&parse_result.version))?;
             } else if is_or {
                 list.or_range(&token.to_range(&parse_result.version))?;
@@ -1028,5 +1115,3 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
 
     Ok(list)
 }
-
-// ported from: src/semver/SemverQuery.zig

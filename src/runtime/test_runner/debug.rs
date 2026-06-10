@@ -8,7 +8,7 @@ use bun_jsc::JsResult;
 use crate::test_runner::bun_test::{DescribeScope, ExecutionEntry, TestScheduleEntry};
 use crate::test_runner::execution::Execution;
 
-pub fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
+pub(crate) fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
@@ -19,13 +19,13 @@ pub fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
     Ok(())
 }
 
-pub fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
+pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
-    // TODO(port): std.zig.fmtString escaping — using BStr Debug-ish display for now
+    // `BStr`'s `Debug` impl quotes and escapes the name.
     let _guard = group::begin_msg(format_args!(
-        "describe \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
+        "describe {:?} (concurrent={}, mode={}, only={}, has_callback={})",
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
@@ -51,12 +51,12 @@ pub fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
     Ok(())
 }
 
-pub fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
+pub(crate) fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
     let _guard = group::begin_msg(format_args!(
-        "{} \"{}\" (concurrent={}, only={})",
+        "{} {:?} (concurrent={}, only={})",
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
@@ -65,7 +65,7 @@ pub fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub fn dump_order(this: &Execution) -> JsResult<()> {
+pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
@@ -86,7 +86,7 @@ pub fn dump_order(this: &Execution) -> JsResult<()> {
             let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
             while let Some(entry_ptr) = current_entry {
                 // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
-                // duration of this read-only dump (Zig: ?*ExecutionEntry walked via .next).
+                // duration of this read-only dump.
                 let entry = unsafe { entry_ptr.as_ref() };
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
@@ -114,7 +114,7 @@ pub mod group {
         let _ = write!(writer, "\x1b[m");
     }
 
-    // PORT NOTE: Zig used plain mutable globals; using atomics for Rust safety (debug-only path).
+    // Atomics for safety (debug-only path).
     static INDENT: AtomicUsize = AtomicUsize::new(0);
     static LAST_WAS_START: AtomicBool = AtomicBool::new(false);
 
@@ -128,7 +128,7 @@ pub mod group {
     }
 
     #[inline]
-    pub fn get_log_enabled() -> bool {
+    pub(crate) fn get_log_enabled() -> bool {
         // bun.Environment.enable_logs gates the runtime check
         if bun_core::Environment::ENABLE_LOGS {
             get_log_enabled_runtime()
@@ -138,9 +138,8 @@ pub mod group {
     }
 
     /// RAII guard returned by [`begin`] / [`begin_msg`]; calls [`end`] on drop.
-    /// Mirrors Zig's `group.beginMsg(...); defer group.end();` pattern.
     #[must_use = "binding this guard keeps the log group open until end of scope"]
-    pub struct GroupGuard(());
+    pub(crate) struct GroupGuard(());
 
     impl Drop for GroupGuard {
         fn drop(&mut self) {
@@ -148,11 +147,10 @@ pub mod group {
         }
     }
 
-    /// Port of Zig's `begin(@src())`. Uses `#[track_caller]` so the source
-    /// location is taken from the *call site* (file/line/column), matching
-    /// `std.builtin.SourceLocation` minus `fn_name` (Rust has no stable equivalent).
+    /// Uses `#[track_caller]` so the source
+    /// location is taken from the *call site* (file/line/column).
     #[track_caller]
-    pub fn begin() -> GroupGuard {
+    pub(crate) fn begin() -> GroupGuard {
         let loc = core::panic::Location::caller();
         begin_msg(format_args!(
             "\x1b[36m{}\x1b[37m:\x1b[93m{}\x1b[37m:\x1b[33m{}\x1b[37m: \x1b[35m{}\x1b[m",
@@ -163,22 +161,20 @@ pub mod group {
         ))
     }
 
-    pub fn begin_msg(args: fmt::Arguments<'_>) -> GroupGuard {
+    pub(crate) fn begin_msg(args: fmt::Arguments<'_>) -> GroupGuard {
         if get_log_enabled() {
-            // TODO(refactor): Zig used std.fs.File.stdout().writerStreaming with a 64-byte buffer;
-            // route through bun_core::Output stdout writer.
             let mut buf: Vec<u8> = Vec::new();
             print_indent(&mut buf);
             let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
             let _ = writeln!(&mut buf, "{}", args);
-            let _ = std::io::stdout().write_all(buf.as_slice());
+            let _ = bun_core::Output::writer().write_all(buf.as_slice());
+            bun_core::Output::flush();
 
             INDENT.fetch_add(1, Ordering::Relaxed);
             LAST_WAS_START.store(true, Ordering::Relaxed);
         }
         // Guard returned unconditionally; `end()` is itself gated on
-        // `get_log_enabled()` so the disabled path stays a symmetric no-op
-        // (matches Zig's unconditional `defer group.end()`).
+        // `get_log_enabled()` so the disabled path stays a symmetric no-op.
         GroupGuard(())
     }
 
@@ -187,10 +183,10 @@ pub mod group {
             return;
         }
         INDENT.fetch_sub(1, Ordering::Relaxed);
-        // Zig: `defer last_was_start = false;` — read-then-clear, so a single swap suffices.
+        // Read-then-clear, so a single swap suffices.
         let last_was_start = LAST_WAS_START.swap(false, Ordering::Relaxed);
         if last_was_start {
-            return; // std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
+            return;
         }
 
         let mut buf: Vec<u8> = Vec::new();
@@ -200,21 +196,21 @@ pub mod group {
             "\x1b[32m{}\x1b[m",
             if last_was_start { "+-" } else { "--" },
         );
-        let _ = std::io::stdout().write_all(buf.as_slice());
+        let _ = bun_core::Output::writer().write_all(buf.as_slice());
+        bun_core::Output::flush();
     }
 
     /// Accepts anything `Display` so callers can pass either `&str` literals or
-    /// `format_args!(...)` (Zig's `log(fmt, args)` is variadic; Rust callers use both forms).
-    pub fn log(args: impl fmt::Display) {
+    /// `format_args!(...)`.
+    pub(crate) fn log(args: impl fmt::Display) {
         if !get_log_enabled() {
             return;
         }
         let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
         let _ = writeln!(&mut buf, "{}", args);
-        let _ = std::io::stdout().write_all(buf.as_slice());
+        let _ = bun_core::Output::writer().write_all(buf.as_slice());
+        bun_core::Output::flush();
         LAST_WAS_START.store(false, Ordering::Relaxed);
     }
 }
-
-// ported from: src/test_runner/debug.zig

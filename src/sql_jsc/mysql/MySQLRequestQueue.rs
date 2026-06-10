@@ -7,8 +7,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::mysql::js_mysql_query::JSMySQLQuery;
-// PORT NOTE: Zig re-exports `MySQLConnection` from JSMySQLConnection.zig — the
-// queue's "connection" param is the JS-wrapper type (it calls
+// The queue's "connection" param is the JS-wrapper type (it calls
 // `reset_connection_timeout`/`on_error` which live on the wrapper, plus
 // `is_able_to_write` which forwards to the inner protocol struct).
 use crate::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
@@ -37,7 +36,7 @@ pub struct MySQLRequestQueue {
 
 impl MySQLRequestQueue {
     #[inline]
-    pub fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
+    pub(crate) fn can_execute_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
             && self.is_ready_for_query.get()
             && self.nonpipelinable_requests.get() == 0
@@ -45,7 +44,7 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn can_prepare_query(&self, connection: &MySQLConnection) -> bool {
+    pub(crate) fn can_prepare_query(&self, connection: &MySQLConnection) -> bool {
         connection.is_able_to_write()
             && self.is_ready_for_query.get()
             && !self.waiting_to_prepare.get()
@@ -53,12 +52,12 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn mark_as_ready_for_query(&mut self) {
+    pub(crate) fn mark_as_ready_for_query(&mut self) {
         self.is_ready_for_query.set(true);
     }
 
     #[inline]
-    pub fn mark_as_prepared(&mut self) {
+    pub(crate) fn mark_as_prepared(&mut self) {
         self.waiting_to_prepare.set(false);
         if let Some(request) = self.current_ref() {
             debug!("markAsPrepared markAsPrepared");
@@ -67,9 +66,9 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
-        // TODO(port): env_var feature_flag::get() returns Option<bool> until the
-        // non-nullable defaulted-var get() wrapper is restored (see env_var.rs).
+    pub(crate) fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
+        // Feature flags are unset by default; `unwrap_or(false)` falls back to the
+        // non-nullable defaulted `get()`.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
             .get()
             .unwrap_or(false)
@@ -84,7 +83,7 @@ impl MySQLRequestQueue {
             && connection.is_able_to_write()
     }
 
-    pub fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
+    pub(crate) fn mark_current_request_as_finished(&mut self, item: &JSMySQLQuery) {
         self.waiting_to_prepare.set(false);
         if item.is_being_prepared() {
             debug!("markCurrentRequestAsFinished markAsPrepared");
@@ -100,7 +99,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    /// PORT NOTE: takes only `connection` (the embedding `JSMySQLConnection`)
+    /// takes only `connection` (the embedding `JSMySQLConnection`)
     /// as a **raw pointer** and derives the queue backref locally. The queue is
     /// a field of `*connection` — but every `MySQLRequestQueue` field is
     /// interior-mutable (`Cell` / `JsCell`), so a `ParentRef<Self>` (yields
@@ -114,7 +113,7 @@ impl MySQLRequestQueue {
     /// is consumed via the safe `ParentRef::from(NonNull)` constructor (null
     /// checked at the boundary), so a function-level guard adds nothing —
     /// caller liveness/provenance is the `ParentRef` contract.
-    pub fn advance(connection: *mut MySQLConnection) {
+    pub(crate) fn advance(connection: *mut MySQLConnection) {
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
         // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
@@ -126,8 +125,8 @@ impl MySQLRequestQueue {
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
-        // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
-        // became a post-block pass; early `return`s in the Zig loop become
+        // reshaped for borrowck — the cleanup that must run at function exit
+        // became a post-block pass; early returns become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
@@ -181,7 +180,10 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    if offset == 0 {
+                    if offset == 0
+                        && queue_ref.requests.get().readable_length() > 0
+                        && queue_ref.requests.get().peek_item(0) == request
+                    {
                         queue_ref.requests.with_mut(|q| q.discard(1));
                         // SAFETY: queue held one ref; pointer is live until this deref.
                         unsafe { JSMySQLQuery::deref(request) };
@@ -226,7 +228,6 @@ impl MySQLRequestQueue {
             }
         }
 
-        // Zig: defer { while ... } — runs at function exit.
         while queue_ref.requests.get().readable_length() > 0 {
             let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(0);
             // Queue holds a ref on every request (taken in `add()`), so the
@@ -247,7 +248,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             requests: JsCell::new(Queue::init()),
             pipelined_requests: Cell::new(0),
@@ -257,11 +258,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.requests.get().readable_length() == 0
-    }
-
-    pub fn add(&mut self, request: *mut JSMySQLQuery) {
+    pub(crate) fn add(&mut self, request: *mut JSMySQLQuery) {
         debug!("add");
         // Caller passes a live JSMySQLQuery; we ref() it before storing.
         // R-2: `ParentRef` yields `&T` only — every method body reached below
@@ -288,7 +285,7 @@ impl MySQLRequestQueue {
     }
 
     #[inline]
-    pub fn current(&self) -> Option<*mut JSMySQLQuery> {
+    pub(crate) fn current(&self) -> Option<*mut JSMySQLQuery> {
         let q = self.requests.get();
         if q.readable_length() == 0 {
             return None;
@@ -307,13 +304,13 @@ impl MySQLRequestQueue {
     ///
     /// [`current`]: Self::current
     #[inline]
-    pub fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
+    pub(crate) fn current_ref(&self) -> Option<bun_ptr::ThisPtr<JSMySQLQuery>> {
         // SAFETY: `current()` returns a pointer the queue holds a ref on
         // (taken in `add()`); non-null and live until `discard()`/`read_item()`.
         self.current().map(|p| unsafe { bun_ptr::ThisPtr::new(p) })
     }
 
-    pub fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
+    pub(crate) fn clean(&mut self, reason: Option<JSValue>, queries_array: JSValue) {
         // reject()/rejectWithJSValue() run JS which can synchronously call .close()
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue
         // into a local first so the re-entrant call sees an empty queue instead of
@@ -322,15 +319,13 @@ impl MySQLRequestQueue {
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);
         self.waiting_to_prepare.set(false);
-        // `requests` drops at scope exit (Zig: defer requests.deinit()).
 
         while let Some(request) = requests.read_item() {
             // Queue held a ref on every request; pointer is non-null and live
             // until `deref()`. R-2: `ParentRef` yields `&T` only — every method
             // body reached below is `&self`.
             let req = ParentRef::from(NonNull::new(request).expect("queue item non-null"));
-            // Zig: defer request.deref() — moved to end of loop body; no early
-            // exits between here and there.
+            // Deref each request at the end of the loop body; no early exits between here and there.
             if !req.is_completed() {
                 if let Some(r) = reason {
                     req.reject_with_js_value(queries_array, r);
@@ -346,9 +341,8 @@ impl MySQLRequestQueue {
 
 impl Drop for MySQLRequestQueue {
     fn drop(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig iterates readableSlice(0) while
-        // discard(1)'ing, which in Rust would overlap & / &mut borrows on
-        // self.requests. read_item() peeks+discards in one &mut call.
+        // read_item() peeks+discards in one &mut call so the & / &mut
+        // borrows on self.requests never overlap.
         while let Some(request) = self.requests.with_mut(|q| q.read_item()) {
             // Queue held a ref on every request; pointer is non-null and live
             // until `deref()`. R-2: `ParentRef` yields `&T` only.
@@ -361,8 +355,6 @@ impl Drop for MySQLRequestQueue {
         self.pipelined_requests.set(0);
         self.nonpipelinable_requests.set(0);
         self.waiting_to_prepare.set(false);
-        // self.requests drops automatically (Zig: this.#requests.deinit()).
+        // self.requests drops automatically.
     }
 }
-
-// ported from: src/sql_jsc/mysql/MySQLRequestQueue.zig

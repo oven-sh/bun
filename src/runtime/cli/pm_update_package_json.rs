@@ -86,8 +86,6 @@ pub(crate) fn analyze_dependencies_and_install(
             result: &mut DependenciesScannerResult<'_, '_>,
         ) -> Result<(), bun_bundler::Error> {
             let this = self;
-            // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-            //
             // Process-lifetime storage for the rewritten positionals —
             // `Global::exit(0)` follows immediately.
             // `OnceLock` (not leaking) per PORTING.md §Forbidden.

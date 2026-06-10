@@ -1058,6 +1058,10 @@ impl EventLoop {
     /// Returns `false` when the loop is gone; the task node is freed if
     /// `auto_delete` and the payload is leaked (same as a task left undrained
     /// in a terminated worker's queue).
+    // Deliberately takes `*mut` and is NOT `unsafe`: accepting a possibly
+    // dangling pointer is the function's contract, and no deref happens until
+    // the registry proves the pointee live (and holds off its free).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn try_enqueue_task_concurrent(
         loop_: *mut EventLoop,
         task: core::ptr::NonNull<ConcurrentTaskItem>,

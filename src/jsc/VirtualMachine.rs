@@ -3689,6 +3689,10 @@ impl VirtualMachine {
     /// (called before any free) also takes — so the VM cannot be freed while
     /// `f` runs. `f` must therefore be short and lock-free: pushing to the
     /// MPSC queue, `wakeup()`, reading a flag.
+    // Deliberately takes `*mut` and is NOT `unsafe`: accepting a possibly
+    // dangling pointer is the function's contract, and no deref happens until
+    // the registry proves the pointee live (and holds off its free).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn with_live_vm<R>(
         vm: *mut VirtualMachine,
         f: impl FnOnce(&VirtualMachine) -> R,

@@ -424,6 +424,15 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         return JSValue::NULL;
     }
 
+    // The returned address outlives this call, so the view's storage must be
+    // made permanently immovable first: a FastTypedArray's vector is
+    // relocated by the engine itself (e.g. at DFG tier-up), which would leave
+    // the captured pointer dangling.
+    // https://github.com/oven-sh/bun/issues/32054
+    if !value.ensure_stable_typed_array_vector() {
+        return global_this.throw_out_of_memory_value();
+    }
+
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",

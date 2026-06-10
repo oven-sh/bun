@@ -3377,6 +3377,27 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     }
 }
 
+// Make a view's data pointer permanently stable before handing the raw
+// address out for use beyond the current call (FFI.ptr). A FastTypedArray's
+// vector lives in the GC heap and is RELOCATED when the view transitions to
+// wasteful mode (slowDownAndWasteMemory copies into a fresh ArrayBuffer and
+// repoints m_vector), and the engine triggers that transition on its own:
+// DFG tier-up folds the view into compiled code and registers an
+// ArrayBufferView watchpoint, whose installation calls
+// possiblySharedBuffer() (ArrayBufferViewWatchpointAdaptor::add in
+// DFGDesiredWatchpoints.cpp). Forcing the transition up front means the
+// address we are about to capture can never be invalidated. Every other mode
+// already has stable storage: Oversize is fastMalloc'd and adopted in place,
+// Wasteful/DataView already have an ArrayBuffer, and JSArrayBuffer data never
+// moves. Returns false only if the transition failed (allocation failure).
+CPP_DECL bool JSC__JSValue__ensureStableTypedArrayVector(JSC::EncodedJSValue v)
+{
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(JSC::JSValue::decode(v));
+    if (!view || view->mode() != JSC::FastTypedArray)
+        return true;
+    return !!view->possiblySharedBuffer();
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data

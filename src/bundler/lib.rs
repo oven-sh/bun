@@ -124,9 +124,6 @@ pub mod linker_context {
     #[path = "convertStmtsForChunk.rs"]
     pub mod convert_stmts_for_chunk;
 
-    #[path = "convertStmtsForChunkForDevServer.rs"]
-    pub mod convert_stmts_for_chunk_for_dev_server;
-
     #[path = "doStep5.rs"]
     pub mod do_step5;
 
@@ -358,6 +355,39 @@ bun_dispatch::link_interface! {
 unsafe impl Send for DevServerHandle {}
 // SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
 unsafe impl Sync for DevServerHandle {}
+
+/// Statement conversion for `options::Format::InternalBakeDev` output: emits
+/// the packed HMR-module shape. The encoding is owned by the HMR runtime that
+/// decodes it, so the body lives in `bun_runtime`'s bake module; the bundler
+/// reaches it through the definer-prefixed extern hook below (same pattern as
+/// the `__bun_jsc_*` hooks in `bundle_v2::dispatch`). `loaders`/`sources` are
+/// the parse graph's input-file columns, computed once per part range by the
+/// caller.
+#[inline]
+pub(crate) fn convert_stmts_for_chunk_hmr(
+    stmts: &mut linker_context_mod::StmtList,
+    part_stmts: &[bun_ast::Stmt],
+    bump: &bun_alloc::Arena,
+    ast: &mut BundledAst<'_>,
+    loaders: &[bun_ast::Loader],
+    sources: &[bun_ast::Source],
+) -> Result<(), bun_alloc::AllocError> {
+    __bun_bake_convert_stmts_for_chunk_hmr(stmts, part_stmts, bump, ast, loaders, sources)
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in `bun_runtime` (`bake/hmr_module_format.rs`).
+    /// All arguments are safe Rust types (no raw-pointer preconditions), so
+    /// the link-time-resolved body upholds Rust's invariants on its own.
+    safe fn __bun_bake_convert_stmts_for_chunk_hmr(
+        stmts: &mut linker_context_mod::StmtList,
+        part_stmts: &[bun_ast::Stmt],
+        bump: &bun_alloc::Arena,
+        ast: &mut BundledAst<'_>,
+        loaders: &[bun_ast::Loader],
+        sources: &[bun_ast::Source],
+    ) -> Result<(), bun_alloc::AllocError>;
+}
 
 // VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.
 // `bun_runtime::jsc_hooks` provides the `Runtime` arm.

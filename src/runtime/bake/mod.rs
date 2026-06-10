@@ -28,6 +28,11 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
+// `Format::InternalBakeDev` statement conversion (the packed HMR-module
+// shape). Reached from the bundler via the
+// `__bun_bake_convert_stmts_for_chunk_hmr` link-time hook it defines.
+mod hmr_module_format;
+
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
 // codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.

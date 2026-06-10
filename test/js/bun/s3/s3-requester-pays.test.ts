@@ -1,7 +1,30 @@
 import { S3Client, type S3Options } from "bun";
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("s3 - Requester Pays", () => {
+  // Every request in this file targets a local mock server, but S3Client
+  // ignores NO_PROXY (https://github.com/oven-sh/bun/issues/32045), so an
+  // HTTP_PROXY from the environment would swallow the requests. Neutralize
+  // the proxy vars for this suite; assign "" instead of deleting because the
+  // native env cache does not observe deletes.
+  const proxyVars = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"];
+  const savedProxyEnv: Record<string, string | undefined> = {};
+  beforeAll(() => {
+    for (const name of proxyVars) {
+      savedProxyEnv[name] = process.env[name];
+      process.env[name] = "";
+    }
+  });
+  afterAll(() => {
+    for (const name of proxyVars) {
+      if (savedProxyEnv[name] === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = savedProxyEnv[name];
+      }
+    }
+  });
+
   const s3Options: S3Options = {
     accessKeyId: "test",
     secretAccessKey: "test",

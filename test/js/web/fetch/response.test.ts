@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (9.1 KB) {
+    "Response (9.50 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -111,11 +111,17 @@ test("new Response(123, { method: 456 }) does not throw", () => {
 });
 
 test("handle stack overflow", () => {
+  // Covers https://github.com/oven-sh/bun/pull/23961: a stack overflow during
+  // text()'s promise resolution must surface as a catchable JS error.
+  // The wide recursive call fattens each frame: debug builds spend ~0.2ms per
+  // frame in the Response constructor, and overflowing the stack with small
+  // frames takes ~26k frames, longer than the test timeout.
+  const pad = new Array(1024).fill(0);
   function f0(a1, a2) {
     const v4 = new Response();
     // @ts-ignore
     const v5 = v4.text(a2, a2, v4, f0, f0);
-    a1(a1); // Recursive call causes stack overflow
+    a1(a1, a2, ...pad); // Recursive call causes stack overflow
     return v5;
   }
   expect(() => {

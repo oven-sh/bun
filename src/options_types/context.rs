@@ -209,9 +209,15 @@ pub struct BundlerOptions {
     pub banner: Box<[u8]>,
     pub footer: Box<[u8]>,
     pub css_chunking: bool,
-    pub bake: bool,
-    pub bake_debug_dump_server: bool,
-    pub bake_debug_disable_minify: bool,
+    /// `bun build --app`: bundle a full-stack application (framework-driven
+    /// client + server graphs) instead of a plain entry-point build.
+    pub app: bool,
+    /// `--debug-dump-server-files` (canary/debug builds only): write the
+    /// server-side bundle of an `--app` build to disk for inspection.
+    pub debug_dump_server_files: bool,
+    /// `--debug-no-minify` (canary/debug builds only): disable minification
+    /// in an `--app` production build.
+    pub debug_no_minify: bool,
 
     pub production: bool,
 
@@ -261,9 +267,9 @@ impl Default for BundlerOptions {
             banner: Box::default(),
             footer: Box::default(),
             css_chunking: false,
-            bake: false,
-            bake_debug_dump_server: false,
-            bake_debug_disable_minify: false,
+            app: false,
+            debug_dump_server_files: false,
+            debug_no_minify: false,
             production: false,
             env_behavior: api::DotEnvBehavior::disable,
             env_prefix: Box::default(),

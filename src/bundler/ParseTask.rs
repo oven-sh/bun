@@ -14,6 +14,7 @@ use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
+use bun_options_types::BuiltInModule;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -1437,7 +1438,7 @@ pub mod parse_worker {
                         if let Some(f) = &ctx.framework {
                             if let Some(file) = f.built_in_modules.get(file_path.text) {
                                 match file {
-                                    crate::bake_types::BuiltInModule::Code(code) => {
+                                    BuiltInModule::Code(code) => {
                                         break 'brk Ok(CacheEntry {
                                             contents: crate::cache::Contents::SharedBuffer {
                                                 ptr: code.as_ptr(),
@@ -1447,7 +1448,7 @@ pub mod parse_worker {
                                             ..Default::default()
                                         });
                                     }
-                                    crate::bake_types::BuiltInModule::Import(path) => {
+                                    BuiltInModule::Import(path) => {
                                         *file_path = Fs::Path::init(path);
                                         break 'lookup_builtin;
                                     }
@@ -2551,10 +2552,10 @@ pub mod parse_worker {
             bun_ast::runtime::ServerComponentsMode::None
         };
 
-        // `transpiler.options.framework: Option<&bake_types::Framework>`
-        // vs `opts.framework: Option<&js_parser::options::Framework>` — both
-        // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
-        // reads into the parser-side mirror and bump-alloc
+        // `transpiler.options.framework` and `opts.framework` are distinct
+        // TYPE_ONLY mirrors of the runtime-side framework config (the bundler
+        // seam struct vs `js_parser::options::Framework`). Project the fields
+        // the parser reads into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.

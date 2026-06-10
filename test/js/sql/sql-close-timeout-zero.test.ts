@@ -175,9 +175,7 @@ test("postgres: close({ timeout: null }) still drains gracefully", async () => {
   const mock = await postgresMock((socket, data) => {
     if (data[0] !== 0x51 /* 'Q' */) return;
     respond = () => {
-      socket.write(
-        Buffer.concat([rowDescription(["x"]), dataRow(["1"]), pkt("C", cstr("SELECT 1")), readyForQuery]),
-      );
+      socket.write(Buffer.concat([rowDescription(["x"]), dataRow(["1"]), pkt("C", cstr("SELECT 1")), readyForQuery]));
     };
   });
   const sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });

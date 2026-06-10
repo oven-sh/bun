@@ -143,6 +143,20 @@ pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, st
 // callback userdata (`ctx: *mut c_void`), so `Rc<T>` is unsuitable (would add
 // a second header and break the round-trip). Hold them as raw intrusive
 // pointers.
+/// Compile-time seam, sibling of [`FrameworkRouterTypes`] (which projects the
+/// route-parsing collection state): the dev-server module supplies the
+/// concrete payload type of [`AnyRoute::FrameworkRouter`] by implementing
+/// this on [`FrameworkRouterSeam`]. The host never reads the payload — it is
+/// produced by the dev-server route parser
+/// (`ServerInitContext::framework_router_from_js`) and consumed by the dev
+/// server's own route registration — so a dev-server rewrite can swap the
+/// type without touching this file.
+pub trait FrameworkRouterRouteTypes {
+    /// Index of the parsed `{ dir, style }` mount within the dev server's
+    /// framework router.
+    type TypeIndex: Copy;
+}
+
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(core::ptr::NonNull<StaticRoute>),
@@ -151,7 +165,7 @@ pub enum AnyRoute {
     /// Bundle an HTML import — `import html from "./index.html"; "/": html`
     Html(bun_ptr::RefPtr<html_bundle::Route>),
     /// Use file-system routing — `"/*": { dir: …, style: "nextjs-pages" }`
-    FrameworkRouter(crate::bake::framework_router::TypeIndex),
+    FrameworkRouter(<FrameworkRouterSeam as FrameworkRouterRouteTypes>::TypeIndex),
 }
 
 impl AnyRoute {
@@ -167,7 +181,9 @@ impl AnyRoute {
             AnyRoute::File(p) => bun_ptr::BackRef::from(*p).memory_cost(),
             AnyRoute::Html(r) => r.data().memory_cost(),
             AnyRoute::FrameworkRouter(_) => {
-                core::mem::size_of::<crate::bake::FileSystemRouterType>()
+                // One parsed mount's worth of router-type config (the same
+                // projected type the route parser collects per entry).
+                core::mem::size_of::<<FrameworkRouterSeam as FrameworkRouterTypes>::Mount>()
             }
         }
     }
@@ -221,6 +237,126 @@ bitflags::bitflags! {
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
     }
+}
+
+// ─── Dev-server slot seam ────────────────────────────────────────────────────
+// The dev-server module owns the concrete dev-server type; this module only
+// stores the owning slot and calls through the vtable below (mirroring the
+// erased `DevServerOptions` handle in `ServerConfig.rs`, the options half of
+// the same seam). Construction goes through the definer-prefixed link-time
+// hook `__bun_dev_server_from_server_config`, so a rewrite of the dev server
+// never touches this file. Request paths that still need the concrete type
+// (the `as_deref` callers in the per-request files) go through the
+// `Deref`/`DerefMut` impls defined next to the dev server.
+
+/// Calls the host makes into an attached dev server. The dev-server module
+/// supplies the single static instance whose bodies downcast `ptr`;
+/// [`DevServerSlot::from_raw`] pairs the pointer with that vtable.
+pub struct DevServerSlotVTable {
+    /// Drops the boxed dev server (its deinit).
+    pub(crate) drop_fn: unsafe fn(core::ptr::NonNull<()>),
+    /// Heap bytes retained by the dev server (for `Server.memoryCost`).
+    pub(crate) memory_cost: fn(core::ptr::NonNull<()>) -> usize,
+    /// Mirrors the host's inspector/debugger id into the dev server (its
+    /// HMR agent tags inspector events with it).
+    pub(crate) set_inspector_server_id: fn(core::ptr::NonNull<()>, jsc::DebuggerId),
+    /// Routes an `Html` static route's bundle through the dev server (which
+    /// serves it with HMR) instead of the prebundled static handler.
+    pub(crate) put_html_route: fn(
+        core::ptr::NonNull<()>,
+        path: &[u8],
+        route: *mut html_bundle::Route,
+    ) -> Result<(), bun_core::Error>,
+    /// Registers the dev server's own routes on the server's uWS app.
+    /// Returns true if a catch-all "/*" handler was attached.
+    pub(crate) set_routes: fn(core::ptr::NonNull<()>, AnyServer) -> Result<bool, bun_core::Error>,
+}
+
+/// Owned, type-erased dev server attached to a [`NewServer`]. Dropping the
+/// slot drops the dev server.
+pub struct DevServerSlot {
+    raw: DevServerSlotRaw,
+}
+
+/// Copyable erased view over the dev server (`(ptr, vtable)`, no ownership),
+/// for `set_routes`' borrowck/aliasing reshape: the pointee is a stable heap
+/// allocation owned by the slot, so a copy taken from `&mut DevServerSlot`
+/// stays valid while `NewServer.dev_server` is untouched — without keeping a
+/// borrow of the server alive across calls that re-derive `&mut NewServer`
+/// (the dev server's own route registration does).
+#[derive(Clone, Copy)]
+pub struct DevServerSlotRaw {
+    ptr: core::ptr::NonNull<()>,
+    vtable: &'static DevServerSlotVTable,
+}
+
+impl DevServerSlot {
+    /// # Safety
+    /// Reserved for the `__bun_dev_server_from_server_config` hook body:
+    /// `ptr` must own the boxed dev server its `vtable` bodies downcast to,
+    /// and `vtable.drop_fn` must free exactly that value. Ownership of `ptr`
+    /// transfers to the slot, which calls `drop_fn` once on drop.
+    pub(crate) unsafe fn from_raw(
+        ptr: core::ptr::NonNull<()>,
+        vtable: &'static DevServerSlotVTable,
+    ) -> Self {
+        Self {
+            raw: DevServerSlotRaw { ptr, vtable },
+        }
+    }
+
+    /// The erased pointer. Only the dev-server module knows the concrete type
+    /// behind it (its `Deref` impls on this slot are the downcast).
+    pub(crate) fn as_ptr(&self) -> core::ptr::NonNull<()> {
+        self.raw.ptr
+    }
+
+    pub fn memory_cost(&self) -> usize {
+        (self.raw.vtable.memory_cost)(self.raw.ptr)
+    }
+
+    pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {
+        (self.raw.vtable.set_inspector_server_id)(self.raw.ptr, id)
+    }
+
+    /// See [`DevServerSlotRaw`]. Takes `&mut self` so the copy inherits the
+    /// caller's exclusive claim on the dev server.
+    pub(crate) fn raw(&mut self) -> DevServerSlotRaw {
+        self.raw
+    }
+}
+
+impl Drop for DevServerSlot {
+    fn drop(&mut self) {
+        // SAFETY: `from_raw`'s contract — the slot solely owns `ptr` and
+        // `drop_fn` pairs with its allocation.
+        unsafe { (self.raw.vtable.drop_fn)(self.raw.ptr) }
+    }
+}
+
+impl DevServerSlotRaw {
+    pub(crate) fn put_html_route(
+        self,
+        path: &[u8],
+        route: *mut html_bundle::Route,
+    ) -> Result<(), bun_core::Error> {
+        (self.vtable.put_html_route)(self.ptr, path, route)
+    }
+
+    pub(crate) fn set_routes(self, server: AnyServer) -> Result<bool, bun_core::Error> {
+        (self.vtable.set_routes)(self.ptr, server)
+    }
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in the dev-server module (`bake/DevServer.rs`).
+    /// Builds the dev server for a config that carried `dev_server_options`
+    /// (`Ok(None)` when it didn't). All arguments are safe Rust types (no
+    /// raw-pointer preconditions), so the link-time-resolved body upholds
+    /// Rust's invariants on its own.
+    safe fn __bun_dev_server_from_server_config(
+        config: &mut ServerConfig,
+    ) -> JsResult<Option<DevServerSlot>>;
 }
 
 // ─── NewServer ───────────────────────────────────────────────────────────────
@@ -285,7 +421,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// counted ref held here is released in `Drop for NewServer`.
     pub plugins: Option<bun_ptr::BackRef<ServePlugins>>,
 
-    pub dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
+    /// The attached dev server (HMR / HTML imports in development),
+    /// type-erased behind the slot seam above.
+    pub dev_server: Option<DevServerSlot>,
 
     /// Route → index in RouteList.cpp. User routes may be applied multiple
     /// times due to SNI, so we have to store them.
@@ -1946,9 +2084,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the heap-allocated config rather than the caller's (since-moved)
         // stack slot. On Err, the `Box<Self>` drop frees the half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        match crate::bake::DevServer::DevServer::from_server_config(unsafe {
-            &mut (*server).config
-        }) {
+        match __bun_dev_server_from_server_config(unsafe { &mut (*server).config }) {
             // SAFETY: `server` is uniquely owned here.
             Ok(dev) => unsafe { (*server).dev_server = dev },
             Err(e) => {
@@ -1979,10 +2115,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
-        // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
-        // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
-        // don't conflict with `&mut self.config` / `&mut self.user_routes`.
-        let dev_server = self.dev_server.as_deref_mut().map(std::ptr::from_mut);
+        // reshaped for borrowck/aliasing — snapshot the copyable erased view
+        // (see `DevServerSlotRaw`) so per-iteration calls don't conflict with
+        // `&mut self.config` / `&mut self.user_routes`, and so no borrow of
+        // `self` is live when the dev server re-derives `&mut NewServer`.
+        let dev_server: Option<DevServerSlotRaw> =
+            self.dev_server.as_mut().map(DevServerSlot::raw);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
@@ -2248,14 +2386,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         }
                     }
                     if let Some(dev) = dev_server {
-                        // SAFETY: `dev` is the live `*mut DevServer` snapshotted
-                        // from `self.dev_server` above; no other `&mut` to it
-                        // is live in this loop.
-                        bun_core::handle_oom(
-                            unsafe { &mut *dev }
-                                .html_router
-                                .put(&entry.path, r.as_ptr()),
-                        );
+                        bun_core::handle_oom(dev.put_html_route(&entry.path, r.as_ptr()));
                     }
                     needs_plugins = true;
                 }
@@ -2300,13 +2431,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // --- 8. Handle DevServer routes & track "/*" coverage ---
         let mut has_dev_server_for_star_path = false;
         if let Some(dev) = dev_server {
-            // dev.setRoutes might register its own "/*" HTTP handler
-            // SAFETY: `dev` is the live `*mut DevServer` snapshotted from
-            // `self.dev_server` above; `self_ptr` is the live server. The two
-            // allocations are disjoint so the `&mut` borrows do not alias.
-            has_dev_server_for_star_path = bun_core::handle_oom(
-                unsafe { &mut *dev }.set_routes::<SSL, DEBUG>(unsafe { &mut *self_ptr }),
-            );
+            // dev set_routes might register its own "/*" HTTP handler. It
+            // re-derives `&mut NewServer` from `any_server`; the erased view
+            // holds no borrow of `self`, and the dev-server allocation is
+            // disjoint from the server's, so the `&mut`s do not alias.
+            has_dev_server_for_star_path = bun_core::handle_oom(dev.set_routes(any_server));
             if has_dev_server_for_star_path {
                 // Assume dev server "/*" covers all methods if it exists
                 star_methods_covered_by_user = http_method::Set::all();
@@ -3113,6 +3242,11 @@ pub trait ServerLike {
     fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
+    /// Typed view over the (erased) `dev_server` slot. Returns the concrete
+    /// dev-server type — through the slot's `Deref` — because the
+    /// per-request paths (`RequestContext`) call concrete methods on it; this
+    /// signature stays an acknowledged coupling until those call sites are
+    /// erased too.
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3449,8 +3583,8 @@ impl AnyServer {
     pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {
         any_server_dispatch_mut!(self, |s| {
             s.inspector_server_id = id;
-            if let Some(dev_server) = s.dev_server.as_deref_mut() {
-                dev_server.inspector_server_id = id;
+            if let Some(dev_server) = s.dev_server.as_mut() {
+                dev_server.set_inspector_server_id(id);
             }
         })
     }

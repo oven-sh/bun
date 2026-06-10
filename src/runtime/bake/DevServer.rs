@@ -526,6 +526,72 @@ impl DevServer {
     }
 }
 
+// ─── Host slot-seam bodies ───────────────────────────────────────────────────
+// `NewServer.dev_server` is `Option<crate::server::DevServerSlot>` — an
+// erased `(ptr, vtable)` pair owned by the host. These are the concrete
+// halves: the hook below boxes the dev server into the slot, the vtable
+// downcasts it for the host's calls, and the `Deref` impls are the typed
+// views the per-request paths (`as_deref{,_mut}` callers) consume.
+
+static DEV_SERVER_SLOT_VTABLE: crate::server::DevServerSlotVTable =
+    crate::server::DevServerSlotVTable {
+        // SAFETY (each body): `DevServerSlot::from_raw`'s contract — `ptr` is
+        // the `Box<DevServer>` leaked by `__bun_dev_server_from_server_config`
+        // below, and the calling slot carries the (JS-thread) access claim.
+        drop_fn: |ptr| drop(unsafe { Box::from_raw(ptr.cast::<DevServer>().as_ptr()) }),
+        memory_cost: |ptr| unsafe { ptr.cast::<DevServer>().as_ref() }.memory_cost(),
+        set_inspector_server_id: |ptr, id| {
+            unsafe { ptr.cast::<DevServer>().as_mut() }.inspector_server_id = id;
+        },
+        put_html_route: |ptr, path, route| {
+            unsafe { ptr.cast::<DevServer>().as_mut() }
+                .html_router
+                .put(path, route)
+        },
+        set_routes: |ptr, server| {
+            let dev = unsafe { ptr.cast::<DevServer>().as_mut() };
+            // Un-erase the `(SSL, DEBUG)` monomorphization the host dispatched
+            // away; `dev` and the server are disjoint heap allocations, so the
+            // two `&mut`s do not alias.
+            crate::server::any_server_dispatch_mut!(server, |s| dev.set_routes(s))
+        },
+    };
+
+/// Builds the dev server for a `Bun.serve` instance whose config carried
+/// dev-server options, boxed behind the host's erased slot (`Ok(None)` when
+/// the config carries none).
+#[unsafe(no_mangle)]
+fn __bun_dev_server_from_server_config(
+    config: &mut crate::server::ServerConfig,
+) -> JsResult<Option<crate::server::DevServerSlot>> {
+    Ok(DevServer::from_server_config(config)?.map(|dev| {
+        let ptr = ::core::ptr::NonNull::from(Box::leak(dev)).cast::<()>();
+        // SAFETY: `ptr` owns the boxed `DevServer` the vtable bodies downcast
+        // to; the slot's `drop_fn` reboxes exactly that allocation.
+        unsafe { crate::server::DevServerSlot::from_raw(ptr, &DEV_SERVER_SLOT_VTABLE) }
+    }))
+}
+
+// The typed views over the host's erased slot: field/method access through
+// `Option::as_deref{,_mut}` on `NewServer.dev_server` lands here. This is the
+// only downcast of the slot pointer.
+impl ::core::ops::Deref for crate::server::DevServerSlot {
+    type Target = DevServer;
+
+    fn deref(&self) -> &DevServer {
+        // SAFETY: every slot is constructed by
+        // `__bun_dev_server_from_server_config` with a leaked `Box<DevServer>`.
+        unsafe { self.as_ptr().cast::<DevServer>().as_ref() }
+    }
+}
+
+impl ::core::ops::DerefMut for crate::server::DevServerSlot {
+    fn deref_mut(&mut self) -> &mut DevServer {
+        // SAFETY: see `Deref`; `&mut self` carries the slot's exclusive claim.
+        unsafe { self.as_ptr().cast::<DevServer>().as_mut() }
+    }
+}
+
 // `AnyServer`'s dev-server accessors are defined here rather than in
 // `server/mod.rs` so the server module doesn't name `DevServer`:
 // `NewServer.dev_server` is the host's slot, these are the typed views

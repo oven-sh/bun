@@ -693,6 +693,12 @@ impl crate::server::FrameworkRouterTypes for crate::server::FrameworkRouterSeam 
     type StringAllocations = crate::bake::StringRefList;
 }
 
+// Sibling projection consumed by `AnyRoute::FrameworkRouter`'s payload
+// (`server/mod.rs`); supplied here for the same reason as above.
+impl crate::server::FrameworkRouterRouteTypes for crate::server::FrameworkRouterSeam {
+    type TypeIndex = TypeIndex;
+}
+
 // Implemented here rather than in `server_body.rs` so the server's route
 // parser stays agnostic of framework-router semantics (style parsing, the
 // bun-framework-react defaults, and the router-count limit).

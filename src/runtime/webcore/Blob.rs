@@ -3160,14 +3160,16 @@ impl BlobExt for Blob {
                 let store = self.store().expect("infallible: store present").clone();
                 // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
                 // pointer is then handed to JSC as an external buffer backing whose
-                // lifetime is the cloned `store` ref above. No Rust-side `&` to the
-                // Store bytes is live across this reborrow.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
-                    .to_js_with_context(
+                // lifetime is the cloned `store` ref above (the deallocator releases
+                // that ref exactly once at GC). No Rust-side `&` to the Store bytes
+                // is live across this reborrow.
+                unsafe {
+                    jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Some(blob_store_array_buffer_deallocator),
                     )
+                }
             }
             Lifetime::Transfer => {
                 if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
@@ -3180,12 +3182,13 @@ impl BlobExt for Blob {
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: see `Share` arm. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
-                    .to_js_with_context(
+                unsafe {
+                    jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW).to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Some(blob_store_array_buffer_deallocator),
                     )
+                }
             }
             Lifetime::Temporary => {
                 if buf_len > jsc::virtual_machine::synthetic_allocation_limit()

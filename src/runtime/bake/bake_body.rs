@@ -30,8 +30,8 @@ use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 // matching filename).
 use super::{dev_server, framework_router};
 
-use crate::server::ServerInitContext;
-use crate::server::server_config::{DevServerOptions, DevelopmentOption};
+use crate::server::server_config::DevelopmentOption;
+use crate::server::{DevServerOptions, ServerInitContext};
 
 // Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
@@ -363,8 +363,8 @@ impl UserOptions {
 
 // ─── `Bun.serve` options seam ────────────────────────────────────────────────
 // CYCLEBREAK extern hooks: `ServerConfig::from_js` reaches the two
-// `UserOptions` constructors through these link-time hooks (declared in
-// `server/ServerConfig.rs`, same pattern as
+// `UserOptions` constructors through these link-time hooks (declared in the
+// dev-server seam section of `server/mod.rs`, same pattern as
 // `__bun_bake_convert_stmts_for_chunk_hmr` in `hmr_module_format.rs`) so the
 // server never names the concrete options type.
 
@@ -396,19 +396,24 @@ fn __bun_bake_dev_server_options_from_serve_routes(
     }
 }
 
-/// Parse the `app` serve option. `Ok(None)` when the bake feature flag is
-/// disabled; errors when dev-server options were already derived from
-/// `routes` or `development` is `Production`.
+/// Read and parse the `app` option from the full `Bun.serve` options object.
+/// `Ok(None)` when the bake feature flag is disabled (the options object is
+/// not touched, so no user getter runs) or `app` is absent/falsy; errors when
+/// dev-server options were already derived from `routes` or `development` is
+/// `Production`.
 #[unsafe(no_mangle)]
 fn __bun_bake_dev_server_options_from_app(
-    app: JSValue,
+    serve_options: JSValue,
     global: &JSGlobalObject,
     has_existing_options: bool,
     development: DevelopmentOption,
 ) -> JsResult<Option<DevServerOptions>> {
-    if !bun_core::FeatureFlags::bake() {
+    if !super::is_enabled() {
         return Ok(None);
     }
+    let Some(app) = serve_options.get_truthy(global, "app")? else {
+        return Ok(None);
+    };
     if has_existing_options {
         // "app" is likely to be removed in favor of the HTML loader.
         return Err(
@@ -1666,6 +1671,22 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
             &SERVER,
         ),
     })
+}
+
+/// CYCLEBREAK extern hook: the bundler's chunk codegen
+/// (`postProcessJSChunk`) splices the HMR runtime preamble for
+/// `Format::InternalBakeDev` output but cannot depend on this crate; it
+/// reaches the embedded bytes through this link-time hook (declared in
+/// `bun_bundler::bake_types`, next to the `DevServerHandle` seam). The
+/// NUL-terminated `&ZStr` flavour stays private to bake for JSC handoff; the
+/// bundler view is the plain byte slice (NUL excluded).
+#[unsafe(no_mangle)]
+fn __bun_bake_get_hmr_runtime(side: Side) -> bun_bundler::bake_types::HmrRuntime {
+    let rt = get_hmr_runtime(side);
+    bun_bundler::bake_types::HmrRuntime {
+        code: rt.code.as_bytes(),
+        line_count: rt.line_count,
+    }
 }
 
 // Note: `Mode`/`Side`/`Graph` are defined canonically in the parent

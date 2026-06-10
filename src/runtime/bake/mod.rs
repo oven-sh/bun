@@ -672,12 +672,13 @@ pub struct HmrRuntime {
     pub line_count: u32,
 }
 pub use bake_body::get_hmr_runtime;
-// (Former `__bun_bake_get_hmr_runtime` link-time bridge deleted —
-// `bun_bundler::bake_types::get_hmr_runtime` now loads the codegen bytes
-// itself via `bun_core::runtime_embed_file!`, so the storage moved DOWN and
-// the cross-crate hook is gone. This crate's `HmrRuntime` keeps the
-// NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
-// `&[u8]`.)
+// The codegen'd `bake.client.js` / `bake.server.js` bytes are loaded only
+// here (via `bun_core::runtime_embed_file!` in `bake_body::get_hmr_runtime`);
+// the bundler's chunk codegen reaches them through the
+// `__bun_bake_get_hmr_runtime` link-time hook defined in `bake_body.rs`.
+// This crate's `HmrRuntime` keeps the NUL-terminated `&ZStr` form for JSC
+// handoff; the bundler-side view (`bun_bundler::bake_types::HmrRuntime`) is
+// plain `&[u8]`.
 
 // `bake.UserOptions` — top-level JS-facing options struct. Full body (with
 // `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported

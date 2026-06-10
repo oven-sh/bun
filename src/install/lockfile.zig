@@ -1807,7 +1807,7 @@ pub fn eql(l: *const Lockfile, r: *const Lockfile, cut_off_pkg_id: usize, alloca
     if (l_len != r_len) return false;
 
     const sort_buf = try allocator.alloc(EqlSorter.PathToId, l_len + r_len);
-    defer l.allocator.free(sort_buf);
+    defer allocator.free(sort_buf);
     var l_buf = sort_buf[0..l_len];
     var r_buf = sort_buf[r_len..];
 
@@ -1927,6 +1927,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool, pack
     this.meta_hash = try this.generateMetaHash(print_name_version_string, packages_len);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
+
 pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packages_len: usize) !MetaHash {
     if (packages_len <= 1)
         return zero_hash;

@@ -280,7 +280,10 @@ class MySQLAdapter
   }
 
   isUpsertUpdate(query: string): boolean {
-    return query.trimEnd().endsWith("ON DUPLICATE KEY UPDATE");
+    // SQL keywords are case-insensitive, so match any spelling of the
+    // suffix; only uppercase the tail, the query can be large
+    const UPSERT_SUFFIX = "ON DUPLICATE KEY UPDATE";
+    return query.trimEnd().slice(-UPSERT_SUFFIX.length).toUpperCase() === UPSERT_SUFFIX;
   }
 }
 

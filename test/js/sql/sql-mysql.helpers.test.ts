@@ -225,6 +225,42 @@ describeWithContainer(
         expect(result[0].email).toBe("bunny2@bun.com");
       }
     });
+
+    // SQL keywords are case-insensitive; lowercase spellings must not get an
+    // extra SET appended. https://github.com/oven-sh/bun/issues/32035
+    test("upsert helper with lowercase on duplicate key update", async () => {
+      await using sql = new SQL({ ...getOptions(), max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`
+      CREATE TABLE IF NOT EXISTS ${sql(random_name)} (
+          id int PRIMARY KEY,
+          foo text NOT NULL,
+          email VARCHAR(255) NOT NULL UNIQUE
+      )
+    `;
+
+      await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, foo: "hello", email: "bunny@bun.com" })}`;
+
+      {
+        const data = { foo: "hello2", email: "bunny2@bun.com" };
+        await sql`
+      INSERT INTO ${sql(random_name)} ${sql({ id: 1, ...data })}
+      on duplicate key update ${sql(data)}
+    `;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result).toEqual([{ id: 1, foo: "hello2", email: "bunny2@bun.com" }]);
+      }
+
+      {
+        const data = { foo: "hello3", email: "bunny3@bun.com" };
+        await sql`
+      INSERT INTO ${sql(random_name)} ${sql({ id: 1, ...data })}
+      On Duplicate Key Update ${sql(data)}
+    `;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result).toEqual([{ id: 1, foo: "hello3", email: "bunny3@bun.com" }]);
+      }
+    });
     test("update helper with IN and column name", async () => {
       await using sql = new SQL({ ...getOptions(), max: 1 });
       const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

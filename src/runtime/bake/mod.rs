@@ -53,6 +53,19 @@ pub mod jsc {
     pub(crate) use crate::jsc::*;
 }
 
+/// Enable the "app" option in Bun.serve. This option will likely be removed
+/// in favor of HTML loaders and configuring framework options in bunfig.toml
+pub fn is_enabled() -> bool {
+    // In canary or if an environment variable is specified.
+    bun_core::env::IS_CANARY
+        || bun_core::env::IS_DEBUG
+        || bun_core::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get() == Some(true)
+}
+
+/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
+/// To use them, extra flags are passed in addition to this one.
+pub const DEBUGGING_FEATURES: bool = bun_core::env::IS_CANARY || bun_core::env::IS_DEBUG;
+
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
 // ══════════════════════════════════════════════════════════════════════════

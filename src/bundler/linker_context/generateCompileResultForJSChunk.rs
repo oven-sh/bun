@@ -71,7 +71,6 @@ fn generate_compile_result_for_js_chunk_impl(
     // `BufferWriter::init()` output is allocated from the global heap and
     // outlives the task's CompileResult consumption, so a per-dev-server
     // arena would only be a perf optimization.
-    let _ = c.dev_server;
 
     // temporary_arena / stmt_list are initialized in Worker::create before any task runs.
     let arena = worker

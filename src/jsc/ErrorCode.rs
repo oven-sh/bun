@@ -683,17 +683,21 @@ impl ErrorCode {
     pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(312);
     /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
     pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
+    /// `ERR_POSTGRES_CONNECTION_REFUSED` (instanceof Error)
+    pub const POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode(314);
+    /// `ERR_MYSQL_CONNECTION_REFUSED` (instanceof Error)
+    pub const MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode(315);
     /// `ERR_WORKER_MESSAGING_ERRORED` (instanceof Error)
-    pub const WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode(314);
+    pub const WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode(316);
     /// `ERR_WORKER_MESSAGING_FAILED` (instanceof Error)
-    pub const WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode(315);
+    pub const WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode(317);
     /// `ERR_WORKER_MESSAGING_SAME_THREAD` (instanceof Error)
-    pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(316);
+    pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(318);
     /// `ERR_WORKER_MESSAGING_TIMEOUT` (instanceof Error)
-    pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(317);
+    pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(319);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 318;
+    pub const COUNT: u16 = 320;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -881,6 +885,7 @@ impl ErrorCode {
         ErrorCode::POSTGRES_AUTHENTICATION_FAILED_PBKDF2;
     pub const ERR_POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_CLOSED;
     pub const ERR_POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_FAILED;
+    pub const ERR_POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_REFUSED;
     pub const ERR_POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::POSTGRES_CONNECTION_TIMEOUT;
     pub const ERR_POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode::POSTGRES_EXPECTED_REQUEST;
     pub const ERR_POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode::POSTGRES_EXPECTED_STATEMENT;
@@ -937,6 +942,7 @@ impl ErrorCode {
     pub const ERR_PROXY_INVALID_CONFIG: ErrorCode = ErrorCode::PROXY_INVALID_CONFIG;
     pub const ERR_MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_CLOSED;
     pub const ERR_MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode::MYSQL_CONNECTION_FAILED;
+    pub const ERR_MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_REFUSED;
     pub const ERR_MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::MYSQL_CONNECTION_TIMEOUT;
     pub const ERR_MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode::MYSQL_IDLE_TIMEOUT;
     pub const ERR_MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode::MYSQL_LIFETIME_TIMEOUT;
@@ -1385,6 +1391,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_REQUIRED",
     "ERR_POSTGRES_CONNECTION_FAILED",
     "ERR_MYSQL_CONNECTION_FAILED",
+    "ERR_POSTGRES_CONNECTION_REFUSED",
+    "ERR_MYSQL_CONNECTION_REFUSED",
     "ERR_WORKER_MESSAGING_ERRORED",
     "ERR_WORKER_MESSAGING_FAILED",
     "ERR_WORKER_MESSAGING_SAME_THREAD",

@@ -777,7 +777,7 @@ impl PostgresSQLConnection {
 
     pub fn on_connect_error(&self) {
         self.handle_socket_failure(|this| {
-            this.fail(b"Failed to connect", AnyPostgresError::ConnectionFailed);
+            this.fail(b"Failed to connect", AnyPostgresError::ConnectionRefused);
         });
     }
 

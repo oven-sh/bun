@@ -231,12 +231,6 @@ where
     pub fn is_async(&self) -> bool {
         self.defer_deinit_until_callback_completes.is_none()
     }
-
-    pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        // `server` is a `BackRef` (BACKREF — server outlives `self`); safe
-        // `Deref` ties the borrow to `&self.server`, which is `&'self`.
-        self.server.as_ref()?.dev_server()
-    }
 }
 
 // ─── per-request state machine bodies ────────────────────────────────────────

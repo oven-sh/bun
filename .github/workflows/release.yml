@@ -178,13 +178,22 @@ jobs:
       - name: Release (latest)
         if: ${{ env.BUN_LATEST == 'true' }}
         # Skip republishing an existing version so release re-runs stay green,
-        # matching the JS-DevTools/npm-publish behavior this replaces.
+        # matching the JS-DevTools/npm-publish behavior this replaces. Only a
+        # registry E404 means "not published"; any other npm view failure
+        # (network, auth) fails the step instead of guessing.
         run: |
           version="$(jq -r .version package.json)"
-          if [ -n "$version" ] && [ -n "$(npm view "bun-types@${version}" version 2>/dev/null || true)" ]; then
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "package.json is missing a version" >&2
+            exit 1
+          fi
+          if published="$(npm view "bun-types@${version}" version 2>&1)"; then
             echo "bun-types@${version} is already published, skipping"
-          else
+          elif grep -q "E404" <<<"$published"; then
             npm publish
+          else
+            printf '%s\n' "$published" >&2
+            exit 1
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -679,9 +679,13 @@ impl ErrorCode {
     pub const SECRETS_AUTH_FAILED: ErrorCode = ErrorCode(310);
     /// `ERR_SECRETS_INTERACTION_REQUIRED` (instanceof Error)
     pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(311);
+    /// `ERR_POSTGRES_CONNECTION_FAILED` (instanceof Error)
+    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(312);
+    /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
+    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 312;
+    pub const COUNT: u16 = 314;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -868,6 +872,7 @@ impl ErrorCode {
     pub const ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2: ErrorCode =
         ErrorCode::POSTGRES_AUTHENTICATION_FAILED_PBKDF2;
     pub const ERR_POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_CLOSED;
+    pub const ERR_POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_FAILED;
     pub const ERR_POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::POSTGRES_CONNECTION_TIMEOUT;
     pub const ERR_POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode::POSTGRES_EXPECTED_REQUEST;
     pub const ERR_POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode::POSTGRES_EXPECTED_STATEMENT;
@@ -923,6 +928,7 @@ impl ErrorCode {
         ErrorCode::POSTGRES_UNSUPPORTED_NUMERIC_FORMAT;
     pub const ERR_PROXY_INVALID_CONFIG: ErrorCode = ErrorCode::PROXY_INVALID_CONFIG;
     pub const ERR_MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_CLOSED;
+    pub const ERR_MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode::MYSQL_CONNECTION_FAILED;
     pub const ERR_MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::MYSQL_CONNECTION_TIMEOUT;
     pub const ERR_MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode::MYSQL_IDLE_TIMEOUT;
     pub const ERR_MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode::MYSQL_LIFETIME_TIMEOUT;
@@ -1365,6 +1371,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_NOT_ALLOWED",
     "ERR_SECRETS_AUTH_FAILED",
     "ERR_SECRETS_INTERACTION_REQUIRED",
+    "ERR_POSTGRES_CONNECTION_FAILED",
+    "ERR_MYSQL_CONNECTION_FAILED",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

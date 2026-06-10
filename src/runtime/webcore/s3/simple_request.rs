@@ -522,6 +522,8 @@ pub struct S3SimpleRequestOptions<'a> {
 
     // http request options
     pub(crate) body: &'a [u8],
+    /// Explicit proxy override (`fetch("s3://…", { proxy })`). `None`/empty
+    /// resolves HTTP_PROXY/HTTPS_PROXY from the env against the signed URL.
     pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
     pub(crate) range: Option<Box<[u8]>>,
@@ -547,6 +549,31 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             request_payer: false,
         }
     }
+}
+
+/// Resolve the proxy for an S3 request against the signed request URL,
+/// matching fetch: an explicit proxy (`fetch("s3://…", { proxy })`) is used
+/// as-is but still subject to NO_PROXY; otherwise HTTP_PROXY/HTTPS_PROXY is
+/// selected from the URL scheme with the NO_PROXY filter applied.
+///
+/// Returns an owned copy (possibly empty = no proxy): the env-derived href
+/// borrows the dotenv loader's map, which a later `process.env.HTTP_PROXY =`
+/// assignment can free while the request is in flight on the HTTP thread.
+pub(crate) fn resolve_proxy_url(url: &URL<'_>, explicit: Option<&[u8]>) -> Box<[u8]> {
+    // `Transpiler::env_mut` is the safe accessor for the process-singleton
+    // dotenv loader (set during init).
+    let env = VirtualMachine::get().transpiler.env_mut();
+    if let Some(explicit) = explicit {
+        if !explicit.is_empty() {
+            if env.is_no_proxy(Some(url.hostname), Some(url.host)) {
+                return Box::default();
+            }
+            return Box::from(explicit);
+        }
+    }
+    env.get_http_proxy_for(url)
+        .map(|proxy| Box::from(proxy.href))
+        .unwrap_or_default()
 }
 
 pub(crate) fn execute_simple_s3_request(
@@ -620,7 +647,7 @@ pub(crate) fn execute_simple_s3_request(
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
-    let proxy = options.proxy_url.unwrap_or(b"");
+    let proxy_url = resolve_proxy_url(&URL::parse(&result.url), options.proxy_url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
@@ -632,11 +659,7 @@ pub(crate) fn execute_simple_s3_request(
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
-        proxy_url: if !proxy.is_empty() {
-            Box::<[u8]>::from(proxy)
-        } else {
-            Box::default()
-        },
+        proxy_url,
         body: Box::<[u8]>::from(options.body),
         poll_ref,
         signal_store: Default::default(),

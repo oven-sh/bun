@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast, isMusl } from "harness";
+import { isArm64, isGlibcVersionAtLeast, isMusl, isWindows } from "harness";
 import { platform } from "os";
 
 import {
@@ -972,15 +972,18 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
 });
 
 // Any C runtime with strlen() will do. On musl there is no stable library
-// name to dlopen, so these are skipped there.
+// name to dlopen, and bun:ffi is disabled entirely on Windows ARM64, so these
+// are skipped there.
 const strlenLibPath =
-  platform() === "darwin"
-    ? "/usr/lib/libSystem.B.dylib"
-    : platform() === "win32"
-      ? "msvcrt.dll"
-      : isMusl
-        ? null
-        : "libc.so.6";
+  isWindows && isArm64
+    ? null
+    : platform() === "darwin"
+      ? "/usr/lib/libSystem.B.dylib"
+      : platform() === "win32"
+        ? "msvcrt.dll"
+        : isMusl
+          ? null
+          : "libc.so.6";
 
 describe.if(!!strlenLibPath)("pointer argument conversion", () => {
   const strings = {

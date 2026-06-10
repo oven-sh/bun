@@ -151,13 +151,17 @@ function helperFunction() {
 // Each round re-registers the file's source provider over the previous one
 // and re-materializes the parsed map from it, so stack remapping must stay
 // correct through repeated provider replacement, not just the first install.
-function churnPage(name: string) {
+// `filler` comment lines shift the throwing function down one line per round,
+// so a stale map from an earlier round would remap the frame to the wrong
+// line and fail that round's assertion.
+function churnPage(name: string, filler: number) {
+  const fillerLines = Array.from({ length: filler }, (_, n) => `// filler ${n}\n`).join("");
   return `export default function ChurnPage() {
   churn${name}();
   return <div>churn ${name}</div>;
 }
 
-function churn${name}() {
+${fillerLines}function churn${name}() {
   throw new Error("Churn error ${name}");
 }
 
@@ -170,13 +174,15 @@ export async function getStaticPaths() {
 
 devTest("server-side source maps stay correct across repeated reloads", {
   files: {
-    "pages/churn.tsx": churnPage("Alpha"),
+    "pages/churn.tsx": churnPage("Alpha", 0),
   },
   framework: "react",
   async test(dev) {
-    for (const name of ["Alpha", "Bravo", "Charlie", "Delta"]) {
-      if (name !== "Alpha") {
-        await dev.write("pages/churn.tsx", churnPage(name));
+    const rounds = ["Alpha", "Bravo", "Charlie", "Delta"];
+    for (let i = 0; i < rounds.length; i++) {
+      const name = rounds[i];
+      if (i > 0) {
+        await dev.write("pages/churn.tsx", churnPage(name, i));
       }
       await Promise.all([
         dev.fetch("/churn").catch(() => {}),
@@ -185,11 +191,11 @@ devTest("server-side source maps stay correct across repeated reloads", {
 
       // Strip ANSI codes; they interleave within stack-frame lines.
       const cleanLines = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-      // The throwing function is declared on line 6 of every version of the
-      // source file; frames remap to the declaration position (see the
+      // The throwing function is declared on line 6 + i of round i's version
+      // of the source file; frames remap to the declaration position (see the
       // `helperFunction`/`5:1` expectation above). `\w*` tolerates bundler
       // symbol renaming (see `doSomething2` above).
-      expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:6:1\\)`));
+      expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:${6 + i}:1\\)`));
     }
   },
   timeoutMultiplier: 2,

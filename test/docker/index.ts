@@ -132,6 +132,18 @@ class DockerComposeHelper {
       throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);
     }
 
+    // If the container exists but died since the last ensure (host OOM kill,
+    // server crash), record its exit status and last words before the `up`
+    // below quietly restarts it, so shard logs explain mid-run outages
+    // (exit 137 = SIGKILL, usually the OOM reaper).
+    const stale = await this.exec(["ps", "-a", service]);
+    if (/exited|dead|restarting/i.test(stale.stdout)) {
+      const lastLogs = await this.exec(["logs", "--tail", "20", service]);
+      console.error(
+        `Service ${service} found dead before start; restarting it.\n--- ps ---\n${stale.stdout}--- last logs ---\n${lastLogs.stdout}${lastLogs.stderr}`,
+      );
+    }
+
     // Start the service and wait for it to be healthy.
     // --wait-timeout: without it `--wait` blocks until the engine reports
     // healthy, which with `interval: 1h` and an engine that doesn't honor the

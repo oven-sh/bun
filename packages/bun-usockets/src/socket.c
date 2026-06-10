@@ -16,7 +16,6 @@
  */
 // clang-format off
 
-#include <stdio.h>
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>

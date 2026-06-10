@@ -533,6 +533,39 @@ describe("streaming", () => {
       expect(stderr).toContain("error: Oops");
       expect(onMessage).toHaveBeenCalled();
     });
+
+    it("returning a Response whose body stream is already locked calls the error handler", async () => {
+      let captured: { code: unknown; name: string; message: string } | null = null;
+      await using server = serve({
+        port: 0,
+        fetch() {
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("payload"));
+              controller.close();
+            },
+          });
+          // Lock the stream before handing it to the response. A locked stream
+          // cannot be piped, so the server must surface ERR_STREAM_CANNOT_PIPE
+          // instead of silently returning a 200 with an empty body.
+          stream.getReader();
+          return new Response(stream);
+        },
+        error(err: any) {
+          captured = { code: err.code, name: err.constructor.name, message: err.message };
+          return new Response("handled", { status: 500 });
+        },
+      });
+
+      const response = await fetch(server.url);
+      expect(await response.text()).toBe("handled");
+      expect(response.status).toBe(500);
+      expect(captured).toEqual({
+        code: "ERR_STREAM_CANNOT_PIPE",
+        name: "Error",
+        message: "Stream already used, please create a new one",
+      });
+    });
   });
 
   it("text from JS, one chunk", async () => {

@@ -41,7 +41,7 @@ impl<'a> Row<'a> {
         structure: JSValue,
         flags: SQLDataCellFlags,
         result_mode: SQLQueryResultMode,
-        // PORT NOTE: Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
+        // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
         let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
@@ -137,7 +137,6 @@ impl<'a> Row<'a> {
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
                         tag: Tag::Uint4,
@@ -145,7 +144,7 @@ impl<'a> Row<'a> {
                         ..SQLDataCell::default()
                     };
                 } else {
-                    // std.math.minInt(i24) == -8_388_608
+                    // -8_388_608 is the minimum value of a signed 24-bit int
                     let val: i32 = parse_int::<i32>(value.slice(), 10).unwrap_or(-8_388_608);
                     *cell = SQLDataCell {
                         tag: Tag::Int4,
@@ -442,7 +441,7 @@ impl<'a> Row<'a> {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+    // See Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub(crate) fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -454,7 +453,9 @@ impl<'a> Row<'a> {
 impl<'a> Drop for Row<'a> {
     fn drop(&mut self) {
         for value in self.values.iter_mut() {
-            // TODO(port): if SQLDataCell gains `impl Drop`, delete this loop and the Drop impl entirely.
+            // SQLDataCell deliberately has no `impl Drop` — it is an FFI struct
+            // whose ownership is normally transferred to C++ — so the cells
+            // still owned by this row must be freed manually here.
             value.deinit();
         }
         // self.columns is intentionally left out.
@@ -465,8 +466,7 @@ impl<'a> Drop for Row<'a> {
 
 #[inline]
 fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
-    // Zig: `bun.String.cloneUTF8(slice).value.WTFStringImpl` — extracts the raw
-    // WTFStringImpl* from a freshly-cloned bun.String (ownership transferred to the cell,
+    // Extracts the raw WTFStringImpl* from a freshly-cloned string (ownership transferred to the cell,
     // freed via `free_value = 1`).
     if !slice.is_empty() {
         BunString::clone_utf8(slice).leak_wtf_impl()
@@ -474,5 +474,3 @@ fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
         ptr::null_mut()
     }
 }
-
-// ported from: src/sql_jsc/mysql/protocol/ResultSet.zig

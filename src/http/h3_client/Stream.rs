@@ -12,8 +12,6 @@ use bun_uws::quic;
 
 use super::ClientSession;
 use crate::HttpClient;
-// TODO(port): H3Client.zig sits at src/http/H3Client.zig alongside the h3_client/ dir;
-// confirm the module path for `live_streams` once the crate layout is wired.
 use crate::h3_client as h3;
 
 pub struct Stream {
@@ -41,7 +39,6 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Zig: `pub const new = bun.TrivialNew(@This());`
     /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
     /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
     /// `heap::take`.
@@ -99,10 +96,6 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         // `decoded_headers` / `body_buffer` are Vec — freed automatically.
-        // Zig `.monotonic` == LLVM monotonic == Rust `Relaxed`.
         h3::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        // Zig: `bun.destroy(this)` — the Box deallocation happens at the drop site.
     }
 }
-
-// ported from: src/http/h3_client/Stream.zig

@@ -27,5 +27,3 @@ impl CssStringFns {
         dest.serialize_string(s)
     }
 }
-
-// ported from: src/css/values/css_string.zig

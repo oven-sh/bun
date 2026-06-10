@@ -1,5 +1,4 @@
-//! Port of `src/runtime/cli/Arguments.zig` — bunfig-loading subset.
-//!
+//! Bunfig-loading subset of CLI argument handling: these functions
 //! and their private helpers were lifted out of `bun_runtime::cli::Arguments`
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
@@ -62,8 +61,8 @@ fn load_bunfig(
     bun_ast::expr::data::Store::create();
     let _store_reset = bun_ast::StoreResetGuard::new();
 
-    // PORT NOTE: reshaped for borrowck — `defer { ctx.log.level = original }`
-    // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
+    // A drop-guard borrowing `&mut *ctx.log` would conflict with the
+    // `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in
     // `create_context_data()`); the guard restores `level` on unwind/return.
     let log_ptr: *mut bun_ast::Log = ctx.log;
@@ -100,9 +99,10 @@ pub fn load_config_path(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: `comptime cmd.readGlobalConfig()` demoted to runtime — see
-    // `parse()` PORT NOTE; `Tag::read_global_config` is a const-ish lookup so
-    // the dead arm is still a single branch.
+    // `cmd.read_global_config()` is evaluated at runtime (see
+    // the note on `Parser::parse` in src/bunfig/bunfig.rs);
+    // `Tag::read_global_config` is a const-ish
+    // lookup so the dead arm is still a single branch.
     if cmd.read_global_config() {
         if let Err(err) = load_global_bunfig(cmd, ctx) {
             if auto_loaded {
@@ -202,7 +202,7 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // PORT NOTE: reshaped for borrowck — `join_abs_string_buf` ties the
+        // Reshaped for borrowck: `join_abs_string_buf` ties the
         // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
         // and `config_buf`. We only need the length to NUL-terminate and
         // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before

@@ -133,7 +133,7 @@ void InspectorBunFrontendDevServerAgent::consoleLog(int devServerId, char kind, 
     m_frontendDispatcher->consoleLog(devServerId, kind, data);
 }
 
-// C API implementations for Zig
+// C API implementations for the Rust side
 extern "C" {
 
 void InspectorBunFrontendDevServerAgent__notifyClientConnected(InspectorBunFrontendDevServerAgent* agent, int devServerId, int connectionId)

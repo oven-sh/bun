@@ -60,10 +60,10 @@ namespace WebCore {
 
 class Blob;
 
-// Move-only owning handle for the Zig heap-allocated SSLConfig returned by
+// Move-only owning handle for the natively heap-allocated SSLConfig returned by
 // Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
 // strings, so every exception / early-return path between parsing and the
-// Zig upgrade client taking ownership must free it. Wrapping the raw `void*`
+// upgrade client taking ownership must free it. Wrapping the raw `void*`
 // in this RAII type lets normal C++ destruction handle all of those paths
 // without ad-hoc scope guards or manual frees at each call site.
 class WebSocketSSLConfigPtr {
@@ -91,7 +91,7 @@ public:
 
     explicit operator bool() const { return m_ptr != nullptr; }
 
-    // Transfer ownership out to the Zig upgrade client; after this the
+    // Transfer ownership out to the upgrade client; after this the
     // destructor is a no-op.
     void* release() { return std::exchange(m_ptr, nullptr); }
 
@@ -344,7 +344,7 @@ private:
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };
 
-    // TLS options (Zig heap SSLConfig — ownership is released to the Zig
+    // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
 

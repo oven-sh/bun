@@ -1472,7 +1472,7 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
 // Note: `Mode`/`Side`/`Graph` are defined canonically in the parent
 // `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
 // `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
-// `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
+// `crate::bake::Mode` and downstream callers (production.rs,
 // IncrementalGraph.rs) see one nominal type.
 pub(crate) use super::Mode;
 pub(crate) use bun_bundler::bake_types::{Graph, Side};

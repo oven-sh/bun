@@ -516,15 +516,9 @@ impl BuildCommand {
                 )?;
             }
 
-            crate::bake::bake_body::add_import_meta_defines(
+            crate::bake::add_dev_server_components_defines(
                 &mut this_transpiler.options.define,
-                crate::bake::Mode::Development,
-                crate::bake::Side::Server,
-            )?;
-            crate::bake::bake_body::add_import_meta_defines(
                 &mut ct.options.define,
-                crate::bake::Mode::Development,
-                crate::bake::Side::Client,
             )?;
 
             this_transpiler.sync_resolver_opts();

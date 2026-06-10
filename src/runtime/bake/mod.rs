@@ -71,6 +71,19 @@ pub enum Mode {
     ProductionStatic,
 }
 
+/// Adds the Vite-style `import.meta.env.*` defines for a development
+/// server-components build: server-side values into `server_define` and
+/// client-side values into `client_define`. Single entry point for
+/// `bun build --server-components`, which always builds in development
+/// mode, so the CLI doesn't need to name `Mode`/`Side`.
+pub(crate) fn add_dev_server_components_defines(
+    server_define: &mut bun_bundler::options::Define,
+    client_define: &mut bun_bundler::options::Define,
+) -> Result<(), bun_core::Error> {
+    bake_body::add_import_meta_defines(server_define, Mode::Development, Side::Server)?;
+    bake_body::add_import_meta_defines(client_define, Mode::Development, Side::Client)
+}
+
 /// `bake.Framework.ServerComponents`.
 ///
 /// String fields are arena-backed at runtime but default to static literals.

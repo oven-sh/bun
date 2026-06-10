@@ -1831,10 +1831,15 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    // Checked: the mkdirp completion runs on the work-pool thread; the
+    // owning VM may be a worker freed by terminate() in the meantime.
+    let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
+        core::ptr::from_ref(this.event_loop).cast_mut(),
+        jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
+            this,
+            call_erased,
+        )),
+    );
 }
 
 // ───────────────────────────────────────────────────────────────────────────

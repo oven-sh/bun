@@ -467,6 +467,110 @@ impl VMHolder {
     }
 }
 
+/// Process-global registry of `(VirtualMachine, EventLoop)` addresses that
+/// cross-thread producers may still enqueue to.
+///
+/// Worker `VirtualMachine`s (and the `EventLoop`s embedded in them) are freed
+/// by `WebWorker::shutdown()` while producers on other threads — the HTTP
+/// client thread (fetch/S3 completions), the work pool (fs/crypto/zlib/napi
+/// completions), watcher threads, napi addon threads — still hold raw
+/// pointers captured when the work was scheduled. A push after the free
+/// corrupts reused heap memory; the corrupted task queue then surfaces as
+/// "invalid enum value" panics in `tickQueueWithCount` on whichever live
+/// worker inherited the memory.
+///
+/// This is the Rust-side analogue of the fence the C++ `postTaskTo` path
+/// already has (`allScriptExecutionContextsMap` + its lock, see
+/// `ScriptExecutionContext.cpp`): teardown removes the VM from the registry
+/// under the same lock producers take to enqueue, so a producer either
+/// observes the VM live (and the teardown path then waits for the lock before
+/// freeing) or drops the task.
+///
+/// Addresses are stored as `usize` — the registry never dereferences them.
+/// The main-thread VM is registered but never unregistered (its allocation is
+/// static-rooted and never freed), which enables the lock-free fast path in
+/// the checked entry points below.
+///
+/// Lock ordering: this lock is a leaf. The critical sections only touch the
+/// target's MPSC queue (wait-free push) and `wakeup()` (a syscall); they take
+/// no other locks.
+pub(crate) mod live_vm_registry {
+    use super::VirtualMachine;
+    use crate::event_loop::EventLoop;
+    use bun_threading::Guarded;
+
+    #[derive(Copy, Clone, Eq, PartialEq)]
+    pub(crate) struct Entry {
+        pub(crate) vm: usize,
+        pub(crate) loop_: usize,
+    }
+
+    pub(crate) static REGISTRY: Guarded<Vec<Entry>> = Guarded::new(Vec::new());
+
+    /// Register `vm` and both of its embedded event loops. Called once from
+    /// `VirtualMachine::init()` after `regular_event_loop`/`macro_event_loop`
+    /// are initialised.
+    pub(crate) fn register_vm(vm: *mut VirtualMachine) {
+        // SAFETY: `vm` is the freshly initialised allocation; `addr_of!` only
+        // projects field addresses, no reads.
+        let (regular, macro_) = unsafe {
+            (
+                core::ptr::addr_of!((*vm).regular_event_loop),
+                core::ptr::addr_of!((*vm).macro_event_loop),
+            )
+        };
+        let mut reg = REGISTRY.lock();
+        reg.push(Entry {
+            vm: vm as usize,
+            loop_: regular as usize,
+        });
+        reg.push(Entry {
+            vm: vm as usize,
+            loop_: macro_ as usize,
+        });
+    }
+
+    /// Remove every entry for `vm`. Called from `WebWorker::shutdown()` before
+    /// anything the VM owns is freed; once this returns, no producer can be
+    /// inside a checked enqueue targeting `vm` (they would have to re-acquire
+    /// the lock and re-check).
+    pub(crate) fn unregister_vm(vm: *mut VirtualMachine) {
+        REGISTRY.lock().retain(|e| e.vm != vm as usize);
+    }
+
+    /// Register a loop that lives outside the VM allocation (the boxed
+    /// spawnSync event loop). Removed with `unregister_loop` when the box is
+    /// freed.
+    pub(crate) fn register_extra_loop(vm: *mut VirtualMachine, loop_: *mut EventLoop) {
+        REGISTRY.lock().push(Entry {
+            vm: vm as usize,
+            loop_: loop_ as usize,
+        });
+    }
+
+    pub(crate) fn unregister_loop(loop_: *mut EventLoop) {
+        REGISTRY.lock().retain(|e| e.loop_ != loop_ as usize);
+    }
+
+    /// `true` iff `loop_` is one of the immortal main-thread VM's embedded
+    /// loops. Address arithmetic only; the main VM allocation is never freed.
+    pub(crate) fn is_main_vm_loop(loop_: *mut EventLoop) -> bool {
+        let main = super::MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        if main.is_null() {
+            return false;
+        }
+        // SAFETY: `main` is the live, never-freed main-thread VM; `addr_of!`
+        // only projects field addresses, no reads.
+        let (regular, macro_) = unsafe {
+            (
+                core::ptr::addr_of!((*main).regular_event_loop),
+                core::ptr::addr_of!((*main).macro_event_loop),
+            )
+        };
+        core::ptr::eq(loop_, regular.cast_mut()) || core::ptr::eq(loop_, macro_.cast_mut())
+    }
+}
+
 #[thread_local]
 pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
@@ -2114,6 +2218,11 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
 
+            // Make this VM reachable for checked cross-thread enqueues.
+            // Worker VMs are unregistered in `WebWorker::shutdown()` before
+            // the allocation is freed; the main VM stays registered forever.
+            live_vm_registry::register_vm(vm);
+
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
             addr_of_mut!((*vm).saved_source_map_table)
@@ -3569,6 +3678,86 @@ impl VirtualMachine {
         task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
     ) {
         self.event_loop_mut().enqueue_task_concurrent(task);
+    }
+
+    /// Run `f` against `vm` only if it is still alive, tolerating `vm` having
+    /// been freed (terminated worker). Returns `None` without touching `*vm`
+    /// when it is gone.
+    ///
+    /// For the immortal main-thread VM this is lock-free; for every other VM,
+    /// `f` runs under the [`live_vm_registry`] lock, which `unregister_vm`
+    /// (called before any free) also takes — so the VM cannot be freed while
+    /// `f` runs. `f` must therefore be short and lock-free: pushing to the
+    /// MPSC queue, `wakeup()`, reading a flag.
+    pub fn with_live_vm<R>(
+        vm: *mut VirtualMachine,
+        f: impl FnOnce(&VirtualMachine) -> R,
+    ) -> Option<R> {
+        if vm.is_null() {
+            return None;
+        }
+        // Fast path: the main-thread VM is allocated once and never freed, so
+        // an address match proves liveness without the lock.
+        if core::ptr::eq(
+            vm,
+            MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire),
+        ) {
+            // SAFETY: main-thread VM, never freed.
+            return Some(f(unsafe { &*vm }));
+        }
+        let reg = live_vm_registry::REGISTRY.lock();
+        if !reg.iter().any(|e| e.vm == vm as usize) {
+            return None;
+        }
+        // SAFETY: `vm` is registered-live, and `unregister_vm` (which
+        // happens-before any free of the VM) takes the same lock we hold, so
+        // the VM cannot be freed while `f` runs.
+        Some(f(unsafe { &*vm }))
+    }
+
+    /// Cross-thread enqueue that tolerates `vm` having been freed (terminated
+    /// worker). Producers that captured `vm` at schedule time and deliver a
+    /// completion from another thread (HTTP client thread, work pool, watcher
+    /// threads, napi addon threads) must use this instead of dereferencing
+    /// `vm` directly — see [`live_vm_registry`].
+    ///
+    /// Returns `false` when the VM is gone: the task was not queued, and
+    /// `task`'s node was freed if it was `auto_delete` (the payload is
+    /// intentionally not touched — equivalent to a task left undrained in a
+    /// terminated worker's queue, which is the pre-existing behavior for
+    /// tasks that lost this race by a few milliseconds).
+    pub fn try_enqueue_task_concurrent(
+        vm: *mut VirtualMachine,
+        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
+    ) -> bool {
+        match Self::with_live_vm(vm, |vm| {
+            vm.event_loop_shared().enqueue_task_concurrent(task);
+        }) {
+            Some(()) => true,
+            None => {
+                crate::event_loop::discard_unqueued_concurrent_task(task);
+                false
+            }
+        }
+    }
+
+    /// Like [`VirtualMachine::is_shutting_down`], but callable with a pointer
+    /// that may already be freed (terminated worker): a freed VM reports
+    /// `true`. For HTTP-thread / work-pool completion paths that branch on
+    /// shutdown before touching VM-owned state.
+    pub fn is_shutting_down_or_freed(vm: *mut VirtualMachine) -> bool {
+        Self::with_live_vm(vm, |vm| vm.is_shutting_down()).unwrap_or(true)
+    }
+
+    /// `ref_concurrently`/`unref_concurrently` variants of
+    /// [`Self::try_enqueue_task_concurrent`]: no-ops when the VM is gone (a
+    /// freed loop has no liveness counter left to balance).
+    pub fn try_ref_concurrently(vm: *mut VirtualMachine) {
+        let _ = Self::with_live_vm(vm, |vm| vm.event_loop_shared().ref_concurrently());
+    }
+
+    pub fn try_unref_concurrently(vm: *mut VirtualMachine) {
+        let _ = Self::with_live_vm(vm, |vm| vm.event_loop_shared().unref_concurrently());
     }
 
     /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant

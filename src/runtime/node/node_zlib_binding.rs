@@ -249,6 +249,10 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     }
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
+
+    /// Owning VM captured at construction — see the `vm` field docs on the
+    /// `Native*` structs.
+    fn vm(&self) -> &JsCell<*mut VirtualMachine>;
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
@@ -469,25 +473,21 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `ref_()` in `write()`); bodies use the `&self` accessor surface
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
-        let global_this: &JSGlobalObject = this_ref.global_this();
-        // `bun_vm_concurrently()` is the thread-safe accessor (skips the
-        // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        // BACKREF — `bun_vm_concurrently()` never returns null for a Bun-owned
-        // global; wrap once so the `event_loop()` read below is safe Deref.
-        let vm = ParentRef::from(
-            NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
-        );
 
         this_ref.stream().with_mut(|s| s.do_work());
 
-        // SAFETY: `event_loop()` is a self-pointer into a live VM; the
-        // `enqueue_task_concurrent` body only touches the lock-free
-        // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
-        // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
-        unsafe {
-            (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
-        }
+        // The owning VM was captured at construction and may be a worker VM
+        // freed by terminate() while this job ran — checked enqueue only, and
+        // no reads through `global_this` on this thread. `this` is the
+        // heap-allocated `m_ctx` payload — the matching `ref()` in `write()`
+        // keeps it alive until `run_from_js_thread` runs and calls `deref()`.
+        // Shared read of the init-immutable `vm` slot; happens-before via
+        // `WorkPool::schedule` (same contract as the `task`/`stream` cells).
+        let vm = *this_ref.vm().get();
+        let _ = VirtualMachine::try_enqueue_task_concurrent(
+            vm,
+            ConcurrentTask::create(Task::init(this)),
+        );
     }
 
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
@@ -1008,6 +1008,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
+            #[inline] fn vm(&self) -> &::bun_jsc::JsCell<*mut ::bun_jsc::virtual_machine::VirtualMachine> { &self.vm }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }

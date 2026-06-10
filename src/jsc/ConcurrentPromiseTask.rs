@@ -116,7 +116,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         );
         // `task` is the live `concurrent_task` field of the heap-allocated
         // job; the queue takes ownership of its intrusive `next` link.
-        event_loop.enqueue_task_concurrent(task);
+        // `event_loop` may point into a worker VM freed by terminate() while
+        // the pool task ran — checked enqueue only.
+        let _ = EventLoop::try_enqueue_task_concurrent(event_loop.as_ptr(), task);
     }
 
     /// Frees the heap allocation backing this task.

@@ -50,6 +50,12 @@ mod _impl {
         pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
+        /// Owning VM, captured at construction. Read on the work-pool thread
+        /// by `async_job_run` (happens-before via `WorkPool::schedule`, same
+        /// contract as `task`) so completion never reads through
+        /// `global_this` off-thread — the VM may be a worker freed by
+        /// terminate() while the job was in flight.
+        pub vm: JsCell<*mut bun_jsc::virtual_machine::VirtualMachine>,
     }
 
     // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
@@ -94,6 +100,7 @@ mod _impl {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global),
+                vm: JsCell::new(global.bun_vm_ptr()),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

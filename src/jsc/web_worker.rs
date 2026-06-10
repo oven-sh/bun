@@ -1207,6 +1207,15 @@ impl WebWorker {
         // vm_lock held; this is the unpublish point.
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
         self.vm_lock.unlock();
+        // Unregister from the live-VM registry so checked cross-thread
+        // producers (HTTP client thread, work pool, watcher threads) observe
+        // the VM as gone instead of pushing into memory freed in step 5. Must
+        // precede every free below; a producer inside a checked enqueue holds
+        // the registry lock, so returning from this call also means no such
+        // producer is still touching the VM.
+        if !vm_ptr.is_null() {
+            crate::virtual_machine::live_vm_registry::unregister_vm(vm_ptr);
+        }
         let mut loop_: Option<*mut bun_uws::Loop> = None;
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr was published under vm_lock; sole owner now.

@@ -1846,12 +1846,16 @@ impl napi_async_work {
         ) {
             if state == AsyncWorkStatus::Cancelled as u32 {
                 // `concurrent_task` is the live inline field of this heap work;
-                // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
+                // the queue takes ownership of its `next` link. Checked: the
+                // owning VM may be a worker freed by terminate() while this
+                // work sat in the pool.
+                let _ = EventLoop::try_enqueue_task_concurrent(
+                    self.event_loop.as_ptr(),
+                    core::ptr::NonNull::from(
                         self.concurrent_task
                             .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
+                    ),
+                );
                 return;
             }
         }
@@ -1860,12 +1864,15 @@ impl napi_async_work {
             .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
 
         // `concurrent_task` is the live inline field of this heap work; the
-        // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
+        // queue takes ownership of its `next` link. Checked: the owning VM
+        // may be a worker freed by terminate() while the work ran.
+        let _ = EventLoop::try_enqueue_task_concurrent(
+            self.event_loop.as_ptr(),
+            core::ptr::NonNull::from(
                 self.concurrent_task
                     .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+            ),
+        );
     }
 
     pub fn cancel(&mut self) -> bool {
@@ -2708,8 +2715,12 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                self.event_loop
-                    .enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                // Checked: threadsafe functions are called from arbitrary
+                // addon threads, which can outlive a terminated worker's loop.
+                let _ = EventLoop::try_enqueue_task_concurrent(
+                    self.event_loop.as_ptr(),
+                    ConcurrentTask::create_from(self_ptr),
+                );
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -4256,10 +4267,15 @@ impl NapiFinalizerTask {
         let is_main_thread = VirtualMachine::get_or_null().is_some();
 
         if !is_main_thread {
-            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            // Checked: scheduled from non-JS threads (addon threads, GC
+            // helpers) that can outlive a terminated worker's VM. When the VM
+            // is gone the finalizer box leaks, matching a task left undrained
+            // in the dead worker's queue.
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                core::ptr::from_ref(vm).cast_mut(),
+                ConcurrentTask::create(Task::init(this)),
+            );
             return;
         }
 

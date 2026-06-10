@@ -79,7 +79,9 @@ impl ConcurrentCppTask {
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
         if let Some(vm) = maybe_vm {
-            vm.event_loop_shared().unref_concurrently();
+            // Checked: runs on the work-pool thread; the creating VM may be a
+            // worker freed by terminate() while this task ran.
+            VirtualMachine::try_unref_concurrently(vm.as_ptr());
         }
     }
 }
@@ -90,7 +92,8 @@ pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoo
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
-        vm.event_loop_shared().ref_concurrently();
+        // Checked for symmetry with the pool-thread unref in `run_owned`.
+        VirtualMachine::try_ref_concurrently(vm.as_ptr());
     }
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,

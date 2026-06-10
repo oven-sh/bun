@@ -729,12 +729,16 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // `vm` was captured on the JS thread at `create` and may point at a
+        // worker VM freed by terminate() while the pool task ran — checked
+        // enqueue only.
+        // SAFETY: `this` is the live pool-owned allocation; `concurrent_task`
+        // is intrusive on it.
         unsafe {
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            let _ = VirtualMachine::try_enqueue_task_concurrent((*this).vm, ct);
         }
     }
 

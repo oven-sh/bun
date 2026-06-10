@@ -1249,6 +1249,10 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Captured at `create` so `work_pool_callback` never reads through
+        /// `global_object` off-thread — the owning VM may be a worker freed
+        /// by terminate() while the pool task was in flight.
+        pub vm: *mut VirtualMachine,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1293,6 +1297,7 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: core::ptr::from_mut(vm),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1316,17 +1321,13 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers; the
-            // event-loop's concurrent queue is MPSC-safe.
-            let vm = this.global_object().bun_vm_concurrently();
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
-            unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
-                    std::ptr::from_mut::<Self>(this),
-                ));
-            }
+            // `this.vm` was captured at `create` and may point at a worker VM
+            // freed by terminate() while the pool task ran — checked enqueue
+            // only, and no reads through `global_object` on this thread.
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                this.vm,
+                ConcurrentTask::create_from(std::ptr::from_mut::<Self>(this)),
+            );
         }
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -2183,6 +2184,10 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Captured at `create` so pool-thread completion never reads through
+        /// `global_object` off-thread (the owning VM may be a worker freed by
+        /// terminate() mid-flight).
+        pub vm: *mut VirtualMachine,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2378,6 +2383,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: core::ptr::from_mut(vm),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2553,16 +2559,15 @@ mod _async_tasks {
                 }
             }
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
-            // `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // `self.vm` was captured at `create` and may point at a worker VM
+            // freed by terminate() while subtasks ran — checked enqueue only,
+            // and no reads through `global_object` on this thread.
+            // `ConcurrentTask::create` heap-allocates a fresh task; the queue
+            // takes ownership of it (or frees it when the VM is gone).
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                self.vm,
+                ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self))),
+            );
         }
 
         fn clear_result_list(&mut self) {

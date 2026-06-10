@@ -119,3 +119,74 @@ test(
   },
   timeout,
 );
+
+// Regression: a worker terminated while a fetch was in flight freed its
+// VirtualMachine (and the event loop embedded in it) while the HTTP client
+// thread still held a pointer to it; the completion callback then read the
+// freed VM (heap-use-after-free in FetchTasklet::callback →
+// VirtualMachine::is_shutting_down) and pushed into the freed concurrent
+// queue. The corrupted queue surfaced in the wild as "Panic: invalid enum
+// value" in EventLoop.tickQueueWithCount on worker threads. Same class: any
+// cross-thread producer (work pool, watcher threads, napi) completing after
+// worker.terminate(). ASAN-only: without a sanitizer the stale write is
+// silent, so this test can only prove the bug on ASAN builds (the gate and
+// the asan CI lanes).
+test.skipIf(!isASAN)(
+  "terminating a worker with a fetch in flight does not touch the freed VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let releaseResponse = null;
+        let requestArrived = null;
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            requestArrived();
+            await new Promise(resolve => (releaseResponse = resolve));
+            return new Response("x".repeat(1024));
+          },
+        });
+        const url = "http://127.0.0.1:" + server.port + "/";
+        const workerCode =
+          "fetch(" + JSON.stringify(url) + ").then(r => r.text()).catch(() => {});" +
+          "postMessage('fetching');";
+        for (let i = 0; i < 3; i++) {
+          const arrived = new Promise(resolve => (requestArrived = resolve));
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(workerCode));
+          await new Promise(resolve => (worker.onmessage = resolve));
+          // The request is now in flight on the HTTP client thread.
+          await arrived;
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+          worker.terminate();
+          await closed;
+          // Give the worker thread time to finish shutdown() and free its VM.
+          await Bun.sleep(300);
+          // The HTTP thread now delivers the response to the freed VM.
+          releaseResponse();
+          await Bun.sleep(300);
+        }
+        // Leave room for an in-progress sanitizer report to abort the process
+        // before we exit cleanly.
+        await Bun.sleep(3000);
+        console.log("done");
+        server.stop(true);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+    void stderr;
+  },
+  timeout,
+);

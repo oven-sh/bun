@@ -784,14 +784,15 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
+        // Checked: runs on the bundle thread; the Bun.build caller's VM may
+        // be a worker freed by terminate() while the bundle ran.
         // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
         // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
-        }
+        let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
+            from_completion_handle(c).jsc_event_loop.as_ptr(),
+            // SAFETY: non-null per the vtable contract above.
+            unsafe { core::ptr::NonNull::new_unchecked(task) },
+        );
     },
 };
 
@@ -989,11 +990,14 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+        // Checked: runs on the bundle thread; the Bun.build caller's VM may
+        // be a worker freed by terminate() while the bundle ran.
+        // `ConcurrentTask::create` heap-allocates a fresh task; the queue
+        // takes ownership of it (or frees it when the VM is gone).
+        let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
+            self.jsc_event_loop.as_ptr(),
+            jsc::ConcurrentTask::create(self.task.task()),
+        );
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

@@ -341,15 +341,15 @@ impl S3HttpDownloadStreamingTask {
             let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // `vm` was captured at task creation and may point at a worker VM
+            // freed by terminate() while this request was in flight — checked
+            // enqueue only. `task` is the inline `concurrent_task` field of
+            // this heap request; the queue takes ownership of its `next` link
+            // (and leaves it untouched when the VM is gone).
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                self_.vm.expect("vm set at task creation").as_ptr(),
+                task,
+            );
         }
     }
 }

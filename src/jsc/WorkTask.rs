@@ -136,7 +136,9 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
                 .from(this_ptr, AutoDeinit::ManualDeinit),
         );
         // `task` is the inline `concurrent_task` field of the live
-        // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
-        event_loop.enqueue_task_concurrent(task);
+        // heap-allocated `*this`; `event_loop` was stored at init and may
+        // point into a worker VM freed by terminate() while the pool task
+        // ran — checked enqueue only.
+        let _ = EventLoop::try_enqueue_task_concurrent(event_loop.as_ptr(), task);
     }
 }

@@ -610,14 +610,14 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         unsafe {
             (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
-            ));
-        }
+        // `event_loop` was stored from the JS-thread VM at schedule time and
+        // may point into a worker VM freed by terminate() while the pool task
+        // ran — checked enqueue only. `task` is an intrusive field at a
+        // stable address; on a dead VM the result box leaks (same as a task
+        // left undrained in the dead worker's queue).
+        // SAFETY: `result` is the live heap allocation built above.
+        let ct = ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) });
+        let _ = EventLoop::try_enqueue_task_concurrent(self.event_loop, ct);
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }

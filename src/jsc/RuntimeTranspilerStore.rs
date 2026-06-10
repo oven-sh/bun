@@ -515,16 +515,22 @@ impl TranspilerJob {
 
     pub(crate) fn dispatch_to_main_thread(&mut self) {
         let vm = self.vm;
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
-        let transpiler_store: *mut RuntimeTranspilerStore =
-            unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
-        // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
-        unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        // Both the store's queue and the event loop live inside the VM
+        // allocation, which may be a worker VM freed by terminate() while
+        // this job ran on the pool — touch them only inside `with_live_vm`
+        // (the registry lock holds off the free). When the VM is gone the
+        // job is simply dropped on the floor; nothing will ever drain it.
+        let _ = crate::VirtualMachineRef::with_live_vm(vm, |vm| {
+            let transpiler_store: *mut RuntimeTranspilerStore =
+                ptr::addr_of!(vm.transpiler_store).cast_mut();
+            // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
+            unsafe { (*transpiler_store).queue.push(job) };
+            // Another thread may free `*job` at any time after .push, so we
+            // cannot use it any more.
+            vm.event_loop_shared()
+                .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        });
     }
 
     pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {

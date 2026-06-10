@@ -1029,12 +1029,15 @@ mod windows_impl {
                 bun_sys::Result::Err(e) => Some(e),
                 bun_sys::Result::Ok(()) => None,
             };
-            // SAFETY: event_loop is the VM-owned EventLoop with process lifetime.
-            unsafe {
-                (*this.event_loop).enqueue_task_concurrent(ConcurrentTask::create(
-                    ManagedTask::new::<WriteFileWindows>(this, Self::on_mkdirp_complete_task),
-                ));
-            }
+            // Checked: the mkdirp completion runs on the work-pool thread;
+            // the owning VM may be a worker freed by terminate() meanwhile.
+            let _ = EventLoop::try_enqueue_task_concurrent(
+                this.event_loop,
+                ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
+                    this,
+                    Self::on_mkdirp_complete_task,
+                )),
+            );
         }
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {

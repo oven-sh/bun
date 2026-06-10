@@ -1049,6 +1049,43 @@ impl EventLoop {
         self.wakeup();
     }
 
+    /// Loop-pointer-keyed variant of
+    /// [`VirtualMachine::try_enqueue_task_concurrent`]: cross-thread enqueue
+    /// that tolerates the target event loop (and the worker VM embedding it)
+    /// having been freed. For producers that captured `*mut EventLoop` /
+    /// `&EventLoop` at schedule time rather than the VM pointer.
+    ///
+    /// Returns `false` when the loop is gone; the task node is freed if
+    /// `auto_delete` and the payload is leaked (same as a task left undrained
+    /// in a terminated worker's queue).
+    pub fn try_enqueue_task_concurrent(
+        loop_: *mut EventLoop,
+        task: core::ptr::NonNull<ConcurrentTaskItem>,
+    ) -> bool {
+        use crate::virtual_machine::live_vm_registry;
+        if loop_.is_null() {
+            discard_unqueued_concurrent_task(task);
+            return false;
+        }
+        // Fast path: loops embedded in the main-thread VM are never freed.
+        if live_vm_registry::is_main_vm_loop(loop_) {
+            // SAFETY: main-thread VM loop, never freed; `enqueue_task_concurrent`
+            // takes `&self` and is thread-safe.
+            unsafe { (*loop_).enqueue_task_concurrent(task) };
+            return true;
+        }
+        let reg = live_vm_registry::REGISTRY.lock();
+        if !reg.iter().any(|e| e.loop_ == loop_ as usize) {
+            drop(reg);
+            discard_unqueued_concurrent_task(task);
+            return false;
+        }
+        // SAFETY: the loop is registered-live, and unregistration (which
+        // happens-before any free) takes the same lock we hold.
+        unsafe { (*loop_).enqueue_task_concurrent(task) };
+        true
+    }
+
     pub fn ref_concurrently(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
         self.wakeup();
@@ -1223,6 +1260,25 @@ impl EventLoop {
     }
 }
 
+/// Free a `ConcurrentTaskItem` that was built for a cross-thread enqueue
+/// whose target turned out to be freed (terminated worker). The node was
+/// never linked into any queue, so the producer still owns it: `auto_delete`
+/// nodes are reclaimed here, struct-embedded nodes stay with their owner.
+/// The task payload is deliberately not run or freed — dispatching it would
+/// touch the dead VM, and its tag-specific teardown can only run on the
+/// (gone) JS thread. This matches the fate of tasks that made it into the
+/// queue moments earlier: a terminated worker's queue is never drained.
+pub fn discard_unqueued_concurrent_task(task: core::ptr::NonNull<ConcurrentTaskItem>) {
+    // SAFETY: never linked (see doc); `auto_delete` nodes come from
+    // `ConcurrentTask::new` (`heap::into_raw`), so reclaiming the box here is
+    // the producer exercising its ownership.
+    unsafe {
+        if task.as_ref().auto_delete() {
+            drop(bun_core::heap::take(task.as_ptr()));
+        }
+    }
+}
+
 /// Testing API to expose event loop state
 #[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
@@ -1381,7 +1437,10 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
-        enqueue_task_concurrent(task) => (*this).enqueue_task_concurrent(task),
+        // Checked: `EventLoopHandle`s are captured at schedule time and used
+        // from producer threads (waiter thread, work pool, shell tasks) that
+        // can outlive a terminated worker's loop.
+        enqueue_task_concurrent(task) => { let _ = EventLoop::try_enqueue_task_concurrent(this, task); },
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),
         create_null_delimited_env_map() =>
@@ -1431,11 +1490,17 @@ pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws
     {
         let _ = uws_loop;
     }
-    bun_core::heap::into_raw(el).cast()
+    let raw = bun_core::heap::into_raw(el);
+    // The boxed spawnSync loop is a cross-thread enqueue target (e.g. the
+    // POSIX waiter thread posts exit events to it) but lives outside the VM
+    // allocation — register it so checked enqueues can find it.
+    crate::virtual_machine::live_vm_registry::register_extra_loop(std::ptr::from_mut(vm), raw);
+    raw.cast()
 }
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
+    crate::virtual_machine::live_vm_registry::unregister_loop(el.cast::<EventLoop>());
     // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
     drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
 }

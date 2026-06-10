@@ -480,14 +480,15 @@ impl S3HttpSimpleTask {
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            this.vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // `vm` was captured at task creation and may point at a worker VM
+            // freed by terminate() while this request was in flight — checked
+            // enqueue only. `task` is the inline `concurrent_task` field of
+            // this heap request; the queue takes ownership of its `next` link
+            // (and leaves it untouched when the VM is gone).
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                this.vm.expect("vm set at task creation").as_ptr(),
+                task,
+            );
         }
     }
 }

@@ -330,12 +330,12 @@ impl StatWatcherScheduler {
                 ctx: core::ptr::NonNull::new(holder_ptr.cast()),
                 callback: update_timer,
             };
-            (*this)
-                .vm
-                .event_loop_shared()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    core::ptr::addr_of_mut!((*holder_ptr).task),
-                )));
+            // Checked: runs on the work-pool thread; `vm` may be a worker VM
+            // freed by terminate() while the restat ran.
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                (*this).vm.as_ptr(),
+                ConcurrentTask::create(Task::init(core::ptr::addr_of_mut!((*holder_ptr).task))),
+            );
         }
     }
 
@@ -680,7 +680,9 @@ impl StatWatcher {
         &self,
         task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
-        self.ctx.event_loop_shared().enqueue_task_concurrent(task);
+        // Called from the work-pool thread: `ctx` may point at a worker VM
+        // freed by terminate() while the stat ran — checked enqueue only.
+        let _ = VirtualMachine::try_enqueue_task_concurrent(self.ctx.as_ptr(), task);
     }
 
     /// Copy the last stat by value.

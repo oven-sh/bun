@@ -98,11 +98,9 @@ impl FSWatcher {
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
-        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
-        // documented cross-thread entry point and only touches the lock-free
-        // queue.
-        self.vm().event_loop_shared().enqueue_task_concurrent(task);
+        // Called from watcher threads: `ctx` may point at a worker VM freed
+        // by terminate() while an event was in flight — checked enqueue only.
+        let _ = VirtualMachine::try_enqueue_task_concurrent(self.ctx, task);
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /

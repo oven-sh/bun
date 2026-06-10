@@ -956,13 +956,15 @@ impl WatcherAtomics {
                     task: bun_event_loop::Task::init(ev),
                     ..Default::default()
                 };
-                // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
-                // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
-                unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
-                        core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
-                    );
-                }
+                // Checked: runs on the watcher thread; the owning VM could be
+                // a worker freed by terminate() (nothing structurally pins the
+                // dev server to the main VM).
+                // SAFETY: `owner` BACKREF is valid (DevServer-owned field reads only).
+                let vm_ptr = unsafe { (*ev_ref.owner).vm.as_ptr() };
+                let _ = bun_jsc::virtual_machine::VirtualMachine::try_enqueue_task_concurrent(
+                    vm_ptr,
+                    core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
+                );
             }
 
             NextEvent::WAITING => {

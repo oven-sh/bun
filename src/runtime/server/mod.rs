@@ -239,15 +239,61 @@ bitflags::bitflags! {
     }
 }
 
-// ─── Dev-server slot seam ────────────────────────────────────────────────────
-// The dev-server module owns the concrete dev-server type; this module only
-// stores the owning slot and calls through the vtable below (mirroring the
-// erased `DevServerOptions` handle in `ServerConfig.rs`, the options half of
-// the same seam). Construction goes through the definer-prefixed link-time
-// hook `__bun_dev_server_from_server_config`, so a rewrite of the dev server
-// never touches this file. Request paths that still need the concrete type
-// (the `as_deref` callers in the per-request files) go through the
+// ─── Dev-server seam ─────────────────────────────────────────────────────────
+// The dev-server module owns the concrete types behind this seam; the server
+// host only stores erased handles and calls through the vtable below. Both
+// halves of the seam are defined here:
+//
+//  * options — `ServerConfig::from_js` turns the `app` serve option / the
+//    HTML imports and framework routers in `routes` into an erased
+//    [`DevServerOptions`] (via the two `__bun_bake_dev_server_options_*`
+//    hooks) and stores it on `ServerConfig::dev_server_options`.
+//  * instance — listen time turns a config that carried options into an
+//    erased [`DevServerSlot`] (via `__bun_dev_server_from_server_config`).
+//
+// Construction goes through the definer-prefixed link-time hooks below (same
+// pattern as the bundler's `__bun_bake_convert_stmts_for_chunk_hmr` hook in
+// `bun_bundler::lib.rs`), so a rewrite of the dev server never touches the
+// server host. Request paths that still need the concrete type (the
+// `as_deref` callers in the per-request files) go through the
 // `Deref`/`DerefMut` impls defined next to the dev server.
+
+/// Owned, type-erased dev-server options: the parsed `app` config, or the
+/// options derived from HTML imports / framework routers in `routes`.
+/// Presence on `ServerConfig::dev_server_options` causes `Bun.serve` to
+/// initialize the dev server at listen time.
+pub struct DevServerOptions {
+    ptr: core::ptr::NonNull<()>,
+    drop_fn: unsafe fn(core::ptr::NonNull<()>),
+}
+
+impl DevServerOptions {
+    /// # Safety
+    /// Reserved for the `__bun_bake_dev_server_options_*` hook bodies: `ptr`
+    /// must own the boxed value their paired downcast expects, and `drop_fn`
+    /// must free exactly that value. Ownership of `ptr` transfers to the
+    /// handle, which calls `drop_fn` once on drop.
+    pub(crate) unsafe fn from_raw(
+        ptr: core::ptr::NonNull<()>,
+        drop_fn: unsafe fn(core::ptr::NonNull<()>),
+    ) -> Self {
+        Self { ptr, drop_fn }
+    }
+
+    /// The erased pointer. Only the constructing module knows the concrete
+    /// type behind it.
+    pub(crate) fn as_ptr(&self) -> core::ptr::NonNull<()> {
+        self.ptr
+    }
+}
+
+impl Drop for DevServerOptions {
+    fn drop(&mut self) {
+        // SAFETY: `from_raw`'s contract — the handle solely owns `ptr` and
+        // `drop_fn` pairs with its allocation.
+        unsafe { (self.drop_fn)(self.ptr) }
+    }
+}
 
 /// Calls the host makes into an attached dev server. The dev-server module
 /// supplies the single static instance whose bodies downcast `ptr`;
@@ -260,6 +306,10 @@ pub struct DevServerSlotVTable {
     /// Mirrors the host's inspector/debugger id into the dev server (its
     /// HMR agent tags inspector events with it).
     pub(crate) set_inspector_server_id: fn(core::ptr::NonNull<()>, jsc::DebuggerId),
+    /// DNS-rebinding guard: whether the request's `Host` header names an
+    /// origin allowed to reach dev-server-internal routes (loopback names,
+    /// IP literals, or the configured hostname).
+    pub(crate) is_allowed_host: fn(core::ptr::NonNull<()>, &uws::Request) -> bool,
     /// Routes an `Html` static route's bundle through the dev server (which
     /// serves it with HMR) instead of the prebundled static handler.
     pub(crate) put_html_route: fn(
@@ -319,6 +369,11 @@ impl DevServerSlot {
         (self.raw.vtable.set_inspector_server_id)(self.raw.ptr, id)
     }
 
+    /// See [`DevServerSlotVTable::is_allowed_host`].
+    pub(crate) fn is_allowed_host(&self, req: &uws::Request) -> bool {
+        (self.raw.vtable.is_allowed_host)(self.raw.ptr, req)
+    }
+
     /// See [`DevServerSlotRaw`]. Takes `&mut self` so the copy inherits the
     /// caller's exclusive claim on the dev server.
     pub(crate) fn raw(&mut self) -> DevServerSlotRaw {
@@ -349,6 +404,32 @@ impl DevServerSlotRaw {
 }
 
 unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in the dev-server module (`bake/bake_body.rs`).
+    /// Derives dev-server options from the HTML bundles and framework routers
+    /// collected while parsing `routes`. `Ok(None)` when the routes need no
+    /// dev server; errors when framework routers are present without
+    /// `development: true`. All arguments are safe Rust types (no raw-pointer
+    /// preconditions), so the link-time-resolved body upholds Rust's
+    /// invariants on its own.
+    pub(crate) safe fn __bun_bake_dev_server_options_from_serve_routes(
+        init_ctx: &mut ServerInitContext<'_>,
+        development: server_config::DevelopmentOption,
+    ) -> JsResult<Option<DevServerOptions>>;
+
+    /// Defined `#[no_mangle]` in the dev-server module (`bake/bake_body.rs`).
+    /// Reads and parses the dev-server option from the full serve options
+    /// object — the hook owns the property name and its feature gating.
+    /// `Ok(None)` when the dev-server feature flag is disabled (without
+    /// touching the object, so no user getter runs) or the option is absent;
+    /// errors when options were already derived from `routes`
+    /// (`has_existing_options`) or `development` is `Production`.
+    pub(crate) safe fn __bun_bake_dev_server_options_from_app(
+        serve_options: JSValue,
+        global: &JSGlobalObject,
+        has_existing_options: bool,
+        development: server_config::DevelopmentOption,
+    ) -> JsResult<Option<DevServerOptions>>;
+
     /// Defined `#[no_mangle]` in the dev-server module (`bake/DevServer.rs`).
     /// Builds the dev server for a config that carried `dev_server_options`
     /// (`Ok(None)` when it didn't). All arguments are safe Rust types (no
@@ -473,16 +554,15 @@ fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -
 pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     request_context::RequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub enum CreateJsRequest {
     Yes,
     No,
-    /// Create the JS wrapper via `Request::to_js_for_bake`
-    /// (`Bun__JSRequest__createForBake` on the C++ side) so the dev server's
-    /// deferred handler gets a `BunRequest`. Name-only association with the
-    /// dev server — no `crate::bake` type is involved, so the match arms on
-    /// this variant are deliberately outside the bake decoupling seams.
-    Bake,
+    /// Create the JS wrapper via the supplied materializer instead of
+    /// `Request::to_js` — for callers whose handlers need a wrapper class
+    /// carrying extra per-route state. `Err(OutOfMemory)` is routed to the
+    /// OOM handler; any other error aborts request preparation.
+    Custom(fn(&crate::webcore::Request, &JSGlobalObject) -> JsResult<JSValue>),
 }
 
 /// Bundle of the JS-side `Request`, the heap
@@ -886,7 +966,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let signal_ref =
             unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
-        // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
+        // allocation is handed to the JS GC via `to_js`/the `Custom`
+        // materializer (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
         // `body_hive` (the original +1) moves into the Request — paired drop in
@@ -960,10 +1041,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // SAFETY: `request_object` is the freshly-allocated heap
                 // `Request`; ownership transfers to the JS wrapper.
                 CreateJsRequest::Yes => unsafe { (*request_object).to_js(global) },
-                CreateJsRequest::Bake => {
+                CreateJsRequest::Custom(materialize) => {
                     // SAFETY: `request_object` is the freshly-allocated heap
                     // `Request`; ownership transfers to the JS wrapper.
-                    match unsafe { (*request_object).to_js_for_bake(global) } {
+                    match materialize(unsafe { &*request_object }, global) {
                         Ok(v) => v,
                         Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -2119,8 +2200,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // (see `DevServerSlotRaw`) so per-iteration calls don't conflict with
         // `&mut self.config` / `&mut self.user_routes`, and so no borrow of
         // `self` is live when the dev server re-derives `&mut NewServer`.
-        let dev_server: Option<DevServerSlotRaw> =
-            self.dev_server.as_mut().map(DevServerSlot::raw);
+        let dev_server: Option<DevServerSlotRaw> = self.dev_server.as_mut().map(DevServerSlot::raw);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
@@ -3242,12 +3322,9 @@ pub trait ServerLike {
     fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
-    /// Typed view over the (erased) `dev_server` slot. Returns the concrete
-    /// dev-server type — through the slot's `Deref` — because the
-    /// per-request paths (`RequestContext`) call concrete methods on it; this
-    /// signature stays an acknowledged coupling until those call sites are
-    /// erased too.
-    fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
+    /// The (erased) `dev_server` slot, when one is attached. Typed views over
+    /// the slot are defined next to the dev server (its `Deref` impls).
+    fn dev_server(&self) -> Option<&DevServerSlot>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
     fn terminated(&self) -> bool;
@@ -3287,8 +3364,8 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         Self::on_request_complete(self)
     }
     #[inline]
-    fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        self.dev_server.as_deref()
+    fn dev_server(&self) -> Option<&DevServerSlot> {
+        self.dev_server.as_ref()
     }
     #[inline(always)]
     fn js_value(&self) -> &jsc::JsRef {

@@ -114,7 +114,7 @@ pub use any_request_context::AnyRequestContext;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
+pub use server_body::{GetOrStartLoadResult, ServePluginsCallback, ServePluginsConsumer};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -894,8 +894,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
     }
 
-    /// Invoke the user's route handler for a
-    /// request that was deferred (bake bundle-then-serve flow).
+    /// Invoke the user's route handler for a request that was deferred (the
+    /// caller's bundle-then-serve flow). `create_js_request` selects how the
+    /// JS `Request` is materialized when `req` is still a stack request;
+    /// already-saved requests carry the JS value they were saved with.
     ///
     /// # Safety
     /// `this` must point to a live heap-allocated `NewServer`; `resp` must be
@@ -906,6 +908,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: *mut uws_sys::NewAppResponse<SSL>,
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
+        create_js_request: CreateJsRequest,
     ) {
         // Same gate as the network trampolines: the saved request's
         // `pending_requests` increment keeps the wrapper `Strong` (so it is
@@ -927,7 +930,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     bun_opaque::opaque_deref_mut(r),
                     resp,
                     None,
-                    CreateJsRequest::Bake,
+                    create_js_request,
                     None,
                 ) {
                     Some(p) => p,
@@ -2165,42 +2168,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // The bake options (and the arena that backs `root`) live in
-        // `(*server).config.bake` for the server's lifetime. Initialise
-        // DevServer AFTER the server box exists so the `Options::arena` borrow
-        // points into the heap-allocated config rather than the caller's
-        // (since-moved) stack slot. On Err, the `Box<Self>` drop frees the
-        // half-built server.
+        // The dev-server options (and the arena that backs its root) live in
+        // `(*server).config` for the server's lifetime. Initialise the dev
+        // server AFTER the server box exists so the arena borrow points into
+        // the heap-allocated config rather than the caller's (since-moved)
+        // stack slot. On Err, the `Box<Self>` drop frees the half-built server.
         // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-        if let Some(bake_options) = unsafe { &mut (*server).config.bake } {
-            // SAFETY: `server` is the freshly-boxed `*mut Self`; uniquely owned here.
-            let broadcast = unsafe {
-                (*server)
-                    .config
-                    .broadcast_console_log_from_browser_to_server_for_bake
-            };
-            let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
-                arena: &bake_options.arena,
-                root: bake_options.root,
-                // SAFETY: per-thread VM singleton; STATIC lifetime.
-                vm: jsc::VirtualMachine::get(),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
-                broadcast_console_log_from_browser_to_server: broadcast,
-            }) {
-                Ok(d) => d,
-                Err(e) => {
-                    // SAFETY: paired with heap::alloc above.
-                    drop(unsafe { bun_core::heap::take(server) });
-                    return Err(e);
-                }
-            };
+        match crate::bake::DevServer::DevServer::from_server_config(unsafe {
+            &mut (*server).config
+        }) {
             // SAFETY: `server` is uniquely owned here.
-            unsafe { (*server).dev_server = Some(dev) };
+            Ok(dev) => unsafe { (*server).dev_server = dev },
+            Err(e) => {
+                // SAFETY: paired with heap::alloc above.
+                drop(unsafe { bun_core::heap::take(server) });
+                return Err(e);
+            }
         }
 
         if SSL {
@@ -2227,8 +2210,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
         // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
         // don't conflict with `&mut self.config` / `&mut self.user_routes`.
-        let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
-            self.dev_server.as_deref_mut().map(std::ptr::from_mut);
+        let dev_server = self.dev_server.as_deref_mut().map(std::ptr::from_mut);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
         // Only enable this when we're using the dev server.
@@ -3685,6 +3667,11 @@ macro_rules! any_server_dispatch {
 /// Dispatch over the four `NewServer` monomorphizations (exclusive `&mut`
 /// borrow). Only for callers that mutate server state — never use this for
 /// read-only accessors (see `any_server_dispatch!`).
+///
+/// Crate-visible so crate-internal extensions of `AnyServer` — the dev-server
+/// accessor and slot vtable in `bake/DevServer.rs` — can dispatch without this
+/// module naming their types. Expansions reference `AnyServerTag` and the four
+/// server aliases, so those must be in scope at the call site.
 macro_rules! any_server_dispatch_mut {
     ($self:expr, |$s:ident| $body:expr) => {{
         let this = $self;
@@ -3715,6 +3702,7 @@ macro_rules! any_server_dispatch_mut {
         }
     }};
 }
+pub(crate) use any_server_dispatch_mut;
 
 /// Dispatch over the four `NewServer` monomorphizations, simultaneously
 /// downcasting an [`uws::AnyResponse`] to the matching `*mut Response<SSL>`.
@@ -3887,6 +3875,10 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
+    // `AnyServer::dev_server_mut` (the typed view over the `dev_server` slot)
+    // is defined next to the dev server itself in `crate::bake` — see the
+    // `impl AnyServer` block in `bake/DevServer.rs`.
+
     pub(crate) fn stop(&mut self, abrupt: bool) {
         any_server_dispatch_mut!(self, |s| s.stop(abrupt))
     }
@@ -3935,12 +3927,14 @@ impl AnyServer {
 
     /// Wraps a stack-lifetime µWS request into a
     /// JS-visible `Request` + heap `RequestContext` so it can outlive the
-    /// handler frame (used by bake's deferred bundling path).
+    /// handler frame (used by the dev server's deferred bundling path).
+    /// `create_js_request` selects how the JS `Request` is materialized.
     pub(crate) fn prepare_and_save_js_request_context(
         &self,
         req: &mut uws::Request,
         resp: uws::AnyResponse,
         global: &jsc::JSGlobalObject,
+        create_js_request: CreateJsRequest,
         method: Option<bun_http::Method>,
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
@@ -3952,7 +3946,7 @@ impl AnyServer {
                 req,
                 r,
                 None,
-                CreateJsRequest::Bake,
+                create_js_request,
                 method,
             ) else {
                 return Ok(None);
@@ -3961,27 +3955,22 @@ impl AnyServer {
         }))
     }
 
-    /// Invoke the user's route handler for a request that
-    /// was deferred (bake bundle-then-serve flow).
+    /// Invoke the user's route handler for a request that was deferred (the
+    /// dev server's bundle-then-serve flow). See [`NewServer::on_saved_request`]
+    /// for the `create_js_request` contract.
     pub(crate) fn on_saved_request<const EXTRA_ARG_COUNT: usize>(
         &self,
         req: SavedRequestUnion<'_>,
         resp: uws::AnyResponse,
         callback: jsc::JSValue,
         extra_args: [jsc::JSValue; EXTRA_ARG_COUNT],
+        create_js_request: CreateJsRequest,
     ) {
         // `s` is the live `*mut NewServer` carried in `self.ptr`,
         // tagged at construction in `AnyServer::from`.
         any_server_dispatch_resp!(self, resp, |s, r| {
-            NewServer::on_saved_request(s, req, r, callback, extra_args)
+            NewServer::on_saved_request(s, req, r, callback, extra_args, create_js_request)
         })
-    }
-
-    /// Mutable handle to the DevServer (when configured). HTMLBundle's request
-    /// path mutates DevServer state (`respond_for_html_bundle`).
-    #[allow(clippy::mut_from_ref)] // dispatched through the tagged raw `self.ptr`
-    pub(crate) fn dev_server_mut(&self) -> Option<&mut crate::bake::DevServer::DevServer> {
-        any_server_dispatch_mut!(self, |s| s.dev_server.as_deref_mut())
     }
 
     /// Returns:

@@ -9,6 +9,19 @@ describe("bundler", () => {
       "/entry.js": "",
     },
   });
+  // https://github.com/oven-sh/bun/issues/32060
+  itBundled("edgecase/DataURLSchemeCaseInsensitive", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "DATA:text/javascript,export const a = 'upper'";
+        import { b } from "Data:text/javascript,export const b = 'mixed'";
+        console.log(a, b);
+      `,
+    },
+    run: {
+      stdout: "upper mixed",
+    },
+  });
   itBundled("edgecase/EmptyCommonJSModule", {
     files: {
       "/entry.js": /* js */ `

@@ -1303,6 +1303,23 @@ impl<'a> Resolver<'a> {
             });
         }
 
+        // URL schemes are case-insensitive (RFC 3986 section 3.1), so "DATA:"
+        // and "Data:" specifiers are data URLs too (Node resolves them).
+        // Normalize the scheme to lowercase here so every downstream consumer
+        // (loader gates, transpiler, bundler) keeps matching the canonical
+        // "data:" form. Only the scheme is folded; the payload may be
+        // case-sensitive (base64).
+        let import_path: &'static [u8] = if import_path.len() >= b"data:".len()
+            && !import_path.starts_with(b"data:")
+            && import_path[..b"data:".len()].eq_ignore_ascii_case(b"data:")
+        {
+            Fs::file_system::DirnameStore::instance()
+                .append_parts(&[b"data:", &import_path[b"data:".len()..]])
+                .expect("unreachable")
+        } else {
+            import_path
+        };
+
         match DataURL::parse(import_path) {
             Err(_) => {
                 self.extension_order = original_order;

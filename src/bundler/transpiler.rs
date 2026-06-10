@@ -1104,28 +1104,8 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
-        framework: src.framework.map(|f| {
-            // Bundler-local `bake_types::BuiltInModule` and
-            // `bun_options_types::BuiltInModule` are nominally distinct (the
-            // former predates the TYPE_ONLY move-down); convert variant-wise.
-            use crate::bake_types::BuiltInModule as B;
-            use bun_options_types::BuiltInModule as R;
-            let mut m = bun_collections::StringArrayHashMap::default();
-            for (k, v) in f
-                .built_in_modules
-                .keys()
-                .iter()
-                .zip(f.built_in_modules.values().iter())
-            {
-                let rv = match v {
-                    B::Import(p) => R::Import(p.clone()),
-                    B::Code(c) => R::Code(c.clone()),
-                };
-                m.put(k, rv).expect("oom");
-            }
-            ropts::Framework {
-                built_in_modules: m,
-            }
+        framework: src.framework.map(|f| ropts::Framework {
+            built_in_modules: f.built_in_modules.clone().expect("oom"),
         }),
         global_cache: src.global_cache,
         // Both sides store

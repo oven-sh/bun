@@ -266,9 +266,16 @@ bun_io::impl_streaming_writer_parent! {
 pub struct Options {
     pub chunk_size: webcore::BlobSizeType,
     pub input_path: PathOrFileDescriptor,
+    /// `O_TRUNC` the destination when opening a path. Off by default —
+    /// `.writer()` keeps its open-in-place semantics; `Bun.write`
+    /// destinations opt in to match the buffered path they replace.
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
+    /// Create missing parent directories on ENOENT and retry the open once.
+    /// Off by default; `Bun.write` destinations opt in (its `createPath`
+    /// option defaults to true), `.writer()` keeps plain open semantics.
+    pub mkdirp: bool,
 }
 
 impl Default for Options {
@@ -276,17 +283,22 @@ impl Default for Options {
         Self {
             chunk_size: 1024,
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            truncate: true,
+            truncate: false,
             close: false,
             mode: 0o664,
+            mkdirp: false,
         }
     }
 }
 
 impl Options {
     pub fn flags(&self) -> i32 {
-        let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        let base =
+            bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
+        if self.truncate {
+            return base | bun_sys::O::TRUNC;
+        }
+        base
     }
 }
 
@@ -702,7 +714,7 @@ impl FileSink {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
             PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
         };
-        let result = bun_io::open_for_writing(
+        let mut result = bun_io::open_for_writing(
             Fd::cwd(),
             &io_path,
             options.flags(),
@@ -720,6 +732,50 @@ impl FileSink {
             },
             is_pollable,
         );
+        if options.mkdirp {
+            if let (sys::Result::Err(err), PathOrFileDescriptor::Path(slice)) =
+                (&result, &options.input_path)
+            {
+                if err.get_errno() == bun_sys::E::ENOENT {
+                    // Create the missing parent directories and retry once
+                    // (the same recovery `Bun.write`'s buffered path performs
+                    // via `mkdir_if_not_exists`).
+                    if let Some(dirname) = bun_core::dirname(slice.slice()) {
+                        let mut node_fs = crate::node::fs::NodeFS::default();
+                        if node_fs
+                            .mkdir_recursive(&crate::node::fs::args::Mkdir {
+                                path: crate::node::PathLike::String(
+                                    bun_ptr::cow_slice::CowSlice::init_unchecked(dirname, false),
+                                ),
+                                recursive: true,
+                                always_return_none: true,
+                                ..Default::default()
+                            })
+                            .is_ok()
+                        {
+                            result = bun_io::open_for_writing(
+                                Fd::cwd(),
+                                &io_path,
+                                options.flags(),
+                                options.mode,
+                                &mut pollable_out,
+                                &mut is_socket_out,
+                                self.force_sync.get(),
+                                &mut nonblocking_out,
+                                &mut force_sync_out,
+                                |_fs: &mut bool| {
+                                    #[cfg(unix)]
+                                    {
+                                        *_fs = true;
+                                    }
+                                },
+                                is_pollable,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);

@@ -1,7 +1,11 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
 import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import path, { join } from "path";
+
+// The concurrent block below runs dozens of multi-megabyte IO tests at once;
+// on loaded debug/ASAN runners individual wall times can exceed the 5s default.
+setDefaultTimeout(30_000);
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -593,5 +597,170 @@ const IS_UV_FS_COPYFILE_DISABLED =
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+});
+
+describe("Bun.write(path, response) streams to disk", () => {
+  // The Locked-body destination arm streams through the FileSink instead of
+  // buffering the entire body in memory first.
+  const SIZE = 4 * 1024 * 1024;
+  function makeServer() {
+    const payload = new Uint8Array(SIZE);
+    for (let i = 0; i < SIZE; i++) payload[i] = (i * 19) & 0xff;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/chunked") {
+          return new Response(
+            new ReadableStream({
+              async pull(c) {
+                for (let o = 0; o < SIZE; o += 65536) {
+                  c.enqueue(payload.subarray(o, o + 65536));
+                  if (o % (1024 * 1024) === 0) await Bun.sleep(1);
+                }
+                c.close();
+              },
+            }),
+          );
+        }
+        return new Response(payload);
+      },
+    });
+    return { server, payload };
+  }
+
+  for (const path of ["/", "/chunked"]) {
+    it(`writes the body bytes and resolves with the count (${path === "/" ? "sized" : "chunked"})`, async () => {
+      const { server, payload } = makeServer();
+      using _s = server;
+      using dir = tempDir("bun-write-stream", {});
+      const dest = join(String(dir), "body.bin");
+
+      const res = await fetch(`${server.url.origin}${path}`);
+      const n = await Bun.write(dest, res);
+
+      expect(n).toBe(SIZE);
+      const got = await Bun.file(dest).bytes();
+      expect(got.byteLength).toBe(SIZE);
+      expect(Buffer.compare(got, payload)).toBe(0);
+    });
+  }
+
+  it("creates missing parent directories by default and honors createPath: false", async () => {
+    const { server } = makeServer();
+    using _s = server;
+    using dir = tempDir("bun-write-createpath", {});
+
+    const res = await fetch(server.url);
+    const n = await Bun.write(join(String(dir), "deep", "nested", "out.bin"), res);
+    expect(n).toBe(SIZE);
+
+    const res2 = await fetch(server.url);
+    await expect(Bun.write(join(String(dir), "missing", "out.bin"), res2, { createPath: false })).rejects.toThrow();
+  });
+
+  it("replaces the contents of an existing larger file", async () => {
+    const { server, payload } = makeServer();
+    using _s = server;
+    using dir = tempDir("bun-write-truncate", {});
+    const dest = join(String(dir), "existing.bin");
+    // Pre-existing file larger than the body: Bun.write must truncate, not
+    // leave stale trailing bytes past the body's end.
+    fs.writeFileSync(dest, Buffer.alloc(SIZE + 65536, 0xff));
+
+    const res = await fetch(server.url);
+    const n = await Bun.write(dest, res);
+
+    expect(n).toBe(SIZE);
+    const got = await Bun.file(dest).bytes();
+    expect(got.byteLength).toBe(SIZE);
+    expect(Buffer.compare(got, payload)).toBe(0);
+  });
+
+  it("writes chunks to disk while the body is still streaming", async () => {
+    // The buffered implementation only opens and writes the destination after
+    // the entire body has arrived; the streaming path writes chunks as they
+    // come in. Hold the body open mid-stream and check that the first chunk
+    // has already landed on disk.
+    const firstChunk = new Uint8Array(256 * 1024).fill(0x61);
+    const lastChunk = new Uint8Array(256 * 1024).fill(0x62);
+    const gate = Promise.withResolvers();
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(firstChunk);
+              await gate.promise;
+              c.enqueue(lastChunk);
+              c.close();
+            },
+          }),
+        );
+      },
+    });
+    using dir = tempDir("bun-write-incremental", {});
+    const dest = join(String(dir), "out.bin");
+
+    const res = await fetch(server.url);
+    const writePromise = Bun.write(dest, res);
+
+    // Wait for the first chunk to reach the disk while the body is held open.
+    // The buffered path never touches the destination before the body
+    // completes, so there the size stays -1 until the deadline passes.
+    let sizeMidStream = -1;
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      const size = fs.statSync(dest, { throwIfNoEntry: false })?.size ?? -1;
+      if (size >= firstChunk.byteLength) {
+        sizeMidStream = size;
+        break;
+      }
+      await Bun.sleep(10);
+    }
+
+    // Unblock the server before asserting so the write settles either way.
+    gate.resolve();
+    expect(await writePromise).toBe(firstChunk.byteLength + lastChunk.byteLength);
+    expect(sizeMidStream).toBe(firstChunk.byteLength);
+
+    const got = await Bun.file(dest).bytes();
+    expect(got.byteLength).toBe(firstChunk.byteLength + lastChunk.byteLength);
+    expect(Buffer.compare(got.subarray(0, firstChunk.byteLength), firstChunk)).toBe(0);
+    expect(Buffer.compare(got.subarray(firstChunk.byteLength), lastChunk)).toBe(0);
+  });
+
+  it("rejects with an abort error when the response was aborted before the write", async () => {
+    // The drain callback observes the abort inside the streaming gate's
+    // to_readable_stream call and replaces the Locked body — this used to
+    // fall into the buffered task's Locked-only re-match and panic.
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        let timer;
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array(1024));
+              // keep the body open; never close
+              timer = setInterval(() => c.enqueue(new Uint8Array(1024)), 50);
+            },
+            cancel() {
+              clearInterval(timer);
+            },
+          }),
+        );
+      },
+    });
+
+    using dir = tempDir("bun-write-aborted", {});
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    controller.abort();
+
+    expect(async () => {
+      await Bun.write(join(String(dir), "aborted.bin"), res);
+    }).toThrow();
   });
 });

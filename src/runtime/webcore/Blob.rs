@@ -236,6 +236,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1412,6 +1413,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
             return Ok(
@@ -1490,13 +1492,45 @@ impl BlobExt for Blob {
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
+                    // `Bun.write` semantics: replace the file's contents
+                    // (`O_TRUNC`, like the buffered `WriteFileWindows` path)
+                    // and honor `createPath`.
+                    let open_flags = bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::NONBLOCK
+                        | bun_sys::O::TRUNC;
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    match bun_sys::open(
-                        path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
+                    let mut open_result = bun_sys::open(path, open_flags, WRITE_PERMISSIONS);
+                    if mkdirp_if_not_exists {
+                        if let bun_sys::Result::Err(err) = &open_result {
+                            if err.get_errno() == bun_sys::E::ENOENT {
+                                // Create the missing parent directories and
+                                // retry once (the same recovery the buffered
+                                // path performs via `mkdir_if_not_exists`).
+                                if let Some(dirname) = bun_core::dirname(path.as_bytes()) {
+                                    let mut node_fs = node::fs::NodeFS::default();
+                                    if node_fs
+                                        .mkdir_recursive(&node::fs::args::Mkdir {
+                                            path: node::PathLike::String(
+                                                bun_ptr::cow_slice::CowSlice::init_unchecked(
+                                                    dirname, false,
+                                                ),
+                                            ),
+                                            recursive: true,
+                                            always_return_none: true,
+                                            ..Default::default()
+                                        })
+                                        .is_ok()
+                                    {
+                                        open_result =
+                                            bun_sys::open(path, open_flags, WRITE_PERMISSIONS);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    match open_result {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1603,6 +1637,11 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
+                    // `Bun.write` semantics: replace the file's contents
+                    // (`O_TRUNC`, like the buffered `WriteFile` path) and
+                    // honor `createPath`.
+                    truncate: true,
+                    mkdirp: mkdirp_if_not_exists,
                     ..Default::default()
                 });
 
@@ -4854,6 +4893,7 @@ pub fn write_file_with_source_destination(
                 ctx,
                 stream,
                 options.extra_options,
+                options.mkdirp_if_not_exists.unwrap_or(true),
             );
         } else {
             return Ok(
@@ -5205,112 +5245,193 @@ pub fn write_file_internal(
         // `Response` and `Request` both expose `get_body_value()` /
         // `get_body_readable_stream()`; one helper takes the
         // body-value pointer and a `get_stream` closure.
-        let mut body_dispatch =
-            |body_value: *mut webcore::body::Value,
-             get_stream: &mut dyn FnMut(&JSGlobalObject) -> Option<ReadableStream>|
-             -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
-                use core::ops::ControlFlow;
-                use webcore::body::Value as BodyValue;
-                // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
-                // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
-                let body_value_ref = unsafe { &mut *body_value };
-                match body_value_ref {
-                    BodyValue::WTFStringImpl(_)
-                    | BodyValue::InternalBlob(_)
-                    | BodyValue::Used
-                    | BodyValue::Empty
-                    | BodyValue::Blob(_)
-                    | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
-                    BodyValue::Error(err_ref) => {
-                        let err_js = err_ref.to_js(global_this);
-                        destination_blob.detach();
-                        // SAFETY: `body_value` points into a live JS-heap Body; re-borrowed
-                        // after `err_ref` is consumed so no `&mut` alias remains active.
-                        let _ = unsafe { &mut *body_value }.use_();
-                        Ok(ControlFlow::Break(
+        let mut body_dispatch = |body_value: *mut webcore::body::Value,
+                                 get_stream: &mut dyn FnMut(
+            &JSGlobalObject,
+        ) -> Option<ReadableStream>|
+         -> JsResult<core::ops::ControlFlow<JSValue, Blob>> {
+            use core::ops::ControlFlow;
+            use webcore::body::Value as BodyValue;
+            // SAFETY: `body_value` is `&mut Body::Value` from a live JS heap
+            // Response/Request `m_ctx`; raw to allow re-borrow after `use_()`.
+            let body_value_ref = unsafe { &mut *body_value };
+            match body_value_ref {
+                BodyValue::WTFStringImpl(_)
+                | BodyValue::InternalBlob(_)
+                | BodyValue::Used
+                | BodyValue::Empty
+                | BodyValue::Blob(_)
+                | BodyValue::Null => Ok(ControlFlow::Continue(body_value_ref.use_())),
+                BodyValue::Error(err_ref) => {
+                    let err_js = err_ref.to_js(global_this);
+                    destination_blob.detach();
+                    // SAFETY: `body_value` points into a live JS-heap Body; re-borrowed
+                    // after `err_ref` is consumed so no `&mut` alias remains active.
+                    let _ = unsafe { &mut *body_value }.use_();
+                    Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this, err_js,
+                            global_this,
+                            err_js,
                         ),
                     ))
-                    }
-                    BodyValue::Locked(_) => {
-                        if destination_blob.is_s3() {
-                            let dest_store = destination_blob
-                                .store()
-                                .expect("infallible: store present")
-                                .clone();
-                            let s3 = dest_store.data.as_s3();
-                            let aws_options = s3
-                                .get_credentials_with_options(options.extra_options, global_this)?;
-                            let _ = body_value_ref.to_readable_stream(global_this)?;
-                            let readable_opt = get_stream(global_this).or_else(|| {
-                                // SAFETY: re-borrow after `to_readable_stream`.
-                                let BodyValue::Locked(locked) = (unsafe { &mut *body_value })
-                                else {
-                                    return None;
-                                };
-                                locked.readable.get(global_this)
-                            });
-                            if let Some(readable) = readable_opt {
-                                if readable.is_disturbed(global_this) {
-                                    destination_blob.detach();
-                                    return Err(global_this.throw_invalid_arguments(format_args!(
-                                        "ReadableStream has already been used"
-                                    )));
-                                }
-                                let proxy_owned = http_proxy_href(global_this);
-                                let proxy_url = proxy_owned.as_deref();
-                                return Ok(ControlFlow::Break(s3_client::upload_stream(
-                                    if options.extra_options.is_some() {
-                                        aws_options.credentials.dupe()
-                                    } else {
-                                        s3.get_credentials().dupe()
-                                    },
-                                    s3.path(),
-                                    readable,
-                                    global_this,
-                                    aws_options.options,
-                                    aws_options.acl,
-                                    aws_options.storage_class,
-                                    destination_blob.content_type_or_mime_type(),
-                                    // SAFETY: `*const [u8]` borrows from sibling
-                                    // `_*_slice` fields on `aws_options`, which
-                                    // outlives this call.
-                                    aws_options.content_disposition.as_deref(),
-                                    aws_options.content_encoding.as_deref(),
-                                    proxy_url,
-                                    aws_options.request_payer,
-                                    None,
-                                    core::ptr::null_mut(),
-                                )?));
-                            }
-                            destination_blob.detach();
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "ReadableStream has already been used"
-                            )));
-                        }
-                        let task =
-                            bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                                global_this: bun_ptr::BackRef::new(global_this),
-                                // Move `destination_blob` by value into the task.
-                                file_blob: core::mem::replace(
-                                    &mut destination_blob,
-                                    Blob::init_empty(global_this),
-                                ),
-                                promise: jsc::JSPromiseStrong::init(global_this),
-                                mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                            }));
-                        // SAFETY: re-borrow after the early-return paths.
-                        let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
-                            unreachable!()
-                        };
-                        locked.task = Some(task.cast::<c_void>());
-                        locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                        // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                        Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
-                    }
                 }
-            };
+                BodyValue::Locked(_) => {
+                    if destination_blob.is_s3() {
+                        let dest_store = destination_blob
+                            .store()
+                            .expect("infallible: store present")
+                            .clone();
+                        let s3 = dest_store.data.as_s3();
+                        let aws_options =
+                            s3.get_credentials_with_options(options.extra_options, global_this)?;
+                        let _ = body_value_ref.to_readable_stream(global_this)?;
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            let proxy_owned = http_proxy_href(global_this);
+                            let proxy_url = proxy_owned.as_deref();
+                            return Ok(ControlFlow::Break(s3_client::upload_stream(
+                                if options.extra_options.is_some() {
+                                    aws_options.credentials.dupe()
+                                } else {
+                                    s3.get_credentials().dupe()
+                                },
+                                s3.path(),
+                                readable,
+                                global_this,
+                                aws_options.options,
+                                aws_options.acl,
+                                aws_options.storage_class,
+                                destination_blob.content_type_or_mime_type(),
+                                // SAFETY: `*const [u8]` borrows from sibling
+                                // `_*_slice` fields on `aws_options`, which
+                                // outlives this call.
+                                aws_options.content_disposition.as_deref(),
+                                aws_options.content_encoding.as_deref(),
+                                proxy_url,
+                                aws_options.request_payer,
+                                None,
+                                core::ptr::null_mut(),
+                            )?));
+                        }
+                        destination_blob.detach();
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "ReadableStream has already been used"
+                        )));
+                    }
+                    // Stream network-fed bodies straight to disk
+                    // instead of buffering them wholly in memory first;
+                    // peak memory becomes the sink's high-water mark
+                    // instead of the body size. Only fetch responses and
+                    // server request bodies install the
+                    // on_start_streaming drain hook — their streams are
+                    // ByteStream-backed. Bodies driven by other producers
+                    // (e.g. HTMLRewriter) rely on the ValueBufferer
+                    // machinery, which a materialized stream would
+                    // bypass, so the check runs BEFORE to_readable_stream.
+                    let is_network_fed = matches!(
+                        &*body_value_ref,
+                        BodyValue::Locked(locked) if locked.on_start_streaming.is_some()
+                    );
+                    if is_network_fed {
+                        let _ = body_value_ref.to_readable_stream(global_this)?;
+                        let readable_opt = get_stream(global_this).or_else(|| {
+                            // SAFETY: re-borrow after `to_readable_stream`.
+                            let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                                return None;
+                            };
+                            locked.readable.get(global_this)
+                        });
+                        if let Some(readable) = readable_opt {
+                            if readable.is_disturbed(global_this) {
+                                destination_blob.detach();
+                                return Err(global_this.throw_invalid_arguments(format_args!(
+                                    "ReadableStream has already been used"
+                                )));
+                            }
+                            if readable.ptr.bytes().is_some() {
+                                return Ok(ControlFlow::Break(
+                                    destination_blob.pipe_readable_stream_to_blob(
+                                        global_this,
+                                        readable,
+                                        options.extra_options,
+                                        options.mkdirp_if_not_exists.unwrap_or(true),
+                                    )?,
+                                ));
+                            }
+                        }
+
+                        // `to_readable_stream` ran the producer's drain
+                        // callback, which can observe an abort (or a fully
+                        // drained body) and replace the Locked body instead
+                        // of handing us a stream. The buffered task below
+                        // requires a Locked body, so settle those here —
+                        // rejecting like the buffered path's ValueBufferer
+                        // would have — rather than panicking on the re-match.
+                        // SAFETY: re-borrow after `to_readable_stream`.
+                        match unsafe { &mut *body_value } {
+                            BodyValue::Locked(_) => {}
+                            BodyValue::Error(err) => {
+                                let js_err = err.to_js(global_this);
+                                destination_blob.detach();
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this, js_err,
+                                    ),
+                                ));
+                            }
+                            _ => {
+                                // Null/Empty: the drain observed an abort
+                                // before any stream materialized.
+                                use crate::jsc::CommonAbortReasonExt as _;
+                                destination_blob.detach();
+                                return Ok(ControlFlow::Break(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        jsc::CommonAbortReason::UserAbort.to_js(global_this),
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+
+                    // No streaming-eligible body — keep the buffered path.
+                    let task =
+                        bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
+                            global_this: bun_ptr::BackRef::new(global_this),
+                            // Move `destination_blob` by value into the task.
+                            file_blob: core::mem::replace(
+                                &mut destination_blob,
+                                Blob::init_empty(global_this),
+                            ),
+                            promise: jsc::JSPromiseStrong::init(global_this),
+                            mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                        }));
+                    // SAFETY: re-borrow after the early-return paths. The
+                    // network-fed arm above settles every non-Locked variant,
+                    // and the non-network arm never materializes the stream,
+                    // so the body is still Locked here.
+                    let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
+                        unreachable!("non-Locked bodies settled above")
+                    };
+                    locked.task = Some(task.cast::<c_void>());
+                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
+                    // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
+                    Ok(ControlFlow::Break(unsafe { (*task).promise.value() }))
+                }
+            }
+        };
 
         // `as_class_ref` is the safe shared-borrow downcast (one audited unsafe
         // in `JSValue`); `get_body_value` / `get_body_readable_stream` both
@@ -6057,6 +6178,7 @@ fn pipe_byte_stream_to_file_sink(
         let bytes = byte_stream.drain();
         let pipe = FileSinkPipe {
             promise: jsc::JSPromiseStrong::init(global_this),
+            accepted: core::cell::Cell::new(0),
             stream: webcore::readable_stream::ReadableStreamStrong::init(
                 readable_stream,
                 global_this,
@@ -6075,6 +6197,8 @@ fn pipe_byte_stream_to_file_sink(
                 if err.is_none() {
                     err = Some(e.to_js(global_this));
                 }
+            } else {
+                pipe.accepted.set(bytes.len());
             }
         }
         // `finish` consumes the boxed pipe; box it first so destroy()'s
@@ -6097,9 +6221,11 @@ fn pipe_byte_stream_to_file_sink(
             drain_err = Some(e.to_js(global_this));
         }
     }
+    let drained_prefix = if drain_err.is_none() { bytes.len() } else { 0 };
 
     let pipe = bun_core::heap::into_raw(Box::new(FileSinkPipe {
         promise: jsc::JSPromiseStrong::init(global_this),
+        accepted: core::cell::Cell::new(drained_prefix),
         stream: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
         sink: file_sink,
         global_this: bun_ptr::BackRef::new(global_this),
@@ -6130,6 +6256,10 @@ fn pipe_byte_stream_to_file_sink(
 /// the sink and a Strong on the stream for the pipe's lifetime.
 pub struct FileSinkPipe {
     pub promise: jsc::JSPromiseStrong,
+    /// Bytes handed to the sink. `Bun.write` resolves with this — the
+    /// writer's drain-callback accounting (`FileSink.written`) mixes
+    /// at-accept and at-drain reports for pollable fds and undercounts.
+    pub accepted: core::cell::Cell<usize>,
     pub stream: webcore::readable_stream::ReadableStreamStrong,
     // Same shape as `FileStreamWrapper.sink` (raw +1, intrusive refcount).
     pub sink: *mut webcore::FileSink,
@@ -6199,11 +6329,12 @@ impl FileSinkPipe {
             return;
         }
 
-        // Resolve with 0 on success — parity with the JSSink path this
-        // replaces, which discards the builtin's result and resolves with 0
-        // for every ReadableStream source (see the `Fulfilled` arm and
-        // `on_file_stream_resolve_request_stream` in
-        // `pipe_readable_stream_to_blob`).
+        // Resolve with the sink's total bytes written on success. The JSSink
+        // path historically resolved ReadableStream sources with 0; now that
+        // Bun.write(path, response) routes through here, the documented
+        // "number of bytes written" return value applies, and every settle
+        // path (here, the then-shims, and the JSSink wrapper) reports the
+        // same total.
         // SAFETY: `sink` is the live +1 held by this pipe.
         match unsafe { (*self.sink).end_from_js(global) } {
             bun_sys::Result::Ok(value) => {
@@ -6221,14 +6352,24 @@ impl FileSinkPipe {
                             return;
                         }
                         jsc::js_promise::Status::Fulfilled => {
-                            let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                            let accepted = self.accepted.get();
+                            let _ = self
+                                .promise
+                                .resolve(global, JSValue::js_number(accepted as f64));
                         }
                         jsc::js_promise::Status::Rejected => {
                             let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
                         }
                     }
                 } else {
-                    let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                    // Synchronous completion. `end_from_js` returns only the
+                    // final flush's count — resolve with the pipe's accepted
+                    // total, matching the buffered Bun.write paths.
+                    let _ = value;
+                    let accepted = self.accepted.get();
+                    let _ = self
+                        .promise
+                        .resolve(global, JSValue::js_number(accepted as f64));
                 }
             }
             bun_sys::Result::Err(err) => {
@@ -6251,8 +6392,12 @@ impl webcore::PipeHandler for FileSinkPipe {
         // sink. (The JS loop's discarded write *promise* still tripped
         // unhandled-rejection; discarding the raw error here would be
         // genuinely silent.)
+        let chunk_len = stream.slice().len();
         // SAFETY: `sink` is the live +1 held by this pipe.
         let write_result = unsafe { (*self.sink).write(&stream) };
+        if !matches!(write_result, streams::Writable::Err(_)) {
+            self.accepted.set(self.accepted.get() + chunk_len);
+        }
 
         // Owned payloads were allocated by ByteStream with the global
         // allocator; freeing them is this handler's responsibility (same tail
@@ -6314,13 +6459,16 @@ pub fn on_file_sink_pipe_resolve(
     // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
     // in `FileSinkPipe::finish`; we are the sole consumer.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
-    // Resolve with 0 — parity with the synchronous arms of
-    // `FileSinkPipe::finish` and with the JSSink path this replaces.
+    // Resolve with the pipe's accepted byte total — same value as the
+    // synchronous arms of `FileSinkPipe::finish`. (The sink's `written`
+    // drain accounting undercounts on pollable fds.)
+    // SAFETY: `this` is live until destroy below.
+    let accepted = unsafe { (*this).accepted.get() };
     // SAFETY: `this` is live until destroy below.
     let result = unsafe {
         (*this)
             .promise
-            .resolve(global_this, JSValue::js_number(0.0))
+            .resolve(global_this, JSValue::js_number(accepted as f64))
     };
     // SAFETY: sole owner.
     unsafe { FileSinkPipe::destroy(this) };
@@ -6399,7 +6547,17 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // Resolve with the byte count, matching the buffered Bun.write paths.
+    // Best-effort on pollable-fd destinations: `written` comes from the
+    // writer's drain callbacks, which mix at-accept and at-drain reports
+    // there (see `FileSinkPipe.accepted` for the exact-count variant).
+    // Regular-file destinations are force_sync and report exactly. The JS
+    // streaming loop feeding this sink (`readStreamIntoSink`) discards
+    // per-chunk write results, so there is no accepted total to read here.
+    // SAFETY: `this.sink` is the live +1 the wrapper holds until Drop.
+    let written = unsafe { (*this.sink).written.get() };
+    this.promise
+        .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)
 }
 

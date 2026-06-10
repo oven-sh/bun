@@ -627,7 +627,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
-            bun_bundler::bundle_v2::BakeOptions {
+            bun_bundler::bundle_v2::FrameworkBundleOptions {
                 framework: bundler_framework,
                 server_component_manifests: super::SERVER_COMPONENTS_MANIFESTS,
                 client_transpiler: NonNull::new(client_ptr).expect("stack-owned transpiler"),
@@ -1366,7 +1366,7 @@ extern "C" fn BakeProdResolve(
 fn generate_production_bundle<'a>(
     entry_points: &EntryPointMap,
     server_transpiler: &'a mut Transpiler<'a>,
-    bake_options: bundle_v2::BakeOptions<'a>,
+    bake_options: bundle_v2::FrameworkBundleOptions<'a>,
     alloc: &'a Arena,
     event_loop: bundle_v2::EventLoop,
 ) -> Result<Vec<OutputFile>, bun_core::Error> {

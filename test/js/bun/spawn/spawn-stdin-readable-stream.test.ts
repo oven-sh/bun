@@ -280,6 +280,47 @@ describe("spawn stdin ReadableStream", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  test("erroring the stdin ReadableStream does not surface an unhandled rejection", async () => {
+    // Regression: once ReadableStream locked-state detection works, the FileSink
+    // teardown's stream.cancel() reaches readableStreamCancel, which returns a
+    // rejected promise for an already-errored stream. That promise must be marked
+    // handled, otherwise the stored error surfaces as an uncaught rejection in the
+    // parent process. Run it in a child so a stray rejection lands on its stderr.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let uncaught = 0;
+        process.on("unhandledRejection", () => { uncaught++; });
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue("hi\\n");
+            await Bun.sleep(10);
+            controller.error(new Error("stdin stream boom"));
+          },
+        });
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          stdout: "ignore",
+        });
+        await child.exited;
+        await Bun.sleep(50);
+        console.log("uncaught=" + uncaught);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("stdin stream boom");
+    expect(stdout.trim()).toBe("uncaught=0");
+    expect(exitCode).toBe(0);
+  });
+
   test("ReadableStream with process that exits immediately", async () => {
     const stream = new ReadableStream({
       start(controller) {

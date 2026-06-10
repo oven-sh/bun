@@ -865,6 +865,10 @@ function getTartPilotStep(options, buildId, arch) {
   // core ~2050-test suite (the bun functionality); vendor-under-Rosetta is a
   // separate follow-up (needs a longer vendor build timeout upstream).
   args.push("--vendor=false", "--exclude=integration/bun-types");
+  // EXPERIMENT: file-level concurrency (runner's built-in --parallel uses
+  // availableParallelism() = all guest cores). Measures speed + flake delta
+  // vs the sequential ~26-30min baseline, safely behind soft_fail.
+  args.push("--parallel");
   return {
     key: `darwin-${arch}-tart-pilot-test-bun`,
     label: `${getBuildkiteEmoji("darwin")} ${arch} - test-bun (tart pilot${rosetta ? ", rosetta" : ""})`,

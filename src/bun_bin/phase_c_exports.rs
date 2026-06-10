@@ -248,6 +248,8 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 
 // REAL: src/bundler_jsc/analyze_jsc.rs
 // bun__ModuleInfoDeserialized__toJSModuleRecord
+
+// REAL: src/runtime/test_runner/diff_format.rs
 // bun__renderDiff
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -291,6 +293,3 @@ pub(crate) extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_vo
 pub(crate) extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> JSValue {
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
-
-// (bun__renderDiff now defined in src/runtime/test_runner/diff_format.rs.)
-// (bun__ModuleInfoDeserialized__toJSModuleRecord now defined in src/bundler_jsc/analyze_jsc.rs.)

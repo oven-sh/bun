@@ -168,7 +168,7 @@ Visit in `visitChildrenImpl`:
 m_JSFooClassStructure.visit(visitor);
 ```
 
-## Expose to Zig
+## Expose to Rust
 
 ```cpp
 extern "C" JSC::EncodedJSValue Bun__JSFooConstructor(Bun::GlobalObject* globalObject) {

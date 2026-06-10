@@ -86,6 +86,12 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-npm == 'true' }}
     permissions:
       contents: read
+      # Lets npm mint an OIDC token for trusted publishing. For packages with
+      # a trusted publisher configured on npmjs.com, npm exchanges it for a
+      # short-lived publish token (and enables provenance); for the rest it
+      # silently falls back to NPM_TOKEN.
+      id-token: write
+    environment: release
     defaults:
       run:
         working-directory: packages/bun-release
@@ -95,6 +101,11 @@ jobs:
         with:
           # To workaround issue
           ref: main
+      - name: Setup Node.js
+        uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
+        with:
+          # Trusted publishing requires npm >= 11.5.1.
+          node-version: 24
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -105,6 +116,10 @@ jobs:
         run: bun upload-npm -- "${{ env.BUN_VERSION }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fallback auth until every published package has a trusted
+          # publisher on npmjs.com. Remove together with the _authToken line
+          # in packages/bun-release/.npmrc (npm errors on .npmrc env
+          # references that are unset).
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
   npm-types:
     name: Release types to NPM
@@ -113,6 +128,11 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-types == 'true' }}
     permissions:
       contents: read
+      # Lets npm mint an OIDC token for trusted publishing, with silent
+      # fallback to token auth until bun-types has a trusted publisher
+      # configured on npmjs.com.
+      id-token: write
+    environment: release
     defaults:
       run:
         working-directory: packages/bun-types
@@ -122,7 +142,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@3235b876344d2a9aa001b8d1453c930bba69e610 # v3
         with:
-          node-version: latest
+          # Trusted publishing requires npm >= 11.5.1.
+          node-version: 24
+          # Writes an npm userconfig that reads NODE_AUTH_TOKEN, the fallback
+          # auth for the publish steps below.
+          registry-url: https://registry.npmjs.org
       - name: Setup Bun
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -148,17 +172,22 @@ jobs:
           BUN_VERSION: ${{ env.TAG || env.BUN_VERSION }}
       - name: Release (canary)
         if: ${{ env.BUN_VERSION == 'canary' }}
-        uses: JS-DevTools/npm-publish@0f451a94170d1699fd50710966d48fb26194d939 # v1
-        with:
-          package: packages/bun-types/package.json
-          token: ${{ secrets.NPM_TOKEN }}
-          tag: canary
+        run: npm publish --tag canary
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Release (latest)
         if: ${{ env.BUN_LATEST == 'true' }}
-        uses: JS-DevTools/npm-publish@0f451a94170d1699fd50710966d48fb26194d939 # v1
-        with:
-          package: packages/bun-types/package.json
-          token: ${{ secrets.NPM_TOKEN }}
+        # Skip republishing an existing version so release re-runs stay green,
+        # matching the JS-DevTools/npm-publish behavior this replaces.
+        run: |
+          version="$(jq -r .version package.json)"
+          if [ -n "$version" ] && [ -n "$(npm view "bun-types@${version}" version 2>/dev/null || true)" ]; then
+            echo "bun-types@${version} is already published, skipping"
+          else
+            npm publish
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
   definitelytyped:
     name: Make pr to DefinitelyTyped to update `bun-types` version
     runs-on: ubuntu-latest

@@ -92,5 +92,5 @@ test.concurrent("static import and require of percent-encoded data URLs with dot
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: `{"a":1.5,"b":2.5}\n`, exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `{"a":1.5,"b":2.5}\n`, stderr: "", exitCode: 0 });
 });

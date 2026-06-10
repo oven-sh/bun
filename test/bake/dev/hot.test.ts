@@ -587,6 +587,7 @@ devTest("keys removed from a CommonJS module disappear after a hot update", {
       import * as dep from "./dep.cjs";
       console.log("inc:" + dep.a + ":" + dep.b);
       globalThis.readInc = () => "live:" + dep.a + ":" + (dep.b === undefined ? "gone" : dep.b);
+      globalThis.incKeys = () => Object.keys(dep).sort().join(",");
       import.meta.hot.accept();
     `,
     "dep.cjs": `
@@ -597,9 +598,12 @@ devTest("keys removed from a CommonJS module disappear after a hot update", {
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("inc:1:2");
+    expect(await c.js<string>`incKeys()`).toBe("a,b,default");
     await dev.write("dep.cjs", `exports.a = 10;`);
     await c.expectMessage("inc:10:undefined");
     expect(await c.js<string>`readInc()`).toBe("live:10:gone");
+    // The deleted key is gone from the namespace shape, not merely undefined.
+    expect(await c.js<string>`incKeys()`).toBe("a,default");
   },
 });
 devTest("a module flipping between CommonJS and ESM across hot updates stays fresh", {
@@ -649,5 +653,52 @@ devTest("require() of a hot-reloaded ESM module sees fresh exports", {
     await c.expectMessage("esm:1");
     await dev.patch("esm.ts", { find: "1", replace: "2" });
     await c.expectMessage("esm:2");
+  },
+});
+devTest("self-accept of a top-level-await module is deferred until in-flight reloads settle", {
+  // `a.ts` and `b.ts` form an import cycle, so editing `a.ts` reloads both:
+  // `a.ts` as the changed module and `b.ts` as its self-accepting importer,
+  // in that order. Reloading `a.ts` starts loading stale `b.ts` through the
+  // import, and `b.ts` has top-level await, so when the reload loop reaches
+  // `b.ts` it is still pending: its accept callback must wait for the
+  // in-flight load instead of firing on a half-evaluated module. The eval
+  // counter proves `a.ts` re-evaluates against the re-evaluated `b.ts`.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { aValue } from "./a";
+      globalThis.readRoot = () => "root:" + aValue;
+      import.meta.hot.accept();
+    `,
+    "a.ts": `
+      import { bToken } from "./b";
+      export const aValue = 1;
+      console.log("a-eval:" + aValue + ":" + bToken);
+      globalThis.readA = () => "liveA:" + aValue + ":" + bToken;
+    `,
+    "b.ts": `
+      import { aValue } from "./a";
+      export const bToken = (globalThis.bEvalCount = (globalThis.bEvalCount ?? 0) + 1);
+      console.log("b-eval:" + bToken);
+      await Promise.resolve();
+      globalThis.readB = () => "liveB:" + bToken + ":" + aValue;
+      import.meta.hot.accept(m => console.log("b-accept:" + m.bToken));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b-eval:1", "a-eval:1:1");
+    await dev.patch("a.ts", { find: "aValue = 1", replace: "aValue = 2" });
+    await c.expectMessage("b-eval:2", "a-eval:2:2", "b-accept:2");
+    expect(await c.js<string>`readA()`).toBe("liveA:2:2");
+    expect(await c.js<string>`readB()`).toBe("liveB:2:2");
+    expect(await c.js<string>`readRoot()`).toBe("root:2");
+    await dev.patch("a.ts", { find: "aValue = 2", replace: "aValue = 3" });
+    await c.expectMessage("b-eval:3", "a-eval:3:3", "b-accept:3");
+    expect(await c.js<string>`readA()`).toBe("liveA:3:3");
+    expect(await c.js<string>`readB()`).toBe("liveB:3:3");
+    expect(await c.js<string>`readRoot()`).toBe("root:3");
   },
 });

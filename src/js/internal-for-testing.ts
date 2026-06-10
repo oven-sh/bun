@@ -10,6 +10,7 @@
 const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
@@ -81,15 +82,6 @@ export const subprocessInternals = {
 
 export const iniInternals = {
   parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
-  // loadNpmrc: (
-  //   src: string,
-  //   env?: Record<string, string>,
-  // ): {
-  //   default_registry_url: string;
-  //   default_registry_token: string;
-  //   default_registry_username: string;
-  //   default_registry_password: string;
-  // } => $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2)(src, env),
   loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
@@ -207,6 +199,16 @@ export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
+
+/**
+ * `bun test --isolate` SourceProvider cache introspection: returns the cached
+ * provider's JSC sourceType name ("Module", "BunTranspiledModule", ...) for a
+ * resolved specifier, or null when the specifier isn't cached.
+ */
+export const isolatedModuleCacheSourceType: (specifier: string) => string | null = $cpp(
+  "IsolatedModuleCache.cpp",
+  "createIsolatedModuleCacheSourceTypeForTesting",
+);
 export const Dequeue = require("internal/fifo");
 
 export const fs = require("node:fs/promises").$data;

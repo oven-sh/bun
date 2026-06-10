@@ -19,9 +19,7 @@ pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Submodule tree (files use PascalCase basenames, mirroring the Zig sources;
-// wired via `#[path]`). Heavy modules remain ``-gated until their lower-
-// tier deps land — see per-module `TODO(port)` markers.
+// Submodule tree (files use PascalCase basenames; wired via `#[path]`).
 // ──────────────────────────────────────────────────────────────────────────
 
 #[path = "postgres/SASL.rs"]
@@ -50,28 +48,16 @@ pub mod error_jsc;
 pub mod postgres_sql_statement;
 pub use postgres_sql_statement::PostgresSQLStatement;
 
-// TODO(port): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
-// TODO(port): bun_uws::Socket method surface
-// TODO(port): bun_jsc::VirtualMachine::get / RareData
-
 #[path = "postgres/PostgresSQLConnection.rs"]
 pub mod postgres_sql_connection;
 pub use postgres_sql_connection::PostgresSQLConnection;
-
-// TODO(port): bun_jsc::host_fn proc-macro + JSValue/CallFrame method surface
 
 #[path = "postgres/PostgresSQLQuery.rs"]
 pub mod postgres_sql_query;
 pub use postgres_sql_query::PostgresSQLQuery;
 
-// TODO(port): bun_jsc::JSValue / bun_jsc::JSObject method surface
-
 #[path = "postgres/PostgresRequest.rs"]
 pub mod postgres_request;
-
-// TODO(port): bun_jsc::js_object::ExternColumnIdentifier
-// TODO(port): bun_jsc::JSType (real enum)
-// TODO(port): bun_core::wtf::{RefPtr,StringImpl}
 
 #[path = "postgres/DataCell.rs"]
 pub mod data_cell;
@@ -104,8 +90,6 @@ pub mod protocol {
     pub mod notice_response_jsc;
 }
 
-// Re-exports of base-crate protocol/types modules (Zig: thin re-exports).
+// Re-exports of base-crate protocol/types modules.
 pub use bun_sql::postgres::postgres_protocol as base_protocol;
 pub use bun_sql::postgres::postgres_types as base_types;
-
-// ported from: src/sql_jsc/postgres.zig

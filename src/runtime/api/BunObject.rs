@@ -14,9 +14,9 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     use bun_core::strings;
     use bun_paths::{Platform, resolve_path};
 
-    // PERF(port): bun_url::URL::join_write wants a `bun_io::Write`; route all
+    // bun_url::URL::join_write wants a `bun_io::Write`; route all
     // byte output through a Vec<u8> then forward to the caller's fmt::Write.
-    // Spec writes raw bytes — POSIX paths are arbitrary byte sequences — so use
+    // POSIX paths are arbitrary byte sequences — so use
     // a lossy conversion rather than silently dropping the whole component.
     #[inline]
     fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
@@ -28,7 +28,7 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
     } else {
-        // PORT NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
+        // NOTE: spec is `VirtualMachine.get().transpiler.fs.relativePlatform(dir, to, platform)`;
         // that wrapper is stateless and forwards to bun_paths — dispatch on runtime `platform`
         // here to keep this fn callable without const-generic plumbing through `transpiler.fs`.
         match platform {
@@ -125,9 +125,7 @@ pub mod r#gen {
 }
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
-// Zig's `host_fn.wrapStaticMethod(T, "name", auto_protect)` reflects on the
-// target fn's parameter types and decodes each from the CallFrame. The Rust
-// proc-macro replacement (`#[bun_jsc::host_fn(static)]`) is not yet emitted,
+// `#[bun_jsc::host_fn(static)]` is not yet emitted,
 // so hand-roll the arg-extraction shims for the six call sites below.
 mod static_adapters {
     use super::*;
@@ -228,8 +226,8 @@ mod static_adapters {
         } else {
             JSValue::UNDEFINED
         };
-        // auto_protect = true: protect each arg across the call (Zig side
-        // re-enters the VM for Blob materialization).
+        // Protect each arg across the call (Blob materialization
+        // re-enters the VM).
         let _a0_guard = a0.protected();
         let _a1_guard = a1.protected();
         let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
@@ -257,14 +255,14 @@ mod static_adapters {
 pub mod bun_object {
     use super::*;
 
-    // TODO(port): proc-macro — Zig used `toJSCallback = jsc.toJSHostFn` and
-    // `toJSLazyPropertyCallback` (comptime fn wrappers) plus comptime `@export`
-    // to emit each callback under `BunObject_callback_<name>` /
-    // `BunObject_lazyPropCb_<name>`. In Rust, the `#[bun_jsc::host_fn]`
-    // attribute on the underlying fn emits the JSC-ABI shim; the export name
-    // is set with `#[unsafe(no_mangle)]` on the shim. The two `macro_rules!`
-    // below expand the static export tables; verify the shim ABI matches
-    // `LazyPropertyCallback` for the property variants.
+    // Each callback is exported under
+    // `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`. The
+    // two `macro_rules!` below expand the static export tables.
+    // ABI check vs the C++ declarations (BunObject+exports.h:90):
+    // `extern "C" EncodedJSValue SYSV_ABI (JSGlobalObject*, JSObject*)` for the
+    // property variants — matched here by `jsc_host_abi!` (`extern "sysv64"`
+    // on Windows-x64, `extern "C"` elsewhere) returning `JSValue`, which is
+    // `#[repr(transparent)]` over `EncodedJSValue`.
 
     // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
     // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
@@ -273,7 +271,7 @@ pub mod bun_object {
     macro_rules! export_callbacks {
         ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
             $(
-                // Zig spec (BunObject.zig) — `callconv(jsc.conv)`. C++ declares
+                // C++ declares
                 // these via `BUN_DECLARE_HOST_FUNCTION` → `JSC_HOST_CALL_ATTRIBUTES`
                 // = SysV on Windows-x64. Mismatching `extern "C"` here puts
                 // `globalObject` in RCX vs C++'s RDI → garbage deref.
@@ -315,8 +313,7 @@ pub mod bun_object {
     macro_rules! export_lazy_prop_callbacks {
         ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
-                // Zig spec (BunObject.zig:108-112) — `LazyPropertyCallback` is
-                // `callconv(jsc.conv)`. C++ declares the extern as `SYSV_ABI`
+                // C++ declares the extern as `SYSV_ABI`
                 // (`BunObject+exports.h:91`); on Windows-x64 that's RDI/RSI,
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
@@ -429,10 +426,8 @@ pub mod bun_object {
     pub use super::set_main;
     // --- Setters ---
 
-    // PORT NOTE: Zig's `lazyPropertyCallbackName`/`callbackName` were comptime
-    // string concats used only at `comptime @export` sites. The export names
-    // are now spelled out verbatim in the `export_*!` macro invocations above,
-    // so the comptime-only helpers are dropped (no runtime callers).
+    // The export names
+    // are spelled out verbatim in the `export_*!` macro invocations above.
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
     // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
@@ -496,7 +491,6 @@ pub(crate) fn braces(
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
-    // PERF(port): was arena bulk-free — profile if hot
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
@@ -517,9 +511,8 @@ pub(crate) fn braces(
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
     if opts.tokenize {
-        // PORT NOTE: Zig's `std.json.fmt` reflects over the tagged-union token
-        // list. The Rust `Braces::Token` enum has no `serde::Serialize`; emit
-        // the same shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
+        // NOTE: the `Braces::Token` enum has no `serde::Serialize`; emit
+        // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
         let bun_str = BunString::from_bytes(&str);
@@ -531,7 +524,7 @@ pub(crate) fn braces(
             Ok(v) => v,
             Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
         };
-        // PORT NOTE: see `tokenize` arm — manual JSON encoder for the AST.
+        // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
         let bun_str = BunString::from_bytes(&str);
         return bun_str.to_js(global);
@@ -652,7 +645,7 @@ pub(crate) fn inspect_table(
         return BunString::empty().to_js(global_this);
     }
 
-    // PORT NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
+    // NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
     // `all_arguments` cannot escape into a guard closure, so copy out into an
     // array of RAII guards.
     let _prot: [bun_jsc::ProtectedJSValue; 5] =
@@ -725,7 +718,7 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     for arg in args_buf.slice() {
         arg.protect();
     }
-    // Spec BunObject.zig:450 — `defer { for (arguments) |a| a.unprotect(); }`.
+    // Each arg is unprotected on scope exit.
     // `arguments_old::<4>` is a stack `[JSValue; 4]`; move it into the guard
     // and re-slice instead of heap-allocating a `Vec` per call.
     //
@@ -905,7 +898,7 @@ pub(crate) fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) ->
 
 // callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
 // plain `JSValue` so the generated thunk is a bare deref+call (no
-// `ExceptionValidationScope`), matching the .zig spec's bare body.
+// `ExceptionValidationScope`).
 // HOST_EXPORT(BunObject_getter_main, jsc)
 pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
@@ -995,15 +988,15 @@ pub(crate) fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     node::process::get_argv(global_this)
 }
 
-// PORT NOTE (layering): `RareData.editor_context` in `bun_jsc` is an opaque ZST
+// NOTE (layering): `RareData.editor_context` in `bun_jsc` is an opaque ZST
 // stub — the real `EditorContext` lives in this crate (`cli::open`) and depends
 // on `bun_dotenv` / `bun_spawn`, so it can't move down without dragging those
-// into `bun_jsc`'s graph. Zig stored it on `rareData()`; semantically it is
+// into `bun_jsc`'s graph. Semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
 //
 // `name_storage` owns the user-supplied editor name so `EditorContext.name`
-// (typed `&'static [u8]` to match the Zig dirname-store backing) can borrow it
+// (typed `&'static [u8]`) can borrow it
 // without leaking; the borrow lives as long as the thread.
 struct EditorContextSlot {
     ctx: crate::cli::open::EditorContext,
@@ -1053,9 +1046,7 @@ pub(crate) fn open_in_editor(
 
                     if !strings::eql_long(prev_name, sliced.slice(), true) {
                         let prev = core::mem::take(edit);
-                        // PORT NOTE: Zig stashed the arena-backed slice
-                        // directly into the persistent EditorContext (latent
-                        // UAF in spec). Own the bytes in `name_storage` and
+                        // Own the bytes in `name_storage` and
                         // hand back a thread-lifetime borrow.
                         let prev_storage =
                             core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
@@ -1159,8 +1150,6 @@ pub(crate) fn sleep_sync(
         )));
     }
 
-    // TODO(port): std.Thread.sleep — bun owns its own sleep; using thread::sleep
-    // here matches Zig's blocking semantics (this is a sync API).
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
@@ -1280,7 +1269,6 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     owned.result_value = unsafe { errorable.result.value };
 
     if !owned.query_string.is_empty() {
-        // PERF(port): was stack-fallback
         let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
         // Vec<u8> writes are infallible.
         let _ = write!(
@@ -1558,9 +1546,6 @@ pub(crate) fn index_of_line(
 }
 
 pub use crate::crypto as crypto_mod;
-// TODO(port): `pub const Crypto = @import("../crypto/crypto.zig");` re-exports
-// the crypto module under this file's namespace; in Rust the canonical path is
-// `crate::crypto`.
 
 #[bun_jsc::host_fn]
 pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
@@ -1604,7 +1589,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
-    // PORT NOTE (layering): Zig's `HotMap` is a `TaggedPtrUnion` over the four
+    // NOTE (layering): `HotMap` is a tagged union over the four
     // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
     // is the erased `(tag: u8, ptr: *mut ())` lowering of that union; the tag
     // values for servers are pinned here to match `crate::server::AnyServerTag`
@@ -1658,19 +1643,34 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             }
             let obj = <$ServerType>::ptr_to_js(server, global_object);
             if route_list_object != JSValue::ZERO {
-                // PORT NOTE: `ServerType.js.routeListSetCached` (codegen
+                // NOTE: `ServerType.js.routeListSetCached` (codegen
                 // `.classes.ts`) — routed through the typed helper in
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
             server_ref.js_value.set_strong(obj, global_object);
 
-            if config.allow_hot {
+            if global_object.bun_vm().test_isolation_enabled {
+                if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                            server.cast_const(),
+                        )),
+                        (),
+                    ));
+                }
+            }
+
+            // `init` moved `config` into the server (`mem::take`), so the
+            // local `config` is defaulted from here on — read `allow_hot`
+            // and `id` from the server's own config or the registration is
+            // keyed on the wrong (empty) id.
+            if server_ref.config.allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
-                        &config.id,
+                        &server_ref.config.id,
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),
@@ -1698,8 +1698,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         }};
     }
 
-    // PORT NOTE: Zig used nested `switch (bool) { inline else => |c| ... }` to
-    // monomorphize over (has_ssl_config, development). Expanded here.
+    // Monomorphized over (has_ssl_config, development), expanded here.
     let has_ssl_config = config.ssl_config.is_some();
     let development = config.is_development();
     match (development, has_ssl_config) {
@@ -1767,9 +1766,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
         // SAFETY: buf[path_len] == 0 written above
         let buf_z = bun_core::ZStr::from_buf(&buf[..], path_len);
 
-        // PORT NOTE: Zig used `std.c.MAP{ .TYPE = .SHARED }` (a packed bitfield
-        // struct). Rust libc exposes raw `MAP_*` ints; build the flag word
-        // directly.
+        // libc exposes raw `MAP_*` ints; build the flag word directly.
         let mut flags: libc::c_int = libc::MAP_SHARED;
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
@@ -1787,7 +1784,6 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                     libc::MAP_PRIVATE
                 };
 
-                // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
                 #[cfg(target_os = "linux")]
                 if opts
                     .get_boolean_loose(global_this, "sync")?
@@ -1814,7 +1810,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                         )));
                     }
                     offset = usize::try_from(offset_value).expect("int cast");
-                    // std.mem.alignBackwardAnyAlign(usize, offset, pageSize())
+                    // Align the offset down to a page boundary.
                     let page = bun_sys::page_size();
                     offset -= offset % page;
                 }
@@ -1837,14 +1833,20 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
             let _ = sys::munmap(ptr.cast::<u8>(), size as usize);
         }
 
-        jsc::array_buffer::make_typed_array_with_bytes_no_copy(
-            global_this,
-            jsc::TypedArrayType::TypeUint8,
-            map.as_ptr().cast_mut().cast::<c_void>(),
-            map.len(),
-            Some(munmap_dealloc),
-            map.len() as *mut c_void,
-        )
+        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
+        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
+        // unmaps it exactly once via `munmap_dealloc` with the length stuffed
+        // into the ctx pointer.
+        unsafe {
+            jsc::array_buffer::make_typed_array_with_bytes_no_copy(
+                global_this,
+                jsc::TypedArrayType::TypeUint8,
+                map.as_ptr().cast_mut().cast::<c_void>(),
+                map.len(),
+                Some(munmap_dealloc),
+                map.len() as *mut c_void,
+            )
+        }
     }
 }
 
@@ -1897,7 +1899,7 @@ pub(crate) fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObje
 }
 
 pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    // PORT NOTE (layering): `RareData::s3_default_client` body lives in
+    // NOTE (layering): `RareData::s3_default_client` body lives in
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
     // types are in scope and store the cached value through the public
@@ -1906,14 +1908,14 @@ pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) 
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
-    // PORT NOTE: reshaped for borrowck — capture the raw env loader pointer
+    // NOTE: reshaped for borrowck — capture the raw env loader pointer
     // before `rare_data()` takes the long-lived `&mut` of `vm`.
     let env_ptr = vm.transpiler.env;
     let rare = vm.rare_data();
     if let Some(v) = rare.s3_default_client.get() {
         return v;
     }
-    // PORT NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
+    // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
     // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
@@ -1995,7 +1997,7 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     if vm.standalone_module_graph.is_none() {
         return JSValue::create_empty_array(global_this, 0);
     }
-    // PORT NOTE (layering): `VirtualMachine.standalone_module_graph` is
+    // NOTE (layering): `VirtualMachine.standalone_module_graph` is
     // type-erased to `&dyn bun_resolver::StandaloneModuleGraph` so `bun_jsc`
     // doesn't depend on `bun_standalone_graph`. The concrete graph is the
     // process singleton — `Graph::get()` returns the same instance the trait
@@ -2034,10 +2036,9 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
     });
     for (i, index) in sort_indices.iter().enumerate() {
         let file: &mut GraphFile = &mut unsorted_files[*index as usize];
-        // PORT NOTE (layering): `File::blob()` lives in the Zig spec's
-        // `StandaloneModuleGraph.File`; that crate can't depend on
-        // `bun_runtime::webcore::Blob`, so build the blob here from the
-        // file's `cached_blob` slot / contents.
+        // NOTE (layering): the crate defining `StandaloneModuleGraph.File`
+        // can't depend on `bun_runtime::webcore::Blob`, so build the blob
+        // here from the file's `cached_blob` slot / contents.
         let input_blob: *mut Blob = standalone_file_blob(file, global_this);
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         // SAFETY: `standalone_file_blob` returns a non-null heap allocation.
@@ -2064,9 +2065,8 @@ fn standalone_file_blob(
     }
     let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
     let blob_body = Blob::init_with_store(store, global);
-    // PORT NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
-    // discriminant and an extension; matches Zig spec
-    // `MimeType.byLoader(file.loader, std.fs.path.extension(file.name))`.
+    // NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
+    // discriminant and an extension.
     let mime =
         bun_http_types::MimeType::by_loader(file.loader as u8, bun_paths::extension(file.name));
     // SAFETY: `mime.value` is `Cow<'static, [u8]>`; the slice pointer is
@@ -2107,7 +2107,7 @@ impl CSRFObject {
     pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
         let object = JSValue::create_empty_object(global_this, 2);
 
-        // PORT NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
+        // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
         // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
         bun_jsc::jsc_host_abi! {
             unsafe fn csrf_generate_shim(
@@ -2225,7 +2225,7 @@ pub mod environment_variables {
         true
     }
 
-    /// Sync a process.env write back to the Zig-side env map so that Zig
+    /// Sync a process.env write back to the native env map so that native
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
     /// observe the updated value. Used by custom setters for proxy-related
     /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
@@ -2258,7 +2258,7 @@ pub mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        // PORT NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
+        // NOTE: `Loader.map` is `&'a mut Map` (a mutable reference field);
         // re-borrow as `&mut *` to avoid moving the reference out of the loader.
         let env_map = &mut *vm.transpiler.env_mut().map;
 
@@ -2275,9 +2275,7 @@ pub mod environment_variables {
         let new_val = bun_jsc::rare_data::RefCountedEnvValue::create(value_slice.slice());
         let stored = slot.ptr.insert(new_val);
         // slot.key is a static-lifetime string literal (the struct field name).
-        // PORT NOTE: Zig's `map.put` stored the slice header without duping,
-        // so the slot write had to precede `put` for the map to borrow live
-        // bytes. Rust's `Map::put` boxes its own copy — the Arc wrapper now
+        // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
         // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
         // kept for spec parity.
         bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
@@ -2366,15 +2364,15 @@ pub mod JSZlib {
         }
     }
 
-    // PORT NOTE: Zig's `list.allocatedSlice()` (the full `[0..capacity)` window)
+    // NOTE: a full `[0..capacity)` window
     // was previously shimmed here as `&mut [u8]`, but materializing `&mut [u8]`
-    // over uninitialized bytes is UB in Rust regardless of later `set_len`.
+    // over uninitialized bytes is UB regardless of later `set_len`.
     // Callers now use `Vec::spare_capacity_mut()` (-> `&mut [MaybeUninit<u8>]`)
     // with `compress_into` / `decompress_into`, which is the sound equivalent.
 
-    // PORT NOTE: Zig exported `reader_deallocator` / `compressor_deallocator`
-    // to free a heap-allocated reader/compressor (and its owned `ArrayList`)
-    // from the ArrayBuffer finalizer. The Rust port keeps the reader on-stack
+    // NOTE: no `reader_deallocator` / `compressor_deallocator` exports are
+    // needed to free a heap-allocated reader/compressor from the ArrayBuffer
+    // finalizer. The reader stays on-stack
     // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
     // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
     // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
@@ -2388,10 +2386,12 @@ pub mod JSZlib {
     }
 
     // bun.ComptimeEnumMap(Library)
-    pub(crate) static LIBRARY_MAP: phf::Map<&'static [u8], Library> = phf::phf_map! {
-        b"zlib" => Library::Zlib,
-        b"libdeflate" => Library::Libdeflate,
-    };
+    bun_core::comptime_string_map! {
+        pub(crate) static LIBRARY_MAP: Library = {
+            b"zlib" => Library::Zlib,
+            b"libdeflate" => Library::Libdeflate,
+        };
+    }
 
     #[bun_jsc::host_fn]
     pub(crate) fn gzip_sync(
@@ -2538,8 +2538,7 @@ pub mod JSZlib {
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
-                // PORT NOTE: Zig moved `list` into the reader and freed via a
-                // dedicated finalizer. In Rust the reader *borrows* `list_ptr`,
+                // NOTE: the reader *borrows* `list_ptr`,
                 // so drop the reader to release the borrow, then leak the owned
                 // `list` directly into the ArrayBuffer (freed by
                 // `global_deallocator`).
@@ -2550,11 +2549,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let decompressor_ptr = bun_libdeflate::Decompressor::alloc();
@@ -2600,11 +2604,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }
@@ -2654,7 +2663,7 @@ pub mod JSZlib {
         }
 
         let compressed = buffer.slice();
-        let _ = window_bits; // unused in Zig too
+        let _ = window_bits; // unused
 
         match library {
             Library::Zlib => {
@@ -2692,7 +2701,7 @@ pub mod JSZlib {
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
                 }
-                // PORT NOTE: see gunzip path — reader borrows `list`, so drop
+                // NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.
                 drop(reader);
                 list.shrink_to_fit();
@@ -2701,11 +2710,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
             Library::Libdeflate => {
                 let compressor_ptr = bun_libdeflate::Compressor::alloc(level.unwrap_or(6));
@@ -2744,11 +2758,16 @@ pub mod JSZlib {
                 let leaked: &'static mut [u8] = list.leak();
                 let ptr = leaked.as_mut_ptr();
                 let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                array_buffer.to_js_with_context(
-                    global_this,
-                    ptr.cast::<c_void>(),
-                    Some(global_deallocator),
-                )
+                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
+                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
+                // GC via the ctx pointer (the data pointer itself).
+                unsafe {
+                    array_buffer.to_js_with_context(
+                        global_this,
+                        ptr.cast::<c_void>(),
+                        Some(global_deallocator),
+                    )
+                }
             }
         }
     }
@@ -2758,7 +2777,7 @@ pub mod JSZlib {
 pub mod JSZstd {
     use super::*;
 
-    // `no_mangle` dropped: 0 C++ refs, 0 Rust refs (kept for parity with Zig export).
+    // `no_mangle` dropped: 0 C++ refs, 0 Rust refs.
     pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2818,9 +2837,10 @@ pub mod JSZstd {
 
         // Calculate max compressed size
         let max_size = bun_zstd::compress_bound(input.len());
+        // The zero-fill
+        // here is output-irrelevant (zstd overwrites the prefix it reports).
+        // PERF: use Box::new_uninit_slice — profile if hot.
         let mut output = vec![0u8; max_size];
-        // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized.
-        // PERF(port): use Box::new_uninit_slice — profile if hot.
 
         // Perform compression with context
         let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
@@ -2887,11 +2907,16 @@ pub mod JSZstd {
                 // Compression path
                 // Calculate max compressed size
                 let max_size = bun_zstd::compress_bound(input.len());
-                // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized
-                // and surfaced OOM as an error. Rust's global allocator aborts on
-                // OOM, so the explicit "Out of memory" path is unreachable here.
-                // Could route through a fallible bun_alloc helper.
-                self.output = vec![0u8; max_size];
+                // Surface OOM
+                // as a rejected promise instead of aborting. The zero-fill is
+                // output-irrelevant (zstd overwrites the prefix it reports).
+                let mut output: Vec<u8> = Vec::new();
+                if output.try_reserve_exact(max_size).is_err() {
+                    self.error_message = Some(b"Out of memory");
+                    return;
+                }
+                output.resize(max_size, 0);
+                self.output = output;
 
                 // Perform compression
                 self.output = match bun_zstd::compress(&mut self.output, input, Some(self.level)) {
@@ -2946,7 +2971,7 @@ pub mod JSZstd {
         }
     }
 
-    /// Zig `ZstdJob.create` — free fn (not `impl ZstdJob`) because
+    /// Free fn (not `impl ZstdJob`) because
     /// `AnyTaskJob<_>` is a foreign type. Returns the promise `JSValue`
     /// directly so callers stay safe (the only state read back from the heap
     /// job is `ctx.promise.value()`; capture it before moving the strong into
@@ -2997,46 +3022,17 @@ pub mod JSZstd {
     }
 }
 
-// const InternalTestingAPIs = struct {
-//     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
-//         const args = callframe.arguments_old(1);
-//         if (args.len < 1) {
-//             globalThis.throwNotEnoughArguments("code", 1, 0);
-//         }
-//
-//         const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-//         defer code.deinit();
-//         var buffer = MutableString.initEmpty(bun.default_allocator);
-//         defer buffer.deinit();
-//         var writer = buffer.bufferedWriter();
-//         const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
-//             .enable_colors = true,
-//             .check_for_unhighlighted_write = false,
-//         });
-//         writer.writer().print("{f}", .{formatter}) catch |err| {
-//             return globalThis.throwError(err, "Error formatting code");
-//         };
-//
-//         writer.flush() catch |err| {
-//             return globalThis.throwError(err, "Error formatting code");
-//         };
-//
-//         return bun.String.createUTF8ForJS(globalThis, buffer.list.items);
-//     }
-// };
-
-// PORT NOTE: Zig `comptime { _ = ...; BunObject.exportAll(); }` block dropped —
-// Rust links what's pub via the `#[unsafe(no_mangle)]` exports above.
+// NOTE: symbols are linked via the `#[unsafe(no_mangle)]` exports above.
 // Referenced: Crypto::JSPasswordObject::JSPasswordObject__create,
 // bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
 //
-// PORT NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
+// NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
 // `Option<Arc<high_tier::BlobStore>>` opaque stubs in `bun_jsc`. The real
 // `Blob::Store` (intrusively refcounted, with `File` payload) lives in this
-// crate and can't move down without dragging `node::PathLike`/S3/aio. The Zig
-// spec stores them on RareData purely for per-VM lazy init; that is per-thread
+// crate and can't move down without dragging `node::PathLike`/S3/aio. The
+// stores exist purely for per-VM lazy init; that is per-thread
 // in practice (`VirtualMachine::get()` is thread-local), so cache the
 // `StoreRef`s here.
 mod stdio_stores {
@@ -3057,8 +3053,7 @@ mod stdio_stores {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        // PORT NOTE: Zig set `ref_count = 2` to account for the RareData slot
-        // plus the Blob; with `StoreRef` (intrusive RAII) the slot is +1 and
+        // NOTE: with `StoreRef` (intrusive RAII) the slot is +1 and
         // the Blob takes its own +1 via `clone()`.
         let store = Store::new(Store {
             data: Data::File(FileStore {
@@ -3081,7 +3076,6 @@ mod stdio_stores {
         is_atty: bool,
         feature: &'static core::sync::atomic::AtomicUsize,
     ) -> JSValue {
-        // Zig: `bun.analytics.Features.@"Bun.std…" += 1` (rare_data.zig).
         feature.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let store = slot.with(|cell| {
             let mut s = cell.borrow_mut();
@@ -3148,5 +3142,3 @@ pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
 pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdout(global_this)
 }
-
-// ported from: src/runtime/api/BunObject.zig

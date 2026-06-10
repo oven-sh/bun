@@ -1,6 +1,5 @@
 use bun_core::strings;
 
-// https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub(crate) struct PercentEncoding;
 
 /// possible errors for decode and encode
@@ -13,6 +12,58 @@ pub enum EncodeError {
 }
 
 bun_core::named_error_set!(EncodeError);
+
+impl EncodeError {
+    /// Returns the error name string.
+    pub fn name(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// Error set of [`DataURL::parse`] / [`DataURL::parse_without_check`].
+#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseDataURLError {
+    #[error("InvalidDataURL")]
+    InvalidDataURL,
+}
+
+bun_core::named_error_set!(ParseDataURLError);
+
+impl ParseDataURLError {
+    /// Returns the error name string.
+    pub fn name(self) -> &'static str {
+        self.into()
+    }
+}
+
+/// Error set of [`DataURL::decode_data`]: `EncodeError || error{Base64DecodeError}`.
+#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeDataError {
+    #[error("InvalidCharacter")]
+    InvalidCharacter,
+    #[error("OutOfMemory")]
+    OutOfMemory,
+    #[error("Base64DecodeError")]
+    Base64DecodeError,
+}
+
+bun_core::named_error_set!(DecodeDataError);
+
+impl DecodeDataError {
+    /// Returns the error name string.
+    pub fn name(self) -> &'static str {
+        self.into()
+    }
+}
+
+impl From<EncodeError> for DecodeDataError {
+    fn from(e: EncodeError) -> Self {
+        match e {
+            EncodeError::InvalidCharacter => Self::InvalidCharacter,
+            EncodeError::OutOfMemory => Self::OutOfMemory,
+        }
+    }
+}
 
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
@@ -93,7 +144,7 @@ impl PercentEncoding {
     }
 }
 
-// PORT NOTE: `mime_type`/`data` are slices into the caller-provided `url` string.
+// `mime_type`/`data` are slices into the caller-provided `url` string.
 // Classified as BORROW_PARAM — struct gets a lifetime parameter.
 pub struct DataURL<'a> {
     pub url: bun_core::String,
@@ -103,8 +154,7 @@ pub struct DataURL<'a> {
 }
 
 impl<'a> DataURL<'a> {
-    pub fn parse(url: &'a [u8]) -> Result<Option<DataURL<'a>>, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn parse(url: &'a [u8]) -> Result<Option<DataURL<'a>>, ParseDataURLError> {
         if !url.starts_with(b"data:") {
             return Ok(None);
         }
@@ -112,10 +162,9 @@ impl<'a> DataURL<'a> {
         Ok(Some(Self::parse_without_check(url)?))
     }
 
-    pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, bun_core::Error> {
-        // TODO(port): narrow error set
-        let comma = strings::index_of_char(url, b',')
-            .ok_or_else(|| bun_core::err!("InvalidDataURL"))? as usize;
+    pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, ParseDataURLError> {
+        let comma =
+            strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
             url: bun_core::String::empty(),
@@ -137,8 +186,7 @@ impl<'a> DataURL<'a> {
     }
 
     /// Decodes the data from the data URL. Always returns an owned slice.
-    pub fn decode_data(&self) -> Result<Vec<u8>, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
         // defer: `percent_decoded_owned` drops at scope exit
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
@@ -149,7 +197,7 @@ impl<'a> DataURL<'a> {
             // errdefer: `buf` drops automatically on error path
             let result = bun_base64::decode(&mut buf, percent_decoded);
             if !result.is_successful() || result.count != len {
-                return Err(bun_core::err!("Base64DecodeError"));
+                return Err(DecodeDataError::Base64DecodeError);
             }
             return Ok(buf);
         }
@@ -186,13 +234,15 @@ impl<'a> DataURL<'a> {
             return buf;
         }
 
-        // TODO(port): Zig source's `bufPrint` writes `text` raw with `{s}` here, not the
-        // base64-encoded form — ported faithfully; verify upstream intent.
-        let mut base64buf = Vec::with_capacity(total_base64_encode_len);
-        base64buf.extend_from_slice(b"data:");
-        base64buf.extend_from_slice(mime_type);
-        base64buf.extend_from_slice(b";base64,");
-        base64buf.extend_from_slice(text);
+        // When the percent-escape path bails, the payload must be
+        // base64-encoded for real (the buffer is sized for the encoded form).
+        let mut base64buf = vec![0u8; total_base64_encode_len];
+        let prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
+        base64buf[..b"data:".len()].copy_from_slice(b"data:");
+        base64buf[b"data:".len()..b"data:".len() + mime_type.len()].copy_from_slice(mime_type);
+        base64buf[b"data:".len() + mime_type.len()..prefix_len].copy_from_slice(b";base64,");
+        let encoded_len = bun_base64::encode(&mut base64buf[prefix_len..], text);
+        base64buf.truncate(prefix_len + encoded_len);
         base64buf
     }
 
@@ -259,9 +309,8 @@ impl<'a> DataURL<'a> {
     }
 }
 
-/// Abstraction over `Vec<u8>` and `CountingBuf` for `encode_string_as_percent_escaped_data_url`
-/// (Zig used `buf: anytype` calling `.appendSlice`/`.append`).
-// PERF(port): Zig anytype was infallible OOM-abort via Vec; trait methods are infallible here.
+/// Abstraction over `Vec<u8>` and `CountingBuf` for
+/// `encode_string_as_percent_escaped_data_url`.
 pub(crate) trait DataUrlBuf {
     fn append_slice(&mut self, slice: &[u8]);
     fn append(&mut self, c: u8);
@@ -294,4 +343,53 @@ impl DataUrlBuf for CountingBuf {
     }
 }
 
-// ported from: src/resolver/data_url.zig
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trips a data URL produced by `encode_string_as_shortest_data_url`
+    /// back through `parse` + `decode_data` and asserts the original bytes.
+    fn round_trip(mime_type: &[u8], text: &[u8]) -> DataURL<'static> {
+        let url = DataURL::encode_string_as_shortest_data_url(mime_type, text);
+        let url: &'static [u8] = Vec::leak(url);
+        let parsed = DataURL::parse(url)
+            .expect("emitted data URL must parse")
+            .expect("emitted data URL must start with data:");
+        assert_eq!(parsed.mime_type, mime_type);
+        let decoded = parsed.decode_data().expect("emitted data URL must decode");
+        assert_eq!(decoded, text);
+        parsed
+    }
+
+    #[test]
+    fn shortest_data_url_percent_path() {
+        // Plain ASCII: percent-escaped form is shorter than base64.
+        let url = DataURL::encode_string_as_shortest_data_url(b"text/plain", b"hello");
+        assert_eq!(url, b"data:text/plain,hello");
+        round_trip(b"text/plain", b"hello");
+    }
+
+    #[test]
+    fn shortest_data_url_base64_fallback_invalid_utf8() {
+        // Non-UTF-8 input makes the percent-escape path bail; the fallback
+        // must emit a real base64 payload.
+        let text: &[u8] = &[0xff, 0xfe, 0x00, 0x01, b'a', 0x80];
+        let url = DataURL::encode_string_as_shortest_data_url(b"application/octet-stream", text);
+        assert!(url.starts_with(b"data:application/octet-stream;base64,"));
+        let parsed = round_trip(b"application/octet-stream", text);
+        assert!(parsed.is_base64);
+    }
+
+    #[test]
+    fn shortest_data_url_base64_fallback_when_shorter() {
+        // Every byte needs escaping (3 bytes each) so base64 (4/3 per byte)
+        // wins and the fallback path is taken.
+        let text = vec![b'\n'; 96];
+        let url = DataURL::encode_string_as_shortest_data_url(b"text/plain", &text);
+        assert!(url.starts_with(b"data:text/plain;base64,"));
+        // 96 bytes -> 128 base64 chars, no padding.
+        assert_eq!(url.len(), b"data:text/plain;base64,".len() + 128);
+        let parsed = round_trip(b"text/plain", &text);
+        assert!(parsed.is_base64);
+    }
+}

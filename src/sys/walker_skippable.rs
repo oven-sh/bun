@@ -11,8 +11,6 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash11::hash(seed, bytes)
 }
 
-// TODO(port): `DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8)` —
-// `dir_iterator::WrappedIterator` is parameterized on the native OS path char in Zig.
 type WrappedIterator = dir_iterator::WrappedIterator;
 
 type NameBufferList = Vec<OSPathChar>;
@@ -20,9 +18,9 @@ type NameBufferList = Vec<OSPathChar>;
 pub struct Walker {
     stack: Vec<StackItem>,
     name_buffer: NameBufferList,
-    // PORT NOTE: reshaped for borrowck — Zig stored `skip_filenames`/`skip_dirnames` as
-    // sub-slices borrowed from `skip_all`. Rust stores index ranges into `skip_all` instead
-    // (self-referential slices are not expressible without raw pointers).
+    // `skip_filenames`/`skip_dirnames` are index ranges into `skip_all` rather
+    // than sub-slices: self-referential slices are not expressible without raw
+    // pointers.
     skip_filenames: Range<usize>,
     skip_dirnames: Range<usize>,
     skip_all: Box<[u64]>,
@@ -37,8 +35,6 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
-    // PORT NOTE: Zig used `std.fs.Dir.Entry.Kind`; mapped to `bun_core::FileKind`
-    // (re-exported as `crate::EntryKind`).
     pub kind: sys::EntryKind,
 }
 
@@ -53,8 +49,8 @@ impl Walker {
     /// a reference to the path.
     pub fn next(&mut self) -> sys::Result<Option<WalkerEntry<'_>>> {
         while !self.stack.is_empty() {
-            // `top` becomes invalid after appending to `self.stack`
-            // PORT NOTE: reshaped for borrowck — use index instead of holding `&mut` across push.
+            // Use an index instead of holding `&mut` to the top item: it would
+            // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
             match self.stack[top_idx].iter.next() {
@@ -70,7 +66,6 @@ impl Walker {
                             && self.resolve_unknown_entry_types
                         {
                             let dir_fd = self.stack[top_idx].iter.dir();
-                            // TODO(port): `base.name.sliceAssumeZ()` — assumed `.as_zstr()`
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
                                 Err(_) => continue, // skip entries we can't stat
@@ -153,8 +148,6 @@ impl Walker {
                             )?;
                             {
                                 self.stack.push(StackItem {
-                                    // TODO(port): Zig passed encoding `if windows .u16 else .u8`;
-                                    // assumed native-encoding overload.
                                     iter: dir_iterator::iterate(new_dir),
                                     dirname_len: cur_len,
                                 });
@@ -190,8 +183,6 @@ impl Drop for Walker {
     fn drop(&mut self) {
         if !self.stack.is_empty() {
             for item in &mut self.stack[1..] {
-                // Zig had `if (self.stack.items.len != 0)` here, which is always true inside
-                // this branch — preserved as-is.
                 item.iter.dir().close();
             }
             // `self.stack` Vec drops itself.
@@ -231,7 +222,6 @@ pub fn walk(
     }
 
     stack.push(StackItem {
-        // TODO(port): Zig passed encoding `if windows .u16 else .u8`; assumed native-encoding overload.
         iter: dir_iterator::iterate(self_),
         dirname_len: 0,
     });
@@ -246,5 +236,3 @@ pub fn walk(
         resolve_unknown_entry_types: false,
     })
 }
-
-// ported from: src/sys/walker_skippable.zig

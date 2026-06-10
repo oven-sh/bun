@@ -19,7 +19,7 @@ export interface DictionaryMember {
   type: Type;
   /** Optional default value to use when this member is missing or undefined. */
   default?: any;
-  /** The name used in generated Zig/C++ code. Defaults to the public JS name. */
+  /** The name used in generated code. Defaults to the public JS name. */
   internalName?: string;
   /** Alternative JavaScript names for this member. */
   altNames?: string[];
@@ -39,7 +39,7 @@ interface DictionaryOptions {
   name: string;
   /** Used in error messages. Defaults to `name`. */
   userFacingName?: string;
-  /** Whether to generate a Zig `fromJS` function. */
+  /** Whether to generate a `fromJS` conversion function. */
   generateConversionFunction?: boolean;
 }
 

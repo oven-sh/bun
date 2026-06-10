@@ -24,8 +24,8 @@ pub struct ZigStackTrace {
     /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
     /// If so, then .deref must be called on it to release the memory.
     ///
-    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, matching
-    /// the Zig `?*SourceProvider` ABI exactly.
+    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
+    /// FFI layout is exactly one nullable pointer.
     pub referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
@@ -50,8 +50,6 @@ impl ZigStackTrace {
         root_path: &[u8],
         origin: Option<&ZigURL<'_>>,
     ) -> Result<api::StackTrace, bun_alloc::AllocError> {
-        // Zig: `comptime std.mem.zeroes(api.StackTrace)` — `Default` is the semantic
-        // equivalent (`Vec` fields are NonNull and not zero-safe).
         let mut stack_trace = api::StackTrace::default();
         {
             let mut source_lines_iter = self.source_line_iterator();
@@ -61,11 +59,9 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // PORT NOTE: Zig packed all line texts into a single contiguous
-                // `source_line_buf` and stored sub-slices in each `SourceLine`.
-                // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
-                // so each line gets its own allocation instead.
-                // PERF(port): one alloc per line vs one shared buffer — profile if hot.
+                // `api::SourceLine.text` is `Box<[u8]>` (owns its bytes), so each
+                // line gets its own allocation rather than sub-slices of one shared
+                // buffer. One alloc per line — profile if this ever shows up hot.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
                     let text = source.text.slice();
@@ -73,7 +69,7 @@ impl ZigStackTrace {
                         text: Box::<[u8]>::from(text),
                         line: source.line,
                     });
-                    // `defer source.text.deinit()` → handled by Drop on ZigStringSlice at end of scope.
+                    // `source.text` is released by `ZigStringSlice`'s Drop at end of scope.
                 }
                 stack_trace.source_lines = source_lines;
             }
@@ -95,7 +91,7 @@ impl ZigStackTrace {
 
     pub fn frames(&self) -> &[ZigStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
-        // (populated by C++ via FFI; see ZigException.zig:111).
+        // (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
@@ -108,8 +104,8 @@ impl ZigStackTrace {
     #[inline]
     pub fn source_lines_mut(&mut self) -> &mut [BunString] {
         // SAFETY: `source_lines_ptr` points to a caller-owned buffer of at least
-        // `source_lines_len` initialized elements (populated by C++ via FFI;
-        // see ZigException.zig:108). The borrow is tied to `&mut self`.
+        // `source_lines_len` initialized elements (populated by C++ via FFI).
+        // The borrow is tied to `&mut self`.
         unsafe { bun_core::ffi::slice_mut(self.source_lines_ptr, self.source_lines_len as usize) }
     }
 
@@ -117,7 +113,7 @@ impl ZigStackTrace {
     #[inline]
     pub fn source_line_numbers(&self) -> &[i32] {
         // SAFETY: `source_lines_numbers` points to a caller-owned buffer of at
-        // least `source_lines_len` initialized elements (see ZigException.zig:108).
+        // least `source_lines_len` initialized elements (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.source_lines_numbers, self.source_lines_len as usize) }
     }
 
@@ -187,5 +183,3 @@ impl<'a> SourceLineIterator<'a> {
         Some(result)
     }
 }
-
-// ported from: src/jsc/ZigStackTrace.zig

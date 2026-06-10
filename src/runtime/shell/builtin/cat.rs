@@ -19,21 +19,18 @@ pub struct Cat {
 pub enum CatState {
     #[default]
     Idle,
-    /// Spec cat.zig `.exec_stdin`.
     ExecStdin {
         in_done: bool,
         chunks_queued: usize,
         chunks_done: usize,
         errno: ExitCode,
     },
-    /// Spec cat.zig `.exec_filepath_args`.
     ExecFilepathArgs {
         /// Index into argv where filepath args start.
         args_start: usize,
         /// Current index into the filepath args.
         idx: usize,
-        /// Per-file reader (Spec: `reader: ?*IOReader`). Dropping the `Arc`
-        /// IS the Zig `r.deref()`.
+        /// Per-file reader.
         reader: Option<Arc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
@@ -93,7 +90,6 @@ impl Cat {
         Self::next(interp, cmd)
     }
 
-    /// Spec: cat.zig `writeFailingError`.
     fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
@@ -111,9 +107,8 @@ impl Cat {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// Spec: cat.zig `next`.
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — read scalars, drop borrow, act.
+        // Read scalars, drop the borrow, then act.
         enum Branch {
             Stdin,
             FileArg { args_start: usize, idx: usize },
@@ -143,9 +138,8 @@ impl Cat {
                     {
                         *in_done = true;
                     }
-                    // PORT NOTE: reshaped for borrowck — copy stdin bytes so
-                    // the &mut on `stdout`/`write_no_io` doesn't overlap a
-                    // borrow of `stdin`.
+                    // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
+                    // doesn't overlap a borrow of `stdin`.
                     let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
                     if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -156,8 +150,7 @@ impl Cat {
                     let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Spec: `this.bltn().stdin.fd.addReader(this); return ...start()`.
-                // PORT NOTE: reshaped for borrowck — clone the `Arc<IOReader>`
+                // Clone the `Arc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
@@ -176,7 +169,7 @@ impl Cat {
                 let argc = Builtin::of(interp, cmd).args_slice().len();
                 let n_files = argc - args_start;
                 if idx >= n_files {
-                    // Spec: `exec.deinit()` — drop the reader if any.
+                    // Drop the reader if any.
                     if let CatState::ExecFilepathArgs { reader, .. } =
                         &mut Self::state_mut(interp, cmd).state
                     {
@@ -184,7 +177,6 @@ impl Cat {
                     }
                     return Builtin::done(interp, cmd, 0);
                 }
-                // Spec: `if (exec.reader) |r| { r.deref(); exec.reader = null }`.
                 if let CatState::ExecFilepathArgs { reader, .. } =
                     &mut Self::state_mut(interp, cmd).state
                 {
@@ -205,8 +197,7 @@ impl Cat {
                     Err(e) => {
                         let buf =
                             Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
-                        // Spec: `defer exec.deinit()` — reader was already
-                        // taken to `None` above.
+                        // The reader was already taken to `None` above.
                         return Self::write_failing_error(interp, cmd, &buf, 1);
                     }
                 };
@@ -241,7 +232,6 @@ impl Cat {
         }
     }
 
-    /// Spec: cat.zig `onIOWriterChunk`.
     pub fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -249,7 +239,6 @@ impl Cat {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(e) = err {
-            // Spec: `defer e.deref(); @intCast(@intFromEnum(e.getErrno()))`.
             let errno = e.get_errno() as ExitCode;
             e.deref();
             let rchild = ReaderChildPtr {
@@ -257,8 +246,8 @@ impl Cat {
                 tag: ReaderTag::Cat,
             };
             // Writing to stdout errored: cancel everything and finish.
-            // PORT NOTE: reshaped for borrowck — pull the reader `Arc` out of
-            // state before calling `remove_reader`, then drop it (= Zig deref).
+            // Pull the reader `Arc` out of
+            // state before calling `remove_reader`, then drop it.
             match &mut Self::state_mut(interp, cmd).state {
                 CatState::ExecStdin {
                     in_done,
@@ -268,14 +257,12 @@ impl Cat {
                     *st_errno = errno;
                     let was_done = core::mem::replace(in_done, true);
                     if !was_done {
-                        // Spec: `if (stdin.needsIO()) stdin.fd.removeReader(this)`.
                         if let BuiltinInput::Fd(r) = &Builtin::of(interp, cmd).stdin {
                             r.remove_reader(rchild);
                         }
                     }
                 }
                 CatState::ExecFilepathArgs { reader, .. } => {
-                    // Spec: `r.removeReader(this); exec.deinit()`.
                     if let Some(r) = reader.take() {
                         r.remove_reader(rchild);
                     }
@@ -327,7 +314,6 @@ impl Cat {
         }
     }
 
-    /// Spec: cat.zig `onIOReaderChunk`.
     pub fn on_io_reader_chunk(
         interp: &Interpreter,
         cmd: NodeId,
@@ -353,7 +339,6 @@ impl Cat {
         Yield::done()
     }
 
-    /// Spec: cat.zig `onIOReaderDone`.
     pub fn on_io_reader_done(
         interp: &Interpreter,
         cmd: NodeId,
@@ -361,7 +346,6 @@ impl Cat {
     ) -> Yield {
         let errno: ExitCode = err
             .map(|e| {
-                // Spec: `defer e.deref(); @intCast(@intFromEnum(e.getErrno()))`.
                 let n = e.get_errno() as ExitCode;
                 e.deref();
                 n
@@ -402,7 +386,7 @@ impl Cat {
                 *in_done = true;
                 if errno != 0 {
                     if *out_done || !stdout_needs_io {
-                        // Spec: `exec.deinit()` — drop the reader ref.
+                        // Drop the reader ref.
                         *reader = None;
                         Step::Done(errno)
                     } else {
@@ -418,7 +402,6 @@ impl Cat {
             CatState::Done | CatState::WaitingWriteErr | CatState::Idle => Step::Suspend,
         };
         if cancel {
-            // Spec: `this.bltn().stdout.fd.writer.cancelChunks(this)`.
             let wchild = ChildPtr::new(cmd, WriterTag::Builtin);
             if let BuiltinIO::Fd(fd) = &Builtin::of(interp, cmd).stdout {
                 fd.writer.cancel_chunks(wchild);
@@ -470,5 +453,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/cat.zig

@@ -12,5 +12,3 @@ pub fn to_have_returned_times(
 ) -> JsResult<JSValue> {
     Expect::to_have_returned_times(this, global, callframe)
 }
-
-// ported from: src/test_runner/expect/toHaveReturnedTimes.zig

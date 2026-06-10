@@ -40,8 +40,7 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
-/// Port of Zig `Shifter.shift(value, comptime fields)` — `inline for` + `@field` over a
-/// comptime field-name list. Expands to one `shift_one` call per named field.
+/// Expands to one `shift_one` call per named field.
 macro_rules! shift_fields {
     ($shifter:expr, $value:expr, $($field:ident),+ $(,)?) => {{
         $( $shifter.shift_one(&mut $value.$field)?; )+
@@ -71,8 +70,6 @@ impl MachoFile {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
-
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
@@ -94,7 +91,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // PORT NOTE: reshaped for borrowck — capture base ptr as usize before iterating so we can
+        // reshaped for borrowck — capture base ptr as usize before iterating so we can
         // compute byte offsets without holding a borrow of self.data across the mutable writes below.
         let base_addr = self.data.as_ptr() as usize;
         let mut iter = self.iterator();
@@ -473,8 +470,6 @@ impl MachoFile {
     }
 
     pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype`; std::io::Write is the canonical
-        // Rust equivalent (bun_io has no Write trait).
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -498,8 +493,10 @@ impl MachoFile {
         Ok(())
     }
 
+    // Returns `bun_core::Error` (the repo-wide union type) rather than a bespoke
+    // `MachoError | io::Error` enum: `From<MachoError>` routes through
+    // `Error::from_name`, so variant names survive into the caller's `e.name()`.
     pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
@@ -641,8 +638,6 @@ impl MachoSigner {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
-
     const IDENTIFIER: &'static [u8] = b"a.out\x00";
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
     const SIGNATURE_HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -664,8 +659,8 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
+    // `bun_core::Error` union return — see the note on `build_and_sign`.
     pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -739,8 +734,7 @@ impl MachoSigner {
             b.write(0);
         }
 
-        // Position writer at signature offset
-        // (Zig used `self.data.writer()`; here we extend the Vec directly.)
+        // Position writer at signature offset; extend the Vec directly.
 
         // Write signature components — SuperBlob / BlobIndex / CodeDirectory are
         // `NoUninit` (#[repr(C)] POD, no padding); byte-serialized verbatim into
@@ -751,7 +745,7 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // PORT NOTE: reshaped for borrowck — index instead of slicing self.data while pushing.
+        // reshaped for borrowck — index instead of slicing self.data while pushing.
         let mut off: usize = 0;
         let end = self.sig_off;
         while end - off >= PAGE_SIZE {
@@ -819,5 +813,3 @@ fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     // SAFETY: engine is null (default).
     unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
 }
-
-// ported from: src/exe_format/macho.zig

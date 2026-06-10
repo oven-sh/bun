@@ -195,7 +195,7 @@ impl Which {
     /// Look up `$PATH` from the export env and the cwd from the shell env.
     fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
         let shell = Builtin::shell(interp, cmd);
-        // `EnvMap::get` refs the returned string; balance it (Zig: `defer PATH.deref()`).
+        // `EnvMap::get` refs the returned string; balance it.
         let path = shell
             .export_env
             .get(EnvStr::init_slice(b"PATH"))
@@ -212,11 +212,8 @@ impl Which {
         Builtin::of(interp, cmd).arg_bytes(idx).to_vec()
     }
 
-    /// Spec: which.zig — `bun.which(path_buf, PATH, cwd, arg)`.
     fn resolve(path_env: &[u8], cwd: &[u8], arg: &[u8]) -> Option<Vec<u8>> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }
 }
-
-// ported from: src/shell/builtin/which.zig

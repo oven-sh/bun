@@ -1,7 +1,6 @@
 //! Proc-macros for `bun_core`.
 //!
-//! `pretty_fmt!(FMT, true|false)` is the compile-time port of Zig's
-//! `Output.prettyFmt` (`src/bun_core/output.zig`). It rewrites Bun's `<tag>`
+//! `pretty_fmt!(FMT, true|false)` rewrites Bun's `<tag>`
 //! color markup into ANSI escape sequences (or strips them when the second
 //! argument is `false`) and emits a string *literal* so the result is usable as
 //! a `format_args!` / `concat!` template.
@@ -80,12 +79,12 @@ fn eval_literal(expr: &Expr, out: &mut String) -> Result<(), syn::Error> {
 
 use bun_output_tags::{RESET, color_for};
 
-/// 1:1 port of `prettyFmt` from output.zig, plus Zig→Rust format-spec rewrites
+/// Rewrites `<tag>` markup plus legacy format specs
 /// (`{s}`/`{d}` → `{}`, `{any}`/`{?}` → `{:?}`).
 ///
 /// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
 /// vs `bun_core::output::pretty_fmt_runtime` because the two intentionally
-/// diverge in the `{` arm (this side rewrites Zig specs `{s}`→`{}` for the
+/// diverge in the `{` arm (this side rewrites legacy specs `{s}`→`{}` for the
 /// emitted `format_args!` template; runtime copies braces verbatim) and on
 /// unknown tags (this side `Err`→`compile_error!`; runtime emits `""`).
 fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
@@ -111,11 +110,11 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                 }
             }
             b'>' => {
-                // stray closer — Zig drops it
+                // stray closer — dropped
                 i += 1;
             }
             b'{' => {
-                // copy `{ ... }` verbatim, optionally rewriting Zig-style specs
+                // copy `{ ... }` verbatim, optionally rewriting legacy specs
                 let start = i;
                 while i < bytes.len() && bytes[i] != b'}' {
                     i += 1;
@@ -189,6 +188,26 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
     }
 }
 
+mod comptime_string_map;
+
+/// Implementation detail of `bun_core::comptime_string_map!` — invoke that
+/// `macro_rules!` wrapper instead (it injects the `@crate_path` prefix).
+#[proc_macro]
+pub fn comptime_string_map_impl(input: TokenStream) -> TokenStream {
+    comptime_string_map::expand_map(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
+/// Implementation detail of `bun_core::comptime_string_set!` — invoke that
+/// `macro_rules!` wrapper instead (it injects the `@crate_path` prefix).
+#[proc_macro]
+pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
+    comptime_string_map::expand_set(input.into())
+        .unwrap_or_else(|e| e.to_compile_error())
+        .into()
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // #[derive(CellRefCounted)] / #[derive(ThreadSafeRefCounted)]
 // ──────────────────────────────────────────────────────────────────────────
@@ -207,9 +226,8 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
 // There is no type-based fallback. An earlier draft fell back on "the unique
 // field whose type's last path segment is `Cell`", but that matched any
 // `Cell<_>` (e.g. `Cell<bool>`), turning the helpful "no ref_count field
-// found" diagnostic into a buried type-mismatch inside generated code. The
-// Zig spec (`@FieldType(T, "ref_count")` in src/ptr/ref_count.zig) requires
-// the literal name anyway, so rules 1+2 are sufficient and exhaustive.
+// found" diagnostic into a buried type-mismatch inside generated code.
+// Rules 1+2 are sufficient and exhaustive.
 //
 // Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
 // routes the trait's `destroy` to that path instead of the default
@@ -552,9 +570,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 // #[derive(RefCounted)]  — intrusive single-thread `RefCount<Self>` mixin
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Third sibling of CellRefCounted / ThreadSafeRefCounted. Ports Zig's
-// `bun.ptr.RefCount(@This(), "ref_count", destructor, .{ .debug_name = … })`
-// comptime mixin (src/ptr/ref_count.zig:67) — the form taken by ~17 Rust
+// Third sibling of CellRefCounted / ThreadSafeRefCounted — replaces the ~17
 // hand-rolls that all spell out `type DestructorCtx = (); get_ref_count =
 // &raw mut (*this).ref_count; destructor = drop(heap::take(this))`.
 //
@@ -562,7 +578,6 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 //   #[ref_count(destroy = <path>)]      — `unsafe fn(*mut Self)`; default is
 //                                         `drop(::bun_core::heap::take(this))`
 //   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
-//                                         (Zig `.{ .debug_name = … }` option)
 //
 // Field selection follows the shared `find_ref_count_field` rules (a
 // `#[ref_count]`-annotated field, else a field literally named `ref_count`).
@@ -668,12 +683,10 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
 // #[derive(EnumTag)]
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Rust port of Zig's `union(Tag)` / `std.meta.Tag(T)` language built-in.
-// Every Zig tagged-union ported to a Rust `enum` lost the implicit
-// data→discriminant projection and grew a hand-written
+// Derives the data→discriminant projection that otherwise needs a
+// hand-written
 // `fn tag(&self) -> Tag { match self { Self::A(..) => Tag::A, … } }` (14
-// copies, 160+ arms total — see ast/expr.rs, ast/stmt.rs, shell_parser, etc.;
-// stmt.rs:466 literally comments "Zig got this for free from `union(Tag)`").
+// copies, 160+ arms total — see ast/expr.rs, ast/stmt.rs, shell_parser, etc.).
 //
 // Two modes:
 //
@@ -745,7 +758,7 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
         let tag_idents2 = tag_idents.clone();
         return quote! {
             impl #impl_g #name #ty_g #where_g {
-                /// Data → discriminant projection (Zig `union(Tag)` built-in).
+                /// Data → discriminant projection.
                 #[inline]
                 pub const fn tag(&self) -> #tag_path {
                     match self {
@@ -772,7 +785,7 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
         pub enum #tag_name { #( #tag_variants, )* }
         impl #impl_g #name #ty_g #where_g {
-            /// Data → discriminant projection (Zig `union(Tag)` built-in).
+            /// Data → discriminant projection.
             #[inline]
             pub const fn tag(&self) -> #tag_name {
                 match self {

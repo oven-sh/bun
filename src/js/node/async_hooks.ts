@@ -9,7 +9,7 @@
 // in the promise reaction) and then just before we call .then, we restore it.
 //
 // This means context tracking is *kind-of* manual. If we receive a callback in native code
-// - In Zig, call jsValue.withAsyncContextIfNeeded(); which returns another JSValue. Store that and
+// - In Rust, call jsValue.with_async_context_if_needed(); which returns another JSValue. Store that and
 //   then run .$call() on it later.
 // - In C++, call AsyncContextFrame::withAsyncContextIfNeeded(jsValue). Then to call it,
 //   use AsyncContextFrame:: call(...) instead of JSC:: call.

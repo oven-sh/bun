@@ -44,5 +44,3 @@ impl FileRange {
         Some(stolen)
     }
 }
-
-// ported from: src/cli/test/parallel/FileRange.zig

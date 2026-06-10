@@ -29,7 +29,13 @@ describe("utimes-family errors report node's syscall names", () => {
   });
 
   it("futimesSync reports 'futime'", () => {
-    expect(() => fs.futimesSync(badFd, 0, 0)).toThrow(expect.objectContaining({ code: "EBADF", syscall: "futime" }));
+    expect(() => fs.futimesSync(badFd, 0, 0)).toThrow(
+      expect.objectContaining({
+        code: "EBADF",
+        syscall: "futime",
+        message: "EBADF: bad file descriptor, futime",
+      }),
+    );
   });
 
   it("promises.utimes reports 'utime'", async () => {
@@ -49,6 +55,10 @@ describe("utimes-family errors report node's syscall names", () => {
   it("futimes callback reports 'futime'", async () => {
     const { promise, resolve } = Promise.withResolvers<unknown>();
     fs.futimes(badFd, 0, 0, resolve);
-    expect(await promise).toMatchObject({ code: "EBADF", syscall: "futime" });
+    expect(await promise).toMatchObject({
+      code: "EBADF",
+      syscall: "futime",
+      message: "EBADF: bad file descriptor, futime",
+    });
   });
 });

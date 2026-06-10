@@ -3520,10 +3520,7 @@ impl DevServer {
         let start_data = bv2.start_from_dev_server(&{
             let mut bt = bundler::bundle_v2::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bundle_v2::EntryPointFlags(v.bits())),
-                );
+                bun_core::handle_oom(bt.set.put(k, bundler::bundle_v2::EntryPointFlags(v.bits())));
             }
             bt
         })?;

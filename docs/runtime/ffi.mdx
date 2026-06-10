@@ -278,7 +278,7 @@ const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), l
 Use `JSCallback` to create JavaScript callback functions that can be passed to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or whenever you want to call into JavaScript code from C.
 
 ```ts
-import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
+import { dlopen, JSCallback, ptr, CString, type Pointer } from "bun:ffi";
 
 const {
   symbols: { search },
@@ -290,10 +290,13 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-});
+const searchIterator = new JSCallback(
+  (ptr: Pointer, length: bigint) => /hello/.test(new CString(ptr, 0, Number(length))),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+  },
+);
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
@@ -316,11 +319,14 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 Currently, thread-safe callbacks work best when run from another thread that is running JavaScript code, i.e. a [`Worker`](/runtime/workers). A future version of Bun will enable them to be called from any thread (such as new threads spawned by your native library that Bun is not aware of).
 
 ```ts
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-  threadsafe: true, // Optional. Defaults to `false`
-});
+const searchIterator = new JSCallback(
+  (ptr: Pointer, length: bigint) => /hello/.test(new CString(ptr, 0, Number(length))),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+    threadsafe: true, // Optional. Defaults to `false`
+  },
+);
 ```
 
 <Note>
@@ -338,7 +344,7 @@ const setOnResolve = new CFunction({
 });
 
 // This code runs slightly faster:
-setOnResolve(onResolve.ptr);
+setOnResolve(onResolve.ptr!);
 
 // Compared to this:
 setOnResolve(onResolve);

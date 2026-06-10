@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { isGlibcVersionAtLeast } from "harness";
+import { isGlibcVersionAtLeast, isMusl } from "harness";
 import { platform } from "os";
 
 import {
@@ -969,4 +969,62 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
+});
+
+// Any C runtime with strlen() will do. On musl there is no stable library
+// name to dlopen, so these are skipped there.
+const strlenLibPath =
+  platform() === "darwin"
+    ? "/usr/lib/libSystem.B.dylib"
+    : platform() === "win32"
+      ? "msvcrt.dll"
+      : isMusl
+        ? null
+        : "libc.so.6";
+
+describe.if(!!strlenLibPath)("pointer argument conversion", () => {
+  const strings = {
+    strlen: {
+      returns: "usize",
+      args: ["cstring"],
+    },
+  };
+
+  it("accepts a CString", () => {
+    const lib = dlopen(strlenLibPath, strings);
+    const buf = Buffer.from("bunbun\0", "ascii");
+    const cstr = new CString(ptr(buf));
+    expect(cstr.toString()).toBe("bunbun");
+    expect(lib.symbols.strlen(cstr)).toBe(6n);
+  });
+
+  it("accepts an ArrayBuffer", () => {
+    const lib = dlopen(strlenLibPath, strings);
+    const buf = new ArrayBuffer(7);
+    new Uint8Array(buf).set(Buffer.from("bunbun\0", "ascii"));
+    expect(lib.symbols.strlen(buf)).toBe(6n);
+  });
+
+  it("accepts a DataView", () => {
+    const lib = dlopen(strlenLibPath, strings);
+    const buf = Buffer.from("bunbun\0", "ascii");
+    expect(lib.symbols.strlen(new DataView(buf.buffer, buf.byteOffset, buf.byteLength))).toBe(6n);
+  });
+
+  it("accepts a DataView for buffer arguments", () => {
+    const lib = dlopen(strlenLibPath, {
+      strlen: {
+        returns: "usize",
+        args: ["buffer"],
+      },
+    });
+    const buf = Buffer.from("bunbun\0", "ascii");
+    expect(lib.symbols.strlen(new DataView(buf.buffer, buf.byteOffset, buf.byteLength))).toBe(6n);
+  });
+
+  it("rejects values it cannot convert", () => {
+    const lib = dlopen(strlenLibPath, strings);
+    expect(() => lib.symbols.strlen("bunbun")).toThrow(TypeError);
+    expect(() => lib.symbols.strlen({})).toThrow(TypeError);
+  });
 });

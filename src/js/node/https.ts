@@ -35,14 +35,39 @@ function get(input, options, cb) {
 function Agent(options) {
   if (!(this instanceof Agent)) return new Agent(options);
 
+  options = { __proto__: null, ...options };
+  options.defaultPort ??= 443;
+  options.protocol ??= "https:";
   http.Agent.$apply(this, [options]);
-  this.defaultPort = 443;
-  this.protocol = "https:";
+
   this.maxCachedSessions = this.options.maxCachedSessions;
   if (this.maxCachedSessions === undefined) this.maxCachedSessions = 100;
 }
 $toClass(Agent, "Agent", http.Agent);
-Agent.prototype.createConnection = http.createConnection;
+Agent.prototype.createConnection = function createConnection(...args) {
+  // XXX: This signature (port, host, options) is different from all the other
+  // createConnection() methods.
+  let options;
+  if (args[0] !== null && typeof args[0] === "object") {
+    options = args[0];
+  } else if (args[1] !== null && typeof args[1] === "object") {
+    options = { ...args[1] };
+  } else if (args[2] === null || typeof args[2] !== "object") {
+    options = {};
+  } else {
+    options = { ...args[2] };
+  }
+
+  if (typeof args[0] === "number") {
+    options.port = args[0];
+  }
+
+  if (typeof args[1] === "string") {
+    options.host = args[1];
+  }
+
+  return require("node:tls").connect(options);
+};
 
 var https = {
   Agent,

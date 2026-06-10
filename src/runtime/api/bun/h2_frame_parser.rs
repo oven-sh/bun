@@ -5144,12 +5144,15 @@ impl H2FrameParser {
                     );
                 }
                 let id = last_stream_arg.to_int32();
-                if id < 0 && id as u32 > MAX_STREAM_ID {
-                    return Err(global_object.throw(format_args!(
-                        "Expected lastStreamId to be a number between 1 and 2147483647"
-                    )));
+                // Like Node's native goaway, a lastStreamId <= 0 means "use the
+                // actual last processed stream id" — Node's JS layer defaults the
+                // argument to 0 and relies on this correction (validateNumber
+                // imposes no range, so negative values reach this path too), and
+                // sending a literal 0 would tell the peer no streams were
+                // processed.
+                if id > 0 {
+                    last_stream_id = id as u32;
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
@@ -7279,12 +7282,34 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
 
             if wait_for_trailers {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
                 return Ok(JSValue::js_number(stream_id as f64));
             }
+
+            // A HEADERS frame carrying END_STREAM half-closes our side; when
+            // the peer already half-closed (a server responding after the
+            // request body finished) the stream is now fully closed. Mirror
+            // send_data / send_trailers: transition the state forward and
+            // dispatch onStreamEnd — without this a headers-only END_STREAM
+            // response regressed the state to HALF_CLOSED_LOCAL and never
+            // told JS, leaking the stream (and the session's connection
+            // count) until socket close.
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            if stream.state == StreamState::HALF_CLOSED_REMOTE {
+                stream.state = StreamState::CLOSED;
+                stream.free_resources::<false>(this);
+            } else {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
+            }
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                identifier,
+                JSValue::js_number(stream.state as u8 as f64),
+            );
         } else {
             stream.wait_for_trailers = wait_for_trailers;
         }

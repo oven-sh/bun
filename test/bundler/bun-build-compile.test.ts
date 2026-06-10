@@ -730,7 +730,13 @@ describe("compiled executable bytecode integrity", () => {
       }
       cmdOff += exe.readUInt32LE(cmdOff + 4);
     }
-    expect(sigOff).toBeGreaterThan(0);
+    if (sigOff === 0) {
+      // Bun only ad-hoc signs arm64 Mach-O output; unsigned x64 binaries run
+      // fine with modified bytes. On arm64 a missing signature would get the
+      // corrupted copy killed by the kernel, so insist on one there.
+      expect(isArm64).toBe(false);
+      return;
+    }
 
     // Code-signature blobs use big-endian fields.
     expect(exe.readUInt32BE(sigOff)).toBe(0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE

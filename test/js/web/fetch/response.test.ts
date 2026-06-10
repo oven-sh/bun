@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (9.68 KB) {
+    "Response (9.71 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -186,19 +186,21 @@ describe("clone()", () => {
 // https://github.com/oven-sh/bun/issues/32043
 describe("null body status", () => {
   // https://fetch.spec.whatwg.org/#null-body-status
-  // 103 is excluded: the status range check rejects it before the body check.
+  // The spec throws a TypeError for a non-null body with one of these
+  // statuses; Bun drops the body instead so existing code that builds such
+  // responses keeps working. 103 is excluded here: the constructor's status
+  // range check rejects it first.
   const nullBodyStatuses = [101, 204, 205, 304];
 
   describe.each(nullBodyStatuses)("status %i", status => {
-    test("constructor throws TypeError for a string body", () => {
-      expect(() => new Response("body", { status })).toThrow(TypeError);
-      expect(() => new Response("body", { status })).toThrow(
-        `Failed to construct 'Response': Response with null body status ${status} cannot have a body`,
-      );
+    test("constructor drops a string body", async () => {
+      const res = new Response("body", { status });
+      expect({ status: res.status, body: res.body }).toEqual({ status, body: null });
+      expect(await res.text()).toBe("");
     });
 
-    test("constructor throws TypeError for an empty string body", () => {
-      expect(() => new Response("", { status })).toThrow(TypeError);
+    test("constructor drops an empty string body", () => {
+      expect(new Response("", { status }).body).toBe(null);
     });
 
     test("constructor accepts null and undefined bodies", () => {
@@ -208,41 +210,42 @@ describe("null body status", () => {
       expect({ status: fromUndefined.status, body: fromUndefined.body }).toEqual({ status, body: null });
     });
 
-    test("Response.json throws TypeError", () => {
-      expect(() => Response.json({ a: 1 }, { status })).toThrow(TypeError);
-      expect(() => Response.json({ a: 1 }, { status })).toThrow(
-        `Failed to construct 'Response': Response with null body status ${status} cannot have a body`,
-      );
+    test("Response.json drops the body", async () => {
+      const res = Response.json({ a: 1 }, { status });
+      expect({ status: res.status, body: res.body }).toEqual({ status, body: null });
+      expect(await res.text()).toBe("");
       // Bun also accepts a bare number as init
-      expect(() => Response.json({ a: 1 }, status)).toThrow(TypeError);
+      expect(Response.json({ a: 1 }, status).body).toBe(null);
     });
   });
 
-  test("constructor throws TypeError for other body types", () => {
-    expect(() => new Response(new Blob(["body"]), { status: 204 })).toThrow(TypeError);
-    expect(() => new Response(new Uint8Array([1, 2, 3]), { status: 205 })).toThrow(TypeError);
-    expect(() => new Response(new URLSearchParams({ a: "1" }), { status: 304 })).toThrow(TypeError);
+  test("constructor drops other body types", () => {
+    expect(new Response(new Blob(["body"]), { status: 204 }).body).toBe(null);
+    expect(new Response(new Uint8Array([1, 2, 3]), { status: 205 }).body).toBe(null);
+    expect(new Response(new URLSearchParams({ a: "1" }), { status: 304 }).body).toBe(null);
   });
 
-  test("a ReadableStream body is left unlocked when the constructor throws", () => {
+  test("a ReadableStream body is left unlocked and usable", async () => {
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue(new Uint8Array([1]));
         controller.close();
       },
     });
-    expect(() => new Response(stream, { status: 204 })).toThrow(TypeError);
+    const res = new Response(stream, { status: 204 });
+    expect(res.body).toBe(null);
     expect(stream.locked).toBe(false);
+    expect((await stream.getReader().read()).value).toEqual(new Uint8Array([1]));
   });
 
-  test("Response.json(null) still serializes to a body, so it throws too", () => {
-    expect(() => Response.json(null, { status: 204 })).toThrow(TypeError);
+  test("Response.json(null) still serializes to a body, so it is dropped too", () => {
+    expect(Response.json(null, { status: 204 }).body).toBe(null);
   });
 
-  test("Response.json with bare number init 103 throws TypeError", () => {
+  test("Response.json with bare number init 103 drops the body", () => {
     // the bare-number init path skips the [200, 599] range check, so 103 is
     // reachable here (unlike in the constructor)
-    expect(() => Response.json({ a: 1 }, 103)).toThrow(TypeError);
+    expect(Response.json({ a: 1 }, 103).body).toBe(null);
   });
 
   test("Response.json with object init 103 is rejected by the range check first", () => {

@@ -1140,9 +1140,7 @@ describe("status code text", () => {
       await runTest(
         {
           fetch(req) {
-            // null body statuses reject a body in the Response constructor
-            const body = [204, 205, 304].includes(+code) ? null : "hey";
-            return new Response(body, { status: +code });
+            return new Response("hey", { status: +code });
           },
         },
         async server => {
@@ -1161,7 +1159,7 @@ it("does not write body bytes for null body statuses", async () => {
       port: 0,
       hostname: "127.0.0.1",
       fetch() {
-        return new Response(null, { status });
+        return new Response("hey", { status });
       },
     });
 
@@ -1571,27 +1569,7 @@ describe("server.requestIP", () => {
       hostname: "::1",
     });
 
-    // raw socket to ::1: fetch("http://localhost") may resolve to 127.0.0.1
-    // first, and bracketed IPv6 literals can get routed through an HTTP proxy
-    const received: Buffer[] = [];
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    await using socket = await Bun.connect({
-      hostname: "::1",
-      port: server.port,
-      socket: {
-        data(_socket, data) {
-          received.push(data);
-        },
-        end: () => resolve(),
-        close: () => resolve(),
-        error: (_socket, error) => reject(error),
-      },
-    });
-    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    socket.flush();
-    await promise;
-    const raw = Buffer.concat(received).toString();
-    const response = JSON.parse(raw.slice(raw.indexOf("\r\n\r\n") + 4));
+    const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
     expect(response).toMatchObject({
       address: "::1",
       family: "IPv6",
@@ -1695,8 +1673,7 @@ it("should support promise returned from error", async () => {
 });
 
 if (process.platform === "linux")
-  // as root, binding a privileged port succeeds, so there is no EPERM to observe
-  it.skipIf(process.getuid?.() === 0)("should use correct error when using a root range port(#7187)", () => {
+  it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {
       using server = Bun.serve({
         port: 1003,
@@ -1954,12 +1931,13 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
     },
   });
 
-  // manually fetch the file using sockets, and get the whole content.
-  // Connection: close makes the server end the socket after the complete
-  // response, so any extra bytes it wrote arrive before "close" fires.
+  // manually fetch the file using sockets, and get the whole content
   const { promise, resolve, reject } = Promise.withResolvers();
-  const socket = net.connect(serve.port, "127.0.0.1", () => {
-    socket.write("GET /file HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  const socket = net.connect(serve.port, "localhost", () => {
+    socket.write("GET /file HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    setTimeout(() => {
+      socket.end(); // wait a bit before closing the connection so we get the whole content
+    }, 100);
   });
 
   let body: Buffer | null = null;
@@ -2233,7 +2211,7 @@ it.concurrent("#6583", async () => {
   using server = Bun.serve({
     fetch: callback,
     port: 0,
-    hostname: "127.0.0.1",
+    hostname: "localhost",
   });
   const { promise, resolve } = Promise.withResolvers();
   await Bun.connect({
@@ -2428,29 +2406,11 @@ it("only serves /bun:info to loopback clients in development mode", async () => 
     return;
   }
 
-  // speak HTTP over a raw socket: fetch() would route through any configured
-  // HTTP proxy and the request would never arrive on the external interface
-  const received: Buffer[] = [];
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  await using socket = await Bun.connect({
-    hostname: externalAddress,
-    port: server.port,
-    socket: {
-      data(_socket, data) {
-        received.push(data);
-      },
-      end: () => resolve(),
-      close: () => resolve(),
-      error: (_socket, error) => reject(error),
-    },
-  });
-  socket.write(`GET /bun:info HTTP/1.1\r\nHost: ${externalAddress}:${server.port}\r\nConnection: close\r\n\r\n`);
-  socket.flush();
-  await promise;
-  const externalRaw = Buffer.concat(received).toString();
-  expect(externalRaw).toStartWith("HTTP/1.1 200 ");
-  expect(externalRaw.slice(externalRaw.indexOf("\r\n\r\n") + 4)).toBe("handled by fetch");
-  expect(externalRaw).not.toContain("bun_version");
+  const externalRes = await fetch(`http://${externalAddress}:${server.port}/bun:info`);
+  const externalText = await externalRes.text();
+  expect(externalText).toBe("handled by fetch");
+  expect(externalText).not.toContain("bun_version");
+  expect(externalRes.status).toBe(200);
 });
 
 it.if(isPosix)("serves /bun:info over a unix socket in development mode", async () => {

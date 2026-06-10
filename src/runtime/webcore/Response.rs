@@ -1023,8 +1023,9 @@ impl Response {
             }
         }
 
-        if !matches!(response.body.get().value.get(), BodyValue::Empty) {
-            Self::check_null_body_status(global_this, response.init.get().status_code)?;
+        // Null body statuses drop the body; see the constructor comment.
+        if Self::is_null_body_status(response.init.get().status_code) {
+            response.body.get().reset();
         }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
@@ -1042,18 +1043,9 @@ impl Response {
         Ok(unsafe { (*ptr).to_js(global_this) })
     }
 
-    /// https://fetch.spec.whatwg.org/#initialize-a-response
-    /// A non-null body combined with a null body status
-    /// (https://fetch.spec.whatwg.org/#null-body-status) throws a TypeError.
-    fn check_null_body_status(global_this: &JSGlobalObject, status_code: u16) -> JsResult<()> {
-        if matches!(status_code, 101 | 103 | 204 | 205 | 304) {
-            let err = global_this.create_type_error_instance(format_args!(
-                "Failed to construct 'Response': Response with null body status {} cannot have a body",
-                status_code
-            ));
-            return Err(global_this.throw_value(err));
-        }
-        Ok(())
+    /// https://fetch.spec.whatwg.org/#null-body-status
+    fn is_null_body_status(status_code: u16) -> bool {
+        matches!(status_code, 101 | 103 | 204 | 205 | 304)
     }
 
     fn validate_redirect_status_code(
@@ -1261,13 +1253,18 @@ impl Response {
             return Err(bun_jsc::JsError::Thrown);
         }
 
-        // Checked before extraction so a ReadableStream body is left untouched.
-        if !arguments[0].is_undefined_or_null() {
-            Self::check_null_body_status(global_this, init.status_code)?;
-        }
-
         let body: Body = 'brk: {
             if arguments[0].is_undefined_or_null() {
+                break 'brk Body::new(BodyValue::Null);
+            }
+            // https://fetch.spec.whatwg.org/#initialize-a-response says a
+            // non-null body with a null body status throws a TypeError, but
+            // widely deployed code constructs these (Elysia's status(204) and
+            // its 304 file responses), so drop the body instead. The result
+            // has the spec's shape (null body) and matches what the HTTP
+            // layer writes for these statuses. Checked before extraction so
+            // a ReadableStream body is left untouched.
+            if Self::is_null_body_status(init.status_code) {
                 break 'brk Body::new(BodyValue::Null);
             }
             // `Body::extract` is a free fn re-exported as `body::extract`.

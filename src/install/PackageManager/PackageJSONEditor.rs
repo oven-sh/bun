@@ -12,7 +12,7 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 
 use super::package_manager_options::{Do, Enable};
-use super::{PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
+use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
@@ -285,11 +285,13 @@ pub(crate) fn edit_update_no_args(
                             .unwrap_or_else(|| bun_core::out_of_memory());
                         let mut tag = dependency::Tag::infer(version_literal);
 
-                        // only updating dependencies with npm versions, dist-tags if `--latest`, and catalog versions.
+                        // only updating dependencies with npm versions, and dist-tags if `--latest`.
+                        // `catalog:` references are left untouched: the version lives in the
+                        // root package.json catalog entry, which is updated by
+                        // `edit_catalogs_before_update`/`edit_catalogs_after_update`.
                         if tag != dependency::Tag::Npm
                             && (tag != dependency::Tag::DistTag
                                 || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
-                            && tag != dependency::Tag::Catalog
                         {
                             continue;
                         }
@@ -307,7 +309,6 @@ pub(crate) fn edit_update_no_args(
                                 if tag != dependency::Tag::Npm
                                     && (tag != dependency::Tag::DistTag
                                         || !manager.options.do_.contains(Do::UPDATE_TO_LATEST))
-                                    && tag != dependency::Tag::Catalog
                                 {
                                     continue;
                                 }
@@ -386,6 +387,17 @@ pub(crate) fn edit_update_no_args(
                         }
                         let Some(value) = &dep.value else { continue };
                         if !matches!(value.data, bun_ast::ExprData::EString(_)) {
+                            continue;
+                        }
+
+                        // never rewrite a `catalog:` reference; the resolved version is
+                        // written to the root catalog entry instead. This also prevents a
+                        // catalog reference from consuming an `updating_packages` entry
+                        // registered by a same-named dependency in a later group.
+                        let value_literal = value
+                            .as_utf8_string_literal()
+                            .unwrap_or_else(|| bun_core::out_of_memory());
+                        if dependency::Tag::infer(value_literal) == dependency::Tag::Catalog {
                             continue;
                         }
 
@@ -529,6 +541,337 @@ pub(crate) fn edit_update_no_args(
     Ok(())
 }
 
+/// Visits every catalog object in the root package.json, calling `f` with the
+/// catalog group name (empty for the default catalog) and the object holding
+/// its `"name": "version"` entries.
+///
+/// Mirrors the locations `CatalogMap::parse_append` reads: catalogs under
+/// `"workspaces"` win; top-level `"catalog"`/`"catalogs"` are only read when
+/// `"workspaces"` exists but declares none.
+fn for_each_catalog_object(
+    root_package_json: &Expr,
+    mut f: impl FnMut(&[u8], Expr) -> Result<(), bun_alloc::AllocError>,
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(workspaces) = root_package_json.get(b"workspaces") else {
+        return Ok(());
+    };
+
+    for container in [workspaces, *root_package_json] {
+        let mut found_any = false;
+        if let Some(default_catalog) = container.get(b"catalog") {
+            found_any = true;
+            f(b"", default_catalog)?;
+        }
+
+        if let Some(catalogs) = container.get(b"catalogs") {
+            found_any = true;
+            if let bun_ast::ExprData::EObject(groups) = &catalogs.data {
+                for group in groups.properties.slice() {
+                    let Some(key) = &group.key else { continue };
+                    let Some(catalog_name) = key.as_utf8_string_literal() else {
+                        continue;
+                    };
+                    let Some(value) = &group.value else { continue };
+                    f(catalog_name, *value)?;
+                }
+            }
+        }
+
+        if found_any {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// `bun update` without package names: record the original version of every
+/// catalog entry in the root package.json so `edit_catalogs_after_update` can
+/// write the resolved versions back once the install finishes. With
+/// `--latest`, the entry is additionally set to `latest` in memory so the
+/// resolver fetches the latest version through the existing `catalog:`
+/// resolution path.
+///
+/// Workspace dependencies keep their `catalog:` references; only the root
+/// catalog entries change.
+pub(crate) fn edit_catalogs_before_update(
+    manager: &mut PackageManager,
+    root_package_json: &Expr,
+) -> Result<bool, bun_alloc::AllocError> {
+    // see note in `edit_update_no_args` — always avoid the store
+    let _guard = ExprDisabler::scope();
+
+    debug_assert!(manager.updating_catalogs.is_empty());
+
+    let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
+
+    // disjoint-field borrows held across the closure
+    let arena = &manager.ast_arena;
+    let updating_catalogs = &mut manager.updating_catalogs;
+
+    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
+        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
+            return Ok(());
+        }
+        for dep in catalog_expr
+            .data
+            .e_object_mut()
+            .expect("infallible: variant checked")
+            .properties
+            .slice_mut()
+        {
+            let Some(key) = &dep.key else { continue };
+            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
+                continue;
+            }
+            let Some(value) = &dep.value else { continue };
+            if !matches!(value.data, bun_ast::ExprData::EString(_)) {
+                continue;
+            }
+
+            let version_literal = value
+                .as_utf8_string_literal()
+                .unwrap_or_else(|| bun_core::out_of_memory());
+            let mut tag = dependency::Tag::infer(version_literal);
+
+            let mut alias_at_index: Option<usize> = None;
+            if strings::trim(version_literal, &strings::WHITESPACE_CHARS).starts_with(b"npm:") {
+                // negative because the real package might have a scope
+                // e.g. "dep": "npm:@foo/bar@1.2.3"
+                if let Some(at_index) = strings::last_index_of_char(version_literal, b'@') {
+                    tag = dependency::Tag::infer(&version_literal[at_index + 1..]);
+                    alias_at_index = Some(at_index);
+                }
+            }
+
+            // only updating catalog entries with npm versions, and dist-tags if
+            // `--latest` — same rule as direct dependencies. Anything else
+            // (workspace:, file:, git…) is left alone.
+            if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
+            {
+                continue;
+            }
+
+            let key_str = key
+                .as_utf8_string_literal()
+                .unwrap_or_else(|| bun_core::out_of_memory());
+
+            updating_catalogs.push(CatalogUpdateInfo {
+                catalog_name: Box::from(catalog_name),
+                dep_name: Box::from(key_str),
+                original_version_literal: Box::from(version_literal),
+                is_alias: alias_at_index.is_some(),
+            });
+
+            if update_to_latest {
+                let temp_version: &[u8] = if let Some(at_index) = alias_at_index {
+                    let mut v = Vec::new();
+                    write!(
+                        &mut v,
+                        "{}@latest",
+                        bstr::BStr::new(&version_literal[0..at_index])
+                    )
+                    .expect("infallible: in-memory write");
+                    arena_str(arena, &v)
+                } else {
+                    b"latest"
+                };
+
+                dep.value = Some(Expr::allocate(
+                    arena,
+                    E::EString::init(temp_version),
+                    bun_ast::Loc::EMPTY,
+                ));
+            }
+        }
+        Ok(())
+    })?;
+
+    Ok(!manager.updating_catalogs.is_empty())
+}
+
+/// Writes the resolved versions back into the root package.json catalog
+/// entries recorded by `edit_catalogs_before_update`, preserving the pinning
+/// style (`^`/`~`/exact) of the original catalog version. Entries that did not
+/// resolve (e.g. not referenced by any workspace dependency) are restored to
+/// their original literal.
+///
+/// Returns whether any entry now differs from its original version.
+pub(crate) fn edit_catalogs_after_update(
+    manager: &mut PackageManager,
+    root_package_json: &Expr,
+    options: EditOptions,
+) -> Result<bool, bun_alloc::AllocError> {
+    // see note in `edit_update_no_args` — always avoid the store
+    let _guard = ExprDisabler::scope();
+
+    let infos = core::mem::take(&mut manager.updating_catalogs);
+    if infos.is_empty() {
+        return Ok(false);
+    }
+
+    let arena = &manager.ast_arena;
+    let lockfile = &*manager.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let package_resolutions = lockfile.packages.items_resolution();
+
+    // Resolve each recorded catalog entry through the first `catalog:`
+    // dependency in the lockfile that references it (all references to the
+    // same entry resolve identically). Single pass over the dependency buffer.
+    let mut new_literals: Vec<Option<Vec<u8>>> = vec![None; infos.len()];
+    debug_assert_eq!(
+        lockfile.buffers.dependencies.len(),
+        lockfile.buffers.resolutions.len()
+    );
+    for (dep, &package_id) in lockfile
+        .buffers
+        .dependencies
+        .iter()
+        .zip(lockfile.buffers.resolutions.iter())
+    {
+        if dep.version.tag != dependency::Tag::Catalog {
+            continue;
+        }
+        if package_id == INVALID_PACKAGE_ID {
+            continue;
+        }
+
+        let dep_name = dep.name.slice(string_buf);
+        let catalog_name = dep.version.catalog().slice(string_buf);
+        let Some(index) = infos.iter().position(|info| {
+            strings::eql_long(&info.dep_name, dep_name, true)
+                && strings::eql_long(&info.catalog_name, catalog_name, true)
+        }) else {
+            continue;
+        };
+        if new_literals[index].is_some() {
+            continue;
+        }
+
+        let resolution = &package_resolutions[package_id as usize];
+        if resolution.tag != resolution::Tag::Npm {
+            continue;
+        }
+
+        if !manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+            // same rule as direct dependencies: a plain `bun update` does not
+            // move an exact catalog version.
+            let resolved_version = lockfile
+                .resolve_catalog_dependency(dep)
+                .unwrap_or_else(|| dep.version.clone());
+            if let Some(npm_version) = resolved_version.try_npm() {
+                if npm_version.version.is_exact() {
+                    continue;
+                }
+            }
+        }
+
+        let info = &infos[index];
+        let version_fmt = resolution.npm().version.fmt(string_buf);
+        let new_version: Vec<u8> = 'new_version: {
+            if options.exact_versions {
+                let mut v = Vec::new();
+                write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write");
+                break 'new_version v;
+            }
+
+            let version_literal: &[u8] = 'version_literal: {
+                if !info.is_alias {
+                    break 'version_literal &info.original_version_literal;
+                }
+                if let Some(at_index) =
+                    strings::last_index_of_char(&info.original_version_literal, b'@')
+                {
+                    break 'version_literal &info.original_version_literal[at_index + 1..];
+                }
+                &info.original_version_literal
+            };
+
+            let pinned_version = semver::Version::which_version_is_pinned(version_literal);
+            let mut v = Vec::new();
+            match pinned_version {
+                semver::PinnedVersion::Patch => {
+                    write!(&mut v, "{}", version_fmt).expect("infallible: in-memory write")
+                }
+                semver::PinnedVersion::Minor => {
+                    write!(&mut v, "~{}", version_fmt).expect("infallible: in-memory write")
+                }
+                semver::PinnedVersion::Major => {
+                    write!(&mut v, "^{}", version_fmt).expect("infallible: in-memory write")
+                }
+            }
+            v
+        };
+
+        new_literals[index] = Some(if info.is_alias {
+            let dep_literal = &info.original_version_literal;
+            if let Some(at_index) = strings::last_index_of_char(dep_literal, b'@') {
+                let mut v = Vec::new();
+                write!(
+                    &mut v,
+                    "{}@{}",
+                    bstr::BStr::new(&dep_literal[0..at_index]),
+                    bstr::BStr::new(&new_version)
+                )
+                .expect("infallible: in-memory write");
+                v
+            } else {
+                new_version
+            }
+        } else {
+            new_version
+        });
+    }
+
+    let mut changed = false;
+    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
+        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
+            return Ok(());
+        }
+        for dep in catalog_expr
+            .data
+            .e_object_mut()
+            .expect("infallible: variant checked")
+            .properties
+            .slice_mut()
+        {
+            let Some(key) = &dep.key else { continue };
+            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
+                continue;
+            }
+            let key_str = key
+                .as_utf8_string_literal()
+                .unwrap_or_else(|| bun_core::out_of_memory());
+
+            let Some(index) = infos.iter().position(|info| {
+                strings::eql_long(&info.dep_name, key_str, true)
+                    && strings::eql_long(&info.catalog_name, catalog_name, true)
+            }) else {
+                continue;
+            };
+
+            let info = &infos[index];
+            let new_literal: &[u8] = match &new_literals[index] {
+                Some(v) => arena_str(arena, v),
+                // unresolved: restore the original literal (the in-memory AST
+                // may still hold the temporary `latest`)
+                None => arena_dup(arena, &info.original_version_literal),
+            };
+
+            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
+
+            dep.value = Some(Expr::allocate(
+                arena,
+                E::EString::init(new_literal),
+                bun_ast::Loc::EMPTY,
+            ));
+        }
+        Ok(())
+    })?;
+
+    Ok(changed)
+}
+
 /// edits dependencies and trusted dependencies
 /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
 pub(crate) fn edit(
@@ -593,8 +936,23 @@ pub(crate) fn edit(
 
                             if let Some(value) = query.expr.as_property(name) {
                                 if matches!(value.expr.data, bun_ast::ExprData::EString(_)) {
+                                    // `bun update <pkg>` on a dependency using the `catalog:`
+                                    // protocol keeps the catalog reference instead of replacing
+                                    // it with a resolved range — route it to the "use the
+                                    // existing spot" branch so the final loop (which skips
+                                    // catalog literals) sees the original value.
+                                    let keep_catalog_reference = manager.subcommand
+                                        == Subcommand::Update
+                                        && value.expr.as_utf8_string_literal().is_some_and(
+                                            |version_literal| {
+                                                dependency::Tag::infer(version_literal)
+                                                    == dependency::Tag::Catalog
+                                            },
+                                        );
+
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && strings::eql_long(list, dependency_list, true)
+                                        && !keep_catalog_reference
                                     {
                                         replacing += 1;
                                     } else {
@@ -1092,6 +1450,15 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
+            // `bun update <pkg>` on a dependency using the `catalog:` protocol keeps
+            // the catalog reference; the version is managed by the root catalog entry.
+            // (`bun add <pkg>` still replaces it — adding is an explicit request to
+            // pin a version in this package.)
+            if manager.subcommand == Subcommand::Update
+                && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
+            {
+                continue;
+            }
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {

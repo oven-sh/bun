@@ -504,7 +504,10 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
+      // Explicit 127.0.0.1 (in the cert's SAN): "localhost" binds ::1 on
+      // v6-first resolvers while the fetch client pins localhost to
+      // 127.0.0.1, turning the timeout under test into ConnectionRefused.
+      hostname: "127.0.0.1",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {

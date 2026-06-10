@@ -208,7 +208,10 @@ pub struct VirtualMachine {
     pub hide_bun_stackframes: bool,
 
     pub is_printing_plugin: bool,
-    pub is_shutting_down: bool,
+    /// Atomic because the checked cross-thread helpers
+    /// ([`Self::live_shutting_down_state`]) read it from producer threads
+    /// while the JS thread writes it. Only ever flips `false` → `true`.
+    pub is_shutting_down: core::sync::atomic::AtomicBool,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
@@ -277,7 +280,12 @@ pub struct VirtualMachine {
     pub overridden_performance_now: Option<u64>,
     pub macro_event_loop: EventLoop,
     pub regular_event_loop: EventLoop,
-    pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
+    /// BORROW_FIELD — points at sibling `regular_event_loop`/`macro_event_loop`
+    /// (or the boxed spawnSync loop). Written only by the JS thread (init,
+    /// macro-mode swap, spawnSync swap); atomic because the checked
+    /// cross-thread enqueue helpers ([`Self::with_live_vm`] closures) read it
+    /// from producer threads while a swap may be in progress.
+    pub event_loop: core::sync::atomic::AtomicPtr<EventLoop>,
 
     pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
@@ -517,9 +525,9 @@ pub(crate) mod live_vm_registry {
 
     pub(crate) static REGISTRY: Guarded<Vec<Entry>> = Guarded::new(Vec::new());
 
-    /// Register `vm` and both of its embedded event loops. Called once from
-    /// `VirtualMachine::init()` after `regular_event_loop`/`macro_event_loop`
-    /// are initialised.
+    /// Register `vm` and both of its embedded event loops. Called once as
+    /// the final step of `VirtualMachine::init()`, after every fallible
+    /// init step has succeeded.
     pub(crate) fn register_vm(vm: *mut VirtualMachine) {
         // SAFETY: `vm` is the freshly initialised allocation; `addr_of!` only
         // projects field addresses, no reads.
@@ -841,8 +849,12 @@ impl VirtualMachine {
     /// short-lived `&mut *p` at the use site instead, mirroring [`Self::get`].
     #[inline(always)]
     pub fn event_loop(&self) -> *mut EventLoop {
-        // self-pointer to regular_event_loop or macro_event_loop
-        self.event_loop
+        // self-pointer to regular_event_loop or macro_event_loop (or the
+        // boxed spawnSync loop). Acquire pairs with the Release stores so a
+        // cross-thread reader that observes a freshly-swapped-in loop also
+        // observes its initialization; same-thread readers are ordered by
+        // program order regardless.
+        self.event_loop.load(core::sync::atomic::Ordering::Acquire)
     }
 
     /// Safe `&mut EventLoop` accessor — the [`JsCell`] escape hatch applied to
@@ -857,7 +869,7 @@ impl VirtualMachine {
     pub fn event_loop_mut(&self) -> &mut EventLoop {
         // SAFETY: `event_loop` points at a sibling field of this VM; non-null
         // after `init()`; single-JS-thread invariant per `unsafe impl Sync`.
-        unsafe { &mut *self.event_loop }
+        unsafe { &mut *self.event_loop() }
     }
 
     /// Safe `&EventLoop` accessor — shared variant of [`Self::event_loop_mut`].
@@ -866,7 +878,7 @@ impl VirtualMachine {
     #[inline(always)]
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
-        unsafe { &*self.event_loop }
+        unsafe { &*self.event_loop() }
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -923,7 +935,7 @@ impl VirtualMachine {
     pub fn enter_event_loop_scope(&self) -> crate::event_loop::EventLoopEnterGuard {
         // SAFETY: `self.event_loop` is the live VM-owned event-loop pointer and
         // remains valid for the VM (and thus the guard's) lifetime.
-        unsafe { EventLoop::enter_scope(self.event_loop) }
+        unsafe { EventLoop::enter_scope(self.event_loop()) }
     }
 
     /// Safe shared-reference accessor for the process-lifetime dotenv loader
@@ -1098,6 +1110,13 @@ impl VirtualMachine {
 
     pub fn is_shutting_down(&self) -> bool {
         self.is_shutting_down
+            .load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// One-way flip; see the field doc for why it is atomic.
+    pub fn set_shutting_down(&self) {
+        self.is_shutting_down
+            .store(true, core::sync::atomic::Ordering::Release);
     }
 
     pub fn has_run_cleanup_hooks(&self) -> bool {
@@ -1106,7 +1125,7 @@ impl VirtualMachine {
 
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
-        if self.is_shutting_down {
+        if self.is_shutting_down() {
             return crate::ScriptExecutionStatus::Stopped;
         }
 
@@ -1272,7 +1291,10 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = true;
         self.macro_mode = true;
-        self.event_loop = &raw mut self.macro_event_loop;
+        self.event_loop.store(
+            &raw mut self.macro_event_loop,
+            core::sync::atomic::Ordering::Release,
+        );
         bun_analytics::features::macros.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.transpiler_store.enabled = false;
     }
@@ -1285,7 +1307,10 @@ impl VirtualMachine {
             .fs
             .use_alternate_source_cache = false;
         self.macro_mode = false;
-        self.event_loop = &raw mut self.regular_event_loop;
+        self.event_loop.store(
+            &raw mut self.regular_event_loop,
+            core::sync::atomic::Ordering::Release,
+        );
         self.transpiler_store.enabled = true;
     }
 
@@ -1594,7 +1619,7 @@ impl VirtualMachine {
         }
 
         ExitHandler::dispatch_on_exit(self);
-        self.is_shutting_down = true;
+        self.set_shutting_down();
 
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
@@ -2226,12 +2251,7 @@ impl VirtualMachine {
             let regular = addr_of_mut!((*vm).regular_event_loop);
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
-            addr_of_mut!((*vm).event_loop).write(regular);
-
-            // Make this VM reachable for checked cross-thread enqueues.
-            // Worker VMs are unregistered in `WebWorker::shutdown()` before
-            // the allocation is freed; the main VM stays registered forever.
-            live_vm_registry::register_vm(vm);
+            addr_of_mut!((*vm).event_loop).write(core::sync::atomic::AtomicPtr::new(regular));
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
@@ -2320,6 +2340,13 @@ impl VirtualMachine {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+
+        // Make this VM reachable for checked cross-thread enqueues. Last step
+        // of `init` so the fallible ones above (`init_runtime_state`) cannot
+        // leave a stale entry behind on an `Err` return. Worker VMs are
+        // unregistered in `WebWorker::shutdown()` before the allocation is
+        // freed; the main VM stays registered forever.
+        live_vm_registry::register_vm(vm);
 
         Ok(vm)
     }

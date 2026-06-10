@@ -2307,7 +2307,7 @@ impl TestCommand {
                                 );
                             }
                             vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
+                            vm.set_shutting_down();
                             let vm_ptr: *mut VirtualMachine = vm;
                             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                             // `run_with_api_lock` takes `&self` only and `global_exit()`
@@ -2404,7 +2404,7 @@ impl TestCommand {
                         );
                     }
                     vm.exit_handler.exit_code = 1;
-                    vm.is_shutting_down = true;
+                    vm.set_shutting_down();
                     let vm_ptr: *mut VirtualMachine = vm;
                     // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                     // `run_with_api_lock` takes `&self` only and `global_exit()`
@@ -2939,7 +2939,7 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        vm.is_shutting_down = true;
+        vm.set_shutting_down();
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
@@ -3185,7 +3185,7 @@ impl TestCommand {
                         reporter.write_junit_report_if_needed();
 
                         vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
+                        vm.set_shutting_down();
                         // `global_exit()` diverges, so the `exit_file()` defer
                         // above never fires. Release the active file's
                         // `Strong`s and the preload-hook scope here so

@@ -1541,8 +1541,11 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
     // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
-    // `regular_event_loop`/`macro_event_loop`).
-    vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
+    // `regular_event_loop`/`macro_event_loop`). Release pairs with the
+    // Acquire load in `VirtualMachine::event_loop()`.
+    vm_from_ptr(vm)
+        .event_loop
+        .store(el.cast::<EventLoop>(), Ordering::Release);
 }
 
 #[unsafe(no_mangle)]

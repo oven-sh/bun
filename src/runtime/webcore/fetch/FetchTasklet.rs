@@ -25,12 +25,15 @@ use bun_sys::FdExt;
 use bun_threading::Mutex;
 
 /// `FetchTasklet` boxes whose owning worker VM was freed (terminated) while
-/// the HTTP thread held the last reference. They can never be reclaimed:
-/// `deinit()` drops JSC `Strong`/`Weak` handles into the dead VM's freed
-/// HandleSet, on any thread, at any time — including the `global_exit` drain
-/// that `dealloc_for_shutdown` parks into. Kept reachable here so
-/// LSan-enabled CI lanes don't report them as leaks; growth is bounded by
-/// in-flight requests that lose a terminate race.
+/// the HTTP thread held the last reference. They can never be fully
+/// reclaimed: `deinit()` drops JSC `Strong`/`Weak` handles into the dead
+/// VM's freed HandleSet, on any thread, at any time — including the
+/// `global_exit` drain that `dealloc_for_shutdown` parks into.
+/// [`FetchTasklet::free_native_data_for_dead_vm`] reclaims the plain-heap
+/// buffers first, so what parks here is the struct itself plus the handles
+/// only the (gone) JS thread could release. Kept reachable so LSan-enabled
+/// CI lanes don't report them as leaks; growth is bounded by in-flight
+/// requests that lose a terminate race.
 static DEAD_VM_TASKLETS: bun_threading::Guarded<Vec<usize>> =
     bun_threading::Guarded::new(Vec::new());
 use bun_url::URL as ZigURL;
@@ -428,10 +431,39 @@ impl FetchTasklet {
         // The owning worker VM is gone. Nothing may ever touch this tasklet's
         // JSC state again: `deinit()` (directly or via the global_exit drain)
         // would drop the `Strong`/`Weak` fields into the dead VM's freed
-        // HandleSet. Park the box forever instead — kept reachable so
-        // LSan-enabled CI lanes don't report it; bounded by requests that
-        // lose the terminate race.
+        // HandleSet. Reclaim the plain-heap buffers, then park the box
+        // forever — kept reachable so LSan-enabled CI lanes don't report it;
+        // bounded by requests that lose the terminate race.
+        // SAFETY: ref_count == 0 — this thread holds the only access.
+        unsafe { (*this).free_native_data_for_dead_vm() };
         DEAD_VM_TASKLETS.lock().push(this as usize);
+    }
+
+    /// Reclaim, on the HTTP thread, the plain-heap allocations of a tasklet
+    /// about to park in [`DEAD_VM_TASKLETS`]. The last reference dropping
+    /// means the HTTP client is done with this request, so nothing writes
+    /// into these buffers anymore; the parked `http` mirror keeps dangling
+    /// views into them, but a parked tasklet is never read again.
+    ///
+    /// Deliberately skipped — everything whose teardown needs the (gone) JS
+    /// thread: the JSC handles (`response`, `promise`, `readable_stream_ref`,
+    /// `abort_reason`, `check_server_identity`, `signal`, `native_response`),
+    /// `sink` / `request_body_streaming_buffer` (their teardown drops stored
+    /// JS callbacks), `request_body` (blob teardown can release WTF strings —
+    /// see the cross-thread string hazard note near `Response::init`), and
+    /// the `http` box itself (`AsyncHTTP::clear_data` / `Drop` release
+    /// `ZigStringSlice`s with the same hazard).
+    fn free_native_data_for_dead_vm(&mut self) {
+        // Aliases `response_buffer` (freed below); drop the view first.
+        self.result.body = None;
+        drop(self.result.certificate_info.take());
+        drop(self.result.metadata.take());
+        drop(self.metadata.take());
+        self.request_headers = Headers::default();
+        self.url_proxy_buffer = Box::default();
+        self.hostname = None;
+        self.response_buffer = MutableString::default();
+        self.scheduled_response_buffer = MutableString::default();
     }
 
     // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`

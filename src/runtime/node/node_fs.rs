@@ -1603,8 +1603,8 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
-                evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+                // `vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+                evtloop: EventLoopHandle::init(vm.event_loop().cast()),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),

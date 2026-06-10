@@ -1,7 +1,6 @@
-// PORT NOTE: Zig source is a non-exhaustive `enum(u8)` (trailing `_`), meaning
-// any u8 value is a valid PacketType. A Rust `#[repr(u8)] enum` would make
-// unlisted values UB on transmute, so this is ported as a transparent u8
-// newtype with associated consts instead.
+// Any u8 value is a valid PacketType (the wire can carry unlisted bytes). A
+// Rust `#[repr(u8)] enum` would make unlisted values UB on transmute, so this
+// is a transparent u8 newtype with associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct PacketType(pub u8);
@@ -19,5 +18,3 @@ impl PacketType {
 
     pub const AUTH_SWITCH: u8 = 0xfe;
 }
-
-// ported from: src/sql/mysql/protocol/PacketType.zig

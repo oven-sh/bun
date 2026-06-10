@@ -11,7 +11,7 @@ use crate::jsc::{
     JsResult, VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
-use bun_collections::{HashMap, OffsetByteList, StringMap};
+use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
@@ -42,7 +42,7 @@ use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
-// Aliases for PostgresRequest's `on_data` dispatch (Zig used PascalCase nested types).
+// Aliases for PostgresRequest's `on_data` dispatch.
 pub use bun_sql::postgres::SSLMode as SslMode;
 pub use bun_sql::postgres::TLSStatus as TlsStatus;
 
@@ -52,8 +52,8 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-// TODO(port): PreparedStatementsMap uses IdentityContext(u64) (key is already a hash) at 80% load.
-type PreparedStatementsMap = HashMap<u64, *mut PostgresSQLStatement>;
+// Keys are already wyhash values, so identity hash avoids re-hashing.
+type PreparedStatementsMap = HashMap<u64, *mut PostgresSQLStatement, IdentityContext<u64>>;
 
 pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
@@ -425,7 +425,7 @@ impl PostgresSQLConnection {
         // not `*self` — and stays live across the field reads below.
         let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
 
-        // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
+        // At this point we are
         // a plain TCP socket in the Connected state.
         let Socket::SocketTcp(tcp) = self.socket.get() else {
             self.fail(
@@ -443,7 +443,7 @@ impl PostgresSQLConnection {
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached (Zig: `this.secure.?`).
+        // reached.
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
@@ -457,8 +457,8 @@ impl PostgresSQLConnection {
             // `tls_config` for the connection lifetime.
             Some(unsafe { bun_core::ffi::cstr(server_name) })
         };
-        // Zig: `@sizeOf(?*PostgresSQLConnection)` — `?*T` is an 8-byte null-niche
-        // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
+        // The ext slot is an 8-byte null-niche
+        // optional pointer, `Option<NonNull<T>>`; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)
         // and desync with the trampoline reader (uws_handlers.rs) which reads
         // the slot as `Option<NonNull<_>>`.
@@ -485,7 +485,7 @@ impl PostgresSQLConnection {
         // SAFETY: `new_socket` is a live us_socket_t freshly returned by
         // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
         // above. One `&mut` reborrow drives both safe inherent methods
-        // (`ext` / `start_tls_handshake`). Zig: `ext(?*PostgresSQLConnection).* = this`.
+        // (`ext` / `start_tls_handshake`).
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
             core::ptr::NonNull::new(self.as_ctx_ptr());
@@ -617,7 +617,7 @@ impl PostgresSQLConnection {
         if self.status.get() == status {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
+        // reshaped for borrowck — `defer this.updateHasPendingActivity()` moved to explicit calls below.
 
         self.status.set(status);
         self.reset_connection_timeout();
@@ -690,8 +690,8 @@ impl PostgresSQLConnection {
     }
 
     pub fn fail_with_js_value(&self, value: JSValue) {
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.updateHasPendingActivity()` +
-        // `defer this.refAndClose(value)`; expanded inline at each return below.
+        // reshaped for borrowck — `update_has_pending_activity()` + `ref_and_close(value)`
+        // are expanded inline at each return below.
         self.stop_timers();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
@@ -728,7 +728,6 @@ impl PostgresSQLConnection {
     }
 
     pub fn fail_fmt(&self, code: &[u8], args: core::fmt::Arguments<'_>) {
-        // PORT NOTE: Zig used `comptime fmt: [:0]const u8, args: anytype` → collapsed to fmt::Arguments.
         let mut message: Vec<u8> = Vec::new();
         use std::io::Write as _;
         let _ = write!(&mut message, "{}", args);
@@ -761,6 +760,28 @@ impl PostgresSQLConnection {
     }
 
     pub fn on_close(&self) {
+        // A close before the handshake finished means the server (or an
+        // intermediary like a container port proxy) accepted the TCP
+        // connection but went away before completing startup — e.g. the
+        // database is still initializing. Report it as a connect failure
+        // (the connection was never established) rather than a closed
+        // connection so the error is actionable.
+        self.handle_socket_failure(|this| match this.status.get() {
+            Status::Connecting | Status::SentStartupMessage => this.fail(
+                b"Connection closed before the connection was established",
+                AnyPostgresError::ConnectionFailed,
+            ),
+            _ => this.fail(b"Connection closed", AnyPostgresError::ConnectionClosed),
+        });
+    }
+
+    pub fn on_connect_error(&self) {
+        self.handle_socket_failure(|this| {
+            this.fail(b"Failed to connect", AnyPostgresError::ConnectionFailed);
+        });
+    }
+
+    fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
 
         if self.vm().is_shutting_down() {
@@ -778,7 +799,7 @@ impl PostgresSQLConnection {
             event_loop.enter();
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
 
-            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            fail(self);
             event_loop.exit();
         }
     }
@@ -795,14 +816,11 @@ impl PostgresSQLConnection {
             options: Data::Temporary(self.options),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
-            self.fail(
-                b"Failed to write startup message",
-                AnyPostgresError::from(err),
-            );
+            self.fail(b"Failed to write startup message", err);
         }
     }
 
-    // PORT NOTE: Zig passed `socket` by value; both call sites have already
+    // Both call sites have already
     // stored it into `self.socket`, so dispatch through `self.socket.get()` instead
     // (avoids moving the non-`Copy` `AnySocket` enum out of `self`).
     fn start_tls(&self) {
@@ -948,7 +966,6 @@ impl PostgresSQLConnection {
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
         self.disable_connection_timeout();
-        // PORT NOTE: Zig `defer { ... }` block expanded after the body below.
 
         let event_loop = self.event_loop();
         event_loop.enter();
@@ -982,9 +999,7 @@ impl PostgresSQLConnection {
                                 .expect("failed to write to read buffer");
                         });
                     } else {
-                        {
-                            let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */
-                        };
+                        bun_core::handle_error_return_trace(err);
                         self.fail(b"Failed to read data", err);
                     }
                 }
@@ -1006,9 +1021,7 @@ impl PostgresSQLConnection {
                 }
                 Err(err) => {
                     if err != AnyPostgresError::ShortRead {
-                        {
-                            let _ = err; /* TODO(port): bun_crash_handler::handle_error_return_trace */
-                        };
+                        bun_core::handle_error_return_trace(err);
                         self.fail(b"Failed to read data", err);
                     } else {
                         #[cfg(debug_assertions)]
@@ -1057,26 +1070,8 @@ impl PostgresSQLConnection {
     }
 }
 
-// comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLConnection__createInstance" }) }
-// TODO(port): the #[crate::jsc::host_fn] attribute on `call` should emit the correct
-// `#[unsafe(no_mangle)]` shim named `PostgresSQLConnection__createInstance`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub(crate) unsafe fn PostgresSQLConnection__createInstance(
-        // `&T` is ABI-identical to `*const T` and JSC guarantees non-null,
-        // live `JSGlobalObject`/`CallFrame` for every host-fn invocation, so
-        // the reference type discharges the deref precondition at the boundary
-        // instead of inside the body.
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JSValue {
-        match call(global, callframe) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-
+// The attribute emits the JSC-callconv shim under the exported symbol.
+#[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]
 pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
@@ -1132,20 +1127,19 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
         if secure.is_none() {
             drop(tls_config);
-            // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
-            // in the runtime _jsc crate and isn't reachable from sql_jsc; throw the
-            // static message instead.
-            return Err(global_object.throw(format_args!(
-                "{}",
-                bun_core::fmt::s(err.message().unwrap_or(b"Failed to create SSL context"))
-            )));
+            return Err(
+                global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
+                    err,
+                    global_object,
+                )),
+            );
         }
     }
     // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
     // below. Ownership passes into `ptr.*` once allocated — `into_inner`
     // recovers them just before the Box is built so the connect-fail path's
     // `ptr.deinit()` is the sole cleanup.
-    // PORT NOTE: guard owns `(secure, tls_config)` by value. Do NOT
+    // guard owns `(secure, tls_config)` by value. Do NOT
     // `drop_in_place` a stack local that Rust would also auto-drop on unwind —
     // that double-frees. The closure's `_tls_config` is dropped exactly once by
     // normal scope-exit drop here.
@@ -1156,7 +1150,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         }
     });
 
-    // PORT NOTE: `StringBuilder::append` takes `&mut self` and returns a borrow
+    // `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
     // results live across each other. The buffer is allocated once and never
     // moved (`move_to_slice` hands back the same allocation), so detach each
@@ -1352,12 +1346,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
-    /* TODO(port): bun_core::analytics::Features::POSTGRES_CONNECTIONS counter */
+    bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }
 
-/// Referenced by `dispatch.zig` (kind = `.postgres[_tls]`). Now the only
-/// caller — `configure()` is gone.
 pub struct SocketHandler<const SSL: bool>;
 
 // Inherent associated types are unstable; use a free type alias instead.
@@ -1374,10 +1366,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    /// VM-shutdown guard shared by the 6 socket-event shims below. Mirrors the
-    /// open-coded `if (this.vm.isShuttingDown()) { @branchHint(.unlikely); this.close(); return; }`
-    /// blocks in `PostgresSQLConnection.zig:SocketHandler` (onOpen / onHandshake_ /
-    /// onConnectError / onTimeout / onData / onWritable). `on_close` and `on_end`
+    /// VM-shutdown guard shared by the 6 socket-event shims below
+    /// (on_open / on_handshake / on_connect_error / on_timeout / on_data / on_writable). `on_close` and `on_end`
     /// intentionally do NOT route through this — they forward unconditionally.
     #[inline]
     fn guarded(this: &PostgresSQLConnection, f: impl FnOnce(&PostgresSQLConnection)) {
@@ -1421,7 +1411,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
-        Self::guarded(this, |t| t.on_close());
+        Self::guarded(this, |t| t.on_connect_error());
     }
 
     pub fn on_timeout(this: &PostgresSQLConnection, _socket: SocketType<SSL>) {
@@ -1481,7 +1471,7 @@ impl PostgresSQLConnection {
     // argument would carry a Stacked Borrows protector for the whole frame, and freeing
     // the allocation while that protector is live is UB ("deallocating while item is
     // protected"). Taking `*mut Self` and reborrowing per-call keeps each `&mut` scoped
-    // strictly before the dealloc — direct mapping of Zig's `*@This()`.
+    // strictly before the dealloc.
     fn deinit(this: *mut Self) {
         // SAFETY: sole remaining owner; `this` is a live Box-allocated connection.
         unsafe {
@@ -1492,10 +1482,8 @@ impl PostgresSQLConnection {
                 PostgresSQLStatement::deref(*stmt_ptr);
             }
             // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
-            // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
 
-            // PORT NOTE: Zig `freeSensitive(allocator, options_buf)` zeroes then frees the
-            // backing slice. The Rust `free_sensitive` is the C-string variant; here we
+            // `free_sensitive` is the C-string variant; here we
             // volatile-zero the Box<[u8]> in place and let Box::drop free it.
             {
                 let buf = &mut *core::ptr::addr_of_mut!((*this).options_buf);
@@ -1533,9 +1521,7 @@ impl PostgresSQLConnection {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
                     let Some(stmt) = request.statement_mut() else {
-                        // `continue` in Zig with `orelse continue` — but we still need to deref+discard.
-                        // PORT NOTE: Zig `orelse continue` skips the deref/discard at the bottom too;
-                        // matching that behavior here.
+                        // The deref/discard at the bottom of the loop is intentionally skipped here.
                         continue;
                     };
                     stmt.error_response = Some(StatementError::PostgresError(
@@ -1665,7 +1651,7 @@ impl PostgresSQLConnection {
     }
 }
 
-// PORT NOTE: Zig's `Writer.connection: *PostgresSQLConnection` is a
+// `Writer.connection` is a
 // backref (LIFETIMES.tsv BACKREF). The connection strictly outlives any Writer
 // (Writers are only constructed via `self.writer()` and never stored). R-2:
 // `BackRef` (shared) — `write_buffer` is a `JsCell`, so mutation routes through
@@ -1726,7 +1712,7 @@ impl PostgresSQLConnection {
     }
 }
 
-// PORT NOTE: Zig's `Reader.connection: *PostgresSQLConnection` is a
+// `Reader.connection` is a
 // backref (LIFETIMES.tsv BACKREF). `PostgresRequest::on_data` passes both
 // `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. R-2: `BackRef`
 // (shared) — `read_buffer`/`last_message_start` are `JsCell`/`Cell`.
@@ -1775,7 +1761,7 @@ impl Reader {
             return Err(AnyPostgresError::ShortRead);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture as `RawSlice` before calling
+        // reshaped for borrowck — capture as `RawSlice` before calling
         // skip(); the read_buffer backing storage is not reallocated by skip().
         let slice = bun_ptr::RawSlice::new(&remaining[..count]);
         self.skip(count);
@@ -1871,7 +1857,7 @@ impl PostgresSQLConnection {
     fn advance(&self) {
         let mut offset: usize = 0;
         debug!("advance");
-        // PORT NOTE: Zig `defer { while ... }` cleanup loop runs after the main loop returns;
+        // The cleanup loop runs after the main loop returns;
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
@@ -1966,7 +1952,7 @@ impl PostgresSQLConnection {
                                 StatementStatus::Failed => {
                                     debug!("stmt failed");
                                     debug_assert!(statement.error_response.is_some());
-                                    // PORT NOTE: `postgres_sql_statement::Error` is not Clone (owns
+                                    // `postgres_sql_statement::Error` is not Clone (owns
                                     // protocol::ErrorResponse). Convert to JSValue and forward via
                                     // on_js_error instead of moving the cached error out.
                                     if let Some(ref e) = statement.error_response {
@@ -2379,10 +2365,9 @@ impl PostgresSQLConnection {
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    // TODO(port): Zig signature is `on(comptime MessageType: @Type(.enum_literal), comptime Context: type, reader)`.
-    // Const-generic enum params are unstable, so `message_type` is a runtime arg; the match
+    // `message_type` is a runtime arg; the match
     // below still monomorphizes per-Context and the branch is trivially predictable.
-    // PORT NOTE: `reader` is taken by-value as a `NewReaderWrap<&mut Context>`
+    // `reader` is taken by-value as a `NewReaderWrap<&mut Context>`
     // (the dispatch loop in `PostgresRequest::on_data` passes
     // `reader.reborrow()` per-message). Per-arm `decode_internal` calls reborrow
     // again via `reader.reborrow()` (see protocol::NewReaderWrap::reborrow).
@@ -2391,7 +2376,7 @@ impl PostgresSQLConnection {
         message_type: MessageType,
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
-        // PORT NOTE: protocol `decode_internal` returns `bun_core::Error`;
+        // protocol `decode_internal` returns `bun_core::Error`;
         // round-trip through the name-based `From` impl.
         #[inline(always)]
         fn pg_err(e: bun_core::Error) -> AnyPostgresError {
@@ -2407,7 +2392,7 @@ impl PostgresSQLConnection {
                     .statement_mut()
                     .ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
-                // PORT NOTE: reshaped for borrowck — `statement.structure()` borrows
+                // reshaped for borrowck — `statement.structure()` borrows
                 // `&mut *statement` and returns `&CachedStructure`; capture it as a
                 // `ParentRef` (lifetime-erased `&T`) so `&statement.fields` below
                 // does not conflict, and `as_deref` for `to_js` at the call site.
@@ -2438,7 +2423,6 @@ impl PostgresSQLConnection {
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
-                // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                 let max_inline = jsc::JSObject::max_inline_capacity() as usize;
                 let mut heap_cells: Vec<DataCell::SQLDataCell>;
                 let mut free_cells = false;
@@ -2465,7 +2449,7 @@ impl PostgresSQLConnection {
                 } else {
                     protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put(i, b))
                 };
-                // PORT NOTE: Zig `defer { for (cells[0..putter.count]) |*cell| cell.deinit(); if (free_cells) free(cells); }`
+                // Cell cleanup (deinit each cell, then free the buffer)
                 // runs on ALL exits (decode error, to_js error, success). `putter.count` is final
                 // after `decode` (the only writer is `Putter::put_impl`, and `to_js` does not
                 // touch it), so capture it by value — no raw-ptr read needed. `cells_ptr` stays
@@ -2515,14 +2499,12 @@ impl PostgresSQLConnection {
                 let _ = free_cells; // heap_cells dropped at scope end; defer! above runs cell.deinit()
             }
             MessageType::CopyData => {
-                let copy_data =
-                    protocol::CopyData::decode_internal(reader.reborrow()).map_err(pg_err)?;
+                let copy_data = protocol::CopyData::decode_internal(reader.reborrow())?;
                 drop(copy_data);
             }
             MessageType::ParameterStatus => {
                 let parameter_status =
-                    protocol::ParameterStatus::decode_internal(reader.reborrow())
-                        .map_err(pg_err)?;
+                    protocol::ParameterStatus::decode_internal(reader.reborrow())?;
                 self.backend_parameters
                     .with_mut(|m| {
                         m.insert(
@@ -2534,8 +2516,7 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query =
-                    protocol::ReadyForQuery::decode_internal(reader.reborrow()).map_err(pg_err)?;
+                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
 
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
@@ -2599,8 +2580,7 @@ impl PostgresSQLConnection {
             }
             MessageType::ParameterDescription => {
                 let description =
-                    protocol::ParameterDescription::decode_internal(reader.reborrow())
-                        .map_err(pg_err)?;
+                    protocol::ParameterDescription::decode_internal(reader.reborrow())?;
                 // errdefer bun.default_allocator.free(description.parameters);
                 let request = match self.current() {
                     Some(r) => r,
@@ -2617,7 +2597,7 @@ impl PostgresSQLConnection {
                     }
                 };
                 if !statement.parameters.is_empty() {
-                    // PORT NOTE: Box<[T]> drop frees old slice.
+                    // Box<[T]> drop frees old slice.
                 }
                 statement.parameters = description.parameters;
                 if statement.status == StatementStatus::Parsing {
@@ -2626,8 +2606,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::RowDescription => {
-                let description =
-                    protocol::RowDescription::decode_internal(reader.reborrow()).map_err(pg_err)?;
+                let description = protocol::RowDescription::decode_internal(reader.reborrow())?;
                 // errdefer description.deinit();
                 let request = match self.current() {
                     Some(r) => r,
@@ -2643,15 +2622,14 @@ impl PostgresSQLConnection {
                 // ReadyForQuery. Free any previous fields before overwriting and
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
-                // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
+                // Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
             }
             MessageType::Authentication => {
-                let auth =
-                    protocol::Authentication::decode_internal(&mut reader).map_err(pg_err)?;
+                let auth = protocol::Authentication::decode_internal(&mut reader)?;
 
                 match &auth {
                     protocol::Authentication::SASL => {
@@ -2682,7 +2660,7 @@ impl PostgresSQLConnection {
                             data: Data::Temporary(bun_ptr::RawSlice::new(mechanism)),
                         };
 
-                        response.write_internal(self.writer()).map_err(pg_err)?;
+                        response.write_internal(self.writer())?;
                         debug!("SASL");
                         self.flush_data();
                     }
@@ -2782,7 +2760,7 @@ impl PostgresSQLConnection {
                             *out = a ^ b;
                         }
 
-                        // base64 of 32 bytes → ceil(32/3)*4 = 44; +4 slack matches Zig encodeLenFromSize.
+                        // base64 of 32 bytes → ceil(32/3)*4 = 44; +4 slack.
                         let mut client_key_xor_base64_buf = [0u8; 48];
                         let xor_base64_len = bun_base64::encode(
                             &mut client_key_xor_base64_buf,
@@ -2805,9 +2783,7 @@ impl PostgresSQLConnection {
                         };
 
                         sasl.status = SASLStatus::Continue;
-                        response
-                            .write_internal(&mut self.writer())
-                            .map_err(pg_err)?;
+                        response.write_internal(&mut self.writer())?;
                         self.flush_data();
                     }
                     protocol::Authentication::SASLFinal { data: final_data } => {
@@ -2886,9 +2862,7 @@ impl PostgresSQLConnection {
                             password: Data::Temporary(self.password),
                         };
 
-                        response
-                            .write_internal(&mut self.writer())
-                            .map_err(pg_err)?;
+                        response.write_internal(&mut self.writer())?;
                         self.flush_data();
                     }
 
@@ -2942,9 +2916,7 @@ impl PostgresSQLConnection {
                         };
 
                         self.authentication_state.set(AuthenticationState::Md5);
-                        response
-                            .write_internal(&mut self.writer())
-                            .map_err(pg_err)?;
+                        response.write_internal(&mut self.writer())?;
                         self.flush_data();
                     }
 
@@ -2966,13 +2938,13 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                self.backend_key_data.set(
-                    protocol::BackendKeyData::decode_internal(reader.reborrow()).map_err(pg_err)?,
-                );
+                self.backend_key_data
+                    .set(protocol::BackendKeyData::decode_internal(
+                        reader.reborrow(),
+                    )?);
             }
             MessageType::ErrorResponse => {
-                let err =
-                    protocol::ErrorResponse::decode_internal(reader.reborrow()).map_err(pg_err)?;
+                let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;
 
                 if matches!(
                     self.status.get(),
@@ -2992,8 +2964,7 @@ impl PostgresSQLConnection {
                     debug!("ErrorResponse: {}", err);
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
-                // Convert to JS while we still own `err` — Zig's `request.onError` only ever
-                // calls `err.toJS`, so materialize the JS value once and route through
+                // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
                     crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
@@ -3064,7 +3035,7 @@ impl PostgresSQLConnection {
             MessageType::CopyBothResponse => {
                 debug!("TODO CopyBothResponse");
             } // else => @compileError("Unknown message type")
-              // PORT NOTE: const-generic enum match is exhaustive in Rust; no compile error needed.
+              // const-generic enum match is exhaustive in Rust; no compile error needed.
         }
         Ok(())
     }
@@ -3109,5 +3080,3 @@ impl PostgresSQLConnection {
         Some(on_close)
     }
 }
-
-// ported from: src/sql_jsc/postgres/PostgresSQLConnection.zig

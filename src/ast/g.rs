@@ -7,12 +7,12 @@ use crate::stmt::Stmt;
 use crate::ts as TypeScript;
 use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
 
-/// Zig: `G.Fn.flags: Flags.Function.Set`. Downstream crates address the flag
-/// enum via `G::FnFlags::IsExport` etc.; re-export the enum + set type here.
+/// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
+/// re-export the enum + set type here.
 pub use crate::flags::Function as FnFlags;
 pub use crate::flags::FunctionSet as FnFlagsSet;
 
-// PORT NOTE: all `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
+// All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
@@ -22,8 +22,7 @@ pub struct Decl {
     pub value: Option<ExprNodeIndex>,
 }
 
-// Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
-// are nightly; free alias.
+// Inherent assoc types are nightly; free alias.
 pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
 
 pub struct NamespaceAlias {
@@ -155,8 +154,8 @@ pub struct Property {
     pub kind: PropertyKind,
     pub flags: flags::PropertySet,
 
-    // Arena-owned `?*ClassStaticBlock` (Zig). `StoreRef` centralises the
-    // raw-pointer deref so the accessors below stay safe.
+    // Arena-owned. `StoreRef` centralises the raw-pointer deref so the
+    // accessors below stay safe.
     pub class_static_block: Option<crate::StoreRef<ClassStaticBlock>>,
     pub ts_decorators: ExprNodeList,
     // Key is optional for spread
@@ -168,7 +167,6 @@ pub struct Property {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-// Zig: nested `pub const List = Vec(Property);` — free alias.
 pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
 
 impl Default for Property {
@@ -224,7 +222,7 @@ impl Property {
             kind: self.kind,
             flags: self.flags,
             class_static_block,
-            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
+            // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
                 .try_deep_clone_with(|e| e.deep_clone(bump))?,
@@ -241,7 +239,6 @@ impl Property {
     }
 }
 
-// Zig: `enum(u3)` — Rust has no u3, use u8
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -266,7 +263,6 @@ impl FnBody {
         bump: &bun_alloc::Arena,
         expr: ExprNodeIndex,
     ) -> core::result::Result<FnBody, bun_alloc::AllocError> {
-        // PERF(port): Zig used arena.dupe over a 1-elem array literal; bumpalo equivalent
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(crate::s::Return { value: Some(expr) }, expr.loc)
         });
@@ -313,7 +309,6 @@ impl Fn {
         &self,
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
-        // PERF(port): Zig arena.alloc + per-index assign; bumpalo equivalent.
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
@@ -363,7 +358,7 @@ impl Arg {
         bump: &bun_alloc::Arena,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
-            // Zig: `try this.ts_decorators.deepClone(arena)` — Vec<Expr> per-element deep clone.
+            // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
                 .try_deep_clone_with(|e| e.deep_clone(bump))?,
@@ -377,5 +372,3 @@ impl Arg {
         })
     }
 }
-
-// ported from: src/js_parser/ast/G.zig

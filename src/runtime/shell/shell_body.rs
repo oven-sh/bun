@@ -1,4 +1,3 @@
-//! Port of src/shell/shell.zig
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
 #![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
@@ -22,17 +21,15 @@ use bun_sys::{self as sys, Fd, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub use super::interpreter as interpret; // ./interpreter.zig → crate::shell::interpret
-pub use super::subproc; // ./subproc.zig — declared once in `shell/mod.rs`
+pub use super::interpreter as interpret;
+pub use super::subproc; // declared once in `shell/mod.rs`
 
 pub use super::{EnvMap, EnvStr, ParsedShellScript};
 pub use interpret::{ExitCode, Interpreter, unreachable_state};
-pub use subproc::ShellSubprocess as Subprocess;
-// In Zig these hang off `Interpreter` as namespaced decls; in Rust they are
-// sibling modules re-exported through `interpret`.
 pub use interpret::{IOReader, IOWriter};
+pub use subproc::ShellSubprocess as Subprocess;
 
-pub use super::yield_; // ./Yield.zig
+pub use super::yield_;
 pub use yield_::Yield;
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
@@ -51,7 +48,7 @@ pub use bun_shell_parser::parse::{
     needs_escape_utf8_ascii_latin1, needs_escape_utf16,
 };
 
-// Spec: `bun.glob.GlobWalker(null, true)` → SyscallAccessor + sentinel paths.
+// Glob walker configured for SyscallAccessor + sentinel (NUL-terminated) paths.
 pub type GlobWalker = bun_glob::BunGlobWalkerZ;
 
 pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
@@ -78,13 +75,11 @@ pub enum ShellErr {
 }
 
 impl ShellErr {
-    /// Spec `ShellErr.newSys(bun.sys.Error)` — wrap a low-level syscall error.
+    /// Wrap a low-level syscall error.
     pub fn new_sys(e: &sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
     /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
-    /// (Zig `newSys(e: anytype)` dispatched on `@TypeOf(e)`; Rust splits the
-    /// two arms into `new_sys` / `from_system`.)
     pub fn from_system(e: SystemError) -> Self {
         ShellErr::Sys(e)
     }
@@ -101,7 +96,7 @@ impl ShellErr {
             }
             ShellErr::Custom(custom) => {
                 let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
-                // `custom: Box<[u8]>` drops here (Zig: `allocator.free(this.custom)`).
+                // `custom: Box<[u8]>` drops here.
                 global.throw_value(err_value)
             }
             ShellErr::InvalidArguments { val } => {
@@ -121,7 +116,6 @@ impl ShellErr {
                     err.message,
                     err.path
                 );
-                // Zig: `defer this.deinit()` → `.sys => this.sys.deref()`.
                 err.deref();
             }
             ShellErr::Custom(custom) => {
@@ -147,8 +141,8 @@ impl ShellErr {
     }
 
     /// Spec `ShellErr.deinit`. Explicit release for callers that drop a
-    /// `ShellErr` without throwing it (mirrors Zig's manual `deinit`; the
-    /// `Box<[u8]>` arms free on ordinary drop, so only `.sys` needs work).
+    /// `ShellErr` without throwing it (the `Box<[u8]>` arms free on ordinary
+    /// drop, so only `.sys` needs work).
     pub fn deinit(self) {
         if let ShellErr::Sys(sys) = self {
             sys.deref();
@@ -169,8 +163,7 @@ impl fmt::Display for ShellErr {
     }
 }
 
-// PORT NOTE: no `impl Drop for ShellErr`. Zig's `ShellErr.deinit` is *manual*
-// and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
+// Note: no `impl Drop for ShellErr`. Release is *manual* and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
 // `toErrorInstance` already consumed those refs. An unconditional `Drop` would
 // re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
 // `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
@@ -186,7 +179,7 @@ pub enum ShellResult<T> {
 
 impl<T: Default> ShellResult<T> {
     pub fn success() -> Self {
-        // PORT NOTE: Zig used std.mem.zeroes(T). PORTING.md forbids zeroed::<T>() for generic T
+        // PORTING.md forbids zeroed::<T>() for generic T
         // (no #[repr(C)] POD guarantee, may contain NonNull/NonZero/enum). Default is the safe
         // mapping; dropped `const` since Default::default is not const-callable on generic T.
         ShellResult::Result(T::default())
@@ -286,8 +279,6 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
-        // Spec shell.zig GlobalJS.enqueueTaskConcurrentWaitPid:
-        //   `globalThis.bunVMConcurrently().enqueueTaskConcurrent(ConcurrentTask.create(Task.init(task)))`
         // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
         // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
         let vm = self
@@ -313,8 +304,6 @@ impl<'a> GlobalJS<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        // Spec shell.zig GlobalJS.platformEventLoop → JsVM.platformEventLoop:
-        //   posix: `vm.event_loop_handle.?`; windows: `vm.uvLoop()`.
         let vm = self.event_loop_ctx();
         #[cfg(windows)]
         // SAFETY: uv_loop() returns the live libuv loop owned by the VM; lifetime tied to 'a.
@@ -397,15 +386,11 @@ impl<'a> GlobalMini<'a> {
     pub fn enqueue_task_concurrent_wait_pid<T: 'static>(
         self,
         task: *mut T,
-        // PORT NOTE: Zig `.from(task, "runFromMainThreadMini")` resolves the callback by
-        // comptime decl-name lookup. Rust cannot reflect on a method by string, so callers
-        // pass `T::run_from_main_thread_mini` explicitly (mirrors AnyTaskWithExtraContext::from).
+        // Callers pass `T::run_from_main_thread_mini` explicitly (see
+        // `AnyTaskWithExtraContext::from`).
         run_from_main_thread_mini: fn(*mut T, *mut ()),
     ) {
         use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-        // Spec shell.zig GlobalMini.enqueueTaskConcurrentWaitPid:
-        //   `var anytask = create(AnyTaskWithExtraContext); _ = anytask.from(task, "runFromMainThreadMini");
-        //    mini.enqueueTaskConcurrent(anytask);`
         let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
@@ -436,8 +421,6 @@ impl<'a> GlobalMini<'a> {
 
     #[inline]
     pub fn platform_event_loop(self) -> &'a PlatformEventLoop {
-        // Spec shell.zig GlobalMini.platformEventLoop → MiniVM.platformEventLoop:
-        //   posix: `mini.loop`; windows: `mini.loop.uv_loop`.
         #[cfg(windows)]
         // SAFETY: see `MiniEventLoop::loop_ptr()` invariant; `uv_loop` is its
         // embedded libuv loop, set once by `us_create_loop` and immutable.
@@ -493,8 +476,8 @@ impl CmdEnvKey<'_> {
 
 impl<'a> CmdEnvIter<'a> {
     pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
-        // PORT NOTE: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
-        // struct can hold both the map ref and the iterator (Zig had no aliasing rules).
+        // Note: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
+        // struct can hold both the map ref and the iterator.
         let env_ptr: *mut _ = env;
         // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
         // walks the backing arrays.
@@ -506,19 +489,16 @@ impl<'a> CmdEnvIter<'a> {
         self.env.len()
     }
 
-    pub fn next(&mut self) -> Result<Option<CmdEnvEntry<'a>>, bun_core::Error> {
-        // TODO(port): narrow error set — Zig sig is `!?Entry` but body never errors.
-        let Some(entry) = self.iter.next() else {
-            return Ok(None);
-        };
-        Ok(Some(CmdEnvEntry {
+    pub fn next(&mut self) -> Option<CmdEnvEntry<'a>> {
+        let entry = self.iter.next()?;
+        Some(CmdEnvEntry {
             key: CmdEnvKey {
                 val: &**entry.key_ptr,
             },
             value: CmdEnvValue {
                 val: &**entry.value_ptr,
             },
-        }))
+        })
     }
 }
 
@@ -599,8 +579,8 @@ pub mod test {
         }
     }
 
-    // ─── JSON serialization (port of `std.json.fmt(test_tokens, .{})`) ──────
-    // Zig: `union(TokenTag)` → `{"Tag":payload}`; void payload → `{"Tag":{}}`.
+    // ─── JSON serialization of test tokens ──────────────────────────────────
+    // Tagged variants serialize as `{"Tag":payload}`; unit payloads as `{"Tag":{}}`.
     use bun_shell_parser::json_fmt::{encode_json_string, write_redirect_flags};
     use core::fmt::Write as _;
 
@@ -664,7 +644,7 @@ pub mod test {
         }
     }
 
-    /// `Display` adapter mirroring `std.json.fmt(test_tokens.items, .{})`.
+    /// `Display` adapter that renders the token list as a JSON array.
     pub fn tokens_json_fmt<'b>(tokens: &'b [TestToken<'_>]) -> impl core::fmt::Display + 'b {
         struct Fmt<'a, 'b>(&'b [TestToken<'a>]);
         impl core::fmt::Display for Fmt<'_, '_> {
@@ -688,8 +668,7 @@ pub use test as Test;
 
 /// RAII owner for the `bun.String` array threaded through `shell_cmd_from_js` →
 /// `Interpreter::parse`. `bun.String` is `Copy` (no `Drop`) for FFI, so the
-/// per-element `deref()` from Zig's `defer { for (jsstrings.items) |bunstr|
-/// bunstr.deref(); jsstrings.deinit(); }` must be explicit. Wrapping the `Vec`
+/// per-element `deref()` must be explicit. Wrapping the `Vec`
 /// avoids the unit-state `scopeguard` + raw-pointer-reborrow pattern that is UB
 /// under Stacked Borrows (PORTING.md §Idiom-map: `defer <side effect>`).
 pub struct JsStrings(pub Vec<BunString>);
@@ -729,7 +708,7 @@ pub fn shell_cmd_from_js(
     string_args: JSValue,
     template_args: &mut JSArrayIterator,
     // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
-    // (a GC root); the heap-backed Vec is index storage only, mirroring the Zig 1:1.
+    // (a GC root); the heap-backed Vec is index storage only.
     out_jsobjs: &mut Vec<JSValue>,
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
@@ -752,7 +731,7 @@ pub fn shell_cmd_from_js(
                     return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
                 }
             };
-            // PORT NOTE: builder holds &mut out_script/jsstrings; NLL releases the
+            // Note: builder holds &mut out_script/jsstrings; NLL releases the
             // borrow here (builder is reassigned below before next use).
             handle_template_value(
                 global,
@@ -1027,9 +1006,8 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         utf8: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
         let invalid = simdutf::validate::utf8(utf8);
-        // PORT NOTE: Zig variable name `invalid` is misleading — it holds the validity bool.
+        // Note: the name `invalid` is misleading — it holds the validity bool.
         if !invalid {
             return Ok(false);
         }
@@ -1049,7 +1027,8 @@ impl<'a> ShellSrcBuilder<'a> {
         let size = simdutf::length::utf8::from::utf16::le(utf16);
         self.outbuf.reserve(size);
         strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
-        // TODO(port): error mapping — Zig propagates encoding error directly.
+        // Infallible: invalid UTF-16 takes the WTF-8 fallback inside the
+        // conversion, and Rust aborts on OOM.
         Ok(())
     }
 
@@ -1065,8 +1044,7 @@ impl<'a> ShellSrcBuilder<'a> {
             self.append_utf8_impl(&latin1[..non_ascii_idx as usize])?;
         }
 
-        // Zig reassigns `self.outbuf.* = allocateLatin1IntoUTF8WithList(self.outbuf.*, …)`;
-        // mirror that by moving the Vec out, transforming, and storing back.
+        // Move the Vec out, transform it, and store it back.
         let len = self.outbuf.len();
         let buf = core::mem::take(self.outbuf);
         *self.outbuf = strings::allocate_latin1_into_utf8_with_list(buf, len, latin1);
@@ -1120,9 +1098,8 @@ pub mod testing_apis {
             let utf8str = bunstr.to_utf8();
 
             for disabled in crate::shell::builtin::Kind::DISABLED_ON_POSIX {
-                // Spec uses Zig `@tagName` (lowercase). `strum::IntoStaticStr`
-                // would yield the PascalCase variant name ("Cp"), so use
-                // `Kind::as_str` which mirrors the lowercase tag.
+                // `strum::IntoStaticStr` would yield the PascalCase variant name
+                // ("Cp"), so use `Kind::as_str` for the lowercase name.
                 if utf8str.slice() == disabled.as_str().as_bytes() {
                     return Ok(JSValue::TRUE);
                 }
@@ -1131,7 +1108,6 @@ pub mod testing_apis {
         }
     }
 
-    /// Spec shell.zig `TestingAPIs.shellLex` (`MarkedArgumentBuffer.wrap(_shellLex)`).
     /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
     /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
     pub fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1163,7 +1139,6 @@ pub mod testing_apis {
             }
         };
         let mut template_args = template_args_js.array_iterator(global)?;
-        // PERF(port): was stack-fallback (4 BunString) — profile if hot.
         let mut jsstrings = JsStrings::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
@@ -1207,13 +1182,14 @@ pub mod testing_apis {
             test_tokens.push(test_tok);
         }
 
-        // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(test_tokens.items, .{})})`.
         let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
         let bun_str = BunString::from_bytes(str.as_bytes());
         bun_str.to_js(global)
     }
 
-    /// Spec shell.zig `TestingAPIs.shellParse` (`MarkedArgumentBuffer.wrap(_shellParse)`).
+    /// Testing API: parse the shell template-string arguments and return the
+    /// AST as a JSON string (or throw on a parse error). Arguments are pinned
+    /// in a `MarkedArgumentBuffer` for GC safety while parsing.
     pub fn shell_parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         MarkedArgumentBuffer::new(|buf| shell_parse_impl(global, callframe, buf))
     }
@@ -1243,7 +1219,6 @@ pub mod testing_apis {
             }
         };
         let mut template_args = template_args_js.array_iterator(global)?;
-        // PERF(port): was stack-fallback
         let mut jsstrings = JsStrings::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
@@ -1271,8 +1246,7 @@ pub mod testing_apis {
         ) {
             Ok(a) => a,
             Err(err) => {
-                // Spec: shell.zig TestingAPIs.shellParse — `if (err == ParseError.Lex)`
-                // ⇔ out_lex_result was populated by `parse()`.
+                // `out_lex_result` is populated by `parse()` only on lex errors.
                 if let Some(lex) = out_lex_result.as_ref() {
                     let str = lex.combine_errors(&arena);
                     return Err(global.throw_pretty(format_args!("{}", bstr::BStr::new(str))));
@@ -1287,7 +1261,6 @@ pub mod testing_apis {
             }
         };
 
-        // Spec: `std.fmt.allocPrint(..., "{f}", .{std.json.fmt(script_ast, .{})})`.
         // `crate::shell::ast::Script` is a `'static`-erased alias of
         // `bun_shell_parser::ast::Script`, so it formats directly.
         let str = format!(
@@ -1298,10 +1271,8 @@ pub mod testing_apis {
     }
 }
 pub use testing_apis as TestingAPIs;
-// `generated_js2native.rs` snake-cases Zig's `TestingAPIs` as `testing_ap_is`
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the codegen splits on capitalisation runs).
 pub use testing_apis as testing_ap_is;
 
 pub use subproc::ShellSubprocess;
-
-// ported from: src/shell/shell.zig

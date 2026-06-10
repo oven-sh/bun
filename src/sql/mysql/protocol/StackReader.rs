@@ -114,5 +114,3 @@ impl<'a> ReaderContext for StackReader<'a> {
         Self::set_offset_from_start(&self, offset)
     }
 }
-
-// ported from: src/sql/mysql/protocol/StackReader.zig

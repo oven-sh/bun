@@ -30,7 +30,6 @@ pub fn find_imported_css_files_in_js_order(
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
-    // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed).
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
 
@@ -38,8 +37,7 @@ pub fn find_imported_css_files_in_js_order(
     let all_loaders = this.parse_graph().input_files.items_loader();
     let all_parts = this.graph.ast.items_parts();
 
-    // Zig uses a local `struct { fn visit }.visit` to get a recursive local fn.
-    // Rust nested `fn` items can recurse directly.
+    // Nested `fn` item so the visitor can recurse directly.
     #[allow(clippy::too_many_arguments)]
     fn visit(
         c: &LinkerContext,
@@ -104,5 +102,3 @@ pub fn find_imported_css_files_in_js_order(
 
     order
 }
-
-// ported from: src/bundler/linker_context/findImportedCSSFilesInJSOrder.zig

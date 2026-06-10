@@ -4,10 +4,6 @@ use crate::{default_alloc, mimalloc};
 // TODO(refactor): consider reshaping the vtable struct into `trait Allocator` impls.
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 
-// Zig: `const log = bun.Output.scoped(.mimalloc, .hidden);` — `Output.scoped`
-// lives in `bun_core`, which depends on this crate, so the hidden-scope debug
-// tracing is dropped here rather than re-declared as a no-op stub.
-
 /// # Safety
 /// `ptr` must have been allocated by mimalloc with the given `size`/`align`.
 #[inline(always)]
@@ -204,5 +200,3 @@ pub unsafe fn free_without_size(ptr: *mut c_void) {
     // SAFETY: caller contract — ptr is null or was allocated by mimalloc; mi_free accepts null
     unsafe { mimalloc::mi_free(ptr) }
 }
-
-// ported from: src/bun_alloc/basic.zig

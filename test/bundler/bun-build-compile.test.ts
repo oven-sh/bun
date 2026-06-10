@@ -709,6 +709,12 @@ describe("compiled executable bytecode integrity", () => {
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
+  async function runQuiet(cmd: string[]): Promise<{ stderr: string; exitCode: number }> {
+    await using proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
   // Writes the corrupted executable to a sibling path: overwriting the
   // original in place can hit ETXTBSY while the kernel still holds it open
   // from the pristine run.
@@ -718,14 +724,20 @@ describe("compiled executable bytecode integrity", () => {
     chmodSync(corruptedPath, 0o755);
     if (isMacOS) {
       // Re-sign so the ad-hoc code signature covers the corrupted bytes;
-      // otherwise the kernel kills the process before it can start.
-      await using sign = Bun.spawn({
-        cmd: ["codesign", "--force", "--sign", "-", corruptedPath],
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, , signExit] = await Promise.all([sign.stdout.text(), sign.stderr.text(), sign.exited]);
-      expect(signExit).toBe(0);
+      // otherwise the kernel kills the process before it can start. Newer
+      // codesign versions can refuse to force-replace a signature that no
+      // longer matches the file, so strip it and sign fresh when that fails.
+      const force = await runQuiet(["codesign", "--force", "--sign", "-", corruptedPath]);
+      if (force.exitCode !== 0) {
+        const remove = await runQuiet(["codesign", "--remove-signature", corruptedPath]);
+        const sign = await runQuiet(["codesign", "--sign", "-", corruptedPath]);
+        // `force` is mirrored so its stderr shows up in the failure diff.
+        expect({ force, remove, sign }).toEqual({
+          force,
+          remove: { stderr: expect.any(String), exitCode: 0 },
+          sign: { stderr: expect.any(String), exitCode: 0 },
+        });
+      }
     }
     return corruptedPath;
   }

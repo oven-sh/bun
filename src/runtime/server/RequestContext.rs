@@ -2445,16 +2445,14 @@ where
             return;
         }
 
-        let Some(server) = this.server else {
+        if this.server.is_none() {
             // server detached?
             this.render_metadata();
             // SAFETY: FFI handle
             resp.write_header_int(b"content-length", 0);
             this.end_without_body(this.should_close_connection());
             return;
-        };
-        // SAFETY: BACKREF
-        let global_this = server.global_this();
+        }
 
         // GET strips the handler's Content-Length / Transfer-Encoding and frames
         // from the body, so HEAD must too (RFC 9110 §9.3.2). Only a bodiless
@@ -2534,22 +2532,12 @@ where
                     };
                     let credentials = s3.get_credentials();
                     let path = s3.path();
-                    // `Transpiler::env_mut` is the safe accessor for the
-                    // process-singleton dotenv loader (set during init).
-                    let proxy_url = global_this
-                        .bun_vm()
-                        .as_mut()
-                        .transpiler
-                        .env_mut()
-                        .get_http_proxy(true, None, None)
-                        .map(|proxy| proxy.href);
 
                     let _ = S3::client::stat(
                         credentials,
                         path,
                         Self::on_s3_size_resolved_thunk,
                         std::ptr::from_mut::<Self>(this).cast::<c_void>(),
-                        proxy_url,
                         s3.request_payer,
                     ); // TODO: properly propagate exception upwards
                     return;

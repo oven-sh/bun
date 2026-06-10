@@ -344,7 +344,7 @@ impl UserOptions {
             // transferred ownership to the handle calling us.
             drop(unsafe { Box::from_raw(ptr.cast::<UserOptions>().as_ptr()) });
         }
-        // `Box::into_raw` never returns null.
+        // SAFETY: `Box::into_raw` never returns null.
         let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(self))) };
         // SAFETY: ownership of the freshly boxed `UserOptions` transfers to
         // the handle; `drop_erased` frees exactly that value once.

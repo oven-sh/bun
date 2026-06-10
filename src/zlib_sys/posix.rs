@@ -41,5 +41,3 @@ unsafe extern "C" {
         stream_size: c_int,
     ) -> ReturnCode;
 }
-
-// ported from: src/zlib_sys/posix.zig

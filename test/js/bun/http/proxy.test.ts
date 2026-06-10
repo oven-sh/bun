@@ -139,7 +139,25 @@ let httpsServer: Server;
 let httpProxyServer: { server: net.Server; url: string; log: string[] };
 let httpsProxyServer: { server: net.Server; url: string; log: string[] };
 
+// Tests in this file that call fetch() in-process expect the explicit `proxy`
+// option to be honored against localhost targets. An ambient NO_PROXY /
+// HTTP_PROXY / HTTPS_PROXY in the environment (as some CI/dev containers set)
+// would make those localhost fetches bypass the proxy and the assertions fail.
+// Clear them for the duration of this file; subprocess-based tests below pass
+// their own explicit `env` and are unaffected.
+//
+// Assign "" rather than `delete`: the HTTP client reads these via getenv, and
+// (matching Node semantics) only an assignment propagates to it — a `delete`
+// leaves the native value stale. An empty value disables the proxy/bypass.
+const savedProxyEnv: Record<string, string | undefined> = {};
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+
 beforeAll(async () => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+
   httpServer = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -172,6 +190,11 @@ afterAll(() => {
   httpsServer.stop();
   httpProxyServer.server.close();
   httpsProxyServer.server.close();
+
+  for (const key of PROXY_ENV_KEYS) {
+    // Restore the prior value; an absent var maps back to "" (see note above).
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
 });
 
 for (const proxy_tls of [false, true]) {
@@ -440,7 +463,7 @@ test("proxy with long password (> 4096 chars) sends correct authorization", asyn
 
     // Decode and verify
     const encoded = capturedAuth.substring("Basic ".length);
-    const decoded = Buffer.from(encoded, "base64url").toString();
+    const decoded = Buffer.from(encoded, "base64").toString();
     expect(decoded).toBe(`${username}:${longPassword}`);
   } finally {
     await proxy.close();
@@ -487,12 +510,141 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
     for (const capturedAuth of proxy.capturedAuths) {
       expect(capturedAuth.startsWith("Basic ")).toBe(true);
       const encoded = capturedAuth.substring("Basic ".length);
-      const decoded = Buffer.from(encoded, "base64url").toString();
+      const decoded = Buffer.from(encoded, "base64").toString();
       expect(decoded).toBe(`${username}:${longPassword}`);
     }
   } finally {
     await proxy.close();
   }
+});
+
+// Regression test for https://github.com/oven-sh/bun/issues/31780
+//
+// The Proxy-Authorization: Basic <...> credential must be encoded with the
+// STANDARD base64 alphabet (+ / with = padding, RFC 7617), not base64url
+// (- _ with no padding). Credentials whose standard base64 contains + or /
+// (common in DataImpulse session tokens) were previously mangled, so strict
+// proxies rejected them and closed the socket.
+//
+// The fetch runs in a subprocess so we can clear NO_PROXY/HTTP_PROXY/HTTPS_PROXY
+// (inherited from the environment in some setups) and guarantee the explicit
+// `proxy` option is actually used. The proxy server runs in-process and
+// captures the header.
+describe("proxy Basic auth uses standard base64 (#31780)", () => {
+  // Userinfo whose standard base64 contains both + and /, plus = padding:
+  //   standard: c3ViLXVzZXI6c2Vzcz4+aWQ/ZmY=
+  //   base64url: c3ViLXVzZXI6c2Vzcz4-aWQ_ZmY   (- and _, no padding)
+  const username = "sub-user";
+  const password = "sess>>id?ff";
+  const expectedStandard = Buffer.from(`${username}:${password}`).toString("base64");
+  const expectedUrlSafe = Buffer.from(`${username}:${password}`).toString("base64url");
+  // Encode the userinfo so reserved characters don't break URL parsing.
+  const userinfo = `${encodeURIComponent(username)}:${encodeURIComponent(password)}`;
+
+  // Ensure the fixtures actually distinguish the two alphabets.
+  expect(expectedStandard).toContain("+");
+  expect(expectedStandard).toContain("/");
+  expect(expectedStandard).not.toBe(expectedUrlSafe);
+
+  // Clear proxy-bypass env so the explicit `proxy:` option is honored for
+  // localhost targets regardless of the ambient environment.
+  const noProxyEnv = { ...bunEnv };
+  delete noProxyEnv.NO_PROXY;
+  delete noProxyEnv.no_proxy;
+  delete noProxyEnv.HTTP_PROXY;
+  delete noProxyEnv.http_proxy;
+  delete noProxyEnv.HTTPS_PROXY;
+  delete noProxyEnv.https_proxy;
+
+  test("absolute-form (HTTP target)", async () => {
+    const proxy = await createAuthCapturingProxy();
+    try {
+      const proxyUrl = `http://${userinfo}@localhost:${proxy.port}`;
+      await using fetchProc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await fetch(${JSON.stringify(httpServer.url.href)}, { proxy: ${JSON.stringify(proxyUrl)}, keepalive: false }); console.log(r.status);`,
+        ],
+        env: noProxyEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        fetchProc.stdout.text(),
+        fetchProc.stderr.text(),
+        fetchProc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("200");
+      expect(exitCode).toBe(0);
+
+      expect(proxy.capturedAuths.length).toBeGreaterThanOrEqual(1);
+      expect(proxy.capturedAuths[0]).toBe(`Basic ${expectedStandard}`);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  test("CONNECT tunnel (HTTPS target)", async () => {
+    using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+
+    const capturedAuths: string[] = [];
+    const sockets = new Set<net.Socket>();
+    const upstreamSockets = new Set<net.Socket>();
+    const proxy = net.createServer(clientSocket => {
+      sockets.add(clientSocket);
+      clientSocket.on("error", () => {});
+      clientSocket.once("data", data => {
+        const req = data.toString();
+        if (!req.startsWith("CONNECT")) return clientSocket.end();
+        const authMatch = req.match(/Proxy-Authorization: (.+)\r\n/i);
+        if (authMatch) capturedAuths.push(authMatch[1]);
+        const serverSocket = net.connect(target.port, "localhost", () => {
+          clientSocket.write("HTTP/1.1 200 OK\r\n\r\n");
+          clientSocket.pipe(serverSocket);
+          serverSocket.pipe(clientSocket);
+        });
+        upstreamSockets.add(serverSocket);
+        serverSocket.on("close", () => upstreamSockets.delete(serverSocket));
+        serverSocket.on("error", () => clientSocket.end());
+      });
+      clientSocket.on("close", () => sockets.delete(clientSocket));
+    });
+    proxy.listen(0);
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+    try {
+      const proxyUrl = `http://${userinfo}@localhost:${proxyPort}`;
+      await using fetchProc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const r = await fetch(${JSON.stringify(target.url.href)}, { proxy: ${JSON.stringify(proxyUrl)}, keepalive: false, tls: { rejectUnauthorized: false } }); console.log(r.status);`,
+        ],
+        env: noProxyEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        fetchProc.stdout.text(),
+        fetchProc.stderr.text(),
+        fetchProc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("200");
+      expect(exitCode).toBe(0);
+
+      expect(capturedAuths.length).toBeGreaterThanOrEqual(1);
+      expect(capturedAuths[0]).toBe(`Basic ${expectedStandard}`);
+    } finally {
+      for (const s of sockets) s.destroy();
+      for (const s of upstreamSockets) s.destroy();
+      proxy.close();
+      await once(proxy, "close");
+    }
+  });
 });
 
 test("axios with https-proxy-agent", async () => {

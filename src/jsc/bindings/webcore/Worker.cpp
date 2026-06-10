@@ -50,12 +50,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Worker);
 
-// ---- Zig FFI -----------------------------------------------------------------------------------
-// The Zig WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
-// thread. See src/jsc/web_worker.zig for the matching side of each entry point.
+// ---- Native FFI --------------------------------------------------------------------------------
+// The native WebWorker struct is owned by this Worker (freed in ~Worker) and drives the worker
+// thread. See src/jsc/web_worker.rs for the matching side of each entry point.
 extern "C" {
 
-// Allocate the Zig WebWorker, take a keep-alive on the parent event loop, and spawn the worker
+// Allocate the native WebWorker, take a keep-alive on the parent event loop, and spawn the worker
 // thread. Returns null (and sets errorMessage) on any failure; nothing needs cleanup in that case.
 void* WebWorker__create(
     Worker* worker,
@@ -87,7 +87,7 @@ void WebWorker__setRef(void* worker, bool ref);
 // thread.
 void WebWorker__releaseParentPollRef(void* worker);
 
-// Free the Zig WebWorker struct. Called from ~Worker.
+// Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
 } // extern "C"
@@ -563,7 +563,7 @@ bool Worker::dispatchExit(int32_t exitCode)
         });
 }
 
-// ---- extern "C" shims (called from Zig) -------------------------------------
+// ---- extern "C" shims (called from native code) ------------------------------
 
 extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
@@ -592,9 +592,7 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     // Drop the single ref taken by `Zig__GlobalObject__create`
     // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
     // to zero — `~VM` runs here while the API lock is still held by this
-    // thread, exactly as in the Zig build (where `pthread_exit` skipped the
-    // outer `JSLockHolder` destructor and a second `deref` here released its
-    // abandoned ref). The Rust port acquires the API lock manually with no
+    // thread. The worker thread acquires the API lock manually with no
     // extra VM ref (see `WebWorker::thread_main`), so a second `deref` would
     // run `~VM` twice / dereference the freed VM.
     vm.derefSuppressingSaferCPPChecking(); // NOLINT

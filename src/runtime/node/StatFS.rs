@@ -10,8 +10,7 @@ pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
 pub(crate) type RawStatFS = bun_sys::StatFS;
 
-// PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
-// integer type via `const Int = if (big) i64 else i32;`. Stable Rust const
+// The field integer type is i64 ("big") or i32 ("small"). Stable Rust const
 // generics cannot select a field type from a `const BIG: bool`, so we generate
 // the two concrete instantiations with a small macro. The two exported aliases
 // (`StatFSSmall`, `StatFSBig`) are the only call sites.
@@ -36,8 +35,6 @@ macro_rules! define_statfs_type {
 
             fn statfs_to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
                 if $big {
-                    // TODO(port): bun.jsc.fromJSHostCall wraps an extern call with
-                    // JSC exception-scope checking; map to the Rust equivalent.
                     return bun_jsc::from_js_host_call(global, || {
                         Bun__createJSBigIntStatFSObject(
                             global,
@@ -84,10 +81,9 @@ macro_rules! define_statfs_type {
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
-                // @truncate(@as(i64, @intCast(x))) — @intCast to i64 then @truncate to Int.
-                // PORT NOTE: platform field types vary (u32/i64/u64); `as i64` matches
-                // Zig's @intCast for the in-range values statfs reports, then `as $Int`
-                // is the @truncate (intentional wrap).
+                // Platform field types vary (u32/i64/u64); widen with `as i64`
+                // (lossless for the in-range values statfs reports), then `as $Int`
+                // truncates (intentional wrap).
                 Self {
                     _fstype: (fstype_ as i64) as $Int,
                     _bsize: (bsize_ as i64) as $Int,
@@ -102,7 +98,6 @@ macro_rules! define_statfs_type {
     };
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     pub safe fn Bun__JSBigIntStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
     pub safe fn Bun__JSStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
@@ -156,9 +151,6 @@ impl StatFS {
         }
     }
 
-    // PORT NOTE: Zig `toJS` body is `@compileError(...)` — intentionally not
-    // callable. Omitted in Rust; callers must use `to_js_newly_created` or call
-    // `to_js` on `StatFSBig`/`StatFSSmall` directly.
+    // A `to_js` method is intentionally omitted; callers must use
+    // `to_js_newly_created` or call `to_js` on `StatFSBig`/`StatFSSmall` directly.
 }
-
-// ported from: src/runtime/node/StatFS.zig

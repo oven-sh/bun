@@ -11,10 +11,10 @@ use crate::crypto::evp;
 use crate::node::Encoding as NodeEncoding;
 
 // ── local shims ──────────────────────────────────────────────────────────
-// `bun.ComptimeStringMap.fromJSCaseInsensitive` — the upstream
+// The upstream
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
 // the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
+// ASCII, so lower the probe and do a direct lookup (mirrors PBKDF2.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,
@@ -23,8 +23,8 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// `JSValue.getOptional(_, _, ZigString.Slice)` — local shim until `bun_jsc`
-/// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
+/// Local shim until `bun_jsc` grows a typed `get_optional`.
+/// Returns `None` for missing/null/undefined.
 fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
@@ -44,10 +44,9 @@ fn get_optional_slice(
     }
 }
 
-/// `JSValue.getOptionalInt(_, _, u64)` — local shim. Spec (`JSValue.zig:1896`)
-/// delegates to `validateIntegerRange` with `[0, MAX_SAFE_INTEGER]`; that
-/// helper is defined on the cfg-gated `JSGlobalObject` impl, so inline the
-/// minimal u64 path here.
+/// Local shim: validates an integer in `[0, MAX_SAFE_INTEGER]`.
+/// `validateIntegerRange` is defined on the cfg-gated `JSGlobalObject` impl,
+/// so inline the minimal u64 path here.
 fn get_optional_int_u64(
     target: JSValue,
     global: &JSGlobalObject,
@@ -94,8 +93,6 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
         secret = Some(js_secret.to_slice(global)?);
     }
-    // `defer if (secret) |s| s.deinit();` — handled by Drop on ZigStringSlice
-
     // Default values
     let mut expires_in: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
@@ -238,11 +235,10 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         );
     }
     let token = js_token.to_slice(global)?;
-    // `defer token.deinit();` — handled by Drop on ZigStringSlice
 
     // Default values
     let mut secret: Option<ZigStringSlice> = None;
-    // `defer if (secret) |s| s.deinit();` — handled by Drop
+    // `secret` is freed by Drop.
     let mut max_age: u64 = csrf::DEFAULT_EXPIRATION_MS;
     let mut encoding: csrf::TokenFormat = csrf::TokenFormat::Base64Url;
     let mut session_id: Option<ZigStringSlice> = None;
@@ -344,5 +340,3 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     Ok(JSValue::from(is_valid))
 }
-
-// ported from: src/runtime/api/csrf_jsc.zig

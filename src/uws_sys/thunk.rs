@@ -10,8 +10,8 @@
 //!
 //! Centralising here means each invariant is documented and audited **once**:
 //!
-//! * `zst::<H>()`         — conjure a ZST handler value (the
-//!   `comptime handler` → monomorphised-ZST trick).
+//! * `zst::<H>()`         — conjure a ZST handler value (handlers are
+//!   monomorphised zero-sized types, so no runtime data is needed).
 //! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
@@ -138,9 +138,9 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
-/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot
-/// (`socket.ext(**T).*` in Zig). `None` covers the calloc'd-but-not-yet-
-/// stamped window during connect/accept.
+/// Dereference the `Option<NonNull<T>>` stored in a socket's ext slot.
+/// `None` covers the calloc'd-but-not-yet-stamped window during
+/// connect/accept.
 ///
 /// # Safety
 /// The pointee, when present, must be live and uniquely borrowed for `'a`

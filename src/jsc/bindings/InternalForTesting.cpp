@@ -85,7 +85,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta, (JSC::J
 
     const unsigned before = original->refCount();
 
-    // Give the BunString its own ref, mirroring how a Zig-side bun.String
+    // Give the BunString its own ref, mirroring how a Rust-side bun.String
     // owns one reference to the underlying StringImpl.
     original->ref();
     BunString str = { BunStringTag::WTFStringImpl, { .wtf = original.ptr() } };

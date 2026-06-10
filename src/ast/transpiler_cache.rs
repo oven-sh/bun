@@ -1,4 +1,4 @@
-//! `bun.jsc.RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig).
+//! Runtime transpiler cache.
 //!
 //! Single canonical struct, lowered to `bun_ast` so both the parser
 //! (`Features.runtime_transpiler_cache`) and the printer
@@ -19,8 +19,8 @@ pub struct RuntimeTranspilerCache {
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
-    /// Zig: `?bun.String` — bundler/parser only store/read the bytes; T6 owns
-    /// the `bun.String` wrapper when surfacing to JS.
+    /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
+    /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.

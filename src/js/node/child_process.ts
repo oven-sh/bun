@@ -1482,7 +1482,7 @@ class ChildProcess extends EventEmitter {
     // We still need this send function because
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
-      // we don't need to because the send callback is called on nextTick by ipc.zig
+      // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
         callback(err);
       } else if (err) {

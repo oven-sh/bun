@@ -122,58 +122,40 @@ impl EntryPointList {
 /// via `as_bundler_view`.
 pub use crate::options_impl::{Framework, ReactFastRefresh, ServerComponents};
 
-/// TYPE_ONLY moved down so the
-/// linker can splice the runtime preamble without depending on bun_bake.
+/// Seam type: the HMR runtime preamble the linker splices ahead of each
+/// `Format::InternalBakeDev` chunk.
 #[derive(Clone, Copy)]
 pub struct HmrRuntime {
     pub code: &'static [u8],
     /// Precomputed `\n` count — sourcemap generation skips this many lines.
     pub line_count: u32,
 }
-impl HmrRuntime {
-    pub const fn init(code: &'static [u8]) -> Self {
-        // const-fn newline counter.
-        let mut n: u32 = 0;
-        let mut i = 0usize;
-        while i < code.len() {
-            if code[i] == b'\n' {
-                n += 1;
-            }
-            i += 1;
-        }
-        Self {
-            code,
-            line_count: n,
-        }
-    }
-}
 /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
 pub type HmrRuntimeSide = Side;
 
-/// MOVE_DOWN bake→bundler:
-/// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
-/// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
-/// `js_parser/runtime.rs` uses for `runtime.out.js`), so the storage lives
-/// HERE — no upward link to `bun_runtime`. `bun_runtime::bake` keeps its
-/// own `&'static ZStr` flavour for JSC/C++ handoff; this bundler-side copy
-/// only needs `&[u8]` for the chunk preamble + sourcemap line skip, so the
-/// NUL-termination dance is unnecessary. Per-side `OnceLock<HmrRuntime>`
-/// memoizes the `\n` count (`runtime_embed_file!` already caches the file
-/// load, this caches the `init` scan so repeat calls are a `Copy`).
+/// The runtime's bytes are owned by `bun_runtime`'s dev-server module (which
+/// embeds the codegen'd files and also hands them to JSC); the bundler only
+/// needs `&[u8]` for the chunk preamble + sourcemap line skip and reaches
+/// them through the definer-prefixed link-time hook below (same pattern as
+/// `__bun_bake_convert_stmts_for_chunk_hmr` in `lib.rs`). Per-side
+/// `OnceLock<HmrRuntime>` memoizes the hook result (the definer recounts
+/// `\n` per call), so repeat calls are a `Copy`.
 pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
     static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
-    match side {
-        Side::Client => *CLIENT.get_or_init(|| {
-            HmrRuntime::init(
-                bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-            )
-        }),
-        // Server runtime is loaded once; non-eager.
-        Side::Server => *SERVER.get_or_init(|| {
-            HmrRuntime::init(bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes())
-        }),
-    }
+    let cell = match side {
+        Side::Client => &CLIENT,
+        Side::Server => &SERVER,
+    };
+    *cell.get_or_init(|| __bun_bake_get_hmr_runtime(side))
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in `bun_runtime` (`bake/bake_body.rs`). All
+    /// argument/return types are safe Rust values (no raw-pointer
+    /// preconditions), so the link-time-resolved body upholds Rust's
+    /// invariants on its own.
+    safe fn __bun_bake_get_hmr_runtime(side: Side) -> HmrRuntime;
 }
 
 /// Descriptor for one synthesized virtual module. The bundler creates the two

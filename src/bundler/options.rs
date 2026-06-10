@@ -269,12 +269,65 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
     TARGET_MAIN_FIELD_NAMES[3],
 ];
 
-/// Seam re-exports: `TargetExt` (the bundler-only `Target::bake_graph()`
-/// extension) is declared next to the `Graph` type it returns; `Framework` is
-/// the seam view `BundleOptions.framework` stores. Re-exported so
-/// `use bun_bundler::options::TargetExt;` keeps resolving the method on the
-/// single canonical `Target` (which lives in `bun_ast`, a lower tier).
-pub use crate::bake_types::{Framework, TargetExt};
+/// TYPE_ONLY subset of the framework fields the bundler/parser actually
+/// consult — host-owned bundler vocabulary (`built_in_modules`,
+/// `server_components`, `react_fast_refresh`, `is_built_in_react`,
+/// `client_css_in_js`). `bake_types` (and through it `bun_runtime::bake`)
+/// re-exports this as the one nominal type; the runtime projects its
+/// canonical `bake.Framework` superset into this view via `as_bundler_view`.
+/// `file_system_router_types` stays in the runtime because only
+/// `bake::FrameworkRouter` reads it.
+#[non_exhaustive]
+pub struct Framework {
+    pub built_in_modules: StringArrayHashMap<bun_options_types::BuiltInModule>,
+    /// Mirrors `Framework.server_components`.
+    pub server_components: Option<ServerComponents>,
+    /// Mirrors `Framework.react_fast_refresh` — read by the parser
+    /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
+    /// .import_source`) when `features.react_fast_refresh` is on.
+    pub react_fast_refresh: Option<ReactFastRefresh>,
+    /// Mirrors `Framework.is_built_in_react` — read by
+    /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
+    pub is_built_in_react: bool,
+    /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
+    pub client_css_in_js: ClientCssInJs,
+}
+impl Framework {
+    /// Construct the bundler-side TYPE_ONLY view. Called from
+    /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+    /// runtime owns the canonical `bake.Framework` and projects the
+    /// fields the bundler reads.
+    pub fn new(
+        built_in_modules: StringArrayHashMap<bun_options_types::BuiltInModule>,
+        server_components: Option<ServerComponents>,
+        react_fast_refresh: Option<ReactFastRefresh>,
+        is_built_in_react: bool,
+    ) -> Self {
+        Self {
+            built_in_modules,
+            server_components,
+            react_fast_refresh,
+            is_built_in_react,
+            client_css_in_js: ClientCssInJs::default(),
+        }
+    }
+}
+/// `Framework.ServerComponents` — full string
+/// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
+/// can forward user-configured `serverRegisterServerReference` /
+/// `clientRegisterServerReference` instead of hardcoding defaults.
+#[derive(Default, Clone)]
+pub struct ServerComponents {
+    pub separate_ssr_graph: bool,
+    pub server_runtime_import: Box<[u8]>,
+    pub server_register_client_reference: Box<[u8]>,
+    pub server_register_server_reference: Box<[u8]>,
+    pub client_register_server_reference: Box<[u8]>,
+}
+#[derive(Clone)]
+pub struct ReactFastRefresh {
+    pub import_source: Box<[u8]>,
+}
 
 // `Target::fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
 // (PORTING.md "*_jsc alias" rule); `from_api`/`to_api` on

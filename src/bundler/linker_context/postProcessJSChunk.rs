@@ -5,7 +5,7 @@ use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
-use crate::options_impl::TargetExt as _;
+use crate::bake_types::TargetExt as _;
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,

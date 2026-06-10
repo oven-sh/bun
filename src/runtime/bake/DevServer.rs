@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
-use bun_bundler::options_impl::TargetExt as _;
+use bun_bundler::bake_types::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
@@ -495,17 +495,19 @@ impl DeferredPromise {
 impl DevServer {
     /// Build the dev server for a `Bun.serve` instance whose config carried
     /// `app` options (`Ok(None)` when it didn't). Consumes the framework and
-    /// bundler options out of `config.bake`; the arena that backs `root`
-    /// stays in `config.bake`, which must outlive the returned `DevServer`
-    /// (it lives in the server's config for the server's lifetime).
+    /// bundler options out of `config.dev_server_options`; the arena that
+    /// backs `root` stays in the boxed options behind that handle, which must
+    /// outlive the returned `DevServer` (it lives in the server's config for
+    /// the server's lifetime).
     pub fn from_server_config(
         config: &mut crate::server::ServerConfig,
     ) -> JsResult<Option<Box<DevServer>>> {
         let broadcast_console_log_from_browser_to_server =
             config.broadcast_console_log_from_browser_to_server_for_bake;
-        let Some(bake_options) = &mut config.bake else {
+        let Some(handle) = &mut config.dev_server_options else {
             return Ok(None);
         };
+        let bake_options = bake::UserOptions::from_erased_mut(handle);
         init(Options {
             arena: &bake_options.arena,
             root: bake_options.root,

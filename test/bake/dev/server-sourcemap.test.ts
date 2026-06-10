@@ -147,3 +147,50 @@ function helperFunction() {
     expect(hasPageCallLine).toBe(true);
   },
 });
+
+// Each round re-registers the file's source provider over the previous one
+// and re-materializes the parsed map from it, so stack remapping must stay
+// correct through repeated provider replacement, not just the first install.
+function churnPage(name: string) {
+  return `export default function ChurnPage() {
+  churn${name}();
+  return <div>churn ${name}</div>;
+}
+
+function churn${name}() {
+  throw new Error("Churn error ${name}");
+}
+
+export async function getStaticPaths() {
+  return {
+    paths: [{ params: {} }],
+  };
+}`;
+}
+
+devTest("server-side source maps stay correct across repeated reloads", {
+  files: {
+    "pages/churn.tsx": churnPage("Alpha"),
+  },
+  framework: "react",
+  async test(dev) {
+    for (const name of ["Alpha", "Bravo", "Charlie", "Delta"]) {
+      if (name !== "Alpha") {
+        await dev.write("pages/churn.tsx", churnPage(name));
+      }
+      await Promise.all([
+        dev.fetch("/churn").catch(() => {}),
+        dev.output.waitForLine(new RegExp(`Churn error ${name}`)),
+      ]);
+
+      // Strip ANSI codes; they interleave within stack-frame lines.
+      const cleanLines = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+      // The throwing function is declared on line 6 of every version of the
+      // source file; frames remap to the declaration position (see the
+      // `helperFunction`/`5:1` expectation above). `\w*` tolerates bundler
+      // symbol renaming (see `doSomething2` above).
+      expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:6:1\\)`));
+    }
+  },
+  timeoutMultiplier: 2,
+});

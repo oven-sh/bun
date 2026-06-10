@@ -86,6 +86,7 @@ pub(crate) fn mysql_error_to_js(
 
     let code: &'static [u8] = match name {
         "ConnectionClosed" => b"ERR_MYSQL_CONNECTION_CLOSED",
+        "ConnectionFailed" => b"ERR_MYSQL_CONNECTION_FAILED",
         "Overflow" => b"ERR_MYSQL_OVERFLOW",
         "AuthenticationFailed" => b"ERR_MYSQL_AUTHENTICATION_FAILED",
         "UnsupportedAuthPlugin" => b"ERR_MYSQL_UNSUPPORTED_AUTH_PLUGIN",

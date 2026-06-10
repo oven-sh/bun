@@ -57,6 +57,21 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 
+// node.http trace events ('http.server.request' b/e). The agent module is
+// only created on the first request, and emission is gated per-request on the
+// category, so this is near-zero cost when tracing is off.
+const kHttpTraceCat = "node,node.http";
+let traceEvents = null;
+function traceServerRequestStart(http_res) {
+  traceEvents ??= require("internal/trace_events");
+  if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
+  traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
+  http_res.once("finish", traceServerRequestEnd);
+}
+function traceServerRequestEnd() {
+  traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
+}
+
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
@@ -615,6 +630,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
+        // Node traces every parsed request before Expect/limit routing
+        // (parserOnIncoming); upgrades never reach that path.
+        if (!is_upgrade) traceServerRequestStart(http_res);
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);

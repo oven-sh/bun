@@ -263,6 +263,11 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
     }
 }
 
+pub fn lchown(_file_path: &ZStr, _uid: uv::uv_uid_t, _gid: uv::uv_uid_t) -> Result<()> {
+    // libuv's Windows `uv_fs_lchown` is a no-op success (no ownership model).
+    Result::Ok(())
+}
+
 pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
     let uv_fd = fd.uv();
 

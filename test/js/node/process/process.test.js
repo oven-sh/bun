@@ -784,6 +784,43 @@ describe.concurrent(() => {
       expect(() => Object.keys(process.env)).not.toThrow();
       expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
     });
+
+    // The get trap used to uppercase every string key, so inherited
+    // Object.prototype methods and own as-is props came back undefined —
+    // node's process-env trace fixture crashed on
+    // `process.env.hasOwnProperty('BAZ')`.
+    it("windows process.env exposes prototype methods and own props alongside case-insensitive vars", () => {
+      process.env.BUN_TEST_ENV_PROXY = "value";
+      try {
+        // Case-insensitive env-var access still wins.
+        expect(process.env.bun_test_env_proxy).toBe("value");
+        expect(process.env.Bun_Test_Env_Proxy).toBe("value");
+        // Inherited Object.prototype methods are callable, like node.
+        expect(typeof process.env.hasOwnProperty).toBe("function");
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY")).toBe(true);
+        expect(process.env.hasOwnProperty("BUN_TEST_ENV_PROXY_MISSING")).toBe(false);
+        expect(typeof process.env.toString).toBe("function");
+        expect("hasOwnProperty" in process.env).toBe(true);
+        // Own as-is properties (toJSON powers JSON.stringify(process.env)).
+        expect(typeof process.env.toJSON).toBe("function");
+        expect(JSON.parse(JSON.stringify(process.env)).BUN_TEST_ENV_PROXY).toBe("value");
+        // toJSON must keep the original-case key names, not the canonical
+        // UPPERCASE storage keys (children echoing their env over IPC or
+        // JSON.stringify must see the same casing the parent saw).
+        process.env.Bun_Test_Env_Proxy_Mixed = "mixed";
+        try {
+          const json = JSON.parse(JSON.stringify(process.env));
+          expect(json.Bun_Test_Env_Proxy_Mixed).toBe("mixed");
+          expect(json.BUN_TEST_ENV_PROXY_MIXED).toBeUndefined();
+        } finally {
+          delete process.env.Bun_Test_Env_Proxy_Mixed;
+        }
+        // Enumeration still works and sees the var.
+        expect(Object.keys(process.env)).toContain("BUN_TEST_ENV_PROXY");
+      } finally {
+        delete process.env.BUN_TEST_ENV_PROXY;
+      }
+    });
   }
 
   it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {

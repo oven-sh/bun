@@ -618,6 +618,38 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   },
 };
 
+// node.net.native trace events: one 'b'/'e' pair per connect *attempt*,
+// including failed ones. 'b' is emitted where the attempt is issued
+// (internalConnect / internalConnectMultiple); the per-req flag dedupes the
+// 'e' across the afterConnect / afterConnectMultiple / rejected-promise
+// completion paths. Near-zero cost when tracing is off.
+const kNetTraceCat = "node,node.net,node.net.native";
+const kTraceConnectActive = Symbol("kTraceConnectActive");
+let traceEvents = null;
+function traceConnectStart(req, pipePath?) {
+  traceEvents ??= require("internal/trace_events");
+  if (!traceEvents.isCategoryGroupEnabled(kNetTraceCat)) return;
+  if (pipePath !== undefined) {
+    // Node (pipe_wrap.cc) emits path_type/pipe_path at the top level of the
+    // event's `args` for pipe connects; an abstract socket path starts with
+    // '\0', which is stripped from the reported path.
+    const isAbstract = pipePath.charCodeAt(0) === 0;
+    traceEvents.emitEventWithArgs("b", kNetTraceCat, "connect", undefined, {
+      path_type: isAbstract ? "abstract socket" : "file",
+      pipe_path: isAbstract ? pipePath.slice(1) : pipePath,
+    });
+  } else {
+    traceEvents.emitEvent("b", kNetTraceCat, "connect");
+  }
+  req[kTraceConnectActive] = true;
+}
+function traceConnectEnd(req) {
+  if (req && req[kTraceConnectActive]) {
+    req[kTraceConnectActive] = false;
+    traceEvents.emitEvent("e", kNetTraceCat, "connect");
+  }
+}
+
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   const promise = doConnect(self._handle, {
@@ -632,6 +664,7 @@ function kConnectTcp(self, addressType, req, address, port) {
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
+    traceConnectEnd(req);
   });
   return 0;
 }
@@ -649,6 +682,7 @@ function kConnectPipe(self, req, address) {
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
+    traceConnectEnd(req);
   });
   return 0;
 }
@@ -1773,6 +1807,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.addressType = addressType;
     req.tls = tls;
 
+    traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
   } else {
     const req: any = {};
@@ -1780,6 +1815,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.oncomplete = afterConnect;
     req.tls = tls;
 
+    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 
@@ -1908,6 +1944,7 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
+  traceConnectStart(req);
   err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {
@@ -1942,6 +1979,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  traceConnectEnd(req);
   if (!handle) return;
   const self = handle[owner_symbol];
   if (!self) return;
@@ -1998,6 +2036,7 @@ function afterConnect(status, handle, req, readable, writable) {
 }
 
 function afterConnectMultiple(context, current, status, handle, req, readable, writable) {
+  traceConnectEnd(req);
   $debug("connect/multiple: connection attempt to %s:%s completed with status %s", req.address, req.port, status);
 
   // Make sure another connection is not spawned

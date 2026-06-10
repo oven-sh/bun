@@ -216,6 +216,10 @@ function ClientRequest(input, options, cb) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
+    // Close the http.client.request trace span if no response ever arrived
+    // (req.destroy()/abort before headers); deduped by the per-request flag.
+    traceClientResponseEnd(this);
+
     const res = this.res;
 
     // If we're aborting, we don't care about any more response data.
@@ -243,6 +247,10 @@ function ClientRequest(input, options, cb) {
 
   const socketCloseListener = () => {
     this.destroyed = true;
+
+    // Socket-level close without a response (connection reset, abort):
+    // close the trace span so it doesn't stay open forever.
+    traceClientResponseEnd(this);
 
     const res = this.res;
     if (res) {
@@ -444,10 +452,12 @@ function ClientRequest(input, options, cb) {
                 emitErrorEventNT(self, $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error"));
 
                 res.complete = true;
+                traceClientResponseEnd(self);
                 maybeEmitClose();
                 return;
               }
               try {
+                traceClientResponseEnd(self);
                 if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }
@@ -507,6 +517,10 @@ function ClientRequest(input, options, cb) {
             }
 
             if (!!$debug) globalReportError(err);
+
+            // Request failed before any response (ECONNREFUSED, DNS, parse
+            // error): close the trace span; deduped by the per-request flag.
+            traceClientResponseEnd(this);
 
             try {
               this.emit("error", err);
@@ -993,6 +1007,25 @@ function ClientRequest(input, options, cb) {
       this.removeAllListeners("timeout");
     }
   };
+
+  traceEvents ??= require("internal/trace_events");
+  if (traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) {
+    traceEvents.emitEvent("b", kHttpTraceCat, "http.client.request");
+    this[kTraceRequestActive] = true;
+  }
+}
+
+// node.http trace events ('http.client.request' b/e). 'b' is emitted at
+// request creation; 'e' fires once when the response arrives (the per-request
+// flag dedupes). Near-zero cost when tracing is off.
+const kHttpTraceCat = "node,node.http";
+const kTraceRequestActive = Symbol("kTraceRequestActive");
+let traceEvents = null;
+function traceClientResponseEnd(req) {
+  if (req[kTraceRequestActive]) {
+    req[kTraceRequestActive] = false;
+    traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
+  }
 }
 
 const ClientRequestPrototype = {

@@ -767,6 +767,11 @@ fn param_display_width(param: &Param<Help>) -> usize {
 fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
     let mut res: usize = 2;
     for param in params {
+        // Params with no help text are hidden (skipped by `simple_help` /
+        // `simple_help_bun_top_level`), so they must not widen the column.
+        if get_help_simple(param).is_empty() {
+            continue;
+        }
         res = res.max(param_display_width(param));
     }
     res

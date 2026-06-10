@@ -27,6 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
+#include "BunClientData.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -496,17 +497,43 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    // This is the top of the stack for the worker's error dispatch: both the
+    // structured clone below (even in NonThrowing mode, serialization can run
+    // JS via getters/proxies and leave a pending exception) and the `code`
+    // property read must not propagate exceptions out of this function.
+    auto& vm = JSC::getVM(workerGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+    CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
         return false;
 
-    return postTaskToParent([protectedThis = Ref { *this }, serialized](ScriptExecutionContext& context) {
+    // Structured clone keeps only the standard Error fields
+    // (name/message/stack/line/column/sourceURL), but Node's worker 'error'
+    // event preserves `error.code` (lib/internal/error_serdes.js) and the
+    // vendored node tests assert on it (e.g. ERR_TRACE_EVENTS_UNAVAILABLE).
+    // Carry a string `code` across the thread boundary manually. If reading
+    // `code` throws (a throwing getter/proxy), drop the code and proceed.
+    String errorCode;
+    if (value.isObject() && !scope.exception()) {
+        JSValue codeValue = value.getObject()->getIfPropertyExists(workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
+        if (!scope.exception() && codeValue && codeValue.isString())
+            errorCode = codeValue.toWTFString(workerGlobalObject);
+        CLEAR_IF_EXCEPTION(scope);
+    }
+
+    return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         ErrorEvent::Init init;
         JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
         RETURN_IF_EXCEPTION(scope, );
+        if (!errorCode.isNull()) {
+            if (auto* errorObject = deserialized.getObject())
+                errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
+        }
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);

@@ -24,9 +24,7 @@ bun_opaque::opaque_ffi! {
 /// before calling.
 ///
 /// Both slot fields are `Copy` `Cell`s, so every method takes `&self` —
-/// callers reaching this through a shared `&Debugger` borrow do not need
-/// `&mut` (the `&mut` in `DevServer::inspector`'s return type is kept for its
-/// callers' aliasing discipline, not required here).
+/// callers reach this through a shared `&Debugger` borrow.
 #[repr(transparent)]
 pub struct BunFrontendDevServerAgent(ErasedAgentSlot);
 
@@ -34,9 +32,9 @@ impl BunFrontendDevServerAgent {
     /// Reinterpret the `Debugger`'s erased slot as this agent. Sound because
     /// `Self` is `#[repr(transparent)]` over [`ErasedAgentSlot`] and this
     /// module is the slot's sole owner.
-    pub fn from_slot_mut(slot: &mut ErasedAgentSlot) -> &mut Self {
+    pub fn from_slot(slot: &ErasedAgentSlot) -> &Self {
         // SAFETY: `#[repr(transparent)]` guarantees identical layout.
-        unsafe { &mut *core::ptr::from_mut(slot).cast::<Self>() }
+        unsafe { &*core::ptr::from_ref(slot).cast::<Self>() }
     }
 
     /// `nextConnectionID` — wrapping post-increment.
@@ -190,12 +188,10 @@ impl BunFrontendDevServerAgent {
 
 // HOST_EXPORT(Bun__InspectorBunFrontendDevServerAgent__setEnabled, c)
 pub fn frontend_dev_server_agent_set_enabled(agent: *mut InspectorBunFrontendDevServerAgentHandle) {
-    // SAFETY: called on the JS thread with a live VM (C++ inspector agent
-    // invokes this only after the VM is initialized).
-    if let Some(dbg) = VirtualMachine::get().as_mut().debugger.as_deref_mut() {
-        // `dbg: &mut Debugger`, so safe `UnsafeCell::get_mut` applies — no
-        // raw-pointer deref needed.
-        dbg.extension_agent.get_mut().set_agent_ptr(agent.cast());
+    // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
+    // this on the JS thread, after the VM is initialized.
+    if let Some(dbg) = VirtualMachine::get().debugger.as_deref() {
+        dbg.extension_agent.set_agent_ptr(agent.cast());
     }
 }
 

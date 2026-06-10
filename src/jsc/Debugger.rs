@@ -7,7 +7,7 @@
 //! (`bun_runtime::test_runner`) — a forward-dep cycle — so it dispatches
 //! through [`RuntimeHooks::retroactively_report_discovered_tests`].
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -116,10 +116,9 @@ pub struct Debugger {
 
     pub test_reporter_agent: TestReporterAgent,
     pub lifecycle_reporter_agent: LifecycleAgent,
-    /// `UnsafeCell` because the slot's owner hands out `&mut` to it through a
-    /// shared `&VirtualMachine` borrow. JS-thread only; callers must not hold
-    /// overlapping `&mut` borrows.
-    pub extension_agent: UnsafeCell<ErasedAgentSlot>,
+    /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
+    /// provide the interior mutability. JS-thread only.
+    pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
 }
@@ -137,7 +136,7 @@ impl Default for Debugger {
             mode: Mode::Listen,
             test_reporter_agent: TestReporterAgent::default(),
             lifecycle_reporter_agent: LifecycleAgent::default(),
-            extension_agent: UnsafeCell::new(ErasedAgentSlot::default()),
+            extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: false,
         }

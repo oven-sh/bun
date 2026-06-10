@@ -533,25 +533,33 @@ impl DevServer {
 // downcasts it for the host's calls, and the `Deref` impls are the typed
 // views the per-request paths (`as_deref{,_mut}` callers) consume.
 
+// Every body downcasts under the same slot contract: per
+// `DevServerSlot::from_raw`, `ptr` is the `Box<DevServer>` leaked by
+// `__bun_dev_server_from_server_config` below, and the calling slot carries
+// the (JS-thread) access claim.
 static DEV_SERVER_SLOT_VTABLE: crate::server::DevServerSlotVTable =
     crate::server::DevServerSlotVTable {
-        // SAFETY (each body): `DevServerSlot::from_raw`'s contract — `ptr` is
-        // the `Box<DevServer>` leaked by `__bun_dev_server_from_server_config`
-        // below, and the calling slot carries the (JS-thread) access claim.
+        // SAFETY: slot contract above; the slot's single drop call retakes the
+        // leaked box.
         drop_fn: |ptr| drop(unsafe { Box::from_raw(ptr.cast::<DevServer>().as_ptr()) }),
+        // SAFETY: slot contract above.
         memory_cost: |ptr| unsafe { ptr.cast::<DevServer>().as_ref() }.memory_cost(),
         set_inspector_server_id: |ptr, id| {
+            // SAFETY: slot contract above.
             unsafe { ptr.cast::<DevServer>().as_mut() }.inspector_server_id = id;
         },
         is_allowed_host: |ptr, req| {
+            // SAFETY: slot contract above.
             unsafe { ptr.cast::<DevServer>().as_ref() }.is_allowed_host(req)
         },
         put_html_route: |ptr, path, route| {
+            // SAFETY: slot contract above.
             unsafe { ptr.cast::<DevServer>().as_mut() }
                 .html_router
                 .put(path, route)
         },
         set_routes: |ptr, server| {
+            // SAFETY: slot contract above.
             let dev = unsafe { ptr.cast::<DevServer>().as_mut() };
             // Un-erase the `(SSL, DEBUG)` monomorphization the host dispatched
             // away; `dev` and the server are disjoint heap allocations, so the

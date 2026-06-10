@@ -15,6 +15,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod comptime_string_map;
 pub mod hint;
 pub mod result;
 pub mod thread_id;

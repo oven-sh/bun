@@ -192,11 +192,13 @@ pub(crate) enum ImportsNotUsedAsValue {
     Invalid,
 }
 
-pub(crate) static IMPORTS_NOT_USED_AS_VALUE_LIST: phf::Map<&'static [u8], ImportsNotUsedAsValue> = phf::phf_map! {
-    b"preserve" => ImportsNotUsedAsValue::Preserve,
-    b"error" => ImportsNotUsedAsValue::Err,
-    b"remove" => ImportsNotUsedAsValue::Remove,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static IMPORTS_NOT_USED_AS_VALUE_LIST: ImportsNotUsedAsValue = {
+        b"preserve" => ImportsNotUsedAsValue::Preserve,
+        b"error" => ImportsNotUsedAsValue::Err,
+        b"remove" => ImportsNotUsedAsValue::Remove,
+    };
+}
 
 // Hidden by default, enabled via `BUN_DEBUG_alloc=1`. Tests count `new(TSConfigJSON)` /
 // `destroy(TSConfigJSON)` lines to assert the extends-chain merge frees intermediates.

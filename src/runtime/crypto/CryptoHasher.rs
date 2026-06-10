@@ -506,7 +506,7 @@ impl CryptoHasher {
             if let Some(key) = &hmac_key {
                 // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
                 // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup` instead of a `phf::Map`.
+                // length-gated `evp::lookup` directly.
                 let chosen_algorithm: evp::Algorithm = {
                     let slice = algorithm_name.to_slice(global)?;
                     match evp::lookup(slice.slice()) {

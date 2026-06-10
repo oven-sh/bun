@@ -45,6 +45,13 @@ pub enum T {
     t_empty_array,
 }
 
+bun_core::comptime_string_map! {
+    static KEYWORDS: T = {
+        b"true" => T::t_true,
+        b"false" => T::t_false,
+    };
+}
+
 pub struct Lexer<'a> {
     // Borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
@@ -829,23 +836,10 @@ impl<'a> Lexer<'a> {
                         self.step();
                     }
                     self.identifier = self.raw();
-                    self.token = match self.identifier.len() {
-                        4 => {
-                            if strings::eql_comptime_ignore_len(self.identifier, b"true") {
-                                T::t_true
-                            } else {
-                                T::t_identifier
-                            }
-                        }
-                        5 => {
-                            if strings::eql_comptime_ignore_len(self.identifier, b"false") {
-                                T::t_false
-                            } else {
-                                T::t_identifier
-                            }
-                        }
-                        _ => T::t_identifier,
-                    };
+                    self.token = KEYWORDS
+                        .get(self.identifier)
+                        .copied()
+                        .unwrap_or(T::t_identifier);
                 }
 
                 _ => self.unexpected()?,

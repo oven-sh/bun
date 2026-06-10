@@ -149,26 +149,26 @@ impl Default for Meta {
     }
 }
 
-// PERF: 16 entries spread across 9 distinct
-// lengths (max 4 per bucket), so a length-gated match beats a phf hash set:
-// the outer `usize` compare rejects almost everything before any byte
-// compare, and within a bucket the known-equal-length lets LLVM lower the
-// `==` to a single wide load/compare. See clap::find_param (12577e958d71)
-// for the reference pattern.
-#[inline]
-fn is_not_allowed_autopipeline_command(cmd: &[u8]) -> bool {
-    match cmd.len() {
-        4 => matches!(cmd, b"AUTH" | b"EXEC" | b"INFO" | b"QUIT"),
-        5 => matches!(cmd, b"MULTI" | b"WATCH"),
-        6 => matches!(cmd, b"SCRIPT" | b"SELECT"),
-        7 => matches!(cmd, b"CLUSTER" | b"DISCARD" | b"UNWATCH"),
-        8 => cmd == b"PIPELINE",
-        9 => cmd == b"SUBSCRIBE",
-        10 => cmd == b"PSUBSCRIBE",
-        11 => cmd == b"UNSUBSCRIBE",
-        12 => cmd == b"UNPSUBSCRIBE",
-        _ => false,
-    }
+bun_core::comptime_string_set! {
+    /// Commands that must not be auto-pipelined.
+    static AUTO_PIPELINE_DISALLOWED_COMMANDS = {
+        b"AUTH",
+        b"EXEC",
+        b"INFO",
+        b"QUIT",
+        b"MULTI",
+        b"WATCH",
+        b"SCRIPT",
+        b"SELECT",
+        b"CLUSTER",
+        b"DISCARD",
+        b"UNWATCH",
+        b"PIPELINE",
+        b"SUBSCRIBE",
+        b"PSUBSCRIBE",
+        b"UNSUBSCRIBE",
+        b"UNPSUBSCRIBE",
+    };
 }
 
 impl Meta {
@@ -176,7 +176,7 @@ impl Meta {
         let mut new = self;
         new.set(
             Meta::SUPPORTS_AUTO_PIPELINING,
-            !is_not_allowed_autopipeline_command(command.command),
+            !AUTO_PIPELINE_DISALLOWED_COMMANDS.contains(command.command),
         );
         new
     }

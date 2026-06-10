@@ -107,13 +107,15 @@ impl Method {
 
 type BackendSupport = enum_map::EnumMap<Method, bool>;
 
-pub(crate) static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
-    b"clonefile" => Method::Clonefile,
-    b"clonefile_each_dir" => Method::ClonefileEachDir,
-    b"hardlink" => Method::Hardlink,
-    b"copyfile" => Method::Copyfile,
-    b"symlink" => Method::Symlink,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static METHOD_MAP: Method = {
+        b"clonefile" => Method::Clonefile,
+        b"clonefile_each_dir" => Method::ClonefileEachDir,
+        b"hardlink" => Method::Hardlink,
+        b"copyfile" => Method::Copyfile,
+        b"symlink" => Method::Symlink,
+    };
+}
 
 impl Method {
     #[cfg(target_os = "macos")]

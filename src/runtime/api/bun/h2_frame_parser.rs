@@ -582,25 +582,25 @@ use bun_io::Write as WireWriter;
 // Static header maps
 // ──────────────────────────────────────────────────────────────────────────
 
-// PERF: a single slice compare is strictly cheaper than a phf::Map
-// .contains_key() (SipHash + compare) on a 1-entry set.
+// A 1-entry set: a single slice compare; a lookup table buys nothing.
 #[inline]
 fn is_valid_response_pseudo_header(name: &[u8]) -> bool {
     name == b":status"
 }
 
-// PERF: a phf::Map hashes the full key (SipHash) before compare; with 5 keys whose
-// lengths are {5,7,7,9,10} a length-gated match rejects most misses on a single
-// usize compare and hits in ≤2 slice compares — cheaper than the hash.
+bun_core::comptime_string_set! {
+    static REQUEST_PSEUDO_HEADERS = {
+        b":path",
+        b":method",
+        b":scheme",
+        b":protocol",
+        b":authority",
+    };
+}
+
 #[inline]
 fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
-    match name.len() {
-        5 => name == b":path",
-        7 => name == b":method" || name == b":scheme",
-        9 => name == b":protocol",
-        10 => name == b":authority",
-        _ => false,
-    }
+    REQUEST_PSEUDO_HEADERS.contains(name)
 }
 
 #[inline]
@@ -645,131 +645,78 @@ fn is_malformed_field_value(value: &[u8]) -> bool {
     value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
+bun_core::comptime_string_set! {
+    static FORBIDDEN_CONNECTION_SPECIFIC_HEADERS = {
+        b"connection",
+        b"keep-alive",
+        b"proxy-connection",
+        b"transfer-encoding",
+        b"upgrade",
+    };
+}
+
 #[inline]
 fn is_forbidden_connection_specific_header(name: &[u8], value: &[u8]) -> bool {
     if name == b"te" {
         return !value.eq_ignore_ascii_case(b"trailers");
     }
-    matches!(
-        name,
-        b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade"
-    )
+    FORBIDDEN_CONNECTION_SPECIFIC_HEADERS.contains(name)
 }
 
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
-/// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
-/// must carry only a single value, or `None` otherwise. The index is used
-/// solely to address a per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset
-/// for duplicate detection — the concrete numeric value has no other meaning.
-///
-/// PERF: a `phf::Map` does not expose stable indices, so it would force a
-/// *linear* `.entries().position()` scan — 40 slice compares per header per
-/// HTTP/2 request. The hand-rolled match below is a length-gated switch: one
-/// `usize` length compare rejects every miss whose length has no entries, and
-/// the largest same-length bucket is 5 entries (len 7), so a hit costs at
-/// most 5 short slice compares and a miss typically costs 0–2.
+bun_core::comptime_string_map! {
+    /// Maps headers that must carry only a single value to a stable index in
+    /// `0..SINGLE_VALUE_HEADERS_LEN`. The index is used solely to address a
+    /// per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset for duplicate
+    /// detection — the concrete numeric value has no other meaning.
+    static SINGLE_VALUE_HEADERS: usize = {
+        b"tk" => 36,
+        b"age" => 9,
+        b"dnt" => 19,
+        b"date" => 18,
+        b"etag" => 20,
+        b"from" => 22,
+        b"host" => 23,
+        b":path" => 4,
+        b"range" => 33,
+        b":status" => 0,
+        b":method" => 1,
+        b":scheme" => 3,
+        b"expires" => 21,
+        b"referer" => 34,
+        b"if-match" => 24,
+        b"if-range" => 27,
+        b"location" => 30,
+        b":protocol" => 5,
+        b":authority" => 2,
+        b"user-agent" => 38,
+        b"content-md5" => 15,
+        b"retry-after" => 35,
+        b"content-type" => 17,
+        b"max-forwards" => 31,
+        b"authorization" => 10,
+        b"content-range" => 16,
+        b"if-none-match" => 26,
+        b"last-modified" => 29,
+        b"content-length" => 13,
+        b"content-encoding" => 11,
+        b"content-language" => 12,
+        b"content-location" => 14,
+        b"if-modified-since" => 25,
+        b"if-unmodified-since" => 28,
+        b"proxy-authorization" => 32,
+        b"access-control-max-age" => 7,
+        b"x-content-type-options" => 39,
+        b"upgrade-insecure-requests" => 37,
+        b"access-control-request-method" => 8,
+        b"access-control-allow-credentials" => 6,
+    };
+}
+
+#[inline]
 fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
-    match name.len() {
-        2 => match name {
-            b"tk" => Some(36),
-            _ => None,
-        },
-        3 => match name {
-            b"age" => Some(9),
-            b"dnt" => Some(19),
-            _ => None,
-        },
-        4 => match name {
-            b"date" => Some(18),
-            b"etag" => Some(20),
-            b"from" => Some(22),
-            b"host" => Some(23),
-            _ => None,
-        },
-        5 => match name {
-            b":path" => Some(4),
-            b"range" => Some(33),
-            _ => None,
-        },
-        7 => match name {
-            b":status" => Some(0),
-            b":method" => Some(1),
-            b":scheme" => Some(3),
-            b"expires" => Some(21),
-            b"referer" => Some(34),
-            _ => None,
-        },
-        8 => match name {
-            b"if-match" => Some(24),
-            b"if-range" => Some(27),
-            b"location" => Some(30),
-            _ => None,
-        },
-        9 => match name {
-            b":protocol" => Some(5),
-            _ => None,
-        },
-        10 => match name {
-            b":authority" => Some(2),
-            b"user-agent" => Some(38),
-            _ => None,
-        },
-        11 => match name {
-            b"content-md5" => Some(15),
-            b"retry-after" => Some(35),
-            _ => None,
-        },
-        12 => match name {
-            b"content-type" => Some(17),
-            b"max-forwards" => Some(31),
-            _ => None,
-        },
-        13 => match name {
-            b"authorization" => Some(10),
-            b"content-range" => Some(16),
-            b"if-none-match" => Some(26),
-            b"last-modified" => Some(29),
-            _ => None,
-        },
-        14 => match name {
-            b"content-length" => Some(13),
-            _ => None,
-        },
-        16 => match name {
-            b"content-encoding" => Some(11),
-            b"content-language" => Some(12),
-            b"content-location" => Some(14),
-            _ => None,
-        },
-        17 => match name {
-            b"if-modified-since" => Some(25),
-            _ => None,
-        },
-        19 => match name {
-            b"if-unmodified-since" => Some(28),
-            b"proxy-authorization" => Some(32),
-            _ => None,
-        },
-        22 => match name {
-            b"access-control-max-age" => Some(7),
-            b"x-content-type-options" => Some(39),
-            _ => None,
-        },
-        25 => match name {
-            b"upgrade-insecure-requests" => Some(37),
-            _ => None,
-        },
-        29 => match name {
-            b"access-control-request-method" => Some(8),
-            _ => None,
-        },
-        32 => match name {
-            b"access-control-allow-credentials" => Some(6),
-            _ => None,
-        },
-        _ => None,
-    }
+    SINGLE_VALUE_HEADERS.get(name).copied()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

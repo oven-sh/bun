@@ -157,35 +157,30 @@ pub enum Category {
 
 impl Category {
     pub fn from_table(entry: Table) -> Category {
-        if entry == t!("text/javascript")
-            || entry == t!("application/javascript")
-            || entry == t!("application/javascript; charset=utf-8")
-        {
-            return Category::Javascript;
+        bun_core::comptime_string_map! {
+            static CATEGORY_OVERRIDES: Category = {
+                b"text/javascript" => Category::Javascript,
+                b"application/javascript" => Category::Javascript,
+                b"application/javascript; charset=utf-8" => Category::Javascript,
+                b"text/css" => Category::Css,
+                b"text/css;charset=utf-8" => Category::Css,
+                b"text/css; charset=utf-8" => Category::Css,
+                b"text/css; charset=utf8" => Category::Css,
+                b"text/css;charset=utf8" => Category::Css,
+                b"text/html" => Category::Html,
+                b"text/html;charset=utf-8" => Category::Html,
+                b"text/html; charset=utf-8" => Category::Html,
+                b"text/html; charset=utf8" => Category::Html,
+                b"text/html;charset=utf8" => Category::Html,
+                b"application/json" => Category::Json,
+                b"application/json;charset=utf-8" => Category::Json,
+                b"application/json; charset=utf-8" => Category::Json,
+                b"application/json; charset=utf8" => Category::Json,
+                b"application/json;charset=utf8" => Category::Json,
+            };
         }
-        if entry == t!("text/css")
-            || entry == t!("text/css;charset=utf-8")
-            || entry == t!("text/css; charset=utf-8")
-            || entry == t!("text/css; charset=utf8")
-            || entry == t!("text/css;charset=utf8")
-        {
-            return Category::Css;
-        }
-        if entry == t!("text/html")
-            || entry == t!("text/html;charset=utf-8")
-            || entry == t!("text/html; charset=utf-8")
-            || entry == t!("text/html; charset=utf8")
-            || entry == t!("text/html;charset=utf8")
-        {
-            return Category::Html;
-        }
-        if entry == t!("application/json")
-            || entry == t!("application/json;charset=utf-8")
-            || entry == t!("application/json; charset=utf-8")
-            || entry == t!("application/json; charset=utf8")
-            || entry == t!("application/json;charset=utf8")
-        {
-            return Category::Json;
+        if let Some(&category) = CATEGORY_OVERRIDES.get(entry.slice()) {
+            return category;
         }
         Category::init(entry.slice())
     }
@@ -245,44 +240,22 @@ impl Category {
                 return Category::Application;
             }
 
-            if category == b"image" {
-                return Category::Image;
+            bun_core::comptime_string_map! {
+                static CATEGORY_BY_NAME: Category = {
+                    b"image" => Category::Image,
+                    b"video" => Category::Video,
+                    b"audio" => Category::Audio,
+                    b"font" => Category::Font,
+                    b"multipart" => Category::Multipart,
+                    b"model" => Category::Model,
+                    b"message" => Category::Message,
+                    b"x-conference" => Category::XConference,
+                    b"x-shader" => Category::XShader,
+                    b"chemical" => Category::Chemical,
+                };
             }
-
-            if category == b"video" {
-                return Category::Video;
-            }
-
-            if category == b"audio" {
-                return Category::Audio;
-            }
-
-            if category == b"font" {
-                return Category::Font;
-            }
-
-            if category == b"multipart" {
-                return Category::Multipart;
-            }
-
-            if category == b"model" {
-                return Category::Model;
-            }
-
-            if category == b"message" {
-                return Category::Message;
-            }
-
-            if category == b"x-conference" {
-                return Category::XConference;
-            }
-
-            if category == b"x-shader" {
-                return Category::XShader;
-            }
-
-            if category == b"chemical" {
-                return Category::Chemical;
+            if let Some(&matched) = CATEGORY_BY_NAME.get(category) {
+                return matched;
             }
         }
 
@@ -511,10 +484,11 @@ pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// phf_map! rejects duplicate keys at compile time. The original table
+// Duplicate keys are rejected at compile time. The original table
 // contained duplicate entries for "tsx", "yaml", "yml" — only the first
 // occurrence is kept; later duplicates dropped below.
-pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub(crate) static EXTENSIONS: Table = {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
     b"3dml" => t!("text/vnd.in3d.3dml"),
@@ -1484,7 +1458,7 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    // (dup "tsx" dropped — phf rejects; first occurrence above wins)
+    // (dup "tsx" dropped — duplicate keys rejected; first occurrence above wins)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1684,10 +1658,10 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    // (dup "yaml" dropped — phf rejects; first occurrence above wins)
+    // (dup "yaml" dropped — duplicate keys rejected; first occurrence above wins)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    // (dup "yml" dropped — phf rejects; first occurrence above wins)
+    // (dup "yml" dropped — duplicate keys rejected; first occurrence above wins)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1702,7 +1676,8 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"zir" => t!("application/vnd.zul"),
     b"zirz" => t!("application/vnd.zul"),
     b"zmm" => t!("application/vnd.handheld-entertainment+xml"),
-};
+    };
+}
 
 const IMAGES_HEADERS: &[(&[u8], Table)] = &[
     (&[0x42, 0x4d], t!("image/bmp")),

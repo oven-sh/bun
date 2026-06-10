@@ -908,7 +908,7 @@ impl JSValue {
         let v = JSC__JSValue__toError_(self);
         if v.is_empty() { None } else { Some(v) }
     }
-    /// Map a JS string value to an enum via the type's `phf` map.
+    /// Map a JS string value to an enum via the type's string map.
     pub fn to_enum<E: FromJsEnum>(
         self,
         global: &JSGlobalObject,
@@ -1257,14 +1257,17 @@ impl JSValue {
         }
         Err(global.throw_invalid_property_type(property, "boolean", prop))
     }
-    /// Validates `is_string`, looks up via the supplied phf map, throws
+    /// Validates `is_string`, looks up via the supplied string map, throws
     /// "must be one of …" on miss. Callers pass `one_of` as a `'static`
     /// literal.
-    pub fn to_enum_from_map<E: Copy>(
+    pub fn to_enum_from_map<
+        E: Copy,
+        M: bun_core::comptime_string_map::ComptimeStringMap<Value = E>,
+    >(
         self,
         global: &JSGlobalObject,
         property_name: &'static str,
-        map: &'static phf::Map<&'static [u8], E>,
+        map: &'static M,
         one_of: &'static str,
     ) -> JsResult<E> {
         if !self.is_string() {
@@ -1297,11 +1300,14 @@ impl JSValue {
     }
     /// `get(prop)`, filter
     /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
-    pub fn get_optional_enum_from_map<E: Copy>(
+    pub fn get_optional_enum_from_map<
+        E: Copy,
+        M: bun_core::comptime_string_map::ComptimeStringMap<Value = E>,
+    >(
         self,
         global: &JSGlobalObject,
         property_name: &'static str,
-        map: &'static phf::Map<&'static [u8], E>,
+        map: &'static M,
         one_of: &'static str,
     ) -> JsResult<Option<E>> {
         match self.get(global, property_name)? {
@@ -1892,7 +1898,7 @@ impl CoerceTo for i32 {
     }
 }
 
-/// Dispatch trait for `JSValue::to_enum::<E>()`; the `phf` map is supplied
+/// Dispatch trait for `JSValue::to_enum::<E>()`; the string map is supplied
 /// per-enum via this trait.
 pub trait FromJsEnum: Sized {
     fn from_js_value(

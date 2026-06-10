@@ -659,11 +659,13 @@ impl Clone for Style {
     }
 }
 
-pub(crate) static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
-    b"nextjs-pages" => || Style::NextjsPages,
-    b"nextjs-app-ui" => || Style::NextjsAppUi,
-    b"nextjs-app-routes" => || Style::NextjsAppRoutes,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static STYLE_MAP: fn() -> Style = {
+        b"nextjs-pages" => || Style::NextjsPages,
+        b"nextjs-app-ui" => || Style::NextjsAppUi,
+        b"nextjs-app-routes" => || Style::NextjsAppRoutes,
+    };
+}
 
 pub(crate) const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
@@ -781,23 +783,26 @@ impl Style {
             return Ok(None);
         }
 
-        static UI_MAP: phf::Map<&'static [u8], ParsedPatternKind> = phf::phf_map! {
-            b"page" => ParsedPatternKind::Page,
-            b"layout" => ParsedPatternKind::Layout,
-            b"default" => ParsedPatternKind::Extra,
-            b"template" => ParsedPatternKind::Extra,
-            b"error" => ParsedPatternKind::Extra,
-            b"loading" => ParsedPatternKind::Extra,
-            b"not-found" => ParsedPatternKind::Extra,
-        };
-        static ROUTES_MAP: phf::Map<&'static [u8], ParsedPatternKind> = phf::phf_map! {
-            b"route" => ParsedPatternKind::Page,
-        };
-        let map = match EXTRACT {
-            UiOrRoutes::Ui => &UI_MAP,
-            UiOrRoutes::Routes => &ROUTES_MAP,
-        };
-        let Some(&kind) = map.get(basename) else {
+        bun_core::comptime_string_map! {
+            static UI_MAP: ParsedPatternKind = {
+                b"page" => ParsedPatternKind::Page,
+                b"layout" => ParsedPatternKind::Layout,
+                b"default" => ParsedPatternKind::Extra,
+                b"template" => ParsedPatternKind::Extra,
+                b"error" => ParsedPatternKind::Extra,
+                b"loading" => ParsedPatternKind::Extra,
+                b"not-found" => ParsedPatternKind::Extra,
+            };
+        }
+        bun_core::comptime_string_map! {
+            static ROUTES_MAP: ParsedPatternKind = {
+                b"route" => ParsedPatternKind::Page,
+            };
+        }
+        let Some(&kind) = (match EXTRACT {
+            UiOrRoutes::Ui => UI_MAP.get(basename),
+            UiOrRoutes::Routes => ROUTES_MAP.get(basename),
+        }) else {
             return Ok(None);
         };
 

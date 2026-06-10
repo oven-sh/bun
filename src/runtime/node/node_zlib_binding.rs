@@ -250,9 +250,9 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
 
-    /// Owning VM captured at construction — see the `vm` field docs on the
-    /// `Native*` structs.
-    fn vm(&self) -> &JsCell<*mut VirtualMachine>;
+    /// Owning VM's schedule-time handle, captured at construction — see the
+    /// `vm` field docs on the `Native*` structs.
+    fn vm(&self) -> &JsCell<bun_jsc::virtual_machine::VmHandle>;
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
@@ -1008,7 +1008,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
-            #[inline] fn vm(&self) -> &::bun_jsc::JsCell<*mut ::bun_jsc::virtual_machine::VirtualMachine> { &self.vm }
+            #[inline] fn vm(&self) -> &::bun_jsc::JsCell<::bun_jsc::virtual_machine::VmHandle> { &self.vm }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }

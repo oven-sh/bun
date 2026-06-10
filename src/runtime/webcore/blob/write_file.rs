@@ -610,7 +610,11 @@ mod windows_impl {
     use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    use bun_jsc::{
+        ConcurrentTask,
+        ManagedTask::ManagedTask,
+        event_loop::{EventLoop, LoopHandle},
+    };
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 
@@ -627,6 +631,9 @@ mod windows_impl {
         pub err: Option<sys::Error>,
         pub total_written: usize,
         pub event_loop: *mut EventLoop,
+        /// Schedule-time handle for `event_loop`, for the pool-thread mkdirp
+        /// completion (the one access that must tolerate the loop being gone).
+        pub loop_handle: LoopHandle,
         pub poll_ref: KeepAlive,
 
         pub owned_fd: bool,
@@ -685,6 +692,8 @@ mod windows_impl {
                     len: 0,
                 }],
                 event_loop,
+                // SAFETY: `event_loop` is the live JS-thread loop at create.
+                loop_handle: unsafe { (*event_loop).concurrent_handle() },
                 fd: -1,
                 err: None,
                 total_written: 0,
@@ -1032,7 +1041,7 @@ mod windows_impl {
             // Checked: the mkdirp completion runs on the work-pool thread;
             // the owning VM may be a worker freed by terminate() meanwhile.
             let _ = EventLoop::try_enqueue_task_concurrent(
-                this.event_loop,
+                this.loop_handle,
                 ConcurrentTask::create(ManagedTask::new::<WriteFileWindows>(
                     this,
                     Self::on_mkdirp_complete_task,

@@ -982,7 +982,7 @@ impl PackageManager {
                 // `WakeHandler.handler`'s second arg is the erased
                 // `*mut PackageManager` (`bun_install_types` cannot name this
                 // type); cast back to `*mut c_void` here.
-                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
+                (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>(), on_wake.generation);
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }

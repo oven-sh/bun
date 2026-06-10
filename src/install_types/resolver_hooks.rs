@@ -1370,14 +1370,20 @@ pub struct TaskCallbackContext {
 #[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
+    /// Live-VM-registry generation of the VM that owns `context`, captured at
+    /// registration (0 when no handler is installed). Passed back to
+    /// `handler` so the cross-thread wake can be validated against the
+    /// registry after the owning (worker) VM may have been freed; opaque to
+    /// this crate.
+    pub generation: u64,
+    pub handler: Option<fn(*mut c_void, *mut c_void, u64)>,
     pub on_dependency_error:
         Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {
     #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
+    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void, u64) {
         // `handler` is Some whenever `context` is Some: the sole installer
         // (runtime::jsc_hooks) sets `context`, `handler`, and
         // `on_dependency_error` together in one struct literal, and callers

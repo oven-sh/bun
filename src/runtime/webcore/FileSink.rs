@@ -870,7 +870,7 @@ impl FileSink {
             return;
         }
         self.run_pending_later.has.set(true);
-        if let EventLoopHandle::Js { owner } = self.event_loop() {
+        if let EventLoopHandle::Js { owner, .. } = self.event_loop() {
             self.ref_();
             // The type→tag
             // map lives in `crate::dispatch`; the resolved tag for

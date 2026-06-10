@@ -996,6 +996,9 @@ pub struct CopyFileWindows {
     // a worker VM freed this loop — JS-thread paths `get()` it, the
     // concurrent path passes `as_ptr()` to the checked enqueue only.
     pub event_loop: bun_ptr::BackRef<jsc::event_loop::EventLoop>,
+    /// Schedule-time handle for `event_loop`, for the pool-thread mkdirp
+    /// completion (the one access that must tolerate the loop being gone).
+    pub loop_handle: jsc::event_loop::LoopHandle,
 
     pub size: SizeType,
 
@@ -1302,6 +1305,7 @@ impl CopyFileWindows {
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
             event_loop: bun_ptr::BackRef::new(event_loop),
+            loop_handle: event_loop.concurrent_handle(),
             mkdirp_if_not_exists,
             destination_mode,
             size: size_,
@@ -1831,7 +1835,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
     // Checked: the mkdirp completion runs on the work-pool thread; the
     // owning VM may be a worker freed by terminate() in the meantime.
     let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
-        this.event_loop.as_ptr(),
+        this.loop_handle,
         jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
             this,
             call_erased,

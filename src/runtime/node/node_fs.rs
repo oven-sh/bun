@@ -1252,7 +1252,7 @@ mod _async_tasks {
         /// Captured at `create` so `work_pool_callback` never reads through
         /// `global_object` off-thread — the owning VM may be a worker freed
         /// by terminate() while the pool task was in flight.
-        pub vm: *mut VirtualMachine,
+        pub vm: bun_jsc::virtual_machine::VmHandle,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1297,7 +1297,7 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
-                vm: core::ptr::from_mut(vm),
+                vm: vm.concurrent_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1321,7 +1321,7 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `this.vm` was captured at `create` and may point at a worker VM
+            // `this.vm` was captured at `create` and may denote a worker VM
             // freed by terminate() while the pool task ran — checked enqueue
             // only, and no reads through `global_object` on this thread.
             let _ = VirtualMachine::try_enqueue_task_concurrent(
@@ -2187,7 +2187,7 @@ mod _async_tasks {
         /// Captured at `create` so pool-thread completion never reads through
         /// `global_object` off-thread (the owning VM may be a worker freed by
         /// terminate() mid-flight).
-        pub vm: *mut VirtualMachine,
+        pub vm: bun_jsc::virtual_machine::VmHandle,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2383,7 +2383,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
-                vm: core::ptr::from_mut(vm),
+                vm: vm.concurrent_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2559,7 +2559,7 @@ mod _async_tasks {
                 }
             }
 
-            // `self.vm` was captured at `create` and may point at a worker VM
+            // `self.vm` was captured at `create` and may denote a worker VM
             // freed by terminate() while subtasks ran — checked enqueue only,
             // and no reads through `global_object` on this thread.
             // `ConcurrentTask::create` heap-allocates a fresh task; the queue

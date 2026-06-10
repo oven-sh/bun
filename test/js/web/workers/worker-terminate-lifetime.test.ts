@@ -120,6 +120,124 @@ test(
   timeout,
 );
 
+// Cross-thread completion delivery inside a worker goes through schedule-time
+// VM/loop handles validated against the live-VM registry (address +
+// generation). A broken handle capture (e.g. a zero generation) silently
+// drops the completion instead of delivering it, so each producer class below
+// would hang instead of resolving: the HTTP client thread (fetch), the
+// process waiter thread (Bun.spawn exit), and the work pool (node:fs async,
+// zlib native streams, Bun.password).
+test(
+  "cross-thread completions are delivered to live worker VMs",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workerCode = \`
+          const results = {};
+          const server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
+          results.fetch = await (await fetch("http://127.0.0.1:" + server.port + "/")).text();
+          server.stop(true);
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"] });
+          results.spawnExit = await child.exited;
+          results.statIsFile = (await require("fs").promises.stat(process.execPath)).isFile();
+          const zlib = require("zlib");
+          const gz = await new Promise((resolve, reject) =>
+            zlib.gzip(Buffer.from("hello"), (e, d) => (e ? reject(e) : resolve(d))),
+          );
+          results.gunzip = (await new Promise((resolve, reject) =>
+            zlib.gunzip(gz, (e, d) => (e ? reject(e) : resolve(d))),
+          )).toString();
+          const hash = await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+          results.password = await Bun.password.verify("pw", hash);
+          postMessage(results);
+        \`;
+        const worker = new Worker(
+          "data:text/javascript," + encodeURIComponent("(async () => {" + workerCode + "})()"),
+        );
+        const results = await new Promise((resolve, reject) => {
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+        });
+        worker.terminate();
+        console.log(JSON.stringify(results));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      fetch: "pong",
+      spawnExit: 7,
+      statIsFile: true,
+      gunzip: "hello",
+      password: true,
+    });
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Same class as the fetch test below, for the process waiter thread: a worker
+// that spawned a subprocess is terminated (VM freed) before the subprocess
+// exits; the waiter thread then delivers the exit notification through the
+// EventLoopHandle captured at spawn time, which the registry check must drop
+// instead of enqueueing into the freed loop.
+test(
+  "terminating a worker with a subprocess in flight drops the waiter-thread completion",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workerCode =
+          "const child = Bun.spawn({ cmd: [process.execPath, \\"-e\\", \\"setTimeout(() => {}, 100000)\\"] });" +
+          "postMessage(child.pid);";
+        for (let i = 0; i < 3; i++) {
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(workerCode));
+          const pid = await new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+          worker.terminate();
+          await closed;
+          // Give the worker thread time to finish shutdown() and free its VM.
+          await Bun.sleep(300);
+          // Reap the orphan; the waiter thread now delivers the exit
+          // notification keyed by the freed worker's event loop. Tolerate the
+          // child having already died with the worker.
+          try {
+            process.kill(pid);
+          } catch {}
+          await Bun.sleep(300);
+        }
+        // Leave room for an in-progress sanitizer report to abort the process
+        // before we exit cleanly.
+        await Bun.sleep(1000);
+        console.log("done");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout,
+);
+
 // Regression: a worker terminated while a fetch was in flight freed its
 // VirtualMachine (and the event loop embedded in it) while the HTTP client
 // thread still held a pointer to it; the completion callback then read the

@@ -9,7 +9,6 @@ use crate::{
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
-use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 
 // `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
 // definition itself.
@@ -279,42 +278,10 @@ pub fn get_verbose_fetch_value() -> i32 {
     }
 }
 
-// HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_bake_source_provider(
-        opaque_source_provider.cast::<BakeSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings.put_dev_server_source_provider(
-        opaque_source_provider.cast::<DevServerSourceProvider>(),
-        slice.slice(),
-    );
-}
-
-// HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
-    opaque_source_provider: *mut c_void,
-    specifier: &BunString,
-) {
-    let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
-}
+// `Bun__addBakeSourceProviderSourceMap` / `Bun__addDevServerSourceProvider` /
+// `Bun__removeDevServerSourceProvider` live in
+// `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
+// source providers; LAYERING).
 
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
 pub fn add_source_provider_source_map(

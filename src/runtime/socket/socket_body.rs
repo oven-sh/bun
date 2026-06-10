@@ -706,20 +706,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// per expression — same Stacked-Borrows footprint as the previous manual
     /// `unsafe { (*p).field }`). Mutating sites use `.as_ptr()` and reborrow
     /// `&mut` explicitly.
-    fn h2dbg_server(&self) -> &'static str {
-        match self.handlers.get() {
-            Some(h) => {
-                // SAFETY: debug-only read; handlers outlive the socket callbacks.
-                if unsafe { h.as_ref() }.mode == super::SocketMode::Server {
-                    "S"
-                } else {
-                    "C"
-                }
-            }
-            None => "none",
-        }
-    }
-
     pub fn get_handlers(&self) -> bun_ptr::BackRef<Handlers> {
         self.handlers
             .get()
@@ -974,12 +960,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn close_and_detach(&self, code: uws::CloseCode) {
-        eprintln!(
-            "[h2dbg] close_and_detach who={} detached={} native_cb={}",
-            self.h2dbg_server(),
-            self.socket.get().is_detached(),
-            !matches!(self.native_callback.get(), NativeCallbacks::None)
-        );
         let socket = self.socket.get();
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
@@ -991,12 +971,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub fn mark_inactive(&self) {
-        eprintln!(
-            "[h2dbg] mark_inactive who={} active={} closed={}",
-            self.h2dbg_server(),
-            self.flags.get().contains(Flags::IS_ACTIVE),
-            self.socket.get().is_closed()
-        );
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
             // otherwise we will get a segfault
@@ -1245,20 +1219,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
-        eprintln!(
-            "[h2dbg] on_end detached={} native_cb={}",
-            this.socket.get().is_detached(),
-            !matches!(this.native_callback.get(), NativeCallbacks::None)
-        );
         if this.socket.get().is_detached() {
             return;
         }
         let handlers = this.get_handlers();
-        eprintln!(
-            "[h2dbg] on_end who={} cb_empty={}",
-            this.h2dbg_server(),
-            handlers.on_end.is_empty()
-        );
         log!(
             "onEnd {}",
             if handlers.mode == super::SocketMode::Server {
@@ -1450,12 +1414,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         jsc::mark_binding!();
         // SAFETY: per fn contract; R-2 shared reborrow.
         let this: &Self = unsafe { &*this };
-        eprintln!(
-            "[h2dbg] on_close who={} detached={} native_cb={}",
-            this.h2dbg_server(),
-            this.socket.get().is_detached(),
-            !matches!(this.native_callback.get(), NativeCallbacks::None)
-        );
         let handlers = this.get_handlers();
         log!(
             "onClose {}",
@@ -1601,9 +1559,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             },
             data.len()
         );
-        let native_consumed = this.native_callback.get().on_data(data);
-        if native_consumed {
-            eprintln!("[h2dbg] on_data native len={}", data.len());
+        if this.native_callback.get().on_data(data) {
             return;
         }
 

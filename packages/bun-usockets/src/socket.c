@@ -657,7 +657,6 @@ struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c
 }
 
 void us_socket_pause(struct us_socket_t *s) {
-    fprintf(stderr, "[h2dbg-c] us_socket_pause fd=%d already=%d\n", us_poll_fd((struct us_poll_t *)s), s->flags.is_paused);
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
@@ -667,7 +666,6 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
-    fprintf(stderr, "[h2dbg-c] us_socket_resume fd=%d paused=%d\n", us_poll_fd((struct us_poll_t *)s), s->flags.is_paused);
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed

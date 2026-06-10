@@ -6027,17 +6027,19 @@ impl DevServer {
     }
 
     /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through the
-    /// `UnsafeCell` on `Debugger.frontend_dev_server_agent`; two calls alias
+    /// `UnsafeCell` on `Debugger.extension_agent`; two calls alias
     /// the same agent. Caller must not hold another live `&mut` to it.
     /// JS-thread only.
     #[allow(clippy::mut_from_ref)]
     pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
             bun_core::hint::cold();
-            // SAFETY: `frontend_dev_server_agent` is `UnsafeCell`-wrapped for
+            // SAFETY: `extension_agent` is `UnsafeCell`-wrapped for
             // interior mutability. JS-thread only; caller upholds the no-alias
             // contract documented above.
-            let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
+            let agent = BunFrontendDevServerAgent::from_slot_mut(unsafe {
+                &mut *debugger.extension_agent.get()
+            });
             if agent.is_enabled() {
                 bun_core::hint::cold();
                 return Some(agent);
@@ -7178,4 +7180,5 @@ use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;
 type DebuggerId = jsc::debugger::DebuggerId;
-type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
+type BunFrontendDevServerAgent =
+    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent;

@@ -73,7 +73,7 @@ impl BuildCommand {
             ctx.args.target = Some(api::Target::Bun);
         }
 
-        if ctx.bundler_options.bake {
+        if ctx.bundler_options.app {
             return crate::bake::production::build_command(ctx);
         }
 

@@ -474,7 +474,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // inside `if separate_ssr_graph` blocks below — Rust forbids forming
     // `&mut T` to uninitialized memory regardless of later use.
 
-    if ctx.bundler_options.bake_debug_disable_minify {
+    if ctx.bundler_options.debug_no_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
         if separate_ssr_graph {
@@ -715,7 +715,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     }
                 }
                 bun_bundler::options::Side::Server => {
-                    if ctx.bundler_options.bake_debug_dump_server {
+                    if ctx.bundler_options.debug_dump_server_files {
                         if let Err(err) = file.write_to_disk(root_dir.fd()) {
                             bun_core::handle_error_return_trace(err);
                             Output::err(

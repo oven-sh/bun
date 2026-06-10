@@ -31,7 +31,7 @@ mod production_body;
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
 // codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
-pub(crate) mod source_provider_exports;
+pub mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.

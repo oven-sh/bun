@@ -495,7 +495,7 @@ pub fn write_output_files_to_disk(
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // Server-components builds insert 2 extra synthetic sources
                 // before user entry points, so the source-index offset is 3.
-                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
+                let offset: u32 = if c.framework.is_some_and(|fw| fw.has_server_components) {
                     3
                 } else {
                     1

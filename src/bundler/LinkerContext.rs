@@ -11,7 +11,6 @@ use bun_sourcemap::{
 };
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
-use crate::bake_types as bake;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
@@ -153,6 +152,15 @@ pub use crate::linker_context::write_output_files_to_disk::write_output_files_to
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
+/// Subset of the framework config that chunk generation consults, projected
+/// by value when `BundleV2` is set up so the linker holds no backref into the
+/// framework struct.
+#[derive(Copy, Clone)]
+pub struct FrameworkInfo {
+    pub has_server_components: bool,
+    pub is_built_in_react: bool,
+}
+
 pub struct LinkerContext<'a> {
     pub parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
@@ -203,14 +211,14 @@ pub struct LinkerContext<'a> {
     /// Used by Bake to extract []CompileResult before it is joined.
     /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
     pub dev_server: Option<crate::dispatch::DevServerHandle>,
-    pub framework: Option<bun_ptr::BackRef<bake::Framework>>,
+    pub framework: Option<FrameworkInfo>,
 
     pub mangled_props: MangledProps,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
-// `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
+// `r#loop`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
 // to disjoint SoA slots (see `compute_line_offsets`).
 unsafe impl<'a> Send for LinkerContext<'a> {}

@@ -2756,7 +2756,12 @@ pub mod bv2_impl {
                     .map(|sc| sc.separate_ssr_graph)
                     .unwrap_or(false);
                 this.framework = Some(bo.framework);
-                this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
+                this.linker.framework = this.framework.as_ref().map(|fw| {
+                    crate::linker_context_mod::FrameworkInfo {
+                        has_server_components: fw.server_components.is_some(),
+                        is_built_in_react: fw.is_built_in_react,
+                    }
+                });
                 this.plugins = bo.plugins;
                 if this.transpiler.options.server_components {
                     debug_assert!(

@@ -617,7 +617,7 @@ pub fn post_process_js_chunk(
     let show_comments = c.options.mode == LinkerOptionsMode::Bundle && !c.options.minify_whitespace;
 
     let emit_targets_in_commands =
-        show_comments && c.framework.is_some_and(|fw| fw.server_components.is_some());
+        show_comments && c.framework.is_some_and(|fw| fw.has_server_components);
 
     let sources: &[bun_ast::Source] = c.parse_graph().input_files.items_source();
     let targets: &[options::Target] = c.parse_graph().ast.items_target();

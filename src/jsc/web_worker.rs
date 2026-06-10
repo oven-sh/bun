@@ -506,6 +506,13 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
+            // Explicit builtin specifiers (node:/bun:) skip the file resolver —
+            // the worker-side module loader resolves them. Lets node:worker_threads
+            // run its bootstrap (stdio rebinding) as a preload.
+            if utf8_slice.slice().starts_with(b"node:") || utf8_slice.slice().starts_with(b"bun:") {
+                preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
+                continue;
+            }
             // SAFETY: `parent_ref` is the live VM on the calling (parent)
             // thread — its `transpiler` is uniquely owned here.
             if let Some(preload) = unsafe {
@@ -1096,16 +1103,26 @@ impl WebWorker {
 
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
-            if (*promise).status() == jsc::js_promise::Status::Rejected {
+            let status = (*promise).status();
+            if status == jsc::js_promise::Status::Rejected {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
                 if !handled {
-                    vm.as_mut().exit_handler.exit_code = 1;
+                    // exit_code is already 1 from uncaught_exception; re-setting it here
+                    // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
                 }
+            } else if status == jsc::js_promise::Status::Pending {
+                // Unsettled top-level await (loop drained, entry promise still pending):
+                // node exits the worker with code 13.
+                if !self.exit_called.load(Ordering::Relaxed) {
+                    vm.as_mut().exit_handler.exit_code = 13;
+                }
+                self.flush_logs(vm);
+                return self.shutdown();
             } else {
                 let _ = (*promise).result(vm.jsc_vm());
             }
@@ -1441,6 +1458,17 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
+    // A parse failure rejects with a BuildMessage, which doesn't survive structured
+    // clone. Node reports a SyntaxError; build a real one from the formatted parse
+    // error so the subtype reaches the parent intact.
+    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
+        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
+        // worker (JS) thread that owns it.
+        let text = unsafe { (*bm).msg.data.text.clone() };
+        error_instance =
+            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+    }
+
     let mut array: Vec<u8> = Vec::new();
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
@@ -1495,6 +1523,11 @@ fn on_unhandled_rejection(
     {
         let _ = global_object.try_take_exception();
     }
+    // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
+    // they may change process.exitCode). Run them before arming termination — a pending
+    // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
+    // and its processIsExiting guard stops shutdown() from running them twice.
+    virtual_machine::ExitHandler::dispatch_on_exit(vm);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

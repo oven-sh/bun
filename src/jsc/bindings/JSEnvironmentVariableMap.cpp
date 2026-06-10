@@ -13,6 +13,16 @@
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <JavaScriptCore/StructureInlines.h>
+#include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/PropertyDescriptor.h>
+#include "BunProcess.h"
+#include "wtf/Lock.h"
+#include "wtf/NeverDestroyed.h"
+#include "wtf/HashMap.h"
+#include "wtf/text/StringHash.h"
 #include "WebCoreJSBuiltins.h"
 
 using namespace JSC;
@@ -344,6 +354,310 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
+// ============================================================================
+// worker_threads SHARE_ENV
+//
+// With `env: SHARE_ENV` the parent and worker share one live environment. JS
+// objects can't cross VMs, so each thread gets its own `process.env` object that
+// is a thin write-through view over the process-wide store below (lock-guarded,
+// strings isolatedCopy()'d both ways).
+//
+// Only the JS-visible `process.env` is shared; Bun's Zig-side env map (Bun.env,
+// fetch proxy resolution) is still snapshotted per worker.
+// Windows env keys are case-insensitive; normalize shared-store keys to uppercase
+// to match the regular env object's OS(WINDOWS) behavior.
+static ALWAYS_INLINE String normalizeSharedEnvKey(const String& key)
+{
+#if OS(WINDOWS)
+    return key.convertToASCIIUppercase();
+#else
+    return key;
+#endif
+}
+
+class SharedEnvStore {
+public:
+    static SharedEnvStore& singleton()
+    {
+        static NeverDestroyed<SharedEnvStore> store;
+        return store;
+    }
+
+    String get(const String& key)
+    {
+        Locker locker { m_lock };
+        auto it = m_map.find(normalizeSharedEnvKey(key));
+        if (it == m_map.end())
+            return String();
+        return it->value.isolatedCopy();
+    }
+
+    void set(const String& key, const String& value)
+    {
+        Locker locker { m_lock };
+        m_map.set(normalizeSharedEnvKey(key).isolatedCopy(), value.isolatedCopy());
+    }
+
+    void remove(const String& key)
+    {
+        Locker locker { m_lock };
+        m_map.remove(normalizeSharedEnvKey(key));
+    }
+
+    Vector<String> keys()
+    {
+        Locker locker { m_lock };
+        Vector<String> out;
+        out.reserveInitialCapacity(m_map.size());
+        for (const auto& key : m_map.keys())
+            out.append(key.isolatedCopy());
+        return out;
+    }
+
+private:
+    Lock m_lock;
+    HashMap<String, String> m_map;
+};
+
+// process.env variant whose reads/writes/deletes/enumeration go through the
+// process-wide SharedEnvStore; no instance state, so no custom subspace.
+class JSSharedEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesGetOwnPropertySlot
+        | JSC::OverridesPut
+        | JSC::OverridesGetOwnPropertyNames
+        | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
+        | JSC::ProhibitsPropertyCaching;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSharedEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSSharedEnvMap* ptr = new (NotNull, JSC::allocateCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+
+private:
+    JSSharedEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSSharedEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSharedEnvMap) };
+
+bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    }
+
+    String value = SharedEnvStore::singleton().get(String(uid));
+    if (value.isNull()) {
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    }
+
+    slot.setValue(object, 0, JSC::jsString(vm, value));
+    return true;
+}
+
+// Proxy env vars written back to the Zig env map so fetch()'s getHttpProxyFor()
+// sees runtime changes; shared by applySharedEnvSideEffects and
+// createEnvironmentVariablesMap.
+static constexpr ASCIILiteral kProxyEnvVarNames[] = {
+    "HTTP_PROXY"_s,
+    "http_proxy"_s,
+    "HTTPS_PROXY"_s,
+    "https_proxy"_s,
+    "NO_PROXY"_s,
+    "no_proxy"_s,
+};
+
+// Mirror the regular process.env CustomSetters' native side effects (TZ, TLS,
+// verbose-fetch, proxy vars); the shared store only updates strings, so without
+// this a SHARE_ENV worker's writes would silently skip them.
+static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String& rawKey, const String& stringValue)
+{
+    VM& vm = JSC::getVM(globalObject);
+    // Windows env keys are case-insensitive; normalize so process.env.tz hits TZ.
+    String key = normalizeSharedEnvKey(rawKey);
+    if (key == "TZ"_s) {
+        if (stringValue.length() < 32 && WTF::setTimeZoneOverride(stringValue))
+            vm.dateCache.resetIfNecessarySlow();
+        return;
+    }
+    if (key == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
+        Bun__setTLSRejectUnauthorizedValue((stringValue == "0"_s || stringValue == "false"_s) ? 0 : 1);
+        return;
+    }
+    if (key == "BUN_CONFIG_VERBOSE_FETCH"_s) {
+        if (stringValue == "1"_s || stringValue == "true"_s)
+            Bun__setVerboseFetchValue(1);
+        else if (stringValue == "curl"_s)
+            Bun__setVerboseFetchValue(2);
+        else
+            Bun__setVerboseFetchValue(0);
+        return;
+    }
+    // Proxy vars: fetch()'s getHttpProxyFor() reads the Zig env map, so sync.
+    const auto& proxyVarNames = kProxyEnvVarNames;
+    for (auto proxyName : proxyVarNames) {
+        if (key == proxyName) {
+            BunString name = Bun::toString(key);
+            BunString val = Bun::toString(stringValue);
+            Bun__setEnvValue(globalObject, &name, &val);
+            return;
+        }
+    }
+}
+
+bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
+    // Node coerces env values to strings on assignment.
+    String stringValue = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    String keyStr = String(uid);
+    applySharedEnvSideEffects(globalObject, keyStr, stringValue);
+    SharedEnvStore::singleton().set(keyStr, stringValue);
+    return true;
+}
+
+bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid) {
+        return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    }
+
+    SharedEnvStore::singleton().remove(String(uid));
+    return true;
+}
+
+void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto keys = SharedEnvStore::singleton().keys();
+    for (const auto& key : keys) {
+        propertyNames.add(JSC::Identifier::fromString(vm, key));
+    }
+    Base::getOwnPropertyNames(object, globalObject, propertyNames, mode);
+}
+
+bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    String stringValue = descriptor.value().toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    String keyStr = String(uid);
+    applySharedEnvSideEffects(globalObject, keyStr, stringValue);
+    SharedEnvStore::singleton().set(keyStr, stringValue);
+    return true;
+}
+
+JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* structure = JSSharedEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    return JSSharedEnvMap::create(vm, structure);
+}
+
+void enableSharedEnvForWorker(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto& store = SharedEnvStore::singleton();
+
+    // Initialize process.env (from the OS environment) if it was never touched,
+    // so the shared store is seeded with the real values instead of an empty map.
+    JSObject* envObject = globalObject->processEnvObject();
+    // If this global's process.env is already the shared variant, nothing to do.
+    if (envObject->inherits<JSSharedEnvMap>())
+        return;
+
+    // Merge this global's process.env into the shared store (later joiners only add
+    // missing keys), then swap this global's process.env to the shared variant. The
+    // swap must happen per-global, even when the store is already seeded.
+    {
+        if (!envObject->staticPropertiesReified()) {
+            envObject->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+
+        JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, );
+
+        for (const auto& key : keys) {
+            String keyStr = String(key.impl());
+            if (!store.get(keyStr).isNull())
+                continue;
+            JSValue value = envObject->get(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, );
+            String str = value.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            store.set(keyStr, str);
+        }
+    }
+
+    // Swap this global's process.env to the shared, write-through variant.
+    auto* shared = createSharedEnvironmentVariablesMap(globalObject).getObject();
+    globalObject->m_processEnvObject.set(vm, globalObject, shared);
+
+    // process.env may already be reified as an own property on the process object;
+    // overwrite it so it resolves to the shared variant.
+    if (globalObject->hasProcessObject()) {
+        JSObject* processObject = globalObject->processObject();
+        processObject->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s), shared, 0);
+    }
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -372,14 +686,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     // Proxy-related env vars need write-back to the native env map so that
     // fetch()'s getHttpProxyFor() observes runtime changes.
-    static constexpr ASCIILiteral proxyVarNames[] = {
-        "HTTP_PROXY"_s,
-        "http_proxy"_s,
-        "HTTPS_PROXY"_s,
-        "https_proxy"_s,
-        "NO_PROXY"_s,
-        "no_proxy"_s,
-    };
+    const auto& proxyVarNames = kProxyEnvVarNames;
     constexpr size_t proxyVarCount = std::size(proxyVarNames);
     bool hasProxyVar[proxyVarCount] = {};
 

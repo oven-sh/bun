@@ -679,13 +679,21 @@ impl ErrorCode {
     pub const SECRETS_AUTH_FAILED: ErrorCode = ErrorCode(310);
     /// `ERR_SECRETS_INTERACTION_REQUIRED` (instanceof Error)
     pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(311);
+    /// `ERR_WORKER_MESSAGING_ERRORED` (instanceof Error)
+    pub const WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode(312);
+    /// `ERR_WORKER_MESSAGING_FAILED` (instanceof Error)
+    pub const WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode(313);
+    /// `ERR_WORKER_MESSAGING_SAME_THREAD` (instanceof Error)
+    pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(314);
+    /// `ERR_WORKER_MESSAGING_TIMEOUT` (instanceof Error)
+    pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(315);
     /// `ERR_POSTGRES_CONNECTION_FAILED` (instanceof Error)
-    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(312);
+    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(316);
     /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
-    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
+    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(317);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 314;
+    pub const COUNT: u16 = 318;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1042,6 +1050,10 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
+    pub const ERR_WORKER_MESSAGING_ERRORED: ErrorCode = ErrorCode::WORKER_MESSAGING_ERRORED;
+    pub const ERR_WORKER_MESSAGING_FAILED: ErrorCode = ErrorCode::WORKER_MESSAGING_FAILED;
+    pub const ERR_WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode::WORKER_MESSAGING_SAME_THREAD;
+    pub const ERR_WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode::WORKER_MESSAGING_TIMEOUT;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1371,6 +1383,10 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_NOT_ALLOWED",
     "ERR_SECRETS_AUTH_FAILED",
     "ERR_SECRETS_INTERACTION_REQUIRED",
+    "ERR_WORKER_MESSAGING_ERRORED",
+    "ERR_WORKER_MESSAGING_FAILED",
+    "ERR_WORKER_MESSAGING_SAME_THREAD",
+    "ERR_WORKER_MESSAGING_TIMEOUT",
     "ERR_POSTGRES_CONNECTION_FAILED",
     "ERR_MYSQL_CONNECTION_FAILED",
 ];

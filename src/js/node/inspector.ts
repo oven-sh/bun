@@ -129,6 +129,27 @@ class Session extends EventEmitter {
       case "Profiler.takePreciseCoverage":
         return new Error("Coverage APIs are not supported");
 
+      case "NodeWorker.enable": {
+        // Minimal NodeWorker domain: a session connected to the main thread
+        // reports the worker it lives in. node's worker-name test reads
+        // workerInfo.title ("[worker N] <name>").
+        const wt = require("node:worker_threads");
+        const title = wt[Symbol.for("nodejs.worker_threads.inspectorTitle")];
+        if (title !== undefined) {
+          const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
+          queueMicrotask(() => {
+            this.emit("NodeWorker.attachedToWorker", {
+              params: { sessionId: `worker:${wt.threadId}`, workerInfo },
+            });
+          });
+        }
+        return {};
+      }
+
+      case "NodeWorker.disable":
+      case "NodeWorker.detach":
+        return {};
+
       default:
         return new Error(`Inspector method "${method}" is not supported`);
     }

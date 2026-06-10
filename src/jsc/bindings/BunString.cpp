@@ -91,25 +91,45 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__tryCreateAtom(const char
     return { BunStringTag::Dead, {} };
 }
 
+// Returns nullptr if converting the bytes to a WTF::String failed (OOM).
+// Never throws and never checks for exceptions.
+static JSC::JSString* createUTF8ForJSImpl(JSC::VM& vm, const char* ptr, size_t length)
+{
+    if (length == 0) {
+        return jsEmptyString(vm);
+    }
+    if (simdutf::validate_ascii(ptr, length)) {
+        return jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length)));
+    }
+
+    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
+    if (str.isNull()) [[unlikely]] {
+        return nullptr;
+    }
+    return jsString(vm, WTF::move(str));
+}
+
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUTF8ForJS(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (length == 0) {
-        return JSValue::encode(jsEmptyString(vm));
-    }
-    if (simdutf::validate_ascii(ptr, length)) {
-        return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
-    }
-
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
-    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
-    if (str.isNull()) [[unlikely]] {
+    auto* result = createUTF8ForJSImpl(vm, ptr, length);
+    if (!result) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
     }
-    scope.assertNoException();
-    return JSValue::encode(jsString(vm, WTF::move(str)));
+    return JSValue::encode(result);
+}
+
+// Used by napi_create_string_utf8: Node implements the napi_create_string_*
+// functions without a pending-exception check (js_native_api_v8.cc), so
+// string creation must succeed even while an exception is pending, e.g. in
+// finalizers that run during environment cleanup. Unlike
+// BunString__createUTF8ForJS, this performs no exception check and throws
+// nothing; it returns 0 only when allocation fails.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue BunString__createUTF8ForJSWithoutExceptionCheck(JSC::JSGlobalObject* globalObject, const char* ptr, size_t length)
+{
+    return JSValue::encode(createUTF8ForJSImpl(JSC::getVM(globalObject), ptr, length));
 }
 
 JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
@@ -389,6 +409,27 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC
         return {};
     }
     return JSValue::encode(result);
+}
+
+// Used by napi_create_string_latin1/utf16: Node implements the
+// napi_create_string_* functions without a pending-exception check
+// (js_native_api_v8.cc), so string creation must succeed even while an
+// exception is pending, e.g. in finalizers that run during environment
+// cleanup. Only the Empty and WTFStringImpl tags are accepted; neither
+// conversion can throw. Returns 0 for a Dead string (allocation failed)
+// without throwing.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue BunString__toJSWithoutExceptionCheck(JSC::JSGlobalObject* globalObject, const BunString* bunString)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (bunString->tag == BunStringTag::Empty) {
+        return JSValue::encode(jsEmptyString(vm));
+    }
+    if (bunString->tag == BunStringTag::WTFStringImpl) [[likely]] {
+        ASSERT(bunString->impl.wtf->hasAtLeastOneRef() && !bunString->impl.wtf->isEmpty());
+        return JSValue::encode(jsString(vm, String(bunString->impl.wtf)));
+    }
+    ASSERT_WITH_MESSAGE(bunString->tag == BunStringTag::Dead, "BunString__toJSWithoutExceptionCheck only supports Empty, WTFStringImpl, and Dead strings");
+    return {};
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)

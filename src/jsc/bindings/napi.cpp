@@ -1066,13 +1066,17 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 
 // code must be a string or nullptr (no code)
 // msg must be a string
-// never calls toString, never throws
+// Never calls toString, never throws, and never checks for a pending
+// exception: Node implements napi_create_error and its siblings with only
+// argument validation (js_native_api_v8.cc), so creating an error value must
+// succeed even while an exception is pending or the VM is terminating.
+// Finalizers that run during environment cleanup rely on this:
+// node-addon-api's Error::New aborts the process when napi_create_error
+// returns a non-ok status.
 static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi_value message, JSC::ErrorType type, napi_value* result)
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, napi_pending_exception);
 
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, message);
@@ -1082,16 +1086,16 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-    auto wtf_message = js_message.getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
+    // tryGetValue resolves ropes without a global object, so instead of
+    // throwing on OOM it returns a null string.
+    WTF::String wtf_code = js_code.isEmpty() ? WTF::String() : WTF::String(asString(js_code)->tryGetValue().data);
+    WTF::String wtf_message { asString(js_message)->tryGetValue().data };
+    NAPI_RETURN_EARLY_IF_FALSE(env, !wtf_message.isNull(), napi_generic_failure);
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
-    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
-    return napi_set_last_error(env, napi_ok);
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_throw_error(napi_env env,
@@ -1106,7 +1110,13 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     uint32_t initial_refcount,
     napi_ref* result)
 {
-    NAPI_PREAMBLE(env);
+    // Node omits NAPI_PREAMBLE here ("V8 calls here cannot throw JS
+    // exceptions", js_native_api_v8.cc), so this must work with a pending
+    // exception. node-addon-api's Error constructor stores the error value in
+    // a reference and aborts the process if that fails, which addons hit when
+    // reporting a failure from a finalizer that runs during environment
+    // cleanup.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, value);
@@ -1124,7 +1134,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
-    NAPI_RETURN_SUCCESS(env);
+    return napi_clear_last_error(env);
 }
 
 extern "C" void napi_set_ref(NapiRef* ref, JSC::EncodedJSValue val_)
@@ -1187,7 +1197,12 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
 extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
-    NAPI_PREAMBLE(env);
+    // Node omits NAPI_PREAMBLE here ("V8 calls here cannot throw JS
+    // exceptions", js_native_api_v8.cc), so this must work with a pending
+    // exception, e.g. in finalizers that run during environment cleanup. The
+    // GC-access check stays: Node blocks this function from finalizers that
+    // run during garbage collection in experimental modules.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
 
@@ -1201,7 +1216,7 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     if (result) [[likely]] {
         *result = napiRef->refCount;
     }
-    NAPI_RETURN_SUCCESS(env);
+    return napi_clear_last_error(env);
 }
 
 // Attempts to get a referenced value. If the reference is weak,
@@ -1210,20 +1225,28 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
 extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     napi_value* result)
 {
-    NAPI_PREAMBLE(env);
+    // Node omits NAPI_PREAMBLE here ("V8 calls here cannot throw JS
+    // exceptions", js_native_api_v8.cc), so this must work with a pending
+    // exception. node-addon-api's Error::ThrowAsJavaScriptException reads the
+    // stored error back through this function and aborts the process if it
+    // fails.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
     NAPI_CHECK_ARG(env, result);
     NapiRef* napiRef = toJS(ref);
     *result = toNapi(napiRef->value(), toJS(env));
 
-    NAPI_RETURN_SUCCESS(env);
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     uint32_t* result)
 {
-    NAPI_PREAMBLE(env);
+    // Node omits NAPI_PREAMBLE here ("V8 calls here cannot throw JS
+    // exceptions", js_native_api_v8.cc), so this must work with a pending
+    // exception, e.g. in finalizers that run during environment cleanup.
+    NAPI_PREAMBLE_NO_THROW_SCOPE(env);
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, ref);
     NapiRef* napiRef = toJS(ref);
@@ -1231,7 +1254,7 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     if (result) [[likely]] {
         *result = napiRef->refCount;
     }
-    NAPI_RETURN_SUCCESS(env);
+    return napi_clear_last_error(env);
 }
 
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)

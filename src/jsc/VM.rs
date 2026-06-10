@@ -181,10 +181,6 @@ impl VM {
         crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
-    pub fn clear_has_termination_request(&self) {
-        crate::cpp::JSC__VM__clearHasTerminationRequest(self)
-    }
-
     #[track_caller]
     pub fn throw_error(&self, global_object: &JSGlobalObject, value: JSValue) -> JsError {
         crate::validation_scope!(scope, global_object);

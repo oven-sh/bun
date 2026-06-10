@@ -1220,10 +1220,17 @@ impl WebWorker {
             // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
             // other thread can dereference it now — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
-            // terminate() set the JSC termination flag to interrupt running JS;
-            // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // terminate() set the JSC termination flag to interrupt running
+            // JS; clear it so process.on('exit') handlers can run.
+            // teardownJSCVM re-sets it for the JSC VM teardown. If terminate()
+            // landed while JS was executing, the TerminationException was also
+            // thrown and is still pending on the VM; it must be cleared too
+            // (clearing only the request bit leaves a state JSC asserts
+            // against in VMTraps::deferTerminationSlow), or the 'exit' event
+            // is skipped and every NAPI call inside exit-time finalizers fails
+            // with napi_pending_exception, which node-addon-api turns into a
+            // "NAPI FATAL ERROR: Error::New" abort.
+            vm.global().clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

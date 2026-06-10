@@ -87,6 +87,31 @@ pub fn to_js(this: &String, global_object: &JSGlobalObject) -> JsResult<JSValue>
     unsafe { crate::cpp::BunString__toJS(global_object, this) }
 }
 
+/// Like [`to_js`], but never checks for pending exceptions and never throws,
+/// so it may be called while an exception is pending (Node-API string
+/// constructors must work in that state, e.g. in finalizers that run during
+/// environment cleanup). Only `Empty` and `WTFStringImpl` strings are
+/// supported; returns `None` when `this` is `Dead` (allocation failed).
+pub fn to_js_without_exception_check(
+    this: &String,
+    global_object: &JSGlobalObject,
+) -> Option<JSValue> {
+    // SAFETY: `this` borrows a live `String` for the call duration;
+    // `BunString__toJSWithoutExceptionCheck` is `nothrow` and performs no
+    // exception-state validation.
+    let value = unsafe {
+        crate::cpp::BunString__toJSWithoutExceptionCheck(
+            core::ptr::from_ref(global_object).cast_mut(),
+            this,
+        )
+    };
+    if value == JSValue::ZERO {
+        None
+    } else {
+        Some(value)
+    }
+}
+
 /// `BunString__toJSDOMURL` opens a `DECLARE_THROW_SCOPE` and throws (returning
 /// encoded `0`) when the string is not a valid URL, so wrap it in a validation
 /// scope exactly like `to_js`/`transfer_to_js` above. Without this, under
@@ -128,6 +153,31 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
             utf8_slice.as_ptr().cast(),
             utf8_slice.len(),
         )
+    }
+}
+
+/// Like [`create_utf8_for_js`], but never checks for pending exceptions and
+/// never throws, so it may be called while an exception is pending (Node-API
+/// string constructors must work in that state, e.g. in finalizers that run
+/// during environment cleanup). Returns `None` when allocation fails.
+pub fn create_utf8_for_js_without_exception_check(
+    global_object: &JSGlobalObject,
+    utf8_slice: &[u8],
+) -> Option<JSValue> {
+    // SAFETY: FFI call into JSC; ptr/len from a live &[u8], global_object
+    // borrowed for call duration. `BunString__createUTF8ForJSWithoutExceptionCheck`
+    // is `nothrow` and performs no exception-state validation.
+    let value = unsafe {
+        crate::cpp::BunString__createUTF8ForJSWithoutExceptionCheck(
+            core::ptr::from_ref(global_object).cast_mut(),
+            utf8_slice.as_ptr().cast(),
+            utf8_slice.len(),
+        )
+    };
+    if value == JSValue::ZERO {
+        None
+    } else {
+        Some(value)
     }
 }
 

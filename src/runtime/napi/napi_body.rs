@@ -9,7 +9,6 @@ use bun_collections::linear_fifo::DynamicBuffer;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -677,10 +676,16 @@ pub(super) extern "C" fn napi_create_string_latin1(
         bstr::BStr::new(slice)
     );
 
+    // Node implements napi_create_string_* without a pending-exception check,
+    // so the conversion must work even while an exception is pending (e.g. in
+    // finalizers that run during environment cleanup).
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        let js = match jsc::bun_string_jsc::to_js_without_exception_check(
+            &bun_core::String::empty(),
+            env.to_js(),
+        ) {
+            Some(v) => v,
+            None => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
         };
         result.set(env, js);
         return env.ok();
@@ -690,9 +695,9 @@ pub(super) extern "C" fn napi_create_string_latin1(
     // `string` derefs on Drop.
     bytes.copy_from_slice(slice);
 
-    let js = match string.to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+    let js = match jsc::bun_string_jsc::to_js_without_exception_check(&string, env.to_js()) {
+        Some(v) => v,
+        None => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
     result.set(env, js);
     env.ok()
@@ -730,11 +735,16 @@ pub(super) extern "C" fn napi_create_string_utf8(
 
     bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
 
+    // Node implements napi_create_string_* without a pending-exception check,
+    // so the conversion must work even while an exception is pending (e.g. in
+    // finalizers that run during environment cleanup).
     let global_object = env.to_js();
-    let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
+    let string =
+        match jsc::bun_string_jsc::create_utf8_for_js_without_exception_check(global_object, slice)
+        {
+            Some(v) => v,
+            None => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        };
     result.set(env, string);
     env.ok()
 }
@@ -779,21 +789,28 @@ pub(super) extern "C" fn napi_create_string_utf16(
         );
     }
 
+    // Node implements napi_create_string_* without a pending-exception check,
+    // so the conversion must work even while an exception is pending (e.g. in
+    // finalizers that run during environment cleanup).
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+        let js = match jsc::bun_string_jsc::to_js_without_exception_check(
+            &bun_core::String::empty(),
+            env.to_js(),
+        ) {
+            Some(v) => v,
+            None => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
         };
         result.set(env, js);
         return env.ok();
     }
 
-    let (mut string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
+    let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
+    // `string` derefs on Drop; the JSString created below holds its own ref.
     chars.copy_from_slice(slice);
 
-    let js = match string.transfer_to_js(env.to_js()) {
-        Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
+    let js = match jsc::bun_string_jsc::to_js_without_exception_check(&string, env.to_js()) {
+        Some(v) => v,
+        None => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
     result.set(env, js);
     env.ok()

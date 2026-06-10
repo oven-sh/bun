@@ -9,22 +9,24 @@ use core::ptr::NonNull;
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
 
-// `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
-// (the full versions); re-exported here so the crate-root `lib.rs` modules and
-// the outer `BundleV2` struct see exactly the same types as the impl bodies.
+// `dispatch` is canonically defined in `bv2_impl` below (the full version);
+// re-exported here so the crate-root `lib.rs` modules and the outer
+// `BundleV2` struct see exactly the same types as the impl bodies.
+// `bake_types` is the crate-root seam module; re-exported so the historical
+// `bundle_v2::bake_types` path keeps resolving.
 pub use bv2_impl::api;
-pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     DeclInfo, DeclInfoKind, EventLoop, ImportTracker, PartRange, StableRef, WrapKind,
-    generic_path_with_pretty_initialized, target_from_hashbang,
+    generate_unique_key, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
+pub use crate::bake_types;
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
-use self::bake_types as bake;
+use crate::bake_types as bake;
 pub use bv2_impl::{
     BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
     EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
@@ -339,7 +341,6 @@ pub mod bv2_impl {
     use crate::{bun_css, import_record};
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
-    use self::bake_types as bake;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
@@ -351,353 +352,11 @@ pub mod bv2_impl {
     use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
 
-    /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
-    /// depending on the full DevServer. Move-in pass keeps these as the canonical defs;
-    /// bun_bake (post tier-6 collapse: bun_runtime::bake) re-exports from here.
-    pub mod bake_types {
-        #[repr(u8)]
-        #[derive(Copy, Clone, Eq, PartialEq, Debug, core::marker::ConstParamTy)]
-        pub enum Side {
-            Client = 0,
-            Server = 1,
-        }
-        #[repr(u8)]
-        #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-        pub enum Graph {
-            Client = 0,
-            Server = 1,
-            Ssr = 2,
-        }
-        /// Used for the per-file `// path (target)` comment
-        /// in postProcessJSChunk and friends.
-        impl From<Graph> for &'static str {
-            fn from(g: Graph) -> Self {
-                match g {
-                    Graph::Client => "client",
-                    Graph::Server => "server",
-                    Graph::Ssr => "ssr",
-                }
-            }
-        }
-        impl Side {
-            pub fn graph(self) -> Graph {
-                match self {
-                    Side::Client => Graph::Client,
-                    Side::Server => Graph::Server,
-                }
-            }
-        }
-        /// The type of `CacheEntry.kind`.
-        #[repr(u8)]
-        #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-        pub enum CacheKind {
-            Unknown = 0,
-            Js = 1,
-            Asset = 2,
-            Css = 3,
-        }
-        #[derive(Copy, Clone)]
-        pub struct CacheEntry {
-            pub kind: CacheKind,
-        }
-        /// INTERNAL_PREFIX ++ "/asset" = "/_bun/asset".
-        pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
+    // `bake_types` is the crate-root TYPE_ONLY seam module (`crate::bake_types`,
+    // declared in lib.rs next to the `DevServerHandle` vtable it feeds).
+    use crate::bake_types;
+    use crate::bake_types as bake;
 
-        /// TYPE_ONLY moved
-        /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
-        pub enum BuiltInModule {
-            Import(Box<[u8]>),
-            Code(Box<[u8]>),
-        }
-
-        /// `EntryPointList` flags.
-        #[repr(transparent)]
-        #[derive(Copy, Clone, Default, Eq, PartialEq)]
-        pub struct EntryPointFlags(pub u8);
-        impl EntryPointFlags {
-            pub const CLIENT: u8 = 1 << 0;
-            pub const SERVER: u8 = 1 << 1;
-            pub const SSR: u8 = 1 << 2;
-            /// When set, `.CLIENT` is also set.
-            pub const CSS: u8 = 1 << 3;
-            #[inline]
-            pub fn client(self) -> bool {
-                self.0 & Self::CLIENT != 0
-            }
-            #[inline]
-            pub fn server(self) -> bool {
-                self.0 & Self::SERVER != 0
-            }
-            #[inline]
-            pub fn ssr(self) -> bool {
-                self.0 & Self::SSR != 0
-            }
-            #[inline]
-            pub fn css(self) -> bool {
-                self.0 & Self::CSS != 0
-            }
-        }
-
-        /// TYPE_ONLY moved down; bundler
-        /// reads `.set` (count/keys/values) in `enqueue_entry_points_dev_server`.
-        #[derive(Default)]
-        pub struct EntryPointList {
-            pub set: bun_collections::StringArrayHashMap<EntryPointFlags>,
-        }
-        impl EntryPointList {
-            pub fn empty() -> Self {
-                Self {
-                    set: bun_collections::StringArrayHashMap::new(),
-                }
-            }
-        }
-
-        /// TYPE_ONLY subset of the `Framework` fields
-        /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::FrameworkRouter` reads it.
-        #[non_exhaustive]
-        pub struct Framework {
-            pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-            /// Mirrors `Framework.server_components`.
-            pub server_components: Option<ServerComponents>,
-            /// Mirrors `Framework.react_fast_refresh` — read by the parser
-            /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
-            /// .import_source`) when `features.react_fast_refresh` is on.
-            pub react_fast_refresh: Option<ReactFastRefresh>,
-            /// Mirrors `Framework.is_built_in_react` — read by
-            /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
-            pub is_built_in_react: bool,
-            /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
-            pub client_css_in_js: crate::options::ClientCssInJs,
-        }
-        impl Framework {
-            /// Construct the bundler-side TYPE_ONLY view. Called from
-            /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
-            /// runtime owns the canonical `bake.Framework` and projects the
-            /// fields the bundler reads.
-            pub fn new(
-                built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-                server_components: Option<ServerComponents>,
-                react_fast_refresh: Option<ReactFastRefresh>,
-                is_built_in_react: bool,
-            ) -> Self {
-                Self {
-                    built_in_modules,
-                    server_components,
-                    react_fast_refresh,
-                    is_built_in_react,
-                    client_css_in_js: crate::options::ClientCssInJs::default(),
-                }
-            }
-        }
-        /// `Framework.ServerComponents` — full string
-        /// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
-        /// can forward user-configured `serverRegisterServerReference` /
-        /// `clientRegisterServerReference` instead of hardcoding defaults.
-        #[derive(Default, Clone)]
-        pub struct ServerComponents {
-            pub separate_ssr_graph: bool,
-            pub server_runtime_import: Box<[u8]>,
-            pub server_register_client_reference: Box<[u8]>,
-            pub server_register_server_reference: Box<[u8]>,
-            pub client_register_server_reference: Box<[u8]>,
-        }
-        #[derive(Clone)]
-        pub struct ReactFastRefresh {
-            pub import_source: Box<[u8]>,
-        }
-
-        /// TYPE_ONLY moved down so the
-        /// linker can splice the runtime preamble without depending on bun_bake.
-        #[derive(Clone, Copy)]
-        pub struct HmrRuntime {
-            pub code: &'static [u8],
-            /// Precomputed `\n` count — sourcemap generation skips this many lines.
-            pub line_count: u32,
-        }
-        impl HmrRuntime {
-            pub const fn init(code: &'static [u8]) -> Self {
-                // const-fn newline counter.
-                let mut n: u32 = 0;
-                let mut i = 0usize;
-                while i < code.len() {
-                    if code[i] == b'\n' {
-                        n += 1;
-                    }
-                    i += 1;
-                }
-                Self {
-                    code,
-                    line_count: n,
-                }
-            }
-        }
-        /// Alias used at the crate root (`crate::HmrRuntimeSide`); identical to `Side`.
-        pub type HmrRuntimeSide = Side;
-
-        /// MOVE_DOWN bake→bundler:
-        /// the codegen'd `bake.client.js` / `bake.server.js` are loaded via
-        /// `bun_core::runtime_embed_file!` (same per-site `OnceLock<String>` cache
-        /// `js_parser/runtime.rs` uses for `runtime.out.js`), so the storage lives
-        /// HERE — no upward link to `bun_runtime`. `bun_runtime::bake` keeps its
-        /// own `&'static ZStr` flavour for JSC/C++ handoff; this bundler-side copy
-        /// only needs `&[u8]` for the chunk preamble + sourcemap line skip, so the
-        /// NUL-termination dance is unnecessary. Per-side `OnceLock<HmrRuntime>`
-        /// memoizes the `\n` count (`runtime_embed_file!` already caches the file
-        /// load, this caches the `init` scan so repeat calls are a `Copy`).
-        pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
-            static CLIENT: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
-            static SERVER: std::sync::OnceLock<HmrRuntime> = std::sync::OnceLock::new();
-            match side {
-                Side::Client => *CLIENT.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(CodegenEager, "bake.client.js").as_bytes(),
-                    )
-                }),
-                // Server runtime is loaded once; non-eager.
-                Side::Server => *SERVER.get_or_init(|| {
-                    HmrRuntime::init(
-                        bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
-                    )
-                }),
-            }
-        }
-
-        /// `bun_ast::Source` is not `const`-constructible (owns a `fs::Path`), so these
-        /// are lazy statics.
-        pub(crate) static SERVER_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
-            std::sync::LazyLock::new(|| {
-                // Inlined because `bun_paths::fs::Path<'static>` is the local TYPE_ONLY stub and
-                // does not expose a built-in-path constructor.
-                bun_ast::Source {
-                    path: bun_paths::fs::Path {
-                        pretty: b"bun:bake/server",
-                        text: b"_bun/bake/server",
-                        namespace: b"bun",
-                        is_disabled: false,
-                        is_symlink: true,
-                    },
-                    index: bun_ast::Index(crate::Index::BAKE_SERVER_DATA.get()),
-                    ..Default::default()
-                }
-            });
-        pub(crate) static CLIENT_VIRTUAL_SOURCE: std::sync::LazyLock<bun_ast::Source> =
-            std::sync::LazyLock::new(|| bun_ast::Source {
-                path: bun_paths::fs::Path {
-                    pretty: b"bun:bake/client",
-                    text: b"_bun/bake/client",
-                    namespace: b"bun",
-                    is_disabled: false,
-                    is_symlink: true,
-                },
-                index: bun_ast::Index(crate::Index::BAKE_CLIENT_DATA.get()),
-                ..Default::default()
-            });
-
-        /// `EntryPointMap`.
-        /// Lives in the bundler (lower tier) so both `bun_runtime::bake::production`
-        /// and `BundleV2::generate_from_bake_production_cli` share ONE nominal type
-        /// (PORTING.md §Layering). Router-integration methods (`InsertionHandler`)
-        /// are added by `bun_runtime::bake` via a local trait impl.
-        pub mod production {
-            use super::Side;
-
-            /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
-            /// This is the same newtype as `framework_router::OpaqueFileId`; the
-            /// bake crate re-exports that one and converts via `.get()` only at
-            /// the FFI boundary.
-            #[repr(transparent)]
-            #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-            pub struct OpaqueFileId(pub u32);
-            impl OpaqueFileId {
-                #[inline]
-                pub const fn init(i: u32) -> Self {
-                    Self(i)
-                }
-                #[inline]
-                pub const fn get(self) -> u32 {
-                    self.0
-                }
-            }
-
-            /// `EntryPointMap.InputFile`. The `Hash`/`Eq` impls below are content-based
-            /// (not byte-layout) — store a
-            /// `RawSlice` and let `bun_ptr` encapsulate the unsafe re-borrow.
-            /// `RawSlice<u8>: Send + Sync`, so no manual auto-trait impls are needed.
-            #[derive(Copy, Clone)]
-            pub struct InputFile {
-                abs_path: bun_ptr::RawSlice<u8>,
-                pub side: Side,
-            }
-            impl InputFile {
-                #[inline]
-                pub fn init(abs_path: &[u8], side: Side) -> Self {
-                    Self {
-                        abs_path: bun_ptr::RawSlice::new(abs_path),
-                        side,
-                    }
-                }
-                #[inline]
-                pub fn abs_path(&self) -> &[u8] {
-                    // Backing allocation is owned by `EntryPointMap.owned_paths`
-                    // (duped on insert) and outlives every key stored in `files`.
-                    self.abs_path.slice()
-                }
-            }
-            impl core::hash::Hash for InputFile {
-                fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-                    state.write(self.abs_path());
-                    state.write_u8(self.side as u8);
-                }
-            }
-            impl PartialEq for InputFile {
-                fn eq(&self, other: &Self) -> bool {
-                    self.side == other.side && self.abs_path() == other.abs_path()
-                }
-            }
-            impl Eq for InputFile {}
-
-            /// Value side is `OutputFile.Index` — left as a placeholder until the
-            /// bundle is indexed; the bundler never reads it.
-            pub use crate::output_file::Index as OutputFileIndex;
-
-            pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
-
-            #[derive(Default)]
-            pub struct EntryPointMap {
-                pub root: Box<[u8]>,
-                /// `OpaqueFileId` is the insertion index into this map.
-                pub files: EntryPointHashMap,
-                /// Owned backing storage for the duped path bytes that `InputFile`
-                /// keys point into (raw ptr+len) — kept here so the allocations
-                /// drop with the map (no `Box::leak`).
-                pub owned_paths: Vec<Box<[u8]>>,
-            }
-            impl EntryPointMap {
-                /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert
-                /// (owned by `owned_paths`; `Box` heap address is stable across the
-                /// move so the raw key pointer stays valid).
-                pub fn get_or_put_entry_point(
-                    &mut self,
-                    abs_path: &[u8],
-                    side: Side,
-                ) -> Result<OpaqueFileId, bun_core::Error> {
-                    let probe = InputFile::init(abs_path, side);
-                    if let Some(index) = self.files.get_index(&probe) {
-                        return Ok(OpaqueFileId::init(index as u32));
-                    }
-                    let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
-                    let key = InputFile::init(&owned, side);
-                    self.owned_paths.push(owned);
-                    let index = self.files.count();
-                    // Value is the post-bundle output index; left as a placeholder until
-                    // the bundle is indexed.
-                    self.files.put_no_clobber(key, OutputFileIndex::init(0))?;
-                    Ok(OpaqueFileId::init(index as u32))
-                }
-            }
-        }
-    }
     use self::api as jsc_api;
 
     /// CYCLEBREAK(b0) TYPE_ONLY: data-only halves of `jsc::api::JSBundler` and
@@ -1341,7 +1000,7 @@ pub mod bv2_impl {
     }
 
     // ── crate-root re-exports for forward-refs left by move-out ───────────────
-    pub use self::bake_types::{HmrRuntimeSide, get_hmr_runtime};
+    pub use crate::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 
     /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
     pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
@@ -3107,26 +2766,24 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub fn enqueue_entry_points_bake_production(
+        /// Enqueue a fixed list of entry points, each with an explicit
+        /// per-entry target graph. The framework production build drives this
+        /// (each route file is enqueued for the graph the caller chose);
+        /// resolution always goes through the main transpiler.
+        pub fn enqueue_entry_points_with_targets(
             &mut self,
-            data: &bake_types::production::EntryPointMap,
+            entry_points: &[(&[u8], options::Target)],
         ) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             self.reserve_source_indexes_for_bake()?;
 
-            let num_entry_points = data.files.count();
+            let num_entry_points = entry_points.len();
             self.graph.entry_points.reserve(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
 
-            for key in data.files.keys() {
-                let abs_path = key.abs_path();
-                let target = match key.side {
-                    bake::Side::Client => Target::Browser,
-                    bake::Side::Server => self.transpiler.options.target,
-                };
-
+            for &(abs_path, target) in entry_points {
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target) {
                     continue;
                 }
@@ -3179,7 +2836,10 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        fn clone_ast(&mut self) -> Result<(), Error> {
+        /// Clone the parse graph's AST into the linker graph and transfer
+        /// worker-allocator-owned AST pieces to the graph heap. Runs between
+        /// parsing and `linker.link` on every generate path.
+        pub fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             self.linker.graph.ast = self.graph.ast.clone()?;
 
@@ -3938,86 +3598,6 @@ pub mod bv2_impl {
             this.wait_for_parse();
 
             Ok(this)
-        }
-
-        pub fn generate_from_bake_production_cli(
-            entry_points: &bake_types::production::EntryPointMap,
-            server_transpiler: &'a mut Transpiler<'a>,
-            bake_options: BakeOptions<'a>,
-            alloc: &'a bun_alloc::Arena,
-            event_loop: EventLoop,
-        ) -> Result<Vec<options::OutputFile>, Error> {
-            let mut this = BundleV2::init(
-                server_transpiler,
-                Some(bake_options),
-                alloc,
-                event_loop,
-                false,
-                None,
-                alloc,
-            )?;
-            this.unique_key = generate_unique_key();
-
-            // Wrap so every exit path hits the cleanup below; `chunks` must drop
-            // inside the closure, before `deinit_without_freeing_arena()`.
-            let result = (|| -> Result<Vec<options::OutputFile>, Error> {
-                if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
-                }
-
-                this.enqueue_entry_points_bake_production(entry_points)?;
-
-                if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
-                }
-
-                this.wait_for_parse();
-
-                if this.transpiler.log().has_errors() {
-                    return Err(bun_core::err!("BuildFailed"));
-                }
-
-                this.scan_for_secondary_paths();
-
-                this.process_server_component_manifest_files()?;
-
-                let reachable_files = this.find_reachable_files()?;
-
-                this.process_files_to_copy(&reachable_files)?;
-
-                this.add_server_component_boundaries_as_extra_entry_points()?;
-
-                this.clone_ast()?;
-
-                // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-                // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-                // from `this.linker`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // Value-copy (original preserved for `StaticRouteVisitor`).
-                    // Borrow — do NOT `take` (see `generate_from_cli`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
-                    // retag invalidates `ep`/`scbs` (SB hygiene).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
-
-                if chunks.is_empty() {
-                    return Ok(Vec::new());
-                }
-
-                crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut this.linker,
-                    &mut chunks,
-                )
-            })();
-
-            this.deinit_without_freeing_arena();
-
-            result
         }
 
         pub fn add_server_component_boundaries_as_extra_entry_points(

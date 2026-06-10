@@ -16,6 +16,7 @@ use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
+use bun_bundler::bundle_v2;
 use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
@@ -598,8 +599,8 @@ pub(super) fn build_with_vm(
             // `clone()`).
             style: fsr.style.clone(),
             allow_layouts: fsr.allow_layouts,
-            server_file: OpaqueFileId::init(server_file.get()),
-            client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
+            server_file,
+            client_file,
             server_file_string: bun_jsc::StrongOptional::empty(),
         });
     }
@@ -642,7 +643,7 @@ pub(super) fn build_with_vm(
         // catch-and-exit here: the bake path expects this call to succeed for
         // valid inputs, and any `BuildFailed` indicates a bug upstream
         // (in the bundler), not a user-facing diagnostic to swallow.
-        BundleV2::generate_from_bake_production_cli(
+        generate_production_bundle(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
@@ -1399,15 +1400,182 @@ pub(super) extern "C" fn BakeProdResolve(
     ))
 }
 
+/// Drive the bundler pipeline for a Bake production build: enqueue each route
+/// entry point on the graph its side selects, parse, link, and generate
+/// chunks. Mirrors `BundleV2::generate_from_cli` minus watch mode and the
+/// metafile.
+fn generate_production_bundle<'a>(
+    entry_points: &EntryPointMap,
+    server_transpiler: &'a mut Transpiler<'a>,
+    bake_options: bundle_v2::BakeOptions<'a>,
+    alloc: &'a Arena,
+    event_loop: bundle_v2::EventLoop,
+) -> Result<Vec<OutputFile>, bun_core::Error> {
+    let mut this = BundleV2::init(
+        server_transpiler,
+        Some(bake_options),
+        alloc,
+        event_loop,
+        false,
+        None,
+        alloc,
+    )?;
+    this.unique_key = bundle_v2::generate_unique_key();
+
+    // Wrap so every exit path hits the cleanup below; `chunks` must drop
+    // inside the closure, before `deinit_without_freeing_arena()`.
+    let result = (|| -> Result<Vec<OutputFile>, bun_core::Error> {
+        if this.transpiler.log().has_errors() {
+            return Err(bun_core::err!("BuildFailed"));
+        }
+
+        // Client files bundle for the browser; server files for the server
+        // transpiler's target.
+        let server_target = this.transpiler.options.target;
+        let mut entry_targets: Vec<(&[u8], bun_ast::Target)> =
+            Vec::with_capacity(entry_points.files.count());
+        for key in entry_points.files.keys() {
+            entry_targets.push((
+                key.abs_path(),
+                match key.side {
+                    bake::Side::Client => bun_ast::Target::Browser,
+                    bake::Side::Server => server_target,
+                },
+            ));
+        }
+        this.enqueue_entry_points_with_targets(&entry_targets)?;
+
+        if this.transpiler.log().has_errors() {
+            return Err(bun_core::err!("BuildFailed"));
+        }
+
+        this.wait_for_parse();
+
+        if this.transpiler.log().has_errors() {
+            return Err(bun_core::err!("BuildFailed"));
+        }
+
+        this.scan_for_secondary_paths();
+
+        this.process_server_component_manifest_files()?;
+
+        let reachable_files = this.find_reachable_files()?;
+
+        this.process_files_to_copy(&reachable_files)?;
+
+        this.add_server_component_boundaries_as_extra_entry_points()?;
+
+        this.clone_ast()?;
+
+        // SAFETY: see `BundleV2::generate_from_cli` — raw-ptr borrow sidestep;
+        // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
+        // from `this.linker`.
+        let mut chunks = unsafe {
+            let bundle_ptr: *mut BundleV2 = &raw mut *this;
+            let ep = (*bundle_ptr).graph.entry_points.as_slice();
+            // Value-copy (original preserved for `StaticRouteVisitor`).
+            // Borrow — do NOT `take` (see `generate_from_cli`).
+            let scbs = &(*bundle_ptr).graph.server_component_boundaries;
+            // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
+            // retag invalidates `ep`/`scbs` (SB hygiene).
+            (*bundle_ptr)
+                .linker
+                .link(bundle_ptr, ep, scbs, &reachable_files)?
+        };
+
+        if chunks.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        bun_bundler::linker_context_mod::generate_chunks_in_parallel::<false>(
+            &mut this.linker,
+            &mut chunks,
+        )
+    })();
+
+    this.deinit_without_freeing_arena();
+
+    result
+}
+
+/// `EntryPointMap.InputFile`. The `Hash`/`Eq` impls below are content-based
+/// (not byte-layout) — store a
+/// `RawSlice` and let `bun_ptr` encapsulate the unsafe re-borrow.
+/// `RawSlice<u8>: Send + Sync`, so no manual auto-trait impls are needed.
+#[derive(Copy, Clone)]
+pub struct InputFile {
+    abs_path: bun_ptr::RawSlice<u8>,
+    pub side: bake::Side,
+}
+impl InputFile {
+    #[inline]
+    pub fn init(abs_path: &[u8], side: bake::Side) -> Self {
+        Self {
+            abs_path: bun_ptr::RawSlice::new(abs_path),
+            side,
+        }
+    }
+    #[inline]
+    pub fn abs_path(&self) -> &[u8] {
+        // Backing allocation is owned by `EntryPointMap.owned_paths`
+        // (duped on insert) and outlives every key stored in `files`.
+        self.abs_path.slice()
+    }
+}
+impl core::hash::Hash for InputFile {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.abs_path());
+        state.write_u8(self.side as u8);
+    }
+}
+impl PartialEq for InputFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.side == other.side && self.abs_path() == other.abs_path()
+    }
+}
+impl Eq for InputFile {}
+
+/// Value side is `OutputFile.Index` — left as a placeholder until the
+/// bundle is indexed; the bundler never reads it.
+pub type EntryPointHashMap = bun_collections::ArrayHashMap<InputFile, OutputFileIndex>;
+
 /// After a production bundle is generated, prerendering needs to be able to
 /// look up the generated chunks associated with each route's `OpaqueFileId`
-/// This data structure contains that mapping, and is also used by bundle_v2
-/// to enqueue the entry points.
-///
-/// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::{EntryPointHashMap, EntryPointMap, InputFile};
+/// This data structure contains that mapping, and is also the source of the
+/// entry-point list handed to the bundler.
+#[derive(Default)]
+pub struct EntryPointMap {
+    pub root: Box<[u8]>,
+    /// `OpaqueFileId` is the insertion index into this map.
+    pub files: EntryPointHashMap,
+    /// Owned backing storage for the duped path bytes that `InputFile`
+    /// keys point into (raw ptr+len) — kept here so the allocations
+    /// drop with the map (no `Box::leak`).
+    pub owned_paths: Vec<Box<[u8]>>,
+}
+impl EntryPointMap {
+    /// Mirrors `getOrPutEntryPoint`. Dupes `abs_path` on first insert
+    /// (owned by `owned_paths`; `Box` heap address is stable across the
+    /// move so the raw key pointer stays valid).
+    pub fn get_or_put_entry_point(
+        &mut self,
+        abs_path: &[u8],
+        side: bake::Side,
+    ) -> Result<OpaqueFileId, bun_core::Error> {
+        let probe = InputFile::init(abs_path, side);
+        if let Some(index) = self.files.get_index(&probe) {
+            return Ok(OpaqueFileId::init(index as u32));
+        }
+        let owned: Box<[u8]> = Box::<[u8]>::from(abs_path);
+        let key = InputFile::init(&owned, side);
+        self.owned_paths.push(owned);
+        let index = self.files.count();
+        // Value is the post-bundle output index; left as a placeholder until
+        // the bundle is indexed.
+        self.files.put_no_clobber(key, OutputFileIndex::init(0))?;
+        Ok(OpaqueFileId::init(index as u32))
+    }
+}
 
 impl framework_router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
@@ -1417,7 +1585,6 @@ impl framework_router::InsertionHandler for EntryPointMap {
         _: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
         self.get_or_put_entry_point(abs_path, bake::Side::Server)
-            .map(|id| OpaqueFileId::init(id.get()))
             .map_err(|_| bun_alloc::AllocError)
     }
 

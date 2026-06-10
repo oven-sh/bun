@@ -30,7 +30,9 @@ pub(crate) mod memory_cost;
 // re-exported via the `pub use` block below alongside the `struct DevServer`
 // type. Declaring it again here would collide in the value namespace.
 
-pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
+/// Canonical definition lives in `bun_options_types` (T3) so the bundler can
+/// emit dev-server asset URLs without referencing bake.
+pub(crate) use bun_options_types::DEV_SERVER_ASSET_PREFIX as ASSET_PREFIX;
 pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 
 // LAYERING: the 4.8 kL of method bodies live in `../DevServer.rs` (mounted as

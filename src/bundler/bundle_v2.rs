@@ -6327,7 +6327,7 @@ pub mod bv2_impl {
                                         self.arena()
                                             .alloc_str(&format!(
                                                 "{}/{}{}",
-                                                bake_types::ASSET_PREFIX,
+                                                bun_options_types::DEV_SERVER_ASSET_PREFIX,
                                                 bun_core::fmt::bytes_to_hex_lower_string(
                                                     &hash.to_ne_bytes()
                                                 ),

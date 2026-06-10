@@ -13,6 +13,7 @@ use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, Error as AnyError, FeatureFlags, declare_scope, err, scoped_log};
+use bun_options_types::BuiltInModule;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -1353,12 +1354,6 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `BundleV2.file_map` is `Option<NonNull<FileMap>>` where `FileMap`
-    // is an opaque forward-decl (`_opaque: [u8; 0]`); `.get(path)`
-    // requires the real T6 `jsc::api::JSBundler::FileMap` surface. Also blocked on
-    // `bake_types::Framework.built_in_modules` value variant carrying `&[u8]` (vs
-    // `Box<[u8]>` here) and `resolver.caches.fs.read_file_with_allocator` shape.
-
     // `transpiler`/`resolver` are raw `*mut`.
     // Callers pass `resolver = &mut (*transpiler).resolver`; taking
     // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
@@ -1400,7 +1395,7 @@ pub mod parse_worker {
                         if let Some(f) = &ctx.framework {
                             if let Some(file) = f.built_in_modules.get(file_path.text) {
                                 match file {
-                                    crate::bake_types::BuiltInModule::Code(code) => {
+                                    BuiltInModule::Code(code) => {
                                         break 'brk Ok(CacheEntry {
                                             contents: crate::cache::Contents::SharedBuffer {
                                                 ptr: code.as_ptr(),
@@ -1410,7 +1405,7 @@ pub mod parse_worker {
                                             ..Default::default()
                                         });
                                     }
-                                    crate::bake_types::BuiltInModule::Import(path) => {
+                                    BuiltInModule::Import(path) => {
                                         *file_path = Fs::Path::init(path);
                                         break 'lookup_builtin;
                                     }
@@ -2262,15 +2257,6 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
-    // blocked_on: `crate::ThreadPool::Worker` (gated module) for
-    // `this.{arena, transpiler_for_target, ctx}`; `bake_types::Framework`
-    // missing `server_components` field; `ParserOptions` field-type mismatches
-    // (`allow_unresolved`, `framework`, `unwrap_commonjs_packages`,
-    // `server_components` — bundler's `BundleOptions` types diverge from the
-    // js_parser-local `parser::options` shims); `get_ast`/`get_empty_*` (gated).
-    // Signature is real; body un-gates once the `ThreadPool` module + the
-    // `parser::options` ↔ `BundleOptions` type unification land.
-
     fn run_with_source_code(
         task: &mut ParseTask,
         this: &mut crate::Worker,
@@ -2554,10 +2540,10 @@ pub mod parse_worker {
             bun_ast::runtime::ServerComponentsMode::None
         };
 
-        // `transpiler.options.framework: Option<&bake_types::Framework>`
-        // vs `opts.framework: Option<&js_parser::options::Framework>` — both
-        // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
-        // reads into the parser-side mirror and bump-alloc
+        // `transpiler.options.framework` and `opts.framework` are distinct
+        // TYPE_ONLY mirrors of the runtime-side framework config (the bundler
+        // seam struct vs `js_parser::options::Framework`). Project the fields
+        // the parser reads into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
         opts.framework = topts.framework.map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.

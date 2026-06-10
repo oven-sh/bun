@@ -269,78 +269,66 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
     TARGET_MAIN_FIELD_NAMES[3],
 ];
 
-/// Bundler-only `Target` methods. Extension trait per PORTING.md crate-tier
-/// rule — the canonical `Target` lives in `bun_options_types` (lower tier) and
-/// cannot depend on `bake_types` / `StringHashMap`. Re-exported through
-/// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
-/// `.bake_graph()` etc. available on the single canonical type.
-pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
+/// Seam re-exports: `TargetExt` (the bundler-only `Target::bake_graph()`
+/// extension) is declared next to the `Graph` type it returns; `Framework` is
+/// the seam view `BundleOptions.framework` stores. Re-exported so
+/// `use bun_bundler::options::TargetExt;` keeps resolving the method on the
+/// single canonical `Target` (which lives in `bun_ast`, a lower tier).
+pub use crate::bake_types::{Framework, TargetExt};
 
-    fn bake_graph(self) -> crate::bake_types::Graph;
-    fn out_extensions(self) -> StringHashMap<&'static [u8]>;
+// `Target::fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
+// (PORTING.md "*_jsc alias" rule); `from_api`/`to_api` on
+// `bun_options_types::TargetExt`.
 
-    // Original comment:
-    // The neutral target is for people that don't want esbuild to try to
-    // pick good defaults for their platform. In that case, the list of main
-    // fields is empty by default. You must explicitly configure it yourself.
-    // array.set(Target.neutral, &listc);
-    fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => DEFAULT_MAIN_FIELDS_NODE,
-            Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
-            Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        })
-    }
-
-    fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => &[b"node" as &[u8]][..],
-            Target::Browser => &[b"browser" as &[u8], b"module"][..],
-            Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
-            Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        })
-    }
+// Original comment:
+// The neutral target is for people that don't want esbuild to try to
+// pick good defaults for their platform. In that case, the list of main
+// fields is empty by default. You must explicitly configure it yourself.
+// array.set(Target.neutral, &listc);
+fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+    EnumMap::from_fn(|k| match k {
+        Target::Node => DEFAULT_MAIN_FIELDS_NODE,
+        Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
+        Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
+        Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
+        Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
+    })
 }
 
-impl TargetExt for Target {
-    fn bake_graph(self) -> crate::bake_types::Graph {
-        match self {
-            Target::Browser => crate::bake_types::Graph::Client,
-            Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
-            Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
-        }
-    }
+fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+    EnumMap::from_fn(|k| match k {
+        Target::Node => &[b"node" as &[u8]][..],
+        Target::Browser => &[b"browser" as &[u8], b"module"][..],
+        Target::Bun => &[b"bun" as &[u8], b"node"][..],
+        Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+        Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
+    })
+}
 
-    fn out_extensions(self) -> StringHashMap<&'static [u8]> {
-        let mut exts = StringHashMap::<&'static [u8]>::default();
+fn out_extensions(target: Target) -> StringHashMap<&'static [u8]> {
+    let mut exts = StringHashMap::<&'static [u8]>::default();
 
-        const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
-            b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
-        ];
+    const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
+        b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
+    ];
 
-        if self == Target::Node {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
-                .expect("OOM");
-            for &ext in OUT_EXTENSIONS_LIST {
-                exts.put_static_key(ext, b".mjs").expect("OOM");
-            }
-        } else {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
-                .expect("OOM");
-            exts.put_static_key(b".mjs", b".js").expect("OOM");
-        }
-
+    if target == Target::Node {
+        exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
+            .expect("OOM");
         for &ext in OUT_EXTENSIONS_LIST {
-            exts.put_static_key(ext, b".js").expect("OOM");
+            exts.put_static_key(ext, b".mjs").expect("OOM");
         }
-
-        exts
+    } else {
+        exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
+            .expect("OOM");
+        exts.put_static_key(b".mjs", b".js").expect("OOM");
     }
+
+    for &ext in OUT_EXTENSIONS_LIST {
+        exts.put_static_key(ext, b".js").expect("OOM");
+    }
+
+    exts
 }
 
 pub use bun_options_types::Format;
@@ -1376,7 +1364,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<&'a Framework>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1779,7 +1767,7 @@ impl<'a> BundleOptions<'a> {
             output_format: Format::Esm,
             append_package_version_in_query_string: false,
             tsconfig_override: None,
-            main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
+            main_fields: owned_string_list(default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
@@ -1880,7 +1868,7 @@ impl<'a> BundleOptions<'a> {
 
         if let Some(t) = transform.target {
             opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
+            opts.main_fields = owned_string_list(default_main_fields_map()[opts.target]);
         }
 
         {
@@ -1889,7 +1877,7 @@ impl<'a> BundleOptions<'a> {
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
-                Target::default_conditions_map()[opts.target],
+                default_conditions_map()[opts.target],
                 transform.allow_addons.unwrap_or(true),
                 &transform
                     .conditions
@@ -1952,7 +1940,7 @@ impl<'a> BundleOptions<'a> {
             opts.log_mut(),
             opts.target,
         );
-        opts.out_extensions = opts.target.out_extensions();
+        opts.out_extensions = out_extensions(opts.target);
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
 
@@ -2149,7 +2137,7 @@ impl TransformOptions {
             entry_point,
             // resolve_dir is cloned so
             // `TransformOptions` stays lifetime-free.
-            main_fields: Target::default_main_fields_map()[Target::Browser],
+            main_fields: default_main_fields_map()[Target::Browser],
             jsx: if loader.is_jsx() {
                 Some(jsx::Pragma::default())
             } else {

@@ -9,6 +9,16 @@ import { SQL } from "bun";
 import { expect, test } from "bun:test";
 import net from "net";
 
+function listen(server: net.Server): Promise<void> {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    server.removeListener("error", reject);
+    resolve();
+  });
+  return promise;
+}
+
 // --- Postgres wire helpers (mirrors postgres-multi-statement-fields.test.ts) ---
 
 function pkt(type: string, body: Buffer): Buffer {
@@ -64,7 +74,7 @@ function dataRow(values: string[]): Buffer {
   return pkt("D", Buffer.concat([int16(values.length), cols]));
 }
 
-interface PostgresMock {
+interface Mock {
   port: number;
   server: net.Server;
   sockets: Set<net.Socket>;
@@ -73,7 +83,7 @@ interface PostgresMock {
 
 // Completes the startup handshake, then hands every post-startup chunk to
 // onQuery (default: swallow it, leaving the query in flight forever).
-async function postgresMock(onQuery?: (socket: net.Socket, data: Buffer) => void): Promise<PostgresMock> {
+async function postgresMock(onQuery?: (socket: net.Socket, data: Buffer) => void): Promise<Mock> {
   const queryReceived = Promise.withResolvers<void>();
   const sockets = new Set<net.Socket>();
   const server = net.createServer(socket => {
@@ -89,8 +99,8 @@ async function postgresMock(onQuery?: (socket: net.Socket, data: Buffer) => void
       queryReceived.resolve();
     });
   });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const port = (server.address() as net.AddressInfo).port;
+  await listen(server);
+  const { port } = server.address() as net.AddressInfo;
   return { port, server, sockets, queryReceived: queryReceived.promise };
 }
 
@@ -107,6 +117,11 @@ function u32le(n: number): Buffer {
 }
 function mysqlPacket(seq: number, payload: Buffer): Buffer {
   return Buffer.concat([u24le(payload.length), Buffer.from([seq]), payload]);
+}
+function lenencStr(s: string): Buffer {
+  const buf = Buffer.from(s, "utf-8");
+  if (buf.length >= 0xfb) throw new Error("lenencStr: only the 1-byte form is needed here");
+  return Buffer.concat([Buffer.from([buf.length]), buf]);
 }
 
 const CLIENT_PROTOCOL_41 = 1 << 9;
@@ -145,6 +160,74 @@ function handshakeV10(): Buffer {
 
 function okPacket(seq: number): Buffer {
   return mysqlPacket(seq, Buffer.from([0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+}
+
+function mysqlColumnDefinition(name: string): Buffer {
+  return Buffer.concat([
+    lenencStr("def"),
+    lenencStr(""),
+    lenencStr("t"),
+    lenencStr("t"),
+    lenencStr(name),
+    lenencStr(name),
+    Buffer.from([0x0c]), // fixed-length-fields length = 12
+    u16le(33), // utf8_general_ci
+    u32le(32), // column_length (display width)
+    Buffer.from([0xfd]), // MYSQL_TYPE_VAR_STRING
+    u16le(0), // flags
+    Buffer.from([0]), // decimals
+    Buffer.from([0, 0]), // reserved
+  ]);
+}
+
+// Text-protocol result set: one column, one row.
+function mysqlTextResultSet(startSeq: number, column: string, value: string): Buffer {
+  let seq = startSeq;
+  return Buffer.concat([
+    mysqlPacket(seq++, Buffer.from([1])), // column count
+    mysqlPacket(seq++, mysqlColumnDefinition(column)),
+    mysqlPacket(seq++, lenencStr(value)), // row
+    // OK packet closing the result set (CLIENT_DEPRECATE_EOF, header 0xfe).
+    mysqlPacket(seq++, Buffer.from([0xfe, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00])),
+  ]);
+}
+
+// Sends the handshake, OKs the auth response, then hands every post-auth
+// packet to onCommand (default: swallow it, leaving the query in flight
+// forever).
+async function mysqlMock(onCommand?: (socket: net.Socket, seq: number, payload: Buffer) => void): Promise<Mock> {
+  const queryReceived = Promise.withResolvers<void>();
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer(socket => {
+    sockets.add(socket);
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+
+    socket.write(handshakeV10());
+
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 4) {
+        const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
+        if (buffered.length < 4 + len) break;
+        const seq = buffered[3];
+        const payload = buffered.subarray(4, 4 + len);
+        buffered = buffered.subarray(4 + len);
+
+        if (!authed) {
+          authed = true;
+          socket.write(okPacket(seq + 1));
+          continue;
+        }
+
+        onCommand?.(socket, seq, payload);
+        queryReceived.resolve();
+      }
+    });
+  });
+  await listen(server);
+  const { port } = server.address() as net.AddressInfo;
+  return { port, server, sockets, queryReceived: queryReceived.promise };
 }
 
 test("postgres: close({ timeout: 0 }) settles immediately with a query in flight", async () => {
@@ -199,48 +282,45 @@ test("postgres: close({ timeout: null }) still drains gracefully", async () => {
 });
 
 test("mysql: close({ timeout: 0 }) settles immediately with a query in flight", async () => {
-  const queryReceived = Promise.withResolvers<void>();
-  const sockets = new Set<net.Socket>();
-  const server = net.createServer(socket => {
-    sockets.add(socket);
-    let buffered = Buffer.alloc(0);
-    let authed = false;
-
-    socket.write(handshakeV10());
-
-    socket.on("data", chunk => {
-      buffered = Buffer.concat([buffered, chunk]);
-      while (buffered.length >= 4) {
-        const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
-        if (buffered.length < 4 + len) break;
-        const seq = buffered[3];
-        buffered = buffered.subarray(4 + len);
-
-        if (!authed) {
-          authed = true;
-          socket.write(okPacket(seq + 1));
-          continue;
-        }
-
-        // Swallow the query so it stays in flight forever.
-        queryReceived.resolve();
-      }
-    });
-  });
-  await new Promise<void>(r => server.listen(0, "127.0.0.1", () => r()));
-  const { port } = server.address() as net.AddressInfo;
-
-  const sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+  const mock = await mysqlMock();
+  const sql = new SQL({ url: `mysql://root@127.0.0.1:${mock.port}/db`, max: 1 });
 
   try {
     const pending = sql`select 1`.catch(e => e.code);
-    await queryReceived.promise;
+    await mock.queryReceived;
 
     await sql.close({ timeout: 0 });
 
     expect(await pending).toBe("ERR_MYSQL_CONNECTION_CLOSED");
   } finally {
-    for (const socket of sockets) socket.destroy();
-    server.close();
+    for (const socket of mock.sockets) socket.destroy();
+    mock.server.close();
+  }
+});
+
+test("mysql: close({ timeout: null }) still drains gracefully", async () => {
+  let respond: (() => void) | undefined;
+  const mock = await mysqlMock((socket, seq, payload) => {
+    if (payload[0] !== 0x03 /* COM_QUERY */) return;
+    respond = () => {
+      socket.write(mysqlTextResultSet(seq + 1, "x", "1"));
+    };
+  });
+  const sql = new SQL({ url: `mysql://root@127.0.0.1:${mock.port}/db`, max: 1 });
+
+  try {
+    // .simple() forces the text protocol (COM_QUERY).
+    const query = sql`select 1 as x`.simple();
+    const result = query.then(r => r);
+    await mock.queryReceived;
+
+    const closing = sql.close({ timeout: null });
+    respond!();
+
+    expect(await result).toEqual([{ x: "1" }]);
+    await closing;
+  } finally {
+    for (const socket of mock.sockets) socket.destroy();
+    mock.server.close();
   }
 });

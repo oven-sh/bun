@@ -114,10 +114,6 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
-    safe fn ReadableStream__hasReader(
-        possible_readable_stream: JSValue,
-        global_object: &JSGlobalObject,
-    ) -> bool;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
@@ -286,17 +282,6 @@ impl ReadableStream {
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {
         // SAFETY: FFI call; value is a valid ReadableStream JSValue.
         ReadableStream__isLocked(self.value, global_object)
-    }
-
-    /// Whether a reader is attached (`$reader` is truthy) — the reader half
-    /// of the JS `$isReadableStreamLocked` builtin (the other half,
-    /// `$bunNativePtr === -1`, marks force-detached streams, which are also
-    /// disturbed and tag as `Invalid`). `is_locked` above only matches a
-    /// literal `true` sentinel that the stream builtins never store, so it
-    /// cannot see readers; use this to decide whether a stream may be
-    /// converted/consumed natively.
-    pub fn has_reader(&self, global_object: &JSGlobalObject) -> bool {
-        ReadableStream__hasReader(self.value, global_object)
     }
 
     pub fn from_js(

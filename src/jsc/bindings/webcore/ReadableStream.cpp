@@ -419,24 +419,6 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
 }
 
-// Whether `$reader` is truthy — the reader half of the `$isReadableStreamLocked`
-// builtin (the other half, `$bunNativePtr === -1`, marks force-detached streams).
-// `ReadableStream::isLocked` above checks `$reader.isTrue()`, which never
-// matches the reader objects (or the `{}` released-reader sentinel) the stream
-// builtins actually store.
-extern "C" bool ReadableStream__hasReader(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    ASSERT(globalObject);
-    auto* stream = dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(possibleReadableStream));
-    if (!stream)
-        return false;
-    auto& vm = JSC::getVM(globalObject);
-    auto clientData = WebCore::clientData(vm);
-    auto& privateName = clientData->builtinNames().readerPrivateName();
-    JSC::JSValue reader = stream->getDirect(vm, privateName);
-    return !reader.isEmpty() && !reader.isUndefinedOrNull();
-}
-
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);

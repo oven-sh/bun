@@ -1734,12 +1734,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
         // A reader the user holds must keep observing the stream; consumption
-        // must keep rejecting like the streaming path does. `is_locked` can't
-        // see readers (see `has_reader`), and the callers' `is_disturbed`
-        // checks miss readers made with `new ReadableStreamDefaultReader(s)`,
-        // which — unlike `getReader()` — doesn't run the deferred `$start`
-        // thunk that marks lazy native streams disturbed.
-        if stream.has_reader(global_object) {
+        // must keep rejecting like the streaming path does. The callers'
+        // `is_disturbed` checks alone miss readers made with
+        // `new ReadableStreamDefaultReader(s)`, which — unlike `getReader()` —
+        // doesn't run the deferred `$start` thunk that marks lazy native
+        // streams disturbed.
+        if stream.is_locked(global_object) {
             return false;
         }
         let Some(blob) = stream.to_any_blob(global_object) else {
@@ -2536,15 +2536,9 @@ impl<'a> ValueBufferer<'a> {
                     // `Locked.readable` slot, so blob/file-backed streams that
                     // `check_body_stream_ref` migrated into the JS-side cache
                     // land here. Convert them now and re-dispatch through the
-                    // Blob arm (buffered bytes / async file read).
-                    //
-                    // `is_locked` above can't see attached readers (see
-                    // `has_reader`); a stream the user holds a reader on is
-                    // already in use and must not be converted out from under
-                    // it.
-                    if stream.has_reader(self.global) {
-                        return Err(bun_core::err!("StreamAlreadyUsed"));
-                    }
+                    // Blob arm (buffered bytes / async file read). Reader-held
+                    // streams were already rejected by the `is_locked` check
+                    // above.
                     let mut stream = stream;
                     if let Some(blob) = stream.to_any_blob(self.global) {
                         *value = match blob {

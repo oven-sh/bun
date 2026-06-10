@@ -2563,9 +2563,9 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(Buffer.compare(body, bytes)).toBe(0);
   });
 
-  it("a stream being read by user JS keeps the streaming error semantics", async () => {
-    // The locked-stream error is reported as an unhandled error after the
-    // headers are sent, so this case runs in a subprocess.
+  it("a stream being read by user JS keeps the cannot-pipe error semantics", async () => {
+    // The locked-stream error is also reported as an unhandled error, so
+    // this case runs in a subprocess.
     const { path } = makeStreamFile();
     await using proc = Bun.spawn({
       cmd: [
@@ -2584,7 +2584,7 @@ describe("Response wrapping a Bun.file() stream", () => {
         });
         const res = await fetch(server.url);
         const body = await res.text();
-        console.log("status:" + res.status + " body-bytes:" + body.length);
+        console.log("status:" + res.status);
         `,
       ],
       env: bunEnv,
@@ -2592,14 +2592,14 @@ describe("Response wrapping a Bun.file() stream", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // headers go out, then the locked stream errors and the body is
-    // truncated; the unhandled error exits the process with 1
-    expect(stdout).toContain("status:200 body-bytes:0");
-    expect(stderr).toContain("ReadableStream is locked");
+    // the locked stream is rejected before headers go out and the request
+    // fails with the cannot-pipe error
+    expect(stdout).toContain("status:500");
+    expect(stderr).toContain("Stream already used");
     expect(exitCode).toBe(1);
   });
 
-  it("a stream locked by a raw-constructor reader keeps the streaming error semantics", async () => {
+  it("a stream locked by a raw-constructor reader keeps the cannot-pipe error semantics", async () => {
     // Same as above, but with new ReadableStreamDefaultReader(body), which —
     // unlike getReader() — doesn't run the deferred $start thunk: the stream
     // is locked but not disturbed, and the native blob conversion must not
@@ -2620,7 +2620,7 @@ describe("Response wrapping a Bun.file() stream", () => {
         });
         const res = await fetch(server.url);
         const body = await res.text();
-        console.log("status:" + res.status + " body-bytes:" + body.length);
+        console.log("status:" + res.status);
         `,
       ],
       env: bunEnv,
@@ -2628,8 +2628,8 @@ describe("Response wrapping a Bun.file() stream", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("status:200 body-bytes:0");
-    expect(stderr).toContain("ReadableStream is locked");
+    expect(stdout).toContain("status:500");
+    expect(stderr).toContain("Stream already used");
     expect(exitCode).toBe(1);
   });
 });

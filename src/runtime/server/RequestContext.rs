@@ -2910,20 +2910,15 @@ where
                             // unread blob/file-backed Response streams land
                             // here. Convert now so file streams take the
                             // sendfile/native blob path instead of the
-                            // per-chunk JS streaming loop.
-                            //
-                            // Skip the conversion when the user holds a reader
-                            // (`is_locked` above can't see readers — see
-                            // `has_reader`): fall through to the JS streaming
-                            // path, which rejects locked streams.
+                            // per-chunk JS streaming loop. Reader-held streams
+                            // were already rejected by the `is_locked` check
+                            // above.
                             let mut stream = stream;
-                            if !stream.has_reader(global_this) {
-                                if let Some(blob) = stream.to_any_blob(global_this) {
-                                    this.response_body_readable_stream_ref.deinit();
-                                    this.blob = blob;
-                                    this.render_with_blob_from_body_value();
-                                    return;
-                                }
+                            if let Some(blob) = stream.to_any_blob(global_this) {
+                                this.response_body_readable_stream_ref.deinit();
+                                this.blob = blob;
+                                this.render_with_blob_from_body_value();
+                                return;
                             }
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };

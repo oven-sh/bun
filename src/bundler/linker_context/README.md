@@ -1001,15 +1001,7 @@ var init_demo = __esm(() => {
 
 This function is essential for maintaining JavaScript module semantics across different output formats while enabling optimal bundling strategies.
 
-#### `convertStmtsForChunkForDevServer.rs`
-
-**Purpose**: Special statement conversion for development server (HMR).
-
-**Key functions**:
-
-- HMR-specific code generation
-- Development-time optimizations
-- Live reload integration
+The dev-server (HMR) variant of this conversion is not in this directory: it lives in `src/runtime/bake/hmr_module_format.rs` and is reached through the `__bun_bake_convert_stmts_for_chunk_hmr` link-time hook declared in `src/bundler/lib.rs`.
 
 ### Post-Processing Phase
 

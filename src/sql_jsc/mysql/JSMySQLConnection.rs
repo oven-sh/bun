@@ -1017,7 +1017,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionFailed);
+        this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 
     pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {

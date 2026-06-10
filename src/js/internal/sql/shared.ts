@@ -587,6 +587,12 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
+  /// when the current connect cycle started; 0 when not connecting. Connect
+  /// failures (server not yet accepting connections) are retried until
+  /// connectionTimeout elapses from this point.
+  connectStartedAt: number = 0;
+  connectAttempts: number = 0;
+  retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
@@ -594,7 +600,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   ) {
     this.adapter = adapter;
     this.connectionInfo = connectionInfo;
-    this.startConnection();
+    this.#beginConnecting();
   }
 
   /** Starts (or restarts) the driver-specific native connection. */
@@ -603,6 +609,21 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   protected abstract wrapError(error: any): Error;
   /** Whether the given error code is an authentication-style error that retrying cannot fix. */
   protected abstract isNonRetryableError(code: string | undefined): boolean;
+  /**
+   * Whether the error is a connect failure (the server accepted the
+   * connection but closed it before the handshake completed) that a backoff
+   * retry can fix.
+   */
+  protected abstract isConnectFailureError(err: Error | null): boolean;
+
+  #beginConnecting() {
+    // a fresh connect cycle (not a backoff retry) starts the retry budget
+    if (this.connectStartedAt === 0) {
+      this.connectStartedAt = Date.now();
+      this.connectAttempts = 0;
+    }
+    this.startConnection();
+  }
 
   protected handleConnected(err: any) {
     if (err) {
@@ -614,6 +635,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     this.storedError = err;
     if (!err) {
+      this.connectStartedAt = 0;
       this.flags |= PooledConnectionFlags.canBeConnected;
     }
     this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
@@ -638,12 +660,77 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    this.connection = null;
+    this.storedError = err;
+    if (this.#shouldRetryConnecting(err)) {
+      // The server is not accepting connections yet (e.g. still starting
+      // up). Keep the slot pending and retry with backoff instead of
+      // failing the queries that are waiting for a connection. The user's
+      // onclose callback only fires when the slot actually closes.
+      this.connectAttempts++;
+      const delay = Math.min(20 * 2 ** this.connectAttempts, 1000);
+      this.retryTimer = setTimeout(BasePooledConnection.#retryTimerFired, delay, this);
+      return;
+    }
+    // this connect cycle is over; a later retry() starts a fresh one
+    this.connectStartedAt = 0;
+    this.#finishClose(err);
+  }
+
+  static #retryTimerFired(self: BasePooledConnection) {
+    self.retryTimer = null;
+    // conditions may have changed during the backoff (pool closing, waiters
+    // gone, retry budget elapsed), so re-check before dialing
+    if (self.#canKeepRetrying()) {
+      self.#beginConnecting();
+    } else {
+      self.#finishClose(self.storedError);
+    }
+  }
+
+  #shouldRetryConnecting(err: any): boolean {
+    // connect failures come from the native layer as options objects that
+    // wrapError turned into the driver's Error class with a typed code
+    if (!this.isConnectFailureError(err)) {
+      return false;
+    }
+    return this.#canKeepRetrying();
+  }
+
+  #canKeepRetrying(): boolean {
+    if (this.adapter.closed || this.onFinish !== null) {
+      return false;
+    }
+    // only retry while queries are actually waiting for a connection
+    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
+      return false;
+    }
+    // an explicit connectionTimeout of 0 disables the connect timer, and with
+    // it the retry budget
+    const connectionTimeout = this.connectionInfo.connectionTimeout ?? 30 * 1000;
+    if (connectionTimeout <= 0) {
+      return false;
+    }
+    return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
+  }
+
+  /// Returns true if a scheduled connect retry was cancelled; in that case
+  /// nothing is in flight and no onClose/onConnected callback will fire.
+  cancelRetry(): boolean {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+      return true;
+    }
+    return false;
+  }
+
+  #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onclose) {
       connectionInfo.onclose(err);
     }
     this.state = PooledConnectionState.closed;
-    this.connection = null;
     this.storedError = err;
 
     // remove from ready connections if its there
@@ -680,9 +767,10 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     // reset error and state
     this.storedError = null;
+    this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
     // retry connection
-    this.startConnection();
+    this.#beginConnecting();
   }
   close() {
     try {
@@ -975,6 +1063,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         for (const pending of reservedQueue) {
           pending(connection.storedError, connection);
         }
+        // draining the queues may have been the last pending work; a
+        // graceful close() is waiting on this callback
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
+        }
       }
       return;
     }
@@ -1071,6 +1164,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         switch (connection.state) {
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
+            // cancelRetry only returns true while a connect retry is parked
+            // in a backoff timer; nothing is in flight then, so there is no
+            // onClose/onConnected to wait for
+            if (connection.cancelRetry()) {
+              connection.state = PooledConnectionState.closed;
+              break;
+            }
             const { promise, resolve } = Promise.withResolvers();
             connection.onFinish = resolve;
             promises.push(promise);

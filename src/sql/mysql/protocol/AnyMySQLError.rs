@@ -5,6 +5,7 @@
 pub enum Error {
     ConnectionClosed,
     ConnectionFailed,
+    ConnectionRefused,
     ConnectionTimedOut,
     LifetimeTimeout,
     IdleTimeout,

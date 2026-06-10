@@ -7,7 +7,7 @@ import { join } from "node:path";
 // share one atime/mtime reader in src/runtime/node/node_fs.rs, so every
 // sibling must validate identically and name the failing argument itself.
 
-describe("chown/fchown/lchown argument validation", () => {
+describe.concurrent("chown/fchown/lchown argument validation", () => {
   it("validates uid and gid to [-1, 2**32 - 1] with the argument's own name", () => {
     const tmp = join(tmpdirSync(), "chown-args.txt");
     fs.writeFileSync(tmp, "x");
@@ -42,7 +42,7 @@ describe("chown/fchown/lchown argument validation", () => {
   });
 });
 
-describe("utimes/futimes/lutimes argument validation", () => {
+describe.concurrent("utimes/futimes/lutimes argument validation", () => {
   it("rejects non-finite and non-number atime/mtime with the argument's own name", () => {
     const tmp = join(tmpdirSync(), "utimes-args.txt");
     fs.writeFileSync(tmp, "x");

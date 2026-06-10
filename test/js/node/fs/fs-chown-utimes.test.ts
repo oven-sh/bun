@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isWindows, tmpdirSync } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 
@@ -19,9 +19,6 @@ describe.concurrent("chown/fchown/lchown argument validation", () => {
         (uid, gid) => fs.lchownSync(tmp, uid, gid),
       ];
       for (const call of variants) {
-        // -1 ("leave unchanged") and the u32 maximum are both in range.
-        expect(() => call(-1, -1)).not.toThrow();
-        expect(() => call(2 ** 32 - 1, 2 ** 32 - 1)).not.toThrow();
         expect(() => call(-2, 0)).toThrow(
           RangeError('The value of "uid" is out of range. It must be >= -1 and <= 4294967295. Received -2'),
         );
@@ -35,6 +32,14 @@ describe.concurrent("chown/fchown/lchown argument validation", () => {
           TypeError("The \"gid\" argument must be of type number. Received type string ('a')"),
         );
         expect(() => call(0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      }
+      // -1 ("leave unchanged") and the u32 maximum are both in range. lchown
+      // is unimplemented on Windows (fails with a TODO error after argument
+      // validation), so only chown/fchown exercise the success path there.
+      const implemented = isWindows ? variants.slice(0, 2) : variants;
+      for (const call of implemented) {
+        expect(() => call(-1, -1)).not.toThrow();
+        expect(() => call(2 ** 32 - 1, 2 ** 32 - 1)).not.toThrow();
       }
     } finally {
       fs.closeSync(fd);

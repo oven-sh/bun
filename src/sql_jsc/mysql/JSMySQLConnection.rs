@@ -1054,7 +1054,21 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // RAII guard adopts that existing ref (no `ref_()` here); raw-pointer
         // shaped so no reference outlives the potential free.
         let _ref = DerefOnDrop(this.as_ctx_ptr());
-        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+        // A close before the handshake finished means the server (or an
+        // intermediary like a container port proxy) accepted the TCP
+        // connection but went away before completing startup — e.g. the
+        // database is still initializing. Report it as a connect failure
+        // (the connection was never established) rather than a closed
+        // connection so the error is actionable.
+        use my_sql_connection::Status as S;
+        let (message, err): (&'static [u8], AnyMySQLErrorT) = match this.connection.get().status {
+            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
+                b"Connection closed before the connection was established",
+                AnyMySQLErrorT::ConnectionFailed,
+            ),
+            _ => (b"Connection closed", AnyMySQLErrorT::ConnectionClosed),
+        };
+        this.fail(message, err);
     }
 
     pub fn on_end(_: &JSMySQLConnection, socket: NewSocketHandler<SSL>) {
@@ -1063,8 +1077,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
-        // TODO: proper propagation of the error
-        this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+        this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionFailed);
     }
 
     pub fn on_timeout(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {

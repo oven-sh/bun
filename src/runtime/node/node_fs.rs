@@ -6137,7 +6137,7 @@ impl NodeFS {
         if let Some(errno) = uv_raw_errno(rc) {
             return Err(sys::Error {
                 errno,
-                syscall: sys::Tag::open,
+                syscall: sys::Tag::statfs,
                 path: args.path.slice().into(),
                 #[cfg(windows)]
                 from_libuv: true,

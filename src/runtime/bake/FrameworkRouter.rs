@@ -685,6 +685,85 @@ impl Style {
     }
 }
 
+// Implemented here rather than in `server_body.rs` so the server's route
+// parser stays agnostic of framework-router semantics (style parsing, the
+// bun-framework-react defaults, and the router-count limit).
+impl crate::server::ServerInitContext<'_> {
+    /// Parse a `Bun.serve` route value of the form `{ dir, style }` into a
+    /// framework-router mount, appending it to `framework_router_list`.
+    /// Returns `Ok(None)` when `argument` does not declare a directory route.
+    pub(crate) fn framework_router_from_js(
+        &mut self,
+        global: &JSGlobalObject,
+        path: &[u8],
+        argument: JSValue,
+    ) -> JsResult<Option<TypeIndex>> {
+        if !argument.is_object() {
+            return Ok(None);
+        }
+        let Some(dir) = argument.get_optional_slice(global, b"dir")? else {
+            return Ok(None);
+        };
+        let relative_root = self.js_string_allocations.track(dir);
+
+        let style: Style = if let Some(style_js) = argument.get(global, b"style")? {
+            Style::from_js(style_js, global)?
+        } else {
+            Style::NextjsPages
+        };
+        // Style impls Drop; `?` drops it on the error path.
+
+        if !strings::ends_with(path, b"/*") {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "To mount a directory, make sure the path ends in `/*`"
+            )));
+        }
+
+        // trim the /*
+        // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`. Rather
+        // than erasing a lifetime through a raw-pointer round-trip (banned per
+        // PORTING.md), copy the prefix bytes here — the route table is built
+        // once at server startup, so the extra allocation is cold.
+        use std::borrow::Cow;
+        let prefix: Cow<'static, [u8]> = if path.len() == 2 {
+            Cow::Borrowed(b"/")
+        } else {
+            Cow::Owned(path[..path.len() - 2].to_vec())
+        };
+        self.framework_router_list
+            .push(crate::bake::FileSystemRouterType {
+                root: Cow::Owned(relative_root.to_vec()),
+                style,
+                prefix,
+                // TODO: customizable framework option.
+                entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
+                entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
+                ignore_underscores: true,
+                ignore_dirs: vec![
+                    Cow::Borrowed(b"node_modules".as_slice()),
+                    Cow::Borrowed(b".git".as_slice()),
+                ],
+                extensions: vec![
+                    Cow::Borrowed(b".tsx".as_slice()),
+                    Cow::Borrowed(b".jsx".as_slice()),
+                ],
+                allow_layouts: true,
+            });
+
+        // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
+        let limit = u8::MAX as usize;
+        if self.framework_router_list.len() > limit {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Too many framework routers. Maximum is {}.",
+                limit
+            )));
+        }
+        Ok(Some(TypeIndex::init(
+            u8::try_from(self.framework_router_list.len() - 1).expect("int cast"),
+        )))
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
 pub enum UiOrRoutes {
     Ui,

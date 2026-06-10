@@ -5,9 +5,6 @@ use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
-use crate::bake::dev_server::DevServer;
-use crate::bake::framework_router as FrameworkRouter;
-use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -739,72 +736,11 @@ impl AnyRoute {
             return Ok(Some(html_route));
         }
 
-        if argument.is_object() {
-            if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
-                let relative_root = init_ctx.js_string_allocations.track(dir);
-
-                let style: FrameworkRouter::Style =
-                    if let Some(style_js) = argument.get(global, b"style")? {
-                        FrameworkRouter::Style::from_js(style_js, global)?
-                    } else {
-                        FrameworkRouter::Style::NextjsPages
-                    };
-                // Style impls Drop; `?` drops it on the error path.
-
-                if !strings::ends_with(path, b"/*") {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "To mount a directory, make sure the path ends in `/*`"
-                    )));
-                }
-
-                // trim the /*
-                // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
-                // Rather
-                // than erasing a lifetime through a raw-pointer round-trip
-                // (banned per PORTING.md), copy the prefix bytes here — the
-                // route table is built once at server startup, so the extra
-                // allocation is cold.
-                use std::borrow::Cow;
-                let prefix: Cow<'static, [u8]> = if path.len() == 2 {
-                    Cow::Borrowed(b"/")
-                } else {
-                    Cow::Owned(path[..path.len() - 2].to_vec())
-                };
-                init_ctx
-                    .framework_router_list
-                    .push(bake::FileSystemRouterType {
-                        root: Cow::Owned(relative_root.to_vec()),
-                        style,
-                        prefix,
-                        // TODO: customizable framework option.
-                        entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
-                        entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
-                        ignore_underscores: true,
-                        ignore_dirs: vec![
-                            Cow::Borrowed(b"node_modules".as_slice()),
-                            Cow::Borrowed(b".git".as_slice()),
-                        ],
-                        extensions: vec![
-                            Cow::Borrowed(b".tsx".as_slice()),
-                            Cow::Borrowed(b".jsx".as_slice()),
-                        ],
-                        allow_layouts: true,
-                    });
-
-                // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
-                let limit = u8::MAX as usize;
-                if init_ctx.framework_router_list.len() > limit {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Too many framework routers. Maximum is {}.",
-                        limit
-                    )));
-                }
-                return Ok(Some(AnyRoute::FrameworkRouter(
-                    FrameworkRouter::TypeIndex::init(
-                        u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
-                    ),
-                )));
-            }
+        // `{ dir, style }` framework-router mounts are dev-server semantics;
+        // the parser lives with the framework router
+        // (`ServerInitContext::framework_router_from_js` in FrameworkRouter.rs).
+        if let Some(type_index) = init_ctx.framework_router_from_js(global, path, argument)? {
+            return Ok(Some(AnyRoute::FrameworkRouter(type_index)));
         }
 
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
@@ -824,9 +760,13 @@ impl AnyRoute {
 
 pub struct ServerInitContext<'a> {
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
-    pub js_string_allocations: bake::StringRefList,
+    // SEAM(bake): the two `crate::bake`-typed fields below collect `{ dir }`
+    // framework-router mounts during route parsing; the dev server consumes
+    // them at listen time. The parsing itself lives in bake
+    // (`ServerInitContext::framework_router_from_js` in FrameworkRouter.rs).
+    pub js_string_allocations: crate::bake::StringRefList,
     pub global: &'a JSGlobalObject,
-    pub framework_router_list: Vec<bake::FileSystemRouterType>,
+    pub framework_router_list: Vec<crate::bake::FileSystemRouterType>,
     pub user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
 }
 
@@ -840,6 +780,17 @@ pub struct ServePlugins {
 // Reference count is incremented while there are other objects waiting on plugin loads.
 // Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
+/// Notified when a pending [`ServePlugins`] load settles. The dev server's
+/// implementation lives in `crate::bake`; the plugin loader stores the
+/// consumer type-erased so it stays agnostic of the concrete type.
+pub trait ServePluginsConsumer {
+    fn on_plugins_resolved(
+        &mut self,
+        plugins: Option<*mut JSBundler::Plugin>,
+    ) -> Result<(), bun_core::Error>;
+    fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error>;
+}
+
 pub enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
@@ -847,13 +798,14 @@ pub enum ServePluginsState {
         plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
-        // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
-        // but `ServePlugins` is a refcounted heap object handed across FFI as
+        // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a _>`), but
+        // `ServePlugins` is a refcounted heap object handed across FFI as
         // a raw promise-context pointer with dynamic lifetime, so a borrowed
-        // `&'a DevServer` cannot be expressed here. Back-reference invariant:
-        // the DevServer outlives the pending plugin load (see the SAFETY
-        // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
-        dev_server: Option<NonNull<DevServer>>,
+        // `&'a dyn ServePluginsConsumer` cannot be expressed here.
+        // Back-reference invariant: the consumer (the dev server) outlives the
+        // pending plugin load (see the SAFETY comments at the deref sites in
+        // `on_plugins_resolved`/`_rejected`).
+        consumer: Option<NonNull<dyn ServePluginsConsumer>>,
     },
     Loaded(Box<JSBundler::Plugin>),
     /// Error information is not stored as it is already reported.
@@ -875,7 +827,10 @@ pub enum ServePluginsCallback<'a> {
     /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
     /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
     HtmlBundleRoute(*mut html_bundle::Route),
-    DevServer(&'a DevServer),
+    /// Type-erased consumer (the dev server); stored as a `NonNull` back-ref
+    /// in [`ServePluginsState::Pending`] while the load is in flight (hence
+    /// the explicit `'static` object bound — the borrow is only for this call).
+    Consumer(&'a (dyn ServePluginsConsumer + 'static)),
 }
 
 impl ServePlugins {
@@ -938,7 +893,7 @@ impl ServePlugins {
                 }
                 ServePluginsState::Pending {
                     html_bundle_routes,
-                    dev_server,
+                    consumer,
                     ..
                 } => {
                     match cb {
@@ -950,13 +905,12 @@ impl ServePlugins {
                             unsafe { bun_ptr::RefCount::<html_bundle::Route>::ref_(route) };
                             html_bundle_routes.push(route);
                         }
-                        ServePluginsCallback::DevServer(server) => {
-                            debug_assert!(
-                                dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr().cast_const())
-                                        == Some(std::ptr::from_ref(server))
-                            ); // one dev server per server
-                            *dev_server = Some(NonNull::from(server));
+                        ServePluginsCallback::Consumer(new_consumer) => {
+                            debug_assert!(consumer.is_none_or(|p| core::ptr::addr_eq(
+                                p.as_ptr().cast_const(),
+                                std::ptr::from_ref(new_consumer),
+                            ))); // one consumer (the dev server) per server
+                            *consumer = Some(NonNull::from(new_consumer));
                         }
                     }
                     return Ok(GetOrStartLoadResult::Pending);
@@ -1005,7 +959,7 @@ impl ServePlugins {
             promise: jsc::JSPromiseStrong::init(global),
             plugin,
             html_bundle_routes: Vec::new(),
-            dev_server: None,
+            consumer: None,
         };
 
         global.bun_vm().event_loop_mut().enter();
@@ -1072,7 +1026,7 @@ impl ServePlugins {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
-            dev_server,
+            consumer,
             html_bundle_routes,
             promise,
         } = mem::replace(&mut self.state, ServePluginsState::Err)
@@ -1098,11 +1052,12 @@ impl ServePlugins {
             // SAFETY: paired with the `ref_` taken when the route was pushed.
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
-        if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load (stored as a back-reference
-            // by `get_or_start_load`; the owning Box<DevServer> is held by the
-            // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
+        if let Some(mut consumer) = consumer {
+            // SAFETY: the consumer outlives the plugin load (stored as a
+            // back-reference by `get_or_start_load`; its owning allocation is
+            // held by the server instance, which itself holds a counted ref on
+            // `self`).
+            bun_core::handle_oom(unsafe { consumer.as_mut() }.on_plugins_resolved(Some(
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
         }
@@ -1112,7 +1067,7 @@ impl ServePlugins {
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
-            dev_server,
+            consumer,
             html_bundle_routes,
             promise,
         } = mem::replace(&mut self.state, ServePluginsState::Err)
@@ -1132,9 +1087,9 @@ impl ServePlugins {
             // SAFETY: route was ref'd when stored; pair with that ref
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
-        if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
+        if let Some(mut consumer) = consumer {
+            // SAFETY: the consumer outlives the plugin load (see `handle_on_resolve`)
+            bun_core::handle_oom(unsafe { consumer.as_mut() }.on_plugins_rejected());
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
@@ -3393,7 +3348,7 @@ where
             // DNS-rebound origin connects from 127.0.0.1 but presents the
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
-            if !bake::is_allowed_dev_host(dev_server, req) {
+            if !dev_server.is_allowed_host(req) {
                 break 'brk false;
             }
 

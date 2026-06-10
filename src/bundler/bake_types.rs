@@ -41,9 +41,8 @@ impl Side {
 }
 /// Bundler-only `Target` extension: which dev-server graph a file bundled for
 /// that target lands in. Declared next to `Graph` because the canonical
-/// `Target` lives in `bun_ast` (lower tier, cannot name seam types);
-/// `options_impl` re-exports it so `use …::options_impl::TargetExt;` callers
-/// resolve the method on the single canonical `Target`.
+/// `Target` lives in `bun_ast` (lower tier, cannot name seam types); callers
+/// import it from here (`crate::bake_types::TargetExt`).
 pub trait TargetExt: Copy {
     fn bake_graph(self) -> Graph;
 }
@@ -116,60 +115,12 @@ impl EntryPointList {
     }
 }
 
-/// TYPE_ONLY subset of the `Framework` fields
-/// the bundler/parser actually consult; `file_system_router_types`
-/// stays in T6 because only `bake::FrameworkRouter` reads it.
-#[non_exhaustive]
-pub struct Framework {
-    pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-    /// Mirrors `Framework.server_components`.
-    pub server_components: Option<ServerComponents>,
-    /// Mirrors `Framework.react_fast_refresh` — read by the parser
-    /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
-    /// .import_source`) when `features.react_fast_refresh` is on.
-    pub react_fast_refresh: Option<ReactFastRefresh>,
-    /// Mirrors `Framework.is_built_in_react` — read by
-    /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
-    pub is_built_in_react: bool,
-    /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
-    pub client_css_in_js: crate::options::ClientCssInJs,
-}
-impl Framework {
-    /// Construct the bundler-side TYPE_ONLY view. Called from
-    /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
-    /// runtime owns the canonical `bake.Framework` and projects the
-    /// fields the bundler reads.
-    pub fn new(
-        built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-        server_components: Option<ServerComponents>,
-        react_fast_refresh: Option<ReactFastRefresh>,
-        is_built_in_react: bool,
-    ) -> Self {
-        Self {
-            built_in_modules,
-            server_components,
-            react_fast_refresh,
-            is_built_in_react,
-            client_css_in_js: crate::options::ClientCssInJs::default(),
-        }
-    }
-}
-/// `Framework.ServerComponents` — full string
-/// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
-/// can forward user-configured `serverRegisterServerReference` /
-/// `clientRegisterServerReference` instead of hardcoding defaults.
-#[derive(Default, Clone)]
-pub struct ServerComponents {
-    pub separate_ssr_graph: bool,
-    pub server_runtime_import: Box<[u8]>,
-    pub server_register_client_reference: Box<[u8]>,
-    pub server_register_server_reference: Box<[u8]>,
-    pub client_register_server_reference: Box<[u8]>,
-}
-#[derive(Clone)]
-pub struct ReactFastRefresh {
-    pub import_source: Box<[u8]>,
-}
+/// Bundler-owned TYPE_ONLY `Framework` view — canonical defs live in
+/// `options_impl` (they are made of bundler/parser vocabulary, no bake
+/// references); re-exported here so `bun_runtime::bake` keeps reaching them
+/// through the seam module when projecting its canonical `bake.Framework`
+/// via `as_bundler_view`.
+pub use crate::options_impl::{Framework, ReactFastRefresh, ServerComponents};
 
 /// TYPE_ONLY moved down so the
 /// linker can splice the runtime preamble without depending on bun_bake.

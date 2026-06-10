@@ -1,3 +1,4 @@
+use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::ZBox;
@@ -65,7 +66,11 @@ pub struct ServerConfig {
     pub negative_routes: Vec<ZBox>,
     pub user_routes_to_build: Vec<UserRouteBuilder>,
 
-    pub bake: Option<crate::bake::UserOptions>,
+    /// Dev-server options parsed from the `app` option or derived from HTML
+    /// imports / framework routers in `routes`. Presence causes `Bun.serve`
+    /// to initialize the dev server at listen time. The concrete type is
+    /// private to the dev-server module (see [`DevServerOptions`]).
+    pub dev_server_options: Option<DevServerOptions>,
 }
 
 impl Default for ServerConfig {
@@ -96,7 +101,7 @@ impl Default for ServerConfig {
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
             user_routes_to_build: Vec::new(),
-            bake: None,
+            dev_server_options: None,
         }
     }
 }
@@ -289,7 +294,7 @@ impl ServerConfig {
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
             user_routes_to_build: core::mem::take(&mut self.user_routes_to_build),
-            bake: self.bake.take(),
+            dev_server_options: self.dev_server_options.take(),
         };
 
         that.normalize_static_routes_list()?;
@@ -799,8 +804,8 @@ impl ServerConfig {
             };
             let init_ctx = &mut init_ctx_;
             // Fields are owned locals; drop on `?` automatically. The router
-            // list and string allocations transfer to args.bake on the success
-            // path via mem::take below.
+            // list and string allocations transfer to args.dev_server_options
+            // on the success path via the from_serve_routes hook below.
             // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // Vec<StaticRouteEntry> drops elements (which deref route)
@@ -949,20 +954,10 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
-                || !init_ctx.framework_router_list.is_empty()
+            if let Some(options) =
+                __bun_bake_dev_server_options_from_serve_routes(init_ctx, args.development)?
             {
-                if args.development.is_hmr_enabled() {
-                    args.bake = Some(crate::bake::UserOptions::from_serve_routes(
-                        global,
-                        core::mem::take(&mut init_ctx.framework_router_list),
-                        core::mem::take(&mut init_ctx.js_string_allocations),
-                    )?);
-                } else if !init_ctx.framework_router_list.is_empty() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "FrameworkRouter is currently only supported when `development: true`",
-                    )));
-                }
+                args.dev_server_options = Some(options);
             }
         }
 
@@ -1096,25 +1091,14 @@ impl ServerConfig {
         }
 
         if opts.allow_bake_config {
-            'brk: {
-                if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
-                    if !bun_core::FeatureFlags::bake() {
-                        break 'brk;
-                    }
-                    if args.bake.is_some() {
-                        // "app" is likely to be removed in favor of the HTML loader.
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'app' + HTML loader not supported.",
-                        )));
-                    }
-
-                    if args.development == DevelopmentOption::Production {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'",
-                        )));
-                    }
-
-                    args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
+            if let Some(app_js) = arg.get_truthy(global, "app")? {
+                if let Some(options) = __bun_bake_dev_server_options_from_app(
+                    app_js,
+                    global,
+                    args.dev_server_options.is_some(),
+                    args.development,
+                )? {
+                    args.dev_server_options = Some(options);
                 }
             }
         }
@@ -1187,7 +1171,7 @@ impl ServerConfig {
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_request = Some(Strong::create(on_request, global));
-        } else if args.bake.is_none()
+        } else if args.dev_server_options.is_none()
             && args.on_node_http_request.is_none()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
@@ -1456,7 +1440,7 @@ impl ServerConfig {
 
         // NOTE: deferred assertion from top of fn
         if !args.development.is_hmr_enabled() {
-            debug_assert!(args.bake.is_none());
+            debug_assert!(args.dev_server_options.is_none());
         }
 
         Ok(args)
@@ -1483,4 +1467,68 @@ impl Default for FromJSOptions {
 pub struct UserRouteBuilder {
     pub route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
+}
+
+// ─── Dev-server options seam ─────────────────────────────────────────────────
+// The dev-server module owns the concrete options type; this file only
+// stores and transports it. Construction goes through the two
+// definer-prefixed link-time hooks below (same pattern as the bundler's
+// `__bun_bake_convert_stmts_for_chunk_hmr` hook in `bun_bundler::lib.rs`),
+// so a rewrite of the dev server never touches this file.
+
+/// Owned, type-erased dev-server options: the parsed `app` config, or the
+/// options derived from HTML imports / framework routers in `routes`.
+pub struct DevServerOptions {
+    ptr: NonNull<()>,
+    drop_fn: unsafe fn(NonNull<()>),
+}
+
+impl DevServerOptions {
+    /// # Safety
+    /// Reserved for the `__bun_bake_dev_server_options_*` hook bodies: `ptr`
+    /// must own the boxed value their paired downcast expects, and `drop_fn`
+    /// must free exactly that value. Ownership of `ptr` transfers to the
+    /// handle, which calls `drop_fn` once on drop.
+    pub(crate) unsafe fn from_raw(ptr: NonNull<()>, drop_fn: unsafe fn(NonNull<()>)) -> Self {
+        Self { ptr, drop_fn }
+    }
+
+    /// The erased pointer. Only the constructing module knows the concrete
+    /// type behind it.
+    pub(crate) fn as_ptr(&self) -> NonNull<()> {
+        self.ptr
+    }
+}
+
+impl Drop for DevServerOptions {
+    fn drop(&mut self) {
+        // SAFETY: `from_raw`'s contract — the handle solely owns `ptr` and
+        // `drop_fn` pairs with its allocation.
+        unsafe { (self.drop_fn)(self.ptr) }
+    }
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in the dev-server module (`bake/bake_body.rs`).
+    /// Derives dev-server options from the HTML bundles and framework routers
+    /// collected while parsing `routes`. `Ok(None)` when the routes need no
+    /// dev server; errors when framework routers are present without
+    /// `development: true`. All arguments are safe Rust types (no raw-pointer
+    /// preconditions), so the link-time-resolved body upholds Rust's
+    /// invariants on its own.
+    safe fn __bun_bake_dev_server_options_from_serve_routes(
+        init_ctx: &mut ServerInitContext<'_>,
+        development: DevelopmentOption,
+    ) -> JsResult<Option<DevServerOptions>>;
+
+    /// Defined `#[no_mangle]` in the dev-server module (`bake/bake_body.rs`).
+    /// Parses the `app` serve option. `Ok(None)` when the dev-server feature
+    /// flag is disabled; errors when options were already derived from
+    /// `routes` (`has_existing_options`) or `development` is `Production`.
+    safe fn __bun_bake_dev_server_options_from_app(
+        app: JSValue,
+        global: &JSGlobalObject,
+        has_existing_options: bool,
+        development: DevelopmentOption,
+    ) -> JsResult<Option<DevServerOptions>>;
 }

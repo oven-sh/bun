@@ -30,6 +30,9 @@ use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 // matching filename).
 use super::{dev_server, framework_router};
 
+use crate::server::ServerInitContext;
+use crate::server::server_config::{DevServerOptions, DevelopmentOption};
+
 // Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
@@ -331,6 +334,93 @@ impl UserOptions {
 
         Ok(user_options)
     }
+
+    /// Box and erase into the server's opaque options slot
+    /// (`ServerConfig::dev_server_options`). Paired with
+    /// [`UserOptions::from_erased_mut`].
+    fn erase(self) -> DevServerOptions {
+        unsafe fn drop_erased(ptr: NonNull<()>) {
+            // SAFETY: `ptr` came from `Box::into_raw` in `erase`, which
+            // transferred ownership to the handle calling us.
+            drop(unsafe { Box::from_raw(ptr.cast::<UserOptions>().as_ptr()) });
+        }
+        // `Box::into_raw` never returns null.
+        let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(self))) };
+        // SAFETY: ownership of the freshly boxed `UserOptions` transfers to
+        // the handle; `drop_erased` frees exactly that value once.
+        unsafe { DevServerOptions::from_raw(ptr.cast(), drop_erased) }
+    }
+
+    /// Downcast the server's opaque options slot back to the concrete type.
+    pub(crate) fn from_erased_mut(handle: &mut DevServerOptions) -> &mut UserOptions {
+        // SAFETY: per `DevServerOptions::from_raw`'s contract the only
+        // constructors are the `__bun_bake_dev_server_options_*` hooks below,
+        // which always erase a boxed `UserOptions` via `erase`; `&mut handle`
+        // uniquely borrows the box.
+        unsafe { &mut *handle.as_ptr().cast::<UserOptions>().as_ptr() }
+    }
+}
+
+// ─── `Bun.serve` options seam ────────────────────────────────────────────────
+// CYCLEBREAK extern hooks: `ServerConfig::from_js` reaches the two
+// `UserOptions` constructors through these link-time hooks (declared in
+// `server/ServerConfig.rs`, same pattern as
+// `__bun_bake_convert_stmts_for_chunk_hmr` in `hmr_module_format.rs`) so the
+// server never names the concrete options type.
+
+/// Derive dev-server options from the HTML bundles and framework routers
+/// collected while parsing the `routes` object. `Ok(None)` when the routes
+/// need no dev server: nothing was collected, or HMR is disabled and no
+/// framework routers are present.
+#[unsafe(no_mangle)]
+fn __bun_bake_dev_server_options_from_serve_routes(
+    init_ctx: &mut ServerInitContext<'_>,
+    development: DevelopmentOption,
+) -> JsResult<Option<DevServerOptions>> {
+    if init_ctx.dedupe_html_bundle_map.is_empty() && init_ctx.framework_router_list.is_empty() {
+        return Ok(None);
+    }
+    if development.is_hmr_enabled() {
+        let options = UserOptions::from_serve_routes(
+            init_ctx.global,
+            core::mem::take(&mut init_ctx.framework_router_list),
+            core::mem::take(&mut init_ctx.js_string_allocations),
+        )?;
+        Ok(Some(options.erase()))
+    } else if !init_ctx.framework_router_list.is_empty() {
+        Err(init_ctx.global.throw_invalid_arguments(format_args!(
+            "FrameworkRouter is currently only supported when `development: true`",
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Parse the `app` serve option. `Ok(None)` when the bake feature flag is
+/// disabled; errors when dev-server options were already derived from
+/// `routes` or `development` is `Production`.
+#[unsafe(no_mangle)]
+fn __bun_bake_dev_server_options_from_app(
+    app: JSValue,
+    global: &JSGlobalObject,
+    has_existing_options: bool,
+    development: DevelopmentOption,
+) -> JsResult<Option<DevServerOptions>> {
+    if !bun_core::FeatureFlags::bake() {
+        return Ok(None);
+    }
+    if has_existing_options {
+        // "app" is likely to be removed in favor of the HTML loader.
+        return Err(
+            global.throw_invalid_arguments(format_args!("'app' + HTML loader not supported.",))
+        );
+    }
+    if development == DevelopmentOption::Production {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'",
+        )));
+    }
+    Ok(Some(UserOptions::from_js(app, global)?.erase()))
 }
 
 /// Bridge the keystone `bake::FileSystemRouterType` (Cow-backed, populated by

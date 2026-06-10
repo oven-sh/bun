@@ -335,7 +335,7 @@ pub mod bv2_impl {
     use crate::Index;
     use crate::JSAst;
     use crate::bun_fs as Fs;
-    use crate::options_impl::TargetExt;
+    use crate::bake_types::TargetExt;
     use crate::transpiler::Transpiler;
 
     use crate::{bun_css, import_record};
@@ -379,7 +379,7 @@ pub mod bv2_impl {
         pub mod JSBundler {
             use super::super::BundleV2;
             use crate::options::{Loader, Target};
-            use crate::options_impl::TargetExt;
+            use crate::bake_types::TargetExt;
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
             use bun_core::String as BunString;

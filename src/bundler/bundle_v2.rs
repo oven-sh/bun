@@ -1967,12 +1967,13 @@ pub mod bv2_impl {
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
                         // so `self.graph.*` / `self.transpiler.*` reads below type-check.
                         // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                        let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
-                                target,
-                            ))
-                        };
+                        let log: &mut bun_ast::Log =
+                            unsafe {
+                                bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                                    &import_record.source_file,
+                                    target,
+                                ))
+                            };
 
                         {
                             let record: &mut ImportRecord =
@@ -5494,8 +5495,7 @@ pub mod bv2_impl {
                                     self.graph.kit_referenced_client_data = true;
                                 }
                                 import_record.path.namespace = manifest.namespace;
-                                import_record.source_index =
-                                    Index::source(reserved_index.get());
+                                import_record.source_index = Index::source(reserved_index.get());
                             }
                             continue;
                         }

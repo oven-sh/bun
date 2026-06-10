@@ -5904,7 +5904,7 @@ pub mod bv2_impl {
                                         self.arena()
                                             .alloc_str(&format!(
                                                 "{}/{:016x}{}",
-                                                bake_types::ASSET_PREFIX,
+                                                bun_options_types::DEV_SERVER_ASSET_PREFIX,
                                                 hash,
                                                 bstr::BStr::new(bun_paths::extension(path.text)),
                                             ))

@@ -1295,7 +1295,7 @@ pub mod parse_worker {
                     write!(
                         &mut buf,
                         "{}/{}{}",
-                        crate::bake_types::ASSET_PREFIX,
+                        bun_options_types::DEV_SERVER_ASSET_PREFIX,
                         bun_core::fmt::bytes_to_hex_lower_string(&content_hash.to_ne_bytes()),
                         bstr::BStr::new(bun_paths::extension(source.path.text)),
                     )

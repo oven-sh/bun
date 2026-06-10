@@ -23,6 +23,13 @@ pub use bundle_enums::{
     LoaderOptionalExt, ModuleType, TargetExt, WindowsOptions,
 };
 
+/// URL prefix the dev server serves bundled assets under (`"/_bun" ++ "/asset"`).
+///
+/// MOVE_DOWN from `bun_runtime::bake::dev_server` so the bundler can emit
+/// dev-server asset URLs (`ParseTask`, `bundle_v2`) without referencing bake;
+/// `bake::dev_server` re-exports it as `ASSET_PREFIX`.
+pub const DEV_SERVER_ASSET_PREFIX: &str = "/_bun/asset";
+
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.
 ///
 /// MOVE_DOWN from `bun_standalone_graph` (which sits above `bun_resolver` via

@@ -70,9 +70,6 @@ pub enum CacheKind {
 pub struct CacheEntry {
     pub kind: CacheKind,
 }
-/// INTERNAL_PREFIX ++ "/asset" = "/_bun/asset".
-pub(crate) const ASSET_PREFIX: &str = "/_bun/asset";
-
 /// Canonical definition lives in `bun_options_types` (T3); re-exported
 /// here so bundler and bake (in runtime, T6) share one nominal type.
 pub use bun_options_types::BuiltInModule;

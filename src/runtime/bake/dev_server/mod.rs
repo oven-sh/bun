@@ -31,7 +31,9 @@ pub(crate) mod memory_cost;
 // type. Declaring it again here would collide in the value namespace.
 
 pub const INTERNAL_PREFIX: &str = "/_bun";
-pub const ASSET_PREFIX: &str = "/_bun/asset";
+/// Canonical definition lives in `bun_options_types` (T3) so the bundler can
+/// emit dev-server asset URLs without referencing bake.
+pub use bun_options_types::DEV_SERVER_ASSET_PREFIX as ASSET_PREFIX;
 pub const CLIENT_PREFIX: &str = "/_bun/client";
 
 /// `bun.jsc.Debugger.DevServerId`.

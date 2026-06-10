@@ -2141,12 +2141,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
-            // Unlike the other consumers, this one must NOT take
-            // `try_blob_from_resolved_stream`: the parse below reads
-            // `blob.slice()` synchronously, and a converted file-backed blob
-            // has no in-memory bytes yet — there is no async
-            // file-read-then-parse path here (same in the Zig original, where
-            // `Response(Bun.file(p)).formData()` has the same limitation).
+            // Blob/file-backed streams that `check_body_stream_ref` migrated
+            // into the JS-side cache convert here so the blob tail below
+            // (including the async file read) runs instead of the JS
+            // streaming loop.
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
+                let _ = self.try_blob_from_resolved_stream(global_object, &mut readable);
+            }
+        }
+        let value = self.get_body_value();
+        if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream(global_object);
             // PORT NOTE: reshaped for borrowck — re-borrow after self method call.
             let value = self.get_body_value();
@@ -2170,6 +2174,38 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         };
         // encoder dropped at end of scope (replaces defer encoder.deinit())
+
+        // File-backed (and S3) blobs have no bytes in memory, so the
+        // synchronous parse below would read an empty view and silently
+        // resolve with an empty FormData. Stamp the body's content type onto
+        // the blob and take Blob's read-then-parse path instead
+        // (`do_read_file`/`do_read_from_s3` via `to_form_data`).
+        if matches!(&blob, AnyBlob::Blob(b) if b.needs_to_read_file() || b.is_s3()) {
+            let AnyBlob::Blob(b) = &blob else {
+                unreachable!()
+            };
+            b.free_content_type();
+            b.content_type_was_set.set(true);
+            match &encoding {
+                webcore::form_data::Encoding::URLEncoded => {
+                    b.content_type.set(std::ptr::from_ref::<[u8]>(
+                        b"application/x-www-form-urlencoded" as &'static [u8],
+                    ));
+                }
+                webcore::form_data::Encoding::Multipart(boundary) => {
+                    const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
+                    let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+                    ct.extend_from_slice(CONTENT_TYPE_PREFIX);
+                    ct.extend_from_slice(boundary);
+                    b.content_type
+                        .set(bun_core::heap::into_raw(ct.into_boxed_slice()));
+                    b.content_type_allocated.set(true);
+                }
+            }
+            let result = b.to_form_data(global_object, Lifetime::Temporary);
+            blob.detach();
+            return result.map_err(Into::into);
+        }
 
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {

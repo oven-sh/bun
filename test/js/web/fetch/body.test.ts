@@ -864,9 +864,7 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(() => new Response(body)).toThrow("ReadableStream has already been used");
   });
 
-  test(".formData() on a file stream still resolves with the parsed fields", async () => {
-    // formData() intentionally keeps the streaming path (its parser reads
-    // in-memory bytes synchronously); this pins that it keeps working
+  test(".formData() on a file stream resolves with the parsed fields", async () => {
     const payload = "a=hello&b=world";
     const dir = tempDirWithFiles("body-file-stream-form", { "form.txt": payload });
 
@@ -875,6 +873,73 @@ describe("Response wrapping a Bun.file() stream", () => {
     }).formData();
     expect(fd.get("a")).toBe("hello");
     expect(fd.get("b")).toBe("world");
+  });
+
+  test(".formData() on a direct file-backed body reads the file", async () => {
+    // file-backed blobs have no bytes in memory; the body must read the file
+    // before parsing rather than silently resolving with an empty FormData
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-blob-form", { "form.txt": payload });
+
+    const fd = await new Response(file(join(dir, "form.txt")), {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect([...fd.entries()]).toEqual([
+      ["a", "hello"],
+      ["b", "world"],
+    ]);
+  });
+
+  test(".formData() parses a multipart file-backed body", async () => {
+    const boundary = "----bodyfileformboundary";
+    const payload = [
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="field1"',
+      "",
+      "value1",
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="field2"',
+      "",
+      "value2",
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+    const dir = tempDirWithFiles("body-file-multipart", { "form.bin": payload });
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+
+    const direct = await new Response(file(join(dir, "form.bin")), { headers }).formData();
+    expect([...direct.entries()]).toEqual([
+      ["field1", "value1"],
+      ["field2", "value2"],
+    ]);
+
+    const streamed = await new Response(file(join(dir, "form.bin")).stream(), { headers }).formData();
+    expect([...streamed.entries()]).toEqual([
+      ["field1", "value1"],
+      ["field2", "value2"],
+    ]);
+  });
+
+  test(".formData() on a missing file rejects instead of resolving empty", async () => {
+    const dir = tempDirWithFiles("body-file-form-missing", { "exists.txt": "x" });
+
+    expect(async () => {
+      await new Response(file(join(dir, "missing.txt")), {
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+      }).formData();
+    }).toThrow();
+  });
+
+  test("a failed .formData() encoding check doesn't consume the stream", async () => {
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-form-badct", { "form.txt": payload });
+
+    // no content-type: the encoding check rejects before any conversion
+    const response = new Response(file(join(dir, "form.txt")).stream());
+    expect(async () => {
+      await response.formData();
+    }).toThrow("Can't decode form data from body because of incorrect MIME type/boundary");
+    expect(await response.text()).toBe(payload);
   });
 
   test("a consumed file stream can't be wrapped into a new Response", async () => {

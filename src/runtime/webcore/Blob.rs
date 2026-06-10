@@ -315,8 +315,10 @@ pub trait BlobExt {
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue>;
     /// # Safety
-    /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
+    /// `buf` must be valid for reads for the duration of the call; when
+    /// `LIFETIME == Temporary` it must be a leaked default-allocator
+    /// `Box<[u8]>` whose ownership transfers to this call.
+    unsafe fn to_form_data_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         buf: *mut [u8],
@@ -3029,11 +3031,15 @@ impl BlobExt for Blob {
     ///
     /// # Safety
     /// `buf` must be valid for reads for the duration of the call.
-    unsafe fn to_form_data_with_bytes<const _L: Lifetime>(
+    unsafe fn to_form_data_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         buf: *mut [u8],
     ) -> JSValue {
+        // Reclaim `Temporary` bytes (a leaked default-allocator `Box<[u8]>`
+        // handed over by the read path) after the parse below — including on
+        // the invalid-encoding early return.
+        let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(buf));
         let Some(encoder) = self.get_form_data_encoding() else {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
@@ -3309,8 +3315,9 @@ impl BlobExt for Blob {
             return Ok(jsc::DOMFormData::create(global));
         }
         // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
-        // `to_form_data_with_bytes` only reads it.
-        Ok(unsafe { self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr) })
+        // `to_form_data_with_bytes` only reads it. `Share` (not `Temporary`):
+        // the bytes belong to the store and must not be reclaimed.
+        Ok(unsafe { self.to_form_data_with_bytes::<{ Lifetime::Share }>(global, view_ptr) })
     }
     #[inline]
     fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(

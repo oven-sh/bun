@@ -469,7 +469,10 @@ declare module "bun:test" {
    * `Symbol.asyncDispose` or `Symbol.dispose`) is disposed after the test as
    * the fixture's teardown.
    */
-  export type FixtureFn<V, Ctx> = (context: Ctx, use: Use<V>) => unknown | Promise<unknown>;
+  export type FixtureFn<V, Ctx> = (
+    context: Ctx,
+    use: Use<V>,
+  ) => Exclude<V, undefined> | Promise<Exclude<V, undefined>> | void | Promise<void>;
 
   export interface FixtureOptions {
     /**

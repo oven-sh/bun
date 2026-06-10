@@ -519,4 +519,10 @@ unknownMatchers.toBe("a");
     expectType<string>(res.tag);
     expectType<number>(plain);
   });
+
+  // return-style fixtures must return the declared fixture type
+  test.extend<{ port: number }>({
+    // @ts-expect-error string is not assignable to the declared fixture type
+    port: () => "nope",
+  });
 }

@@ -14,6 +14,7 @@ use bun_core::ThreadLock;
 // `BundleV2` struct see exactly the same types as the impl bodies.
 // `bake_types` is the crate-root seam module; re-exported so the historical
 // `bundle_v2::bake_types` path keeps resolving.
+pub use crate::bake_types;
 pub use bv2_impl::api;
 pub use bv2_impl::dispatch;
 pub use bv2_impl::{
@@ -22,7 +23,6 @@ pub use bv2_impl::{
     generate_unique_key, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
-pub use crate::bake_types;
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
@@ -334,8 +334,8 @@ pub mod bv2_impl {
     use crate::Graph::InputFileColumns;
     use crate::Index;
     use crate::JSAst;
-    use crate::bun_fs as Fs;
     use crate::bake_types::TargetExt;
+    use crate::bun_fs as Fs;
     use crate::transpiler::Transpiler;
 
     use crate::{bun_css, import_record};
@@ -378,8 +378,8 @@ pub mod bv2_impl {
         #[allow(non_snake_case)]
         pub mod JSBundler {
             use super::super::BundleV2;
-            use crate::options::{Loader, Target};
             use crate::bake_types::TargetExt;
+            use crate::options::{Loader, Target};
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
             use bun_core::String as BunString;
@@ -2415,12 +2415,13 @@ pub mod bv2_impl {
                     .map(|sc| sc.separate_ssr_graph)
                     .unwrap_or(false);
                 this.framework = Some(bo.framework);
-                this.linker.framework = this.framework.as_ref().map(|fw| {
-                    crate::linker_context_mod::FrameworkInfo {
-                        has_server_components: fw.server_components.is_some(),
-                        is_built_in_react: fw.is_built_in_react,
-                    }
-                });
+                this.linker.framework =
+                    this.framework
+                        .as_ref()
+                        .map(|fw| crate::linker_context_mod::FrameworkInfo {
+                            has_server_components: fw.server_components.is_some(),
+                            is_built_in_react: fw.is_built_in_react,
+                        });
                 this.plugins = bo.plugins;
                 if this.transpiler.options.server_components {
                     debug_assert!(

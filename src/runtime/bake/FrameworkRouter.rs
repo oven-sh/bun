@@ -685,6 +685,14 @@ impl Style {
     }
 }
 
+// The server's route-parsing context stores the framework-router collection
+// state behind the `FrameworkRouterTypes` projection so `server_body.rs`
+// never names this module's types; this impl supplies the concrete types.
+impl crate::server::FrameworkRouterTypes for crate::server::FrameworkRouterSeam {
+    type Mount = crate::bake::FileSystemRouterType;
+    type StringAllocations = crate::bake::StringRefList;
+}
+
 // Implemented here rather than in `server_body.rs` so the server's route
 // parser stays agnostic of framework-router semantics (style parsing, the
 // bun-framework-react defaults, and the router-count limit).

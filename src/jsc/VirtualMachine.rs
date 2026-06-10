@@ -3763,7 +3763,18 @@ impl VirtualMachine {
     /// `true`. For HTTP-thread / work-pool completion paths that branch on
     /// shutdown before touching VM-owned state.
     pub fn is_shutting_down_or_freed(vm: *mut VirtualMachine) -> bool {
-        Self::with_live_vm(vm, |vm| vm.is_shutting_down()).unwrap_or(true)
+        Self::live_shutting_down_state(vm).unwrap_or(true)
+    }
+
+    /// Tri-state variant of [`Self::is_shutting_down_or_freed`] for callers
+    /// that must distinguish a freed VM from a live-but-exiting one: `None`
+    /// when `vm` is gone (terminated worker), otherwise
+    /// `Some(is_shutting_down)`. Because `WebWorker::shutdown()` unregisters
+    /// the VM *before* setting `is_shutting_down`, `Some(true)` can only be
+    /// observed for VMs that are never freed (the main VM during
+    /// `global_exit`).
+    pub fn live_shutting_down_state(vm: *mut VirtualMachine) -> Option<bool> {
+        Self::with_live_vm(vm, |vm| vm.is_shutting_down())
     }
 
     /// `ref_concurrently`/`unref_concurrently` variants of

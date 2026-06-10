@@ -39,9 +39,7 @@ unsafe extern "C" {
     // FFI boundary in C++-owned storage that Rust has no provenance over
     // (these types are opaque ZST markers).
     fn BakeSourceProvider__getSourceSlice(this: *const BakeSourceProvider) -> BunString;
-    fn DevServerSourceProvider__getSourceSlice(
-        this: *const DevServerSourceProvider,
-    ) -> BunString;
+    fn DevServerSourceProvider__getSourceSlice(this: *const DevServerSourceProvider) -> BunString;
     fn DevServerSourceProvider__getSourceMapJSON(
         this: *const DevServerSourceProvider,
     ) -> DevServerSourceMapData;

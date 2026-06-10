@@ -3095,11 +3095,8 @@ pub mod bv2_impl {
                     )?;
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &mut resolved,
-                        true,
-                        Target::ServerComponentsSsr,
-                    )?;
+                    let _ =
+                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
                 }
             }
             Ok(())

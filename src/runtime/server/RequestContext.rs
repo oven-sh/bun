@@ -223,12 +223,6 @@ where
     pub(crate) fn is_async(&self) -> bool {
         self.defer_deinit_until_callback_completes.get().is_none()
     }
-
-    pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        let server = self.server.get()?;
-        // SAFETY: BACKREF — the server outlives every context it allocates.
-        unsafe { &*server.as_ptr() }.dev_server()
-    }
 }
 
 // ─── per-request state machine bodies ────────────────────────────────────────

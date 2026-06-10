@@ -1074,6 +1074,45 @@ pub mod formatters {
         }
     }
 
+    /// Shared writer for every URL template: the variants differ only in the
+    /// literal prefix, the separator after the host, whether auth/user
+    /// segments are present, and the suffix.
+    ///
+    /// Produces `{prefix}{auth}@{host}{host_sep}{user}/{project}{suffix}#{committish}`,
+    /// omitting the `@`, `/`, and `#` separators alongside their absent segments.
+    fn format_template(
+        prefix: &str,
+        auth: Option<&[u8]>,
+        host: &[u8],
+        host_sep: &str,
+        user: Option<&[u8]>,
+        project: &[u8],
+        suffix: &str,
+        committish: Option<&[u8]>,
+    ) -> Result<Vec<u8>, AllocError> {
+        let auth_str: &[u8] = auth.unwrap_or(b"");
+        let auth_sep = if auth_str.is_empty() { "" } else { "@" };
+        let (user_str, user_sep): (&[u8], &str) = match user {
+            Some(u) => (u, "/"),
+            None => (b"", ""),
+        };
+        let cmsh: &[u8] = committish.unwrap_or(b"");
+        let cmsh_sep = if cmsh.is_empty() { "" } else { "#" };
+
+        let mut v = Vec::new();
+        write!(
+            &mut v,
+            "{prefix}{}{auth_sep}{}{host_sep}{}{user_sep}{}{suffix}{cmsh_sep}{}",
+            BStr::new(auth_str),
+            BStr::new(host),
+            BStr::new(user_str),
+            BStr::new(project),
+            BStr::new(cmsh),
+        )
+        .map_err(|_| AllocError)?;
+        Ok(v)
+    }
+
     /// Mirrors hosts.js's sshtemplate
     pub mod ssh {
         use super::*;
@@ -1092,21 +1131,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git@{}:{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git@",
+                None,
+                self_.domain(),
+                ":",
+                user,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn gist(
@@ -1115,20 +1149,16 @@ pub mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git@{}:{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git@",
+                None,
+                self_.domain(),
+                ":",
+                None,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
     }
 
@@ -1150,21 +1180,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+ssh://git@{}/{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git+ssh://git@",
+                None,
+                self_.domain(),
+                "/",
+                user,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn gist(
@@ -1173,20 +1198,16 @@ pub mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+ssh://git@{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git+ssh://git@",
+                None,
+                self_.domain(),
+                "/",
+                None,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
     }
 
@@ -1210,26 +1231,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-
-            let auth_str: &[u8] = auth.unwrap_or(b"");
-            let auth_sep: &[u8] = if !auth_str.is_empty() { b"@" } else { b"" };
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+https://{}{}{}/{}/{}.git{}{}",
-                BStr::new(auth_str),
-                BStr::new(auth_sep),
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git+https://",
+                auth,
+                self_.domain(),
+                "/",
+                user,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn gist(
@@ -1239,20 +1250,16 @@ pub mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git+https://{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git+https://",
+                None,
+                self_.domain(),
+                "/",
+                None,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn sourcehut(
@@ -1263,22 +1270,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "https://{}/{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "https://",
+                None,
+                self_.domain(),
+                "/",
+                user,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
     }
 
@@ -1300,22 +1301,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}{}/{}{}{}",
-                BStr::new(self_.shortcut()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "",
+                None,
+                self_.shortcut(),
+                "",
+                user,
+                project,
+                "",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn gist(
@@ -1324,20 +1319,16 @@ pub mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "{}{}{}{}",
-                BStr::new(self_.shortcut()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "",
+                None,
+                self_.shortcut(),
+                "",
+                None,
+                project,
+                "",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
     }
 
@@ -1346,6 +1337,42 @@ pub mod formatters {
         use super::*;
 
         pub type Type = fn(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError>;
+
+        /// Percent-decode the parts into a single owned buffer and build the
+        /// `ExtractResult` over it.
+        fn build_result(
+            user: Option<&[u8]>,
+            project: &[u8],
+            committish: Option<&[u8]>,
+        ) -> Result<ExtractResult, HostedGitInfoError> {
+            let mut sb = StringBuilder::default();
+            if let Some(u) = user {
+                sb.count(u);
+            }
+            sb.count(project);
+            if let Some(c) = committish {
+                sb.count(c);
+            }
+
+            sb.allocate()?;
+
+            let user_slice = match user {
+                Some(u) => Some(HostedGitInfo::decode_and_append(&mut sb, u)?),
+                None => None,
+            };
+            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
+            let committish_slice = match committish {
+                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
+                None => None,
+            };
+
+            Ok(ExtractResult {
+                user: user_slice,
+                project: project_slice,
+                committish: committish_slice,
+                _owned_buffer: Some(sb.move_to_slice()),
+            })
+        }
 
         pub(crate) fn github(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
@@ -1391,54 +1418,54 @@ pub mod formatters {
                 committish_part
             };
 
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            sb.allocate()?;
-
-            let user_slice = HostedGitInfo::decode_and_append(&mut sb, user_part)?;
-            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
-            let committish_slice = match committish {
-                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+            Ok(Some(build_result(Some(user_part), project, committish)?))
         }
 
-        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+        /// Shared tail for hosts whose URL shape is `/user/project[.git][/aux]`
+        /// with the committish in the fragment: reject `aux == reject_aux`,
+        /// trim `.git`, require a non-empty project (and user, unless
+        /// `user_optional`, in which case a lone segment is the project), then
+        /// build the result. With `error_as_none`, allocation or decode
+        /// failure maps to "not a hosted git URL" rather than an error.
+        fn user_project_committish(
+            url: &JscUrl,
+            reject_aux: &[u8],
+            user_optional: bool,
+            error_as_none: bool,
+        ) -> Result<Option<ExtractResult>, HostedGitInfoError> {
             let pathname_owned = url.pathname().to_owned_slice();
             let pathname = strings::trim_prefix(&pathname_owned, b"/");
 
             let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
+            let Some(mut user_part) = iter.next() else {
                 return Ok(None);
             };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
+            let mut project_part = iter.next();
 
-            if let Some(a) = aux {
-                if a == b"get" {
-                    return Ok(None);
-                }
+            if iter.next() == Some(reject_aux) {
+                return Ok(None);
             }
+
+            if user_optional && project_part.is_none_or(<[u8]>::is_empty) {
+                project_part = Some(user_part);
+                user_part = b"";
+            }
+            let Some(project_part) = project_part else {
+                return Ok(None);
+            };
 
             let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
+            if project.is_empty() {
                 return Ok(None);
             }
+            let user: Option<&[u8]> = if user_part.is_empty() {
+                if !user_optional {
+                    return Ok(None);
+                }
+                None
+            } else {
+                Some(user_part)
+            };
 
             let fragment_str = OwnedString::new(url.fragment_identifier());
             let fragment_utf8 = fragment_str.to_utf8();
@@ -1449,28 +1476,17 @@ pub mod formatters {
                 None
             };
 
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
+            match build_result(user, project, committish) {
+                Ok(result) => Ok(Some(result)),
+                Err(_) if error_as_none => Ok(None),
+                Err(err) => Err(err),
             }
+        }
 
-            sb.allocate()?;
-
-            let user_slice = HostedGitInfo::decode_and_append(&mut sb, user_part)?;
-            let project_slice = HostedGitInfo::decode_and_append(&mut sb, project)?;
-            let committish_slice = match committish {
-                Some(c) => Some(HostedGitInfo::decode_and_append(&mut sb, c)?),
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+        pub(crate) fn bitbucket(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
+            user_project_committish(
+                url, b"get", /* user_optional */ false, /* error_as_none */ false,
+            )
         }
 
         pub(crate) fn gitlab(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
@@ -1528,176 +1544,15 @@ pub mod formatters {
         }
 
         pub(crate) fn gist(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(mut user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let mut project_part = iter.next();
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"raw" {
-                    return Ok(None);
-                }
-            }
-
-            if project_part.is_none() || project_part.unwrap().is_empty() {
-                project_part = Some(user_part);
-                user_part = b"";
-            }
-
-            let project = strings::trim_suffix(project_part.unwrap(), b".git");
-            let user: Option<&[u8]> = if !user_part.is_empty() {
-                Some(user_part)
-            } else {
-                None
-            };
-
-            if project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            let mut sb = StringBuilder::default();
-            if let Some(u) = user {
-                sb.count(u);
-            }
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            let Ok(()) = sb.allocate() else {
-                return Ok(None);
-            };
-
-            let user_slice = match user {
-                Some(u) => {
-                    let Ok(r) = HostedGitInfo::decode_and_append(&mut sb, u) else {
-                        return Ok(None);
-                    };
-                    Some(r)
-                }
-                None => None,
-            };
-            let Ok(project_slice) = HostedGitInfo::decode_and_append(&mut sb, project) else {
-                return Ok(None);
-            };
-            let committish_slice = match committish {
-                Some(c) => {
-                    let Ok(r) = HostedGitInfo::decode_and_append(&mut sb, c) else {
-                        return Ok(None);
-                    };
-                    Some(r)
-                }
-                None => None,
-            };
-
-            Ok(Some(ExtractResult {
-                user: user_slice,
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+            user_project_committish(
+                url, b"raw", /* user_optional */ true, /* error_as_none */ true,
+            )
         }
 
         pub(crate) fn sourcehut(url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
-            let pathname_owned = url.pathname().to_owned_slice();
-            let pathname = strings::trim_prefix(&pathname_owned, b"/");
-
-            let mut iter = pathname.split(|&b| b == b'/');
-            let Some(user_part) = iter.next() else {
-                return Ok(None);
-            };
-            let Some(project_part) = iter.next() else {
-                return Ok(None);
-            };
-            let aux = iter.next();
-
-            if let Some(a) = aux {
-                if a == b"archive" {
-                    return Ok(None);
-                }
-            }
-
-            let project = strings::trim_suffix(project_part, b".git");
-
-            if user_part.is_empty() || project.is_empty() {
-                return Ok(None);
-            }
-
-            let fragment_str = OwnedString::new(url.fragment_identifier());
-            let fragment_utf8 = fragment_str.to_utf8();
-            let fragment = fragment_utf8.slice();
-            let committish: Option<&[u8]> = if !fragment.is_empty() {
-                Some(fragment)
-            } else {
-                None
-            };
-
-            let mut sb = StringBuilder::default();
-            sb.count(user_part);
-            sb.count(project);
-            if let Some(c) = committish {
-                sb.count(c);
-            }
-
-            let Ok(()) = sb.allocate() else {
-                return Ok(None);
-            };
-
-            // Inline percent-decode rather than `decode_and_append`: this path
-            // returns None instead of erroring on decode failure.
-            let user_slice = 'blk: {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, user_part) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                break 'blk start..start + decoded_len;
-            };
-            let project_slice = 'blk: {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, project) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                break 'blk start..start + decoded_len;
-            };
-            let committish_slice = if let Some(c) = committish {
-                let start = sb.len;
-                let writable = sb.writable();
-                let Ok(decoded_len) = PercentEncoding::decode_into(writable, c) else {
-                    return Ok(None);
-                };
-                let decoded_len = decoded_len as usize;
-                sb.len += decoded_len;
-                Some(start..start + decoded_len)
-            } else {
-                None
-            };
-
-            Ok(Some(ExtractResult {
-                user: Some(user_slice),
-                project: project_slice,
-                committish: committish_slice,
-                _owned_buffer: Some(sb.move_to_slice()),
-            }))
+            user_project_committish(
+                url, b"archive", /* user_optional */ false, /* error_as_none */ true,
+            )
         }
     }
 
@@ -1725,26 +1580,16 @@ pub mod formatters {
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
             requires_user(user);
-
-            let auth_str: &[u8] = auth.unwrap_or(b"");
-            let auth_sep: &[u8] = if !auth_str.is_empty() { b"@" } else { b"" };
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git://{}{}{}/{}/{}.git{}{}",
-                BStr::new(auth_str),
-                BStr::new(auth_sep),
-                BStr::new(self_.domain()),
-                BStr::new(user.unwrap()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git://",
+                auth,
+                self_.domain(),
+                "/",
+                user,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
 
         pub(crate) fn gist(
@@ -1754,20 +1599,16 @@ pub mod formatters {
             project: &[u8],
             committish: Option<&[u8]>,
         ) -> Result<Vec<u8>, AllocError> {
-            let cmsh: &[u8] = committish.unwrap_or(b"");
-            let cmsh_sep: &[u8] = if !cmsh.is_empty() { b"#" } else { b"" };
-
-            let mut v = Vec::new();
-            write!(
-                &mut v,
-                "git://{}/{}.git{}{}",
-                BStr::new(self_.domain()),
-                BStr::new(project),
-                BStr::new(cmsh_sep),
-                BStr::new(cmsh),
+            format_template(
+                "git://",
+                None,
+                self_.domain(),
+                "/",
+                None,
+                project,
+                ".git",
+                committish,
             )
-            .map_err(|_| AllocError)?;
-            Ok(v)
         }
     }
 }

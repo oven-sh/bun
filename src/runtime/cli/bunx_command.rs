@@ -216,6 +216,19 @@ pub(crate) enum GetBinNameError {
 
 bun_core::named_error_set!(GetBinNameError);
 
+/// Inputs shared by both post-install cached-bin probes; invariant across the
+/// initial-bin-name and package-json-bin-name attempts.
+struct CachedBinProbe<'a> {
+    bunx_cache_dir: &'a [u8],
+    ignore_cwd: &'a [u8],
+    top_level_dir: &'a [u8],
+    #[cfg(unix)]
+    uid: libc::uid_t,
+    #[cfg(not(unix))]
+    uid: u32,
+    dirname_store: &'static bun_resolver::fs::DirnameStore,
+}
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -590,6 +603,77 @@ impl BunxCommand {
     #[inline(always)]
     fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
         true
+    }
+
+    /// Post-install cache probe: builds
+    /// `<bunx_cache_dir>/node_modules/.bin/<bin_name><EXE_SUFFIX>`, resolves it
+    /// via `bun_which::which`, and execs it via `Run::run_binary` (noreturn)
+    /// once it passes the `is_trusted_cached_binary` TOCTOU check. Returns
+    /// `Ok(())` only on a miss: the binary is absent or untrusted.
+    fn try_run_cached_bin(
+        ctx: &mut ContextData,
+        path_buf: &mut PathBuffer,
+        absolute_in_cache_dir_buf: &mut PathBuffer,
+        probe: &CachedBinProbe,
+        bin_name: &[u8],
+        env_loader: &mut bun_dotenv::Loader<'static>,
+        passthrough: &[Box<[u8]>],
+    ) -> Result<(), bun_core::Error> {
+        let buf_total = absolute_in_cache_dir_buf.len();
+        let absolute_in_cache_dir: &[u8] = {
+            let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
+            write!(
+                cursor,
+                "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
+                cache = BStr::new(probe.bunx_cache_dir),
+                sep = bun_paths::SEP as char,
+                bin = BStr::new(bin_name),
+                exe = EXE_SUFFIX,
+            )
+            .expect("unreachable");
+            let written = buf_total - cursor.len();
+            // SAFETY: `written` bytes initialized above
+            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+        };
+
+        // Similar to "npx": try the bin in the global cache. Do not try $PATH
+        // because we already checked it above if we should.
+        if let Some(destination) = bun_which::which(
+            path_buf,
+            probe.bunx_cache_dir,
+            if !probe.ignore_cwd.is_empty() {
+                b"".as_slice()
+            } else {
+                probe.top_level_dir
+            },
+            absolute_in_cache_dir,
+        ) {
+            let out: &[u8] = destination.as_bytes();
+            // The install we just ran should have created this symlink as the
+            // current user, but the cache lives in a world-writable temp dir; an
+            // attacker can race the install and plant a uid-mismatched entry.
+            // Bail out to the generic error rather than execute it.
+            if Self::is_trusted_cached_binary(destination, probe.uid) {
+                let stored = probe.dirname_store.append_slice(out)?;
+                Run::run_binary(
+                    ctx,
+                    stored,
+                    destination,
+                    probe.top_level_dir,
+                    env_loader,
+                    passthrough,
+                    None,
+                )?;
+                // run_binary is noreturn
+            } else {
+                bun_output::scoped_log!(
+                    bunx,
+                    "refusing untrusted cached binary: {}",
+                    BStr::new(out)
+                );
+            }
+        }
+        Ok(())
     }
 
     fn exit_with_usage() -> ! {
@@ -1380,61 +1464,23 @@ impl BunxCommand {
             _ => {}
         }
 
-        absolute_in_cache_dir = {
-            let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
-            write!(
-                cursor,
-                "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
-                cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-                bin = BStr::new(initial_bin_name),
-                exe = EXE_SUFFIX,
-            )
-            .expect("unreachable");
-            let written = buf_total - cursor.len();
-            // SAFETY: `written` bytes initialized above
-            unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+        let cached_bin_probe = CachedBinProbe {
+            bunx_cache_dir,
+            ignore_cwd: &ignore_cwd,
+            top_level_dir,
+            uid,
+            dirname_store: fs.dirname_store,
         };
 
-        // Similar to "npx":
-        //
-        //  1. Try the bin in the global cache
-        //     Do not try $PATH because we already checked it above if we should
-        if let Some(destination) = bun_which::which(
+        Self::try_run_cached_bin(
+            ctx,
             &mut path_buf,
-            bunx_cache_dir,
-            if !ignore_cwd.is_empty() {
-                b"".as_slice()
-            } else {
-                top_level_dir
-            },
-            absolute_in_cache_dir,
-        ) {
-            let out: &[u8] = destination.as_bytes();
-            // The install we just ran should have created this symlink as the
-            // current user, but the cache lives in a world-writable temp dir; an
-            // attacker can race the install and plant a uid-mismatched entry.
-            // Bail out to the generic error rather than execute it.
-            if Self::is_trusted_cached_binary(destination, uid) {
-                let stored = fs.dirname_store.append_slice(out)?;
-                Run::run_binary(
-                    ctx,
-                    stored,
-                    destination,
-                    top_level_dir,
-                    env_loader,
-                    passthrough,
-                    None,
-                )?;
-                // run_binary is noreturn
-            } else {
-                bun_output::scoped_log!(
-                    bunx,
-                    "refusing untrusted cached binary: {}",
-                    BStr::new(out)
-                );
-            }
-        }
+            &mut absolute_in_cache_dir_buf,
+            &cached_bin_probe,
+            initial_bin_name,
+            env_loader,
+            passthrough,
+        )?;
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
         // BUT: Skip this if --package was used, as the user explicitly specified the binary name
@@ -1446,55 +1492,15 @@ impl BunxCommand {
                 false,
             ) {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
-                    absolute_in_cache_dir = {
-                        let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
-                        write!(
-                            cursor,
-                            "{}/node_modules/.bin/{}{}",
-                            BStr::new(bunx_cache_dir),
-                            BStr::new(&package_name_for_bin),
-                            EXE_SUFFIX,
-                        )
-                        .expect("unreachable");
-                        let written = buf_total - cursor.len();
-                        // SAFETY: `written` bytes initialized above
-                        unsafe {
-                            core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written)
-                        }
-                    };
-
-                    if let Some(destination) = bun_which::which(
+                    Self::try_run_cached_bin(
+                        ctx,
                         &mut path_buf,
-                        bunx_cache_dir,
-                        if !ignore_cwd.is_empty() {
-                            b"".as_slice()
-                        } else {
-                            top_level_dir
-                        },
-                        absolute_in_cache_dir,
-                    ) {
-                        let out: &[u8] = destination.as_bytes();
-                        // Same TOCTOU hardening as the post-install probe above.
-                        if Self::is_trusted_cached_binary(destination, uid) {
-                            let stored = fs.dirname_store.append_slice(out)?;
-                            Run::run_binary(
-                                ctx,
-                                stored,
-                                destination,
-                                top_level_dir,
-                                env_loader,
-                                passthrough,
-                                None,
-                            )?;
-                            // run_binary is noreturn
-                        } else {
-                            bun_output::scoped_log!(
-                                bunx,
-                                "refusing untrusted cached binary: {}",
-                                BStr::new(out)
-                            );
-                        }
-                    }
+                        &mut absolute_in_cache_dir_buf,
+                        &cached_bin_probe,
+                        &package_name_for_bin,
+                        env_loader,
+                        passthrough,
+                    )?;
                 }
             }
         }

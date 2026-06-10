@@ -1,9 +1,8 @@
 use crate::lockfile::package::PackageColumns as _;
+use bstr::BStr;
 use bun_collections::VecExt;
 use core::fmt;
 use std::borrow::Cow;
-
-use bstr::BStr;
 
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
@@ -617,25 +616,22 @@ fn update_package_json_and_install_with_manager_with_updates(
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
-                    let root_package_json_entry = match manager
-                        .workspace_package_json_cache
-                        .get_with_path(
+                    let root_package_json_entry =
+                        match manager.workspace_package_json_cache.get_with_path(
                             manager.log_mut(),
                             root_package_json_path.as_bytes(),
                             GetJSONOptions::default(),
-                        )
-                        .unwrap()
-                    {
-                        Ok(e) => e,
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
-                            );
-                            Global::exit(1);
-                        }
-                    };
+                        ) {
+                            GetResult::Entry(entry) => entry,
+                            GetResult::ReadErr(err) | GetResult::ParseErr(err) => {
+                                Output::err(
+                                    err,
+                                    "failed to read/parse package.json at '{s}'",
+                                    (BStr::new(root_package_json_path.as_bytes()),),
+                                );
+                                Global::exit(1);
+                            }
+                        };
 
                     break 'source_and_path (
                         &root_package_json_entry.source.contents,

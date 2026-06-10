@@ -628,6 +628,16 @@ enum ReplResult {
     SkipEval,
 }
 
+/// How `evaluate_to_value` reports promise rejections and interrupts.
+/// Mirrors the difference between repl.zig's evaluateAndPrint (sets `_error`
+/// on globalThis, prints a newline on interrupt) and evaluateAndCopy (does
+/// neither).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReportMode {
+    Print,
+    Copy,
+}
+
 fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
     repl.print(format_args!(
         "\n{}REPL Commands:{}\n",
@@ -1303,19 +1313,20 @@ impl<'a> Repl<'a> {
     // JavaScript Evaluation
     // ========================================================================
 
-    fn evaluate_and_print(&mut self, code: &[u8]) {
-        let Some(global) = self.global else {
-            return;
-        };
-        let Some(vm) = self.vm else {
-            return;
-        };
+    /// Run `code` through the interactive REPL pipeline: transform_for_repl,
+    /// evaluate, await any async IIFE promise (with Ctrl+C signal handling),
+    /// unwrap the `{ value: expr }` wrapper, then store the result and set `_`
+    /// on globalThis. Returns `None` when the outcome was already reported
+    /// (errors, interrupts, or raw-evaluation fallback).
+    fn evaluate_to_value(&mut self, code: &[u8], mode: ReportMode) -> Option<JSValue> {
+        let global = self.global?;
+        let vm = self.vm?;
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
         let Some(transformed_code) = self.transform_for_repl(code) else {
             // Transform failed, try evaluating raw code (for syntax errors, etc.)
             self.evaluate_raw(code);
-            return;
+            return None;
         };
 
         // Evaluate the transformed code
@@ -1337,7 +1348,7 @@ impl<'a> Repl<'a> {
         if !exception.is_undefined() && !exception.is_null() {
             self.set_last_error(exception);
             self.print_js_error(exception);
-            return;
+            return None;
         }
 
         // Handle async IIFE results - wait for promise to resolve
@@ -1360,7 +1371,7 @@ impl<'a> Repl<'a> {
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
-                return;
+                return None;
             }
 
             // SAFETY: `vm.jsc_vm` is the live JSC VM handle for this thread.
@@ -1373,18 +1384,22 @@ impl<'a> Repl<'a> {
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
-                    // Set _error on the global object
-                    let global_this = global_to_js_value(global);
-                    global_this.put(global, b"_error", rejection);
+                    if mode == ReportMode::Print {
+                        // Set _error on the global object
+                        let global_this = global_to_js_value(global);
+                        global_this.put(global, b"_error", rejection);
+                    }
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
-                    return;
+                    return None;
                 }
                 PromiseStatus::Pending => {
                     // Interrupted by signal or timed out
-                    self.print(format_args!("\n"));
+                    if mode == ReportMode::Print {
+                        self.print(format_args!("\n"));
+                    }
                     self.disable_signals_during_wait();
-                    return;
+                    return None;
                 }
             }
             self.disable_signals_during_wait();
@@ -1404,7 +1419,7 @@ impl<'a> Repl<'a> {
                         self.set_last_error(exc);
                         self.print_js_error(exc);
                         vm_mut(vm).tick();
-                        return;
+                        return None;
                     }
                 };
             if let Some(value) = maybe_value {
@@ -1412,7 +1427,7 @@ impl<'a> Repl<'a> {
             }
         }
 
-        // Store and print result
+        // Store the result
         self.set_last_result(actual_result);
 
         // Set _ to the last result (only if not undefined)
@@ -1421,6 +1436,14 @@ impl<'a> Repl<'a> {
             let global_this = global_to_js_value(global);
             global_this.put(global, b"_", actual_result);
         }
+
+        Some(actual_result)
+    }
+
+    fn evaluate_and_print(&mut self, code: &[u8]) {
+        let Some(actual_result) = self.evaluate_to_value(code, ReportMode::Print) else {
+            return;
+        };
 
         if actual_result.is_undefined() {
             if self.use_colors {
@@ -1433,7 +1456,9 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm_mut(vm).tick();
+        if let Some(vm) = self.vm {
+            vm_mut(vm).tick();
+        }
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1612,103 +1637,20 @@ impl<'a> Repl<'a> {
 
     /// Evaluate code and copy the result to clipboard instead of printing it
     fn evaluate_and_copy(&mut self, code: &[u8]) {
-        let Some(global) = self.global else {
+        let Some(actual_result) = self.evaluate_to_value(code, ReportMode::Copy) else {
             return;
         };
-        let Some(vm) = self.vm else {
-            return;
-        };
-
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            self.evaluate_raw(code);
-            return;
-        };
-
-        let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
-
-        if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
-            self.print_js_error(exception);
-            return;
-        }
-
-        let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
-            // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
-            // owning JSC VM handle for this thread.
-            jsc::JSPromise::opaque_mut(promise).set_handled();
-            self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm().execution_forbidden() {
-                vm_set_execution_forbidden(vm.jsc_vm, false);
-                global.clear_termination_exception();
-                self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
-                return;
-            }
-            let jsc_vm_ref = vm.jsc_vm();
-            match jsc::JSPromise::opaque_mut(promise).status() {
-                PromiseStatus::Fulfilled => {
-                    resolved_result = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref)
-                }
-                PromiseStatus::Rejected => {
-                    let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
-                    self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
-                    return;
-                }
-                PromiseStatus::Pending => {
-                    self.disable_signals_during_wait();
-                    return;
-                }
-            }
-            self.disable_signals_during_wait();
-        }
-
-        let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
-            let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
-                    Ok(v) => v,
-                    Err(err) => {
-                        let exc = global.take_exception(err);
-                        self.set_last_error(exc);
-                        self.print_js_error(exc);
-                        vm_mut(vm).tick();
-                        return;
-                    }
-                };
-            if let Some(value) = maybe_value {
-                actual_result = value;
-            }
-        }
-
-        self.set_last_result(actual_result);
-        if !actual_result.is_undefined() {
-            let global_this = global_to_js_value(global);
-            global_this.put(global, b"_", actual_result);
-        }
 
         if let Err(err) = self.copy_value_to_clipboard(actual_result) {
-            let exc = global.take_exception(err);
-            self.set_last_error(exc);
-            self.print_js_error(exc);
+            if let Some(global) = self.global {
+                let exc = global.take_exception(err);
+                self.set_last_error(exc);
+                self.print_js_error(exc);
+            }
         }
-        vm_mut(vm).tick();
+        if let Some(vm) = self.vm {
+            vm_mut(vm).tick();
+        }
     }
 
     /// Format a JS value as a string suitable for clipboard.

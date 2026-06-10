@@ -3252,8 +3252,7 @@ impl DevServer {
         self.log.clear_and_free();
 
         // Notify inspector about bundle start
-        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(agent) = unsafe { self.inspector() } {
+        if let Some(agent) = self.inspector() {
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
@@ -4700,12 +4699,12 @@ pub(super) fn finalize_bundle(
     if !dev.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
-        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
         // Note: erase the agent borrow to a raw pointer so it can be passed
-        // through `send_serialized_failures` (which also borrows `dev`) and then
-        // re-used below.
-        let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
-            unsafe { dev.inspector() }.map(std::ptr::from_mut);
+        // through `send_serialized_failures` (which takes `&mut *dev` while
+        // the borrow derives from `&*dev`) and then re-used below. The agent
+        // lives in the VM's `Debugger`, which outlives this scope.
+        let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
+            dev.inspector().map(std::ptr::from_ref);
         if current_bundle!().promise.strong.has_value() {
             // SAFETY: see `current_bundle!` SAFETY; guard runs before `_outer_defer`.
             // Note: copy the raw ptr so `defer!`'s by-ref capture does not
@@ -4733,7 +4732,7 @@ pub(super) fn finalize_bundle(
                 failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
-                inspector_agent_ptr.map(|p| unsafe { &mut *p }),
+                inspector_agent_ptr.map(|p| unsafe { &*p }),
             )?;
         }
 
@@ -4766,17 +4765,16 @@ pub(super) fn finalize_bundle(
                 failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
-                inspector_agent_ptr.take().map(|p| unsafe { &mut *p }),
+                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
             )?;
         }
         if let Some(agent_ptr) = inspector_agent_ptr {
             let mut buf: Vec<u8> = Vec::new();
-            // SAFETY: agent ptr is from `dev.inspector()` above; live for this scope.
             dev.encode_serialized_failures(
                 dev.bundling_failures.values(),
                 &mut buf,
                 // SAFETY: `agent_ptr` is from `dev.inspector()` above; live for this scope.
-                Some(unsafe { &mut *agent_ptr }),
+                Some(unsafe { &*agent_ptr }),
             )?;
         }
 
@@ -4892,8 +4890,7 @@ pub(super) fn finalize_bundle(
         bun_core::pretty_error!("\n");
         Output::flush();
 
-        // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
-        if let Some(agent) = unsafe { dev.inspector() } {
+        if let Some(agent) = dev.inspector() {
             agent.notify_bundle_complete(dev.inspector_server_id, ms_elapsed as f64);
         }
     }
@@ -5418,7 +5415,7 @@ impl DevServer {
         &self,
         failures: &[SerializedFailure],
         buf: &mut Vec<u8>,
-        inspector_agent: Option<&mut BunFrontendDevServerAgent>,
+        inspector_agent: Option<&BunFrontendDevServerAgent>,
     ) -> Result<(), AllocError> {
         let mut all_failures_len: usize = 0;
         for fail in failures {
@@ -5455,7 +5452,7 @@ impl DevServer {
         resp: DevResponse,
         failures: &[SerializedFailure],
         kind: ErrorPageKind,
-        inspector_agent: Option<&mut BunFrontendDevServerAgent>,
+        inspector_agent: Option<&BunFrontendDevServerAgent>,
     ) -> Result<(), bun_core::Error> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 
@@ -6026,18 +6023,13 @@ impl DevServer {
         }
     }
 
-    /// SAFETY: returns `&mut BunFrontendDevServerAgent` derived through the
-    /// `UnsafeCell` on `Debugger.frontend_dev_server_agent`; two calls alias
-    /// the same agent. Caller must not hold another live `&mut` to it.
-    /// JS-thread only.
-    #[allow(clippy::mut_from_ref)]
-    pub unsafe fn inspector(&self) -> Option<&mut BunFrontendDevServerAgent> {
+    /// The dev server's inspector agent, or `None` while the
+    /// `BunFrontendDevServer` domain is disabled. The agent's state is
+    /// `Cell`-based, so a shared borrow suffices. JS-thread only.
+    pub fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
         if let Some(debugger) = self.vm().debugger.as_ref() {
             bun_core::hint::cold();
-            // SAFETY: `frontend_dev_server_agent` is `UnsafeCell`-wrapped for
-            // interior mutability. JS-thread only; caller upholds the no-alias
-            // contract documented above.
-            let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
+            let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
             if agent.is_enabled() {
                 bun_core::hint::cold();
                 return Some(agent);
@@ -6355,8 +6347,7 @@ impl DevServer {
     /// - The inspector is enabled
     /// - The user passed "console": true in serve options
     fn should_receive_console_log_from_browser(&self) -> bool {
-        // SAFETY: read-only check; agent borrow not retained.
-        unsafe { self.inspector() }.is_some() || self.broadcast_console_log_from_browser_to_server
+        self.inspector().is_some() || self.broadcast_console_log_from_browser_to_server
     }
 }
 
@@ -7178,4 +7169,5 @@ use crate::bake::dev_server::route_bundle;
 use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;
 type DebuggerId = jsc::debugger::DebuggerId;
-type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
+type BunFrontendDevServerAgent =
+    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent;

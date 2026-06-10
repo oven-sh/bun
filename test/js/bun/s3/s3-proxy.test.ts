@@ -114,7 +114,7 @@ describe.concurrent("s3 proxy env vars", () => {
         NO_PROXY: "localhost,127.0.0.1",
       });
 
-      expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr, proxyHits }).toEqual({
+      expect({ stdout, exitCode, stderr, proxyHits }).toEqual({
         stdout: `ok:${op}\n`,
         exitCode: 0,
         stderr: "",
@@ -135,7 +135,7 @@ describe.concurrent("s3 proxy env vars", () => {
     });
 
     // The request is sent to the proxy in absolute-URI form.
-    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr, proxyHits, endpointHits }).toEqual({
+    expect({ stdout, exitCode, stderr, proxyHits, endpointHits }).toEqual({
       stdout: "ok:write\n",
       exitCode: 0,
       stderr: "",
@@ -154,7 +154,7 @@ describe.concurrent("s3 proxy env vars", () => {
       NO_PROXY: "localhost,127.0.0.1",
     });
 
-    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr, proxyHits }).toEqual({
+    expect({ stdout, exitCode, stderr, proxyHits }).toEqual({
       stdout: "ok:fetch-stream\n",
       exitCode: 0,
       stderr: "",
@@ -173,7 +173,7 @@ describe.concurrent("s3 proxy env vars", () => {
       NO_PROXY: "example.com",
     });
 
-    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr, endpointHits }).toEqual({
+    expect({ stdout, exitCode, stderr, endpointHits }).toEqual({
       stdout: "ok:fetch-stream\n",
       exitCode: 0,
       stderr: "",
@@ -193,7 +193,7 @@ describe.concurrent("s3 proxy env vars", () => {
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
     });
 
-    expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr, proxyHits, endpointHits }).toEqual({
+    expect({ stdout, exitCode, stderr, proxyHits, endpointHits }).toEqual({
       stdout: "ok:write\n",
       exitCode: 0,
       stderr: "",

@@ -1447,7 +1447,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             global_object,
             &mut args,
             crate::server::server_config::FromJSOptions {
-                allow_bake_config: true,
+                allow_dev_server_options: true,
                 is_fetch_required: true,
                 previous_fetch: false,
                 previous_routes: false,

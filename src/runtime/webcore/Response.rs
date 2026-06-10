@@ -1023,6 +1023,10 @@ impl Response {
             }
         }
 
+        if !matches!(response.body.get().value.get(), BodyValue::Empty) {
+            Self::check_null_body_status(global_this, response.init.get().status_code)?;
+        }
+
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
@@ -1036,6 +1040,20 @@ impl Response {
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
         Ok(unsafe { (*ptr).to_js(global_this) })
+    }
+
+    /// https://fetch.spec.whatwg.org/#initialize-a-response
+    /// A non-null body combined with a null body status
+    /// (https://fetch.spec.whatwg.org/#null-body-status) throws a TypeError.
+    fn check_null_body_status(global_this: &JSGlobalObject, status_code: u16) -> JsResult<()> {
+        if matches!(status_code, 101 | 103 | 204 | 205 | 304) {
+            let err = global_this.create_type_error_instance(format_args!(
+                "Failed to construct 'Response': Response with null body status {} cannot have a body",
+                status_code
+            ));
+            return Err(global_this.throw_value(err));
+        }
+        Ok(())
     }
 
     fn validate_redirect_status_code(
@@ -1241,6 +1259,11 @@ impl Response {
 
         if global_this.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
+        }
+
+        // Checked before extraction so a ReadableStream body is left untouched.
+        if !arguments[0].is_undefined_or_null() {
+            Self::check_null_body_status(global_this, init.status_code)?;
         }
 
         let body: Body = 'brk: {

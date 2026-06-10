@@ -1343,8 +1343,8 @@ impl PropertyId {
     /// isn't allowed for that property.
     pub fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
         use bun_core::strings;
-        // PERF: the linear scan here is correct but slow — a phf /
-        // match-on-len would be an optimization.
+        // PERF: the linear scan here is correct but slow — a length-gated
+        // match (`comptime_string_map!`) would be an optimization.
         if strings::eql_case_insensitive_ascii_check_length(name, b"background-color") {
             let allowed: VendorPrefix = VendorPrefix::NONE;
             if allowed.intersects(pre) {

@@ -367,7 +367,7 @@ macro_rules! impl_tag_error {
 // overrides divergent texts and adds OS-only errnos. Because lookup is gated
 // by the per-OS `SystemErrno` name space, BASE rows for Linux-only errnos are
 // unreachable on macOS/FreeBSD and harmless to keep — so the three full per-OS
-// `phf_map!`s collapse to BASE + two ~40-row deltas with identical behavior.
+// maps collapse to BASE + two ~40-row deltas with identical behavior.
 pub mod coreutils_error_map {
     /// Returns the GNU-coreutils-style short label for an errno, if known.
     #[inline]
@@ -381,15 +381,16 @@ pub mod coreutils_error_map {
     #[inline]
     pub fn get_by_name(name: &str) -> Option<&'static str> {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        if let Some(s) = DELTA.get(name) {
+        if let Some(s) = DELTA.get(name.as_bytes()) {
             return Some(*s);
         }
-        BASE.get(name).copied()
+        BASE.get(name.as_bytes()).copied()
     }
 
     // The glibc/coreutils strerror() texts. Linux/Android/Windows/wasm use this
     // table verbatim; macOS/FreeBSD consult DELTA first then fall back here.
-    static BASE: phf::Map<&'static str, &'static str> = phf::phf_map! {
+    crate::comptime_string_map! {
+    static BASE: &'static str = {
         "EPERM" => "Operation not permitted",
         "ENOENT" => "No such file or directory",
         "ESRCH" => "No such process",
@@ -522,11 +523,13 @@ pub mod coreutils_error_map {
         "ERFKILL" => "Operation not possible due to RF-kill",
         "EHWPOISON" => "Memory page has hardware error",
     };
+    }
 
     // macOS DELTA: overrides where Apple's strerror() text diverges from glibc,
     // plus macOS-only errnos (EBADARCH, EBADMACHO, EPWROFF, …).
     #[cfg(target_os = "macos")]
-    static DELTA: phf::Map<&'static str, &'static str> = phf::phf_map! {
+    crate::comptime_string_map! {
+    static DELTA: &'static str = {
         "EADDRNOTAVAIL" => "Can't assign requested address",
         "EAFNOSUPPORT" => "Address family not supported by protocol family",
         "EAGAIN" => "non-blocking and interrupt i/o. Resource temporarily unavailable",
@@ -578,11 +581,13 @@ pub mod coreutils_error_map {
         "EWOULDBLOCK" => "Operation would block",
         "EXDEV" => "Cross-device link",
     };
+    }
 
     // FreeBSD DELTA: overrides where FreeBSD's errlst.c diverges from glibc,
     // plus FreeBSD-only errnos (EDOOFUS, ECAPMODE, ENOTCAPABLE, EINTEGRITY, …).
     #[cfg(target_os = "freebsd")]
-    static DELTA: phf::Map<&'static str, &'static str> = phf::phf_map! {
+    crate::comptime_string_map! {
+    static DELTA: &'static str = {
         "EADDRNOTAVAIL" => "Can't assign requested address",
         "EAFNOSUPPORT" => "Address family not supported by protocol family",
         "EAUTH" => "Authentication error",
@@ -616,6 +621,7 @@ pub mod coreutils_error_map {
         "ETOOMANYREFS" => "Too many references: can't splice",
         "EXDEV" => "Cross-device link",
     };
+    }
 }
 
 /// A plain ok/err union.

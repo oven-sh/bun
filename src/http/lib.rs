@@ -820,22 +820,39 @@ fn get_user_agent_header() -> picohttp::Header {
 }
 
 // ── header-hash constants ───────────────────────────────────────────────
-// `Wyhash` is not
-// `const fn`, so use a runtime alias of `hash_header_name` and cache the three
-// values that are looked up on every request via `LazyLock`. The per-header
-// `match` arms inside `build_request` / `handle_response_metadata` already
-// call `hash_header_const` at runtime.
+// `Wyhash` is not `const fn`, so the per-header `match` arms inside
+// `build_request` / `handle_response_metadata` call this runtime alias of
+// `hash_header_name`.
 #[inline(always)]
 fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
-static AUTHORIZATION_HEADER_HASH: std::sync::LazyLock<u64> =
-    std::sync::LazyLock::new(|| hash_header_name(b"Authorization"));
-static PROXY_AUTHORIZATION_HEADER_HASH: std::sync::LazyLock<u64> =
-    std::sync::LazyLock::new(|| hash_header_name(b"Proxy-Authorization"));
-static COOKIE_HEADER_HASH: std::sync::LazyLock<u64> =
-    std::sync::LazyLock::new(|| hash_header_name(b"Cookie"));
+bun_core::comptime_string_map! {
+    /// Request-body-header names
+    /// (https://fetch.spec.whatwg.org/#request-body-header-name).
+    /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
+    static REQUEST_BODY_HEADERS: () = {
+        b"content-encoding" => (),
+        b"content-language" => (),
+        b"content-location" => (),
+        b"content-type" => (),
+    };
+}
+
+bun_core::comptime_string_map! {
+    /// Headers deleted from the request on a cross-origin redirect.
+    /// `host` is included because a user-supplied Host header names the
+    /// previous origin; keeping it would also suppress the default Host
+    /// header derived from the new URL.
+    /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
+    static CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS: () = {
+        b"authorization" => (),
+        b"proxy-authorization" => (),
+        b"cookie" => (),
+        b"host" => (),
+    };
+}
 
 // ── shared per-thread buffers ───────────────────────────────────────────
 // All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
@@ -4769,45 +4786,19 @@ impl<'a> HTTPClient<'a> {
 
                             // https://github.com/oven-sh/bun/issues/6053
                             if self.header_entries.len() > 0 {
-                                // A request-body-header name is a header name that is a byte-case-insensitive match for one of:
-                                // - `Content-Encoding`
-                                // - `Content-Language`
-                                // - `Content-Location`
-                                // - `Content-Type`
-                                const REQUEST_BODY_HEADER: [&[u8]; 3] = [
-                                    b"Content-Encoding",
-                                    b"Content-Language",
-                                    b"Content-Location",
-                                ];
-                                let mut i: usize = 0;
-
                                 // - For each headerName of request-body-header name, delete headerName from request's header list.
-                                let mut len = self.header_entries.len();
-                                'outer: while i < len {
+                                let mut i: usize = 0;
+                                while i < self.header_entries.len() {
                                     let names = self.header_entries.items_name();
                                     let name = self.header_str(names[i]);
-                                    match name.len() {
-                                        l if l == b"Content-Type".len() => {
-                                            let hash = hash_header_name(name);
-                                            if hash == hash_header_const(b"Content-Type") {
-                                                let _ = self.header_entries.ordered_remove(i);
-                                                len = self.header_entries.len();
-                                                continue 'outer;
-                                            }
-                                        }
-                                        l if l == b"Content-Encoding".len() => {
-                                            let hash = hash_header_name(name);
-                                            for hash_value in REQUEST_BODY_HEADER {
-                                                if hash == hash_header_const(hash_value) {
-                                                    let _ = self.header_entries.ordered_remove(i);
-                                                    len = self.header_entries.len();
-                                                    continue 'outer;
-                                                }
-                                            }
-                                        }
-                                        _ => {}
+                                    if REQUEST_BODY_HEADERS
+                                        .get_ascii_case_insensitive(name)
+                                        .is_some()
+                                    {
+                                        let _ = self.header_entries.ordered_remove(i);
+                                    } else {
+                                        i += 1;
                                     }
-                                    i += 1;
                                 }
                             }
                         }
@@ -4825,44 +4816,16 @@ impl<'a> HTTPClient<'a> {
                         // non-wildcard request-header name, delete headerName from
                         // request's header list.
                         if !is_same_origin && self.header_entries.len() > 0 {
-                            struct H {
-                                name: &'static [u8],
-                                hash: u64,
-                            }
-                            // LazyLock hashes
-                            // aren't const, so build at runtime.
-                            let headers_to_remove: [H; 4] = [
-                                H {
-                                    name: b"Authorization",
-                                    hash: *AUTHORIZATION_HEADER_HASH,
-                                },
-                                H {
-                                    name: b"Proxy-Authorization",
-                                    hash: *PROXY_AUTHORIZATION_HEADER_HASH,
-                                },
-                                H {
-                                    name: b"Cookie",
-                                    hash: *COOKIE_HEADER_HASH,
-                                },
-                                // A user-supplied Host header names the previous
-                                // origin; keeping it would also suppress the
-                                // default Host header derived from the new URL.
-                                H {
-                                    name: HOST_HEADER_NAME,
-                                    hash: hash_header_const(HOST_HEADER_NAME),
-                                },
-                            ];
-                            for to_remove in headers_to_remove.iter() {
-                                let mut i = 0;
-                                while i < self.header_entries.len() {
-                                    let name = self.header_str(self.header_entries.items_name()[i]);
-                                    if name.len() == to_remove.name.len()
-                                        && hash_header_name(name) == to_remove.hash
-                                    {
-                                        let _ = self.header_entries.ordered_remove(i);
-                                    } else {
-                                        i += 1;
-                                    }
+                            let mut i = 0;
+                            while i < self.header_entries.len() {
+                                let name = self.header_str(self.header_entries.items_name()[i]);
+                                if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
+                                    .get_ascii_case_insensitive(name)
+                                    .is_some()
+                                {
+                                    let _ = self.header_entries.ordered_remove(i);
+                                } else {
+                                    i += 1;
                                 }
                             }
                         }

@@ -1595,15 +1595,20 @@ impl Level {
             })
         });
 
-    pub const MAP: phf::Map<&'static [u8], Level> = phf::phf_map! {
+    pub const MAP: __ComptimeStringMap_LEVEL_MAP = __ComptimeStringMap_LEVEL_MAP(());
+
+    // `from_js` lives in `bun_logger_jsc`.
+}
+
+bun_core::comptime_string_map! {
+    /// Backing map for [`Level::MAP`].
+    pub static LEVEL_MAP: Level = {
         b"verbose" => Level::Verbose,
         b"debug" => Level::Debug,
         b"info" => Level::Info,
         b"warn" => Level::Warn,
         b"error" => Level::Err,
     };
-
-    // `from_js` lives in `bun_logger_jsc`.
 }
 
 // PORTING.md §Global mutable state: written by CLI startup, read by every

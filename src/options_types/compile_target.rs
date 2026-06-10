@@ -7,7 +7,7 @@
 use core::fmt;
 use std::io::Write as _;
 
-use bun_core::env::{Architecture, OperatingSystem};
+use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
@@ -261,11 +261,11 @@ impl CompileTarget {
                 continue;
             }
 
-            if let Some(arch) = Architecture::NAMES.get(token) {
+            if let Some(arch) = ARCHITECTURE_NAMES.get(token) {
                 this.arch = *arch;
                 found_arch = true;
                 continue;
-            } else if let Some(os) = OperatingSystem::NAMES.get(token) {
+            } else if let Some(os) = OPERATING_SYSTEM_NAMES.get(token) {
                 this.os = *os;
                 found_os = true;
                 continue;
@@ -350,8 +350,8 @@ impl CompileTarget {
                     if token.is_empty() {
                         continue;
                     }
-                    if Architecture::NAMES.get(token).is_none()
-                        && OperatingSystem::NAMES.get(token).is_none()
+                    if ARCHITECTURE_NAMES.get(token).is_none()
+                        && OPERATING_SYSTEM_NAMES.get(token).is_none()
                         && token != b"modern"
                         && token != b"baseline"
                         && token != b"musl"

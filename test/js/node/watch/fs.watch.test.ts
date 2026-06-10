@@ -1072,3 +1072,106 @@ test("fs.watch reports an error for relative paths that no longer fit in the pat
   // the subprocess instead of throwing a catchable error.
   expect(exitCode).toBe(0);
 });
+
+// The native FSWatcher holds a weak reference to its JS wrapper (rooted by
+// hasPendingActivity while open). Exercise every emit path (change, error,
+// abort, close) with forced GC between steps; a rooting/clearing mistake
+// crashes the subprocess or drops the awaited events.
+test("fs.watch wrapper reference survives GC across event, abort and close paths", async () => {
+  using dir = tempDir("fswatch-jsref-gc", { "target.txt": "x" });
+  const watchDir = String(dir);
+
+  const fixture = /* js */ `
+    const fs = require("fs");
+    const path = require("path");
+    const dir = ${JSON.stringify(watchDir)};
+    const file = path.join(dir, "target.txt");
+
+    // Write-and-poll until \`done()\` reports true; bounded so a missed event
+    // becomes a crisp error instead of a hang with no diagnostics.
+    async function pokeUntil(done, label) {
+      for (let attempt = 0; attempt < 500; attempt++) {
+        if (done()) return;
+        fs.writeFileSync(file, label + " " + attempt + " " + Math.random());
+        Bun.gc(true);
+        await Bun.sleep(10);
+      }
+      throw new Error("event never delivered: " + label);
+    }
+
+    async function main() {
+      // Phase 1: event delivery + close event, with GC forced between steps.
+      for (let round = 0; round < 3; round++) {
+        let sawEvent;
+        const gotEvent = new Promise(resolve => (sawEvent = resolve));
+        const watcher = fs.watch(dir, () => sawEvent());
+        Bun.gc(true);
+
+        // Keep touching the file until the event lands (watch registration
+        // can race the first write on some platforms).
+        let delivered = false;
+        gotEvent.then(() => (delivered = true));
+        await pokeUntil(() => delivered, "round " + round);
+        await gotEvent;
+
+        const gotClose = new Promise(resolve => watcher.once("close", resolve));
+        Bun.gc(true);
+        watcher.close();
+        Bun.gc(true);
+        await gotClose;
+      }
+
+      // Phase 2: abort path under GC pressure.
+      for (let i = 0; i < 3; i++) {
+        const ac = new AbortController();
+        const watcher = fs.watch(dir, { signal: ac.signal }, () => {});
+        const gotAbort = new Promise((resolve, reject) => {
+          watcher.once("error", err =>
+            err.message === "The operation was aborted." ? resolve() : reject(err),
+          );
+        });
+        Bun.gc(true);
+        ac.abort();
+        Bun.gc(true);
+        await gotAbort;
+      }
+
+      // Phase 3: double-close and close-from-inside-listener under GC.
+      {
+        let closeFromListener;
+        const closedFromListener = new Promise(resolve => (closeFromListener = resolve));
+        const watcher = fs.watch(dir, () => {
+          Bun.gc(true);
+          watcher.close(); // re-entrant close from inside the native emit
+          watcher.close(); // second close must be a no-op
+          closeFromListener();
+        });
+        let done = false;
+        closedFromListener.then(() => (done = true));
+        await pokeUntil(() => done, "phase3");
+        await closedFromListener;
+        Bun.gc(true);
+      }
+
+      Bun.gc(true);
+      console.log("OK");
+    }
+
+    main().catch(err => {
+      console.error(err);
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+}, 30_000);

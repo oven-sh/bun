@@ -2301,44 +2301,39 @@ pub(crate) enum BuiltInHook {
     useOptimistic,
 }
 
+// PERF: all 19 keys share the `b"use"` prefix, so a perfect hash spends most
+// of its work mixing identical leading bytes. The length dispatch yields a
+// unique bucket for 13 of the 15 occupied lengths; the two collisions
+// (len 10 → 2 keys, len 13 → 4 keys) resolve via the constant-length compare
+// tree.
+bun_core::comptime_string_map! {
+    static BUILT_IN_HOOK_MAP: BuiltInHook = {
+        b"useId" => BuiltInHook::useId,
+        b"useRef" => BuiltInHook::useRef,
+        b"useMemo" => BuiltInHook::useMemo,
+        b"useState" => BuiltInHook::useState,
+        b"useEffect" => BuiltInHook::useEffect,
+        b"useReducer" => BuiltInHook::useReducer,
+        b"useContext" => BuiltInHook::useContext,
+        b"useCallback" => BuiltInHook::useCallback,
+        b"useFormState" => BuiltInHook::useFormState,
+        b"useDebugValue" => BuiltInHook::useDebugValue,
+        b"useTransition" => BuiltInHook::useTransition,
+        b"useFormStatus" => BuiltInHook::useFormStatus,
+        b"useOptimistic" => BuiltInHook::useOptimistic,
+        b"useActionState" => BuiltInHook::useActionState,
+        b"useLayoutEffect" => BuiltInHook::useLayoutEffect,
+        b"useDeferredValue" => BuiltInHook::useDeferredValue,
+        b"useInsertionEffect" => BuiltInHook::useInsertionEffect,
+        b"useImperativeHandle" => BuiltInHook::useImperativeHandle,
+        b"useSyncExternalStore" => BuiltInHook::useSyncExternalStore,
+    };
+}
+
 impl BuiltInHook {
-    /// Length-gated lookup (formerly a `phf::Map<&[u8], BuiltInHook>`).
-    ///
-    /// All 19 keys share the `b"use"` prefix, so a perfect hash spends most of
-    /// its work mixing identical leading bytes. Gating on `len()` alone yields a
-    /// unique bucket for 13 of the 15 occupied lengths; the two collisions
-    /// (len 10 → 2 keys, len 13 → 4 keys) disambiguate on `id[3]` — the first
-    /// byte after the shared prefix — before the confirming slice compare.
     #[inline]
     pub(crate) fn from_bytes(id: &[u8]) -> Option<Self> {
-        match id.len() {
-            5 if id == b"useId" => Some(Self::useId),
-            6 if id == b"useRef" => Some(Self::useRef),
-            7 if id == b"useMemo" => Some(Self::useMemo),
-            8 if id == b"useState" => Some(Self::useState),
-            9 if id == b"useEffect" => Some(Self::useEffect),
-            10 => match id[3] {
-                b'R' if id == b"useReducer" => Some(Self::useReducer),
-                b'C' if id == b"useContext" => Some(Self::useContext),
-                _ => None,
-            },
-            11 if id == b"useCallback" => Some(Self::useCallback),
-            12 if id == b"useFormState" => Some(Self::useFormState),
-            13 => match id[3] {
-                b'D' if id == b"useDebugValue" => Some(Self::useDebugValue),
-                b'T' if id == b"useTransition" => Some(Self::useTransition),
-                b'F' if id == b"useFormStatus" => Some(Self::useFormStatus),
-                b'O' if id == b"useOptimistic" => Some(Self::useOptimistic),
-                _ => None,
-            },
-            14 if id == b"useActionState" => Some(Self::useActionState),
-            15 if id == b"useLayoutEffect" => Some(Self::useLayoutEffect),
-            16 if id == b"useDeferredValue" => Some(Self::useDeferredValue),
-            18 if id == b"useInsertionEffect" => Some(Self::useInsertionEffect),
-            19 if id == b"useImperativeHandle" => Some(Self::useImperativeHandle),
-            20 if id == b"useSyncExternalStore" => Some(Self::useSyncExternalStore),
-            _ => None,
-        }
+        BUILT_IN_HOOK_MAP.get(id).copied()
     }
 }
 

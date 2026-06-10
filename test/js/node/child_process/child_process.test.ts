@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
@@ -472,13 +472,48 @@ it("spawnSync(does-not-exist)", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/32067
-it.if(!isWindows)("spawn with pipe fds above Darwin OPEN_MAX reports EBADF instead of losing output", async () => {
+// Darwin's posix_spawn file actions reject any fd number >= OPEN_MAX (10240)
+// with EBADF at registration time, before checking whether the fd is open.
+// Bun used to swallow that error and spawn anyway with the action silently
+// dropped, so the child ran with closed stdio and looked like a successful
+// run that produced no output. The spawn must fail with EBADF, matching
+// node. On other POSIX platforms the child-side dup2 of an fd that is not
+// open fails with EBADF, so the observable behavior is the same.
+it.if(!isWindows)("spawn with an fd number at Darwin OPEN_MAX in stdio reports EBADF", () => {
+  // Precondition: fd 10240 is not open in this process, so the fd is
+  // invalid on every platform (on Darwin it is invalid by number alone).
+  expect(() => fs.fstatSync(10240)).toThrow();
+
+  const r = spawnSync("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe", 10240] });
+  expect({
+    status: r.status ?? null,
+    stdout: r.stdout?.toString() ?? null,
+    error: r.error?.code ?? null,
+  }).toEqual({ status: null, stdout: null, error: "EBADF" });
+
+  // Async spawn throws synchronously: EBADF is not in node's delayed-error
+  // list (EACCES/EAGAIN/EMFILE/ENFILE/ENOENT), so node throws here too.
+  let asyncCode: string | undefined;
+  try {
+    spawn("echo", ["hi"], { stdio: ["ignore", "pipe", "pipe", 10240] });
+  } catch (err: any) {
+    asyncCode = err.code;
+  }
+  expect(asyncCode).toBe("EBADF");
+});
+
+// https://github.com/oven-sh/bun/issues/32067
+// The fd-pressure variant of the case above: with more than 10240 fds open,
+// freshly created stdio pipes get numbers past OPEN_MAX. Linux has no such
+// cap, so spawning must keep working. The test is Linux-only because default
+// macOS installs cap RLIMIT_NOFILE at kern.maxfilesperproc = 10240, which
+// makes it impossible to open this many fds there (the Darwin EBADF surface
+// is covered by the test above, which needs no fd pressure).
+it.if(isLinux)("spawn still works with more than 10240 fds open", async () => {
   const script = /* js */ `
       const fs = require("fs");
       const { spawn, spawnSync } = require("child_process");
 
-      // Occupy fd numbers up to ~11000 so the stdio pipes created by spawn
-      // get fd numbers above Darwin's OPEN_MAX (10240).
       let opened = 0;
       let setup = "ok";
       try {
@@ -509,10 +544,7 @@ it.if(!isWindows)("spawn with pipe fds above Darwin OPEN_MAX reports EBADF inste
     `;
 
   await using proc = Bun.spawn({
-    // The repro needs more open fds than some environments allow by
-    // default; raise the soft limit before exec'ing bun (which raises it
-    // further on startup).
-    cmd: ["/bin/sh", "-c", `ulimit -Sn 12000 2>/dev/null; exec "$1" -e "$2"`, "sh", bunExe(), script],
+    cmd: [bunExe(), "-e", script],
     env: bunEnv,
     stdin: "ignore",
     stdout: "pipe",
@@ -527,21 +559,10 @@ it.if(!isWindows)("spawn with pipe fds above Darwin OPEN_MAX reports EBADF inste
     throw new Error(`child did not produce a result; stdout: ${JSON.stringify(stdout)} stderr: ${stderr}`);
   }
 
-  if (process.platform === "darwin") {
-    // Darwin's posix_spawn file actions reject fds >= OPEN_MAX (10240)
-    // with EBADF. The spawn must fail the way node's does, not run a child
-    // with closed stdio that looks like a successful run with empty output.
-    expect(result).toEqual({
-      setup: "ok",
-      sync: { status: null, stdout: null, error: "EBADF" },
-      async: { outcome: "throw", code: "EBADF" },
-    });
-  } else {
-    expect(result).toEqual({
-      setup: "ok",
-      sync: { status: 0, stdout: "hi\n", error: null },
-      async: { outcome: "exit", code: 0 },
-    });
-  }
+  expect(result).toEqual({
+    setup: "ok",
+    sync: { status: 0, stdout: "hi\n", error: null },
+    async: { outcome: "exit", code: 0 },
+  });
   expect(exitCode).toBe(0);
 });

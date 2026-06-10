@@ -472,3 +472,37 @@ it("should link dependency without crashing", async () => {
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
 });
+
+for (const command of ["link", "unlink"]) {
+  it(`should error when ${command}ing a package without a name`, async () => {
+    await writeFile(join(link_dir, "package.json"), JSON.stringify({ version: "0.0.1" }));
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), command],
+      cwd: link_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    expect(err).toContain('error: package.json missing "name"');
+    expect(exitCode).toBe(1);
+  });
+}
+
+it("should error when linking a package with an invalid name", async () => {
+  await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: "NOT a valid name!", version: "0.0.1" }));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: link_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err).toContain('error: invalid package.json name "NOT a valid name!"');
+  expect(exitCode).toBe(1);
+});

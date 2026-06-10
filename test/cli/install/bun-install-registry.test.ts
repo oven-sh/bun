@@ -8255,6 +8255,21 @@ describe("outdated", () => {
       expect(rest).toMatchSnapshot();
     });
   }
+  test("errors without a lockfile", async () => {
+    await write(packageJson, JSON.stringify({ name: "no-lockfile", version: "1.0.0" }));
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+    expect(err).toContain("error: missing lockfile, nothing outdated");
+    expect(exitCode).toBe(1);
+  });
   test("in workspace", async () => {
     await Promise.all([
       write(

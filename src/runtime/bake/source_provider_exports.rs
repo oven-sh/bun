@@ -10,41 +10,50 @@ use core::ffi::c_void;
 
 use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
-pub fn add_bake_source_provider_source_map(
+pub(crate) fn add_bake_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings.put_bake_source_provider(
-        opaque_source_provider.cast::<BakeSourceProvider>(),
+    vm.source_mappings.put_source_provider(
+        AnySourceProvider::new(
+            opaque_source_provider
+                .cast::<BakeSourceProvider>()
+                .cast_const(),
+        ),
         slice.slice(),
     );
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
-pub fn add_dev_server_source_provider(
+pub(crate) fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings.put_dev_server_source_provider(
-        opaque_source_provider.cast::<DevServerSourceProvider>(),
+    vm.source_mappings.put_source_provider(
+        AnySourceProvider::new(
+            opaque_source_provider
+                .cast::<DevServerSourceProvider>()
+                .cast_const(),
+        ),
         slice.slice(),
     );
 }
 
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub fn remove_dev_server_source_provider(
+pub(crate) fn remove_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }

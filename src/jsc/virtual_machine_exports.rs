@@ -9,6 +9,8 @@ use crate::{
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
+use bun_sourcemap::SourceProviderMap;
+use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
 // `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
 // definition itself.
@@ -290,8 +292,14 @@ pub fn add_source_provider_source_map(
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
-        .put_zig_source_provider(opaque_source_provider, slice.slice());
+    vm.source_mappings.put_source_provider(
+        AnySourceProvider::new(
+            opaque_source_provider
+                .cast::<SourceProviderMap>()
+                .cast_const(),
+        ),
+        slice.slice(),
+    );
 }
 
 // HOST_EXPORT(Bun__removeSourceProviderSourceMap, c)
@@ -302,7 +310,7 @@ pub fn remove_source_provider_source_map(
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings
-        .remove_zig_source_provider(opaque_source_provider, slice.slice());
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 #[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]

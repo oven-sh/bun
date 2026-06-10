@@ -301,6 +301,10 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         require: mod.require.bind(this),
       };
       mod.exports = null;
+    } else {
+      // Reloading a stale CommonJS module. Drop the memoized ESM namespace
+      // (`getEsmExports`) so importers observe the re-evaluated exports.
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -400,6 +404,10 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         exports: {},
         require: mod.require.bind(this),
       };
+      mod.exports = null;
+    } else {
+      // Reloading a stale CommonJS module. Drop the memoized ESM namespace
+      // (`getEsmExports`) so importers observe the re-evaluated exports.
       mod.exports = null;
     }
     if (importer) {
@@ -748,14 +756,22 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
+  // Reload all modules. Mark everything stale and detach the accept handlers
+  // before reloading anything: `toReload` is in discovery order, which may
+  // visit an importer before one of its dependencies. A reloading importer
+  // then re-evaluates any still-stale dependency on demand, instead of
+  // reusing the previous module instance and its exports.
   const promises: Promise<HMRModule>[] = [];
+  const selfAccepts: (HotAcceptFunction | null)[] = [];
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.push(mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
-
+  }
+  let reloadIndex = 0;
+  for (const mod of toReload) {
+    const selfAccept = selfAccepts[reloadIndex++];
     const modOrPromise = loadModuleAsync(mod.id, false, null);
     if (modOrPromise === mod) {
       if (selfAccept) {

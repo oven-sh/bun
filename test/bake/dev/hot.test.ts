@@ -527,3 +527,43 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
     }
   },
 });
+devTest("hot reload of an imported json file updates the value", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import data from "./data.json";
+      console.log("value=" + data.value);
+      import.meta.hot.accept();
+    `,
+    "data.json": `{ "value": 1 }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value=1");
+    await dev.write("data.json", `{ "value": 2 }`);
+    await c.expectMessage("value=2");
+    await dev.write("data.json", `{ "value": 3 }`);
+    await c.expectMessage("value=3");
+  },
+});
+devTest("hot reload of a CommonJS module updates exports seen by importers", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import data from "./data.cjs";
+      console.log("value=" + data.value);
+      import.meta.hot.accept();
+    `,
+    "data.cjs": `module.exports = { value: 1 };`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value=1");
+    await dev.write("data.cjs", `module.exports = { value: 2 };`);
+    await c.expectMessage("value=2");
+  },
+});

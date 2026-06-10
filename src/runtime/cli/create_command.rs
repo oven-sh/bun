@@ -2059,10 +2059,12 @@ pub enum ExampleTag {
     JslikeFile,
 }
 
-static EXTENSION_TAG_MAP: phf::Map<&'static [u8], ExampleTag> = phf::phf_map! {
-    b".tsx" => ExampleTag::JslikeFile,
-    b".jsx" => ExampleTag::JslikeFile,
-};
+bun_core::comptime_string_map! {
+    static EXTENSION_TAG_MAP: ExampleTag = {
+        b".tsx" => ExampleTag::JslikeFile,
+        b".jsx" => ExampleTag::JslikeFile,
+    };
+}
 
 impl ExampleTag {
     pub fn from_file_extension(extension: &[u8]) -> Option<ExampleTag> {

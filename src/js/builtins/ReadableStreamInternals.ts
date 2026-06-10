@@ -1676,7 +1676,11 @@ export function readableStreamClose(stream) {
     }
   }
 
-  $getByIdDirectPrivate($getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").resolve.$call();
+  // Direct streams store an empty `{}` sentinel in the reader slot (see
+  // $readDirectStream) to mark themselves locked without a real reader, so it
+  // has no closedPromiseCapability to resolve.
+  const closedPromiseCapability = $getByIdDirectPrivate(reader, "closedPromiseCapability");
+  if (closedPromiseCapability) closedPromiseCapability.resolve.$call();
 }
 
 export function readableStreamFulfillReadRequest(stream, chunk, done) {

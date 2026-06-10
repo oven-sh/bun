@@ -1178,32 +1178,34 @@ impl BuiltinName {
     }
 }
 
-static BUILTIN_NAME_MAP: phf::Map<&'static [u8], BuiltinName> = phf::phf_map! {
-    b"method" => BuiltinName::method,
-    b"headers" => BuiltinName::headers,
-    b"status" => BuiltinName::status,
-    b"statusText" => BuiltinName::statusText,
-    b"url" => BuiltinName::url,
-    b"body" => BuiltinName::body,
-    b"data" => BuiltinName::data,
-    b"toString" => BuiltinName::toString,
-    b"redirect" => BuiltinName::redirect,
-    b"inspectCustom" => BuiltinName::inspectCustom,
-    b"highWaterMark" => BuiltinName::highWaterMark,
-    b"path" => BuiltinName::path,
-    b"stream" => BuiltinName::stream,
-    b"asyncIterator" => BuiltinName::asyncIterator,
-    b"name" => BuiltinName::name,
-    b"message" => BuiltinName::message,
-    b"error" => BuiltinName::error,
-    b"default" => BuiltinName::default,
-    b"encoding" => BuiltinName::encoding,
-    b"fatal" => BuiltinName::fatal,
-    b"ignoreBOM" => BuiltinName::ignoreBOM,
-    b"type" => BuiltinName::type_,
-    b"signal" => BuiltinName::signal,
-    b"cmd" => BuiltinName::cmd,
-};
+bun_core::comptime_string_map! {
+    static BUILTIN_NAME_MAP: BuiltinName = {
+        b"method" => BuiltinName::method,
+        b"headers" => BuiltinName::headers,
+        b"status" => BuiltinName::status,
+        b"statusText" => BuiltinName::statusText,
+        b"url" => BuiltinName::url,
+        b"body" => BuiltinName::body,
+        b"data" => BuiltinName::data,
+        b"toString" => BuiltinName::toString,
+        b"redirect" => BuiltinName::redirect,
+        b"inspectCustom" => BuiltinName::inspectCustom,
+        b"highWaterMark" => BuiltinName::highWaterMark,
+        b"path" => BuiltinName::path,
+        b"stream" => BuiltinName::stream,
+        b"asyncIterator" => BuiltinName::asyncIterator,
+        b"name" => BuiltinName::name,
+        b"message" => BuiltinName::message,
+        b"error" => BuiltinName::error,
+        b"default" => BuiltinName::default,
+        b"encoding" => BuiltinName::encoding,
+        b"fatal" => BuiltinName::fatal,
+        b"ignoreBOM" => BuiltinName::ignoreBOM,
+        b"type" => BuiltinName::type_,
+        b"signal" => BuiltinName::signal,
+        b"cmd" => BuiltinName::cmd,
+    };
+}
 
 /// RAII guard that keeps a `JSValue` reachable across an FFI call by emitting
 /// a use of the value at scope exit. Mirrors `JSC::EnsureStillAliveScope`.
@@ -1947,12 +1949,16 @@ impl LogJsc for bun_ast::Log {
             0 => Ok(JSValue::UNDEFINED),
             1 => msg_to_js(&msgs[0], global),
             _ => {
-                let mut errors_stack: Vec<JSValue> = Vec::with_capacity(count);
-                for msg in &msgs[0..count] {
-                    errors_stack.push(msg_to_js(msg, global)?);
+                // On-stack array: conservative GC stack scan keeps these
+                // JSValues alive until `create_aggregate_error` stores them;
+                // a heap `Vec` is invisible to the scan, so a GC triggered by
+                // a later `msg_to_js` could sweep the earlier wrappers.
+                let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
+                for (i, msg) in msgs[0..count].iter().enumerate() {
+                    errors_stack[i] = msg_to_js(msg, global)?;
                 }
                 let out = bun_core::ZigString::init(message.as_bytes());
-                global.create_aggregate_error(&errors_stack, &out)
+                global.create_aggregate_error(&errors_stack[..count], &out)
             }
         }
     }
@@ -1965,8 +1971,16 @@ impl LogJsc for bun_ast::Log {
 pub trait ComptimeStringMapExt<V: Copy> {
     fn from_js(&'static self, global: &JSGlobalObject, input: JSValue) -> JsResult<Option<V>>;
 }
-impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
-    fn from_js(&'static self, global: &JSGlobalObject, input: JSValue) -> JsResult<Option<V>> {
+impl<M> ComptimeStringMapExt<M::Value> for M
+where
+    M: bun_core::comptime_string_map::ComptimeStringMap,
+    M::Value: Copy,
+{
+    fn from_js(
+        &'static self,
+        global: &JSGlobalObject,
+        input: JSValue,
+    ) -> JsResult<Option<M::Value>> {
         comptime_string_map_jsc::from_js(self, global, input)
     }
 }

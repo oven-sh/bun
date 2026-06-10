@@ -5,9 +5,7 @@
 //! back-edge into the schema crate). `to_mime_type` / `from_mime_type` live in
 //! `bun_http_types` (would back-edge into `bun_http::MimeType`).
 
-use bun_core::strings;
 use enum_map::Enum;
-use phf;
 
 /// The max integer value in this enum can only be appended to.
 /// It has dependencies in several places:
@@ -122,6 +120,39 @@ impl From<Loader> for LoaderOptional {
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
 pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;
 
+bun_core::comptime_string_map! {
+    pub static LOADER_NAMES: Loader = {
+        b"js" => Loader::Js,
+        b"mjs" => Loader::Js,
+        b"cjs" => Loader::Js,
+        b"cts" => Loader::Ts,
+        b"mts" => Loader::Ts,
+        b"jsx" => Loader::Jsx,
+        b"ts" => Loader::Ts,
+        b"tsx" => Loader::Tsx,
+        b"css" => Loader::Css,
+        b"file" => Loader::File,
+        b"json" => Loader::Json,
+        b"jsonc" => Loader::Jsonc,
+        b"toml" => Loader::Toml,
+        b"yaml" => Loader::Yaml,
+        b"json5" => Loader::Json5,
+        b"wasm" => Loader::Wasm,
+        b"napi" => Loader::Napi,
+        b"node" => Loader::Napi,
+        b"dataurl" => Loader::Dataurl,
+        b"base64" => Loader::Base64,
+        b"txt" => Loader::Text,
+        b"text" => Loader::Text,
+        b"sh" => Loader::Bunsh,
+        b"sqlite" => Loader::Sqlite,
+        b"sqlite_embedded" => Loader::SqliteEmbedded,
+        b"html" => Loader::Html,
+        b"md" => Loader::Md,
+        b"markdown" => Loader::Md,
+    };
+}
+
 impl Loader {
     #[inline]
     pub fn is_css(self) -> bool {
@@ -188,36 +219,7 @@ impl Loader {
 
     // `from_js` lives in bundler_jsc as an extension trait.
 
-    pub const NAMES: phf::Map<&'static [u8], Loader> = phf::phf_map! {
-        b"js" => Loader::Js,
-        b"mjs" => Loader::Js,
-        b"cjs" => Loader::Js,
-        b"cts" => Loader::Ts,
-        b"mts" => Loader::Ts,
-        b"jsx" => Loader::Jsx,
-        b"ts" => Loader::Ts,
-        b"tsx" => Loader::Tsx,
-        b"css" => Loader::Css,
-        b"file" => Loader::File,
-        b"json" => Loader::Json,
-        b"jsonc" => Loader::Jsonc,
-        b"toml" => Loader::Toml,
-        b"yaml" => Loader::Yaml,
-        b"json5" => Loader::Json5,
-        b"wasm" => Loader::Wasm,
-        b"napi" => Loader::Napi,
-        b"node" => Loader::Napi,
-        b"dataurl" => Loader::Dataurl,
-        b"base64" => Loader::Base64,
-        b"txt" => Loader::Text,
-        b"text" => Loader::Text,
-        b"sh" => Loader::Bunsh,
-        b"sqlite" => Loader::Sqlite,
-        b"sqlite_embedded" => Loader::SqliteEmbedded,
-        b"html" => Loader::Html,
-        b"md" => Loader::Md,
-        b"markdown" => Loader::Md,
-    };
+    pub const NAMES: &'static __ComptimeStringMap_LOADER_NAMES = &LOADER_NAMES;
 
     pub fn from_string(slice_: &[u8]) -> Option<Loader> {
         let slice = if !slice_.is_empty() && slice_[0] == b'.' {
@@ -225,12 +227,9 @@ impl Loader {
         } else {
             slice_
         };
-        // phf is case-sensitive, so fall back to a case-insensitive scan over NAMES.entries().
         Self::NAMES.get(slice).copied().or_else(|| {
-            Self::NAMES
-                .entries()
-                .find(|(k, _)| strings::eql_case_insensitive_asciii_check_length(k, slice))
-                .map(|(_, v)| *v)
+            // Exact match missed; retry case-insensitively (keys are lowercase).
+            Self::NAMES.get_ascii_case_insensitive(slice).copied()
         })
     }
 

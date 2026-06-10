@@ -34,8 +34,8 @@ describe.concurrent("chown/fchown/lchown argument validation", () => {
         expect(() => call(0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
       }
       // -1 ("leave unchanged") and the u32 maximum are both in range. lchown
-      // is unimplemented on Windows (fails with a TODO error after argument
-      // validation), so only chown/fchown exercise the success path there.
+      // is unimplemented on Windows and fails after argument validation
+      // (#32050), so only chown/fchown exercise the success path there.
       const implemented = isWindows ? variants.slice(0, 2) : variants;
       for (const call of implemented) {
         expect(() => call(-1, -1)).not.toThrow();

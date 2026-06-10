@@ -326,5 +326,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_MESSAGING_FAILED", Error],
   ["ERR_WORKER_MESSAGING_SAME_THREAD", Error],
   ["ERR_WORKER_MESSAGING_TIMEOUT", Error],
+  ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
+  ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
 ];
 export default errors;

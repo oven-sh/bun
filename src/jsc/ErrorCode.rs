@@ -687,9 +687,13 @@ impl ErrorCode {
     pub const WORKER_MESSAGING_SAME_THREAD: ErrorCode = ErrorCode(314);
     /// `ERR_WORKER_MESSAGING_TIMEOUT` (instanceof Error)
     pub const WORKER_MESSAGING_TIMEOUT: ErrorCode = ErrorCode(315);
+    /// `ERR_POSTGRES_CONNECTION_FAILED` (instanceof Error)
+    pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(316);
+    /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
+    pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(317);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 316;
+    pub const COUNT: u16 = 318;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -876,6 +880,7 @@ impl ErrorCode {
     pub const ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2: ErrorCode =
         ErrorCode::POSTGRES_AUTHENTICATION_FAILED_PBKDF2;
     pub const ERR_POSTGRES_CONNECTION_CLOSED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_CLOSED;
+    pub const ERR_POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode::POSTGRES_CONNECTION_FAILED;
     pub const ERR_POSTGRES_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::POSTGRES_CONNECTION_TIMEOUT;
     pub const ERR_POSTGRES_EXPECTED_REQUEST: ErrorCode = ErrorCode::POSTGRES_EXPECTED_REQUEST;
     pub const ERR_POSTGRES_EXPECTED_STATEMENT: ErrorCode = ErrorCode::POSTGRES_EXPECTED_STATEMENT;
@@ -931,6 +936,7 @@ impl ErrorCode {
         ErrorCode::POSTGRES_UNSUPPORTED_NUMERIC_FORMAT;
     pub const ERR_PROXY_INVALID_CONFIG: ErrorCode = ErrorCode::PROXY_INVALID_CONFIG;
     pub const ERR_MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_CLOSED;
+    pub const ERR_MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode::MYSQL_CONNECTION_FAILED;
     pub const ERR_MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::MYSQL_CONNECTION_TIMEOUT;
     pub const ERR_MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode::MYSQL_IDLE_TIMEOUT;
     pub const ERR_MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode::MYSQL_LIFETIME_TIMEOUT;
@@ -1381,6 +1387,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_WORKER_MESSAGING_FAILED",
     "ERR_WORKER_MESSAGING_SAME_THREAD",
     "ERR_WORKER_MESSAGING_TIMEOUT",
+    "ERR_POSTGRES_CONNECTION_FAILED",
+    "ERR_MYSQL_CONNECTION_FAILED",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

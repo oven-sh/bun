@@ -68,11 +68,12 @@ pub enum ABIType {
     Buffer = 20,
 }
 
-/// String-to-tag lookup table for `args:`/`returns:`
-/// option parsing. Associated `static` items aren't allowed in Rust, so the
-/// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
-/// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the `&phf::Map`).
-pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    /// String-to-tag lookup table for `args:`/`returns:`
+    /// option parsing. Associated `static` items aren't allowed in Rust, so the
+    /// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
+    /// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the reference).
+    pub static ABI_TYPE_LABEL: ABIType = {
     b"bool" => ABIType::Bool,
     b"c_int" => ABIType::Int32T,
     b"c_uint" => ABIType::Uint32T,
@@ -115,7 +116,8 @@ pub static ABI_TYPE_LABEL: phf::Map<&'static [u8], ABIType> = phf::phf_map! {
     b"fn" => ABIType::Function,
     b"napi_env" => ABIType::NapiEnv,
     b"napi_value" => ABIType::NapiValue,
-};
+    };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-variant string table — single source of truth for the four exhaustive
@@ -188,7 +190,7 @@ impl ABIType {
     pub const MAX: i32 = ABIType::NapiValue as i32;
 
     /// See [`ABI_TYPE_LABEL`].
-    pub const LABEL: &'static phf::Map<&'static [u8], ABIType> = &ABI_TYPE_LABEL;
+    pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
     /// Returns `None` for
     /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous

@@ -52,35 +52,17 @@ enum EasingKeyword {
     StepEnd,
 }
 
-/// ASCII-case-insensitive keyword lookup.
-///
-/// PERF: chosen over `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
-/// 7 keys with near-unique lengths (only len 8 collides: `ease-out` /
-/// `step-end`), so a length-gated byte match is cheaper than phf's
-/// hash+displace+verify — one `usize` compare rejects almost every miss
-/// before any byte work, and hits resolve in a single slice compare. Same
-/// pattern as `clap::find_param` (12577e958d71).
-fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
-    // Longest key is "ease-in-out" (11 bytes).
-    let len = ident.len();
-    if len < 4 || len > 11 {
-        return None;
-    }
-    let (buf, _) = bun_core::strings::ascii_lowercase_buf::<11>(ident)?;
-    let lower = &buf[..len];
-    match len {
-        4 if lower == b"ease" => Some(EasingKeyword::Ease),
-        6 if lower == b"linear" => Some(EasingKeyword::Linear),
-        7 if lower == b"ease-in" => Some(EasingKeyword::EaseIn),
-        8 => match lower {
-            b"ease-out" => Some(EasingKeyword::EaseOut),
-            b"step-end" => Some(EasingKeyword::StepEnd),
-            _ => None,
-        },
-        10 if lower == b"step-start" => Some(EasingKeyword::StepStart),
-        11 if lower == b"ease-in-out" => Some(EasingKeyword::EaseInOut),
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
+    static EASING_KEYWORDS: EasingKeyword = {
+        b"ease" => EasingKeyword::Ease,
+        b"linear" => EasingKeyword::Linear,
+        b"ease-in" => EasingKeyword::EaseIn,
+        b"ease-out" => EasingKeyword::EaseOut,
+        b"step-end" => EasingKeyword::StepEnd,
+        b"step-start" => EasingKeyword::StepStart,
+        b"ease-in-out" => EasingKeyword::EaseInOut,
+    };
 }
 
 impl EasingFunction {
@@ -93,7 +75,7 @@ impl EasingFunction {
         let location = input.current_source_location();
         let tok = input.next()?.clone();
         if let Token::Ident(ident) = tok {
-            let keyword = if let Some(e) = easing_map_get_any_case(ident) {
+            let keyword = if let Some(e) = EASING_KEYWORDS.get_ascii_case_insensitive(ident) {
                 match e {
                     EasingKeyword::Linear => EasingFunction::Linear,
                     EasingKeyword::Ease => EasingFunction::Ease,
@@ -215,7 +197,7 @@ impl EasingFunction {
 
     /// Returns whether the given string is a valid easing function name.
     pub fn is_ident(s: &[u8]) -> bool {
-        easing_map_get_any_case(s).is_some()
+        EASING_KEYWORDS.get_ascii_case_insensitive(s).is_some()
     }
 
     /// Returns whether the easing function is equivalent to the `ease` keyword.
@@ -258,30 +240,16 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-/// ASCII-case-insensitive keyword lookup — lowercase into a stack buffer,
-/// then a length-gated byte match.
-///
-/// PERF: chosen over `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
-/// before a single bucket compare; with 6 keys spread across 5 distinct
-/// lengths (3/5/8/9/9/10), gating on `len()` rejects every miss with one
-/// `usize` compare and resolves every hit with at most one slice compare
-/// (two at len 9). See `clap::find_param` for the same shape.
-fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
-    // Longest key is "jump-start" (10 bytes).
-    let (buf, len) = bun_core::strings::ascii_lowercase_buf::<10>(ident)?;
-    let key = &buf[..len];
-    match len {
-        3 if key == b"end" => Some(StepPositionKeyword::End),
-        5 if key == b"start" => Some(StepPositionKeyword::Start),
-        8 if key == b"jump-end" => Some(StepPositionKeyword::JumpEnd),
-        9 => match key {
-            b"jump-none" => Some(StepPositionKeyword::JumpNone),
-            b"jump-both" => Some(StepPositionKeyword::JumpBoth),
-            _ => None,
-        },
-        10 if key == b"jump-start" => Some(StepPositionKeyword::JumpStart),
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
+    static STEP_POSITION_KEYWORDS: StepPositionKeyword = {
+        b"end" => StepPositionKeyword::End,
+        b"start" => StepPositionKeyword::Start,
+        b"jump-end" => StepPositionKeyword::JumpEnd,
+        b"jump-none" => StepPositionKeyword::JumpNone,
+        b"jump-both" => StepPositionKeyword::JumpBoth,
+        b"jump-start" => StepPositionKeyword::JumpStart,
+    };
 }
 
 impl StepPosition {
@@ -296,7 +264,7 @@ impl StepPosition {
         let Token::Ident(ident) = tok else {
             return Err(location.new_unexpected_token_error(tok));
         };
-        let keyword = if let Some(e) = step_position_map_get_any_case(ident) {
+        let keyword = if let Some(e) = STEP_POSITION_KEYWORDS.get_ascii_case_insensitive(ident) {
             match e {
                 StepPositionKeyword::Start => StepPosition::Start,
                 StepPositionKeyword::End => StepPosition::End,

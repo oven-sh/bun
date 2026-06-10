@@ -1,4 +1,4 @@
-# Version: 19
+# Version: 20
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -413,6 +413,57 @@ function Install-Ccache {
   Add-To-Path $installDir
 }
 
+function Install-IntelSde {
+  # Intel SDE lets verify-baseline run the x64-baseline build on an emulated
+  # pre-AVX CPU (sde.exe -nhm). It is baked into the image because
+  # downloadmirror.intel.com sits behind a bot challenge that blocks
+  # non-browser downloads, both from CI jobs and from this bake VM. The
+  # tarball is mirrored, unmodified, on our blob storage, which the Intel
+  # Simplified Software License it ships under permits.
+  # To bump: download sde-external-<version>-win.tar.xz from
+  # https://www.intel.com/content/www/us/en/download/684897/ in a browser,
+  # upload it to the artifacts container, then update $version and $sha256
+  # (Intel publishes the SHA256 on the download page).
+  $version = "9.58.0-2025-06-16"
+  $sha256 = "EBB8B3B63FCB0B6C1F9721118BA4883703D2AED9E0DB2DEFED4E44FBA78D9CA9"
+  $installDir = "C:\intel-sde"
+
+  if (Test-Path "$installDir\sde.exe") {
+    return
+  }
+
+  Write-Output "Installing Intel SDE $version..."
+  $tarXz = Download-File "https://buncistore.blob.core.windows.net/artifacts/sde-external-$version-win.tar.xz" -Name "sde-external-$version-win.tar.xz"
+  $actualHash = (Get-FileHash $tarXz -Algorithm SHA256).Hash
+  if ($actualHash -ne $sha256) {
+    # Delete the bad file: Download-File skips the download when the target
+    # already exists, so leaving it would poison every subsequent run.
+    Remove-Item $tarXz -ErrorAction SilentlyContinue
+    throw "Intel SDE checksum mismatch: expected $sha256, got $actualHash"
+  }
+
+  $sevenZip = Which 7z -Required
+  $extractDir = "$env:TEMP\sde-extract"
+  & $sevenZip x -y "-o$extractDir" $tarXz | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to extract $tarXz"
+  }
+  & $sevenZip x -y "-o$extractDir" "$extractDir\sde-external-$version-win.tar" | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to extract sde-external-$version-win.tar"
+  }
+
+  # Keep the whole kit directory intact: sde.exe resolves its Pin DLLs
+  # relative to its own location.
+  Move-Item "$extractDir\sde-external-$version-win" $installDir -Force
+  Remove-Item $tarXz -ErrorAction SilentlyContinue
+  Remove-Item $extractDir -Recurse -ErrorAction SilentlyContinue
+
+  if (-not (Test-Path "$installDir\sde.exe")) {
+    throw "Intel SDE install failed: $installDir\sde.exe not found"
+  }
+}
+
 function Install-Bun {
   if (Which bun) {
     return
@@ -711,6 +762,12 @@ Install-Ccache
 Install-Rust
 Install-Visual-Studio
 Install-PdbAddr2line
+
+# x64-only: Intel SDE for the verify-baseline step (emulates a pre-AVX CPU);
+# only the x64-baseline build is verified under it.
+if (-not $script:IsARM64) {
+  Install-IntelSde
+}
 
 function Prefetch-Build-Deps {
   # Bake a read-only download cache for scripts/build/download.ts

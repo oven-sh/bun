@@ -679,6 +679,73 @@ describe("pathological bracket inputs", () => {
     // Past the cap the outer candidate is rejected.
     expect(Markdown.html(wiki(40), { wikiLinks: true })).not.toContain('data-target="t"');
   });
+
+  // Rendering a link/image label used to recurse: each nesting level
+  // re-tokenized its whole label (bracket map, emphasis state), so a flood
+  // of "![" openers closed by "](u)" repeats was O(n²) — a fuzzer-found
+  // ~256 KB input hung for ~30s and deeper inputs aborted with OOM. Label
+  // frames now share the slice's bracket map and are driven iteratively, so
+  // rendering is linear and nesting depth is unlimited. The exact-output
+  // assertions double as the regression check: only a full (non-truncated,
+  // non-capped) parse of the 250 KB nesting chain flattens to these strings.
+  test("nested image/link labels render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const cases = [
+          ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
+          ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
+        ];
+        for (const [name, input, check] of cases) {
+          const out = Bun.markdown.html(input);
+          if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + name);
+        }
+        const ansi = Bun.markdown.ansi(fill(43000, "![") + fill(43000, "](u)"), { colors: false });
+        if (ansi !== "[img] (image)\\n") throw new Error("unexpected ansi output: " + JSON.stringify(ansi.slice(0, 200)));
+        console.log("OK ansi nested images");
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("deeply nested image/link labels flatten exactly at any depth", () => {
+    const nest = (depth: number) =>
+      Buffer.alloc(depth * 2, "![").toString() + "x" + Buffer.alloc(depth * 4, "](u)").toString();
+    // Nested image alt text flattens to the innermost text, regardless of
+    // depth: there is no nesting cap and no native-stack recursion.
+    expect(Markdown.html(nest(2))).toBe('<p><img src="u" alt="x" /></p>\n');
+    expect(Markdown.html(nest(40))).toBe('<p><img src="u" alt="x" /></p>\n');
+    expect(Markdown.html(nest(20000))).toBe('<p><img src="u" alt="x" /></p>\n');
+    expect(Markdown.ansi(nest(5000), { colors: false })).toBe("[img] x\n");
+    // Image inside a link, link inside an image alt: normal nesting depths.
+    expect(Markdown.html("[![alt](i.png)](p)\n")).toBe('<p><a href="p"><img src="i.png" alt="alt" /></a></p>\n');
+    expect(Markdown.html("![a ![b](u2) c](u1)\n")).toBe('<p><img src="u1" alt="a b c" /></p>\n');
+    expect(Markdown.html("[`code` *em*](u)\n")).toBe('<p><a href="u"><code>code</code> <em>em</em></a></p>\n');
+    expect(Markdown.html("![\\[escaped\\]](u)\n")).toBe('<p><img src="u" alt="[escaped]" /></p>\n');
+    expect(Markdown.ansi("[[target|wiki *label*]]", { colors: false })).toBe("[[wiki label]]\n");
+  });
+
+  test("link-validity lookahead agrees with the link parser", () => {
+    // [foo][x] with x undefined is not a link: the full reference fails and
+    // the shortcut form may not be followed by '['. The lookahead used by
+    // label_contains_link and the emphasis collector must agree, or the
+    // outer link is wrongly rejected as containing a link.
+    const doc = "[foo]: /u\n\n[outer [foo][x] text](dest)\n";
+    expect(Markdown.html(doc)).toBe('<p><a href="dest">outer [foo][x] text</a></p>\n');
+    // Control: a real inner link still rejects the outer candidate.
+    expect(Markdown.html("[foo]: /u\n\n[outer [foo] text](dest)\n")).toBe(
+      '<p>[outer <a href="/u">foo</a> text](dest)</p>\n',
+    );
+    // Control: plain shortcut references still resolve.
+    expect(Markdown.html("[foo]: /u\n\n[foo]\n")).toBe('<p><a href="/u">foo</a></p>\n');
+    // A reference label must start immediately after the closing ']': a
+    // failed inline-link parse must not leave the scan position on a later
+    // '[' and read it as the reference.
+    expect(Markdown.html("[ref]: /u\n\n[foo](bar [ref])\n")).toBe('<p>[foo](bar <a href="/u">ref</a>)</p>\n');
+    expect(Markdown.html("[ref]: /u\n\n[foo][ref]\n")).toBe('<p><a href="/u">foo</a></p>\n');
+    expect(Markdown.html("[ref]: /u\n\n[foo](/x)[ref]\n")).toBe('<p><a href="/x">foo</a><a href="/u">ref</a></p>\n');
+  });
 });
 
 // ============================================================================

@@ -39,6 +39,24 @@ impl Side {
         }
     }
 }
+/// Bundler-only `Target` extension: which dev-server graph a file bundled for
+/// that target lands in. Declared next to `Graph` because the canonical
+/// `Target` lives in `bun_ast` (lower tier, cannot name seam types);
+/// `options_impl` re-exports it so `use …::options_impl::TargetExt;` callers
+/// resolve the method on the single canonical `Target`.
+pub trait TargetExt: Copy {
+    fn bake_graph(self) -> Graph;
+}
+impl TargetExt for bun_ast::Target {
+    fn bake_graph(self) -> Graph {
+        use bun_ast::Target;
+        match self {
+            Target::Browser => Graph::Client,
+            Target::ServerComponentsSsr => Graph::Ssr,
+            Target::BunMacro | Target::Bun | Target::Node => Graph::Server,
+        }
+    }
+}
 /// The type of `CacheEntry.kind`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]

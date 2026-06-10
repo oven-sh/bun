@@ -2436,7 +2436,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         // inherent `Self::finalize` (detach-only) stays separate for
         // `abort()`, which must not free — the JS wrapper still owns the box
         // at that point.
-        if self.task_ref().is_some_and(bun_s3::MultiPartUpload::has_started) && !self.done {
+        if self
+            .task_ref()
+            .is_some_and(bun_s3::MultiPartUpload::has_started)
+            && !self.done
+        {
             self.pending_destroy = true;
         } else {
             Self::finalize_and_destroy(std::ptr::from_mut::<Self>(self));

@@ -477,7 +477,8 @@ pub(crate) fn writable_stream(
     fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
         let sink_ptr: *mut NetworkSink = ctx.cast();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
-        let outcome = wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) });
+        let outcome =
+            wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) });
         // The JS wrapper was GC-finalized mid-upload: the box was kept alive
         // for this report; it is now done (even on JsTerminated) and this is
         // the last reference — destroy it.

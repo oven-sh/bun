@@ -101,16 +101,22 @@ pub mod api {
         Bun = 5,
     }
 
-    impl UnhandledRejections {
-        /// `UnhandledRejections.map` — `bun.ComptimeStringMap` → `phf::Map`.
-        /// Note: deliberately omits `"bun"` (it's the implicit default).
-        pub const MAP: phf::Map<&'static [u8], UnhandledRejections> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+        #[doc(hidden)]
+        pub static UNHANDLED_REJECTIONS_MAP: UnhandledRejections = {
             b"strict" => UnhandledRejections::Strict,
             b"throw" => UnhandledRejections::Throw,
             b"warn" => UnhandledRejections::Warn,
             b"none" => UnhandledRejections::None,
             b"warn-with-error-code" => UnhandledRejections::WarnWithErrorCode,
         };
+    }
+
+    impl UnhandledRejections {
+        /// `UnhandledRejections.map` — `bun.ComptimeStringMap`.
+        /// Note: deliberately omits `"bun"` (it's the implicit default).
+        pub const MAP: __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP =
+            __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
     /// peechy `message TransformOptions`. Full field set,

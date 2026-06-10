@@ -26,8 +26,6 @@ pub mod linear_fifo;
 pub mod bit_set;
 pub mod pool;
 pub use pool::{ObjectPool, ObjectPoolTrait, ObjectPoolType, PoolGuard};
-pub mod comptime_string_map;
-pub use comptime_string_map::{ComptimeStringMap, ComptimeStringMapWithKeyType};
 #[path = "StaticHashMap.rs"]
 pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;

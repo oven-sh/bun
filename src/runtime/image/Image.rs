@@ -147,10 +147,12 @@ pub enum Fit {
     Inside,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
-static FIT_MAP: phf::Map<&'static [u8], Fit> = phf::phf_map! {
-    b"fill" => Fit::Fill,
-    b"inside" => Fit::Inside,
-};
+bun_core::comptime_string_map! {
+    static FIT_MAP: Fit = {
+        b"fill" => Fit::Fill,
+        b"inside" => Fit::Inside,
+    };
+}
 impl jsc::FromJsEnum for Fit {
     fn from_js_value(v: JSValue, global: &JSGlobalObject, prop: &'static str) -> JsResult<Self> {
         v.to_enum_from_map(global, prop, &FIT_MAP, "'fill' or 'inside'")
@@ -1752,8 +1754,13 @@ impl<'a> PipelineTask<'a> {
                                 out_slice.len(),
                             )
                         };
-                        let v = ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                            .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
+                        // SAFETY: `out.bytes` is the codec-owned allocation
+                        // whose ownership transfers to JSC; `out.free` frees
+                        // it exactly once at GC and ignores the null ctx.
+                        let v = unsafe {
+                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
+                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
+                        };
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

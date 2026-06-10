@@ -179,13 +179,15 @@ pub enum Family {
     Unix,
 }
 
-pub static FAMILY_MAP: phf::Map<&'static [u8], Family> = phf::phf_map! {
-    b"IPv4" => Family::Inet,
-    b"IPv6" => Family::Inet6,
-    b"ipv4" => Family::Inet,
-    b"ipv6" => Family::Inet6,
-    b"any"  => Family::Unspecified,
-};
+bun_core::comptime_string_map! {
+    pub static FAMILY_MAP: Family = {
+        b"IPv4" => Family::Inet,
+        b"IPv6" => Family::Inet6,
+        b"ipv4" => Family::Inet,
+        b"ipv6" => Family::Inet6,
+        b"any"  => Family::Unspecified,
+    };
+}
 
 impl Family {
     pub fn to_libc(self) -> i32 {
@@ -206,12 +208,14 @@ pub enum SocketType {
     Dgram,
 }
 
-pub static SOCKET_TYPE_MAP: phf::Map<&'static [u8], SocketType> = phf::phf_map! {
-    b"stream" => SocketType::Stream,
-    b"dgram"  => SocketType::Dgram,
-    b"tcp"    => SocketType::Stream,
-    b"udp"    => SocketType::Dgram,
-};
+bun_core::comptime_string_map! {
+    pub static SOCKET_TYPE_MAP: SocketType = {
+        b"stream" => SocketType::Stream,
+        b"dgram"  => SocketType::Dgram,
+        b"tcp"    => SocketType::Stream,
+        b"udp"    => SocketType::Dgram,
+    };
+}
 
 impl SocketType {
     pub fn to_libc(self) -> i32 {
@@ -231,10 +235,12 @@ pub enum Protocol {
     Udp,
 }
 
-pub static PROTOCOL_MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
-    b"tcp" => Protocol::Tcp,
-    b"udp" => Protocol::Udp,
-};
+bun_core::comptime_string_map! {
+    pub static PROTOCOL_MAP: Protocol = {
+        b"tcp" => Protocol::Tcp,
+        b"udp" => Protocol::Udp,
+    };
+}
 
 impl Protocol {
     pub fn to_libc(self) -> i32 {
@@ -254,15 +260,17 @@ pub enum Backend {
     Libc,
 }
 
-pub static BACKEND_LABEL: phf::Map<&'static [u8], Backend> = phf::phf_map! {
-    b"c-ares"      => Backend::CAres,
-    b"c_ares"      => Backend::CAres,
-    b"cares"       => Backend::CAres,
-    b"async"       => Backend::CAres,
-    b"libc"        => Backend::Libc,
-    b"system"      => Backend::System,
-    b"getaddrinfo" => Backend::Libc,
-};
+bun_core::comptime_string_map! {
+    pub static BACKEND_LABEL: Backend = {
+        b"c-ares"      => Backend::CAres,
+        b"c_ares"      => Backend::CAres,
+        b"cares"       => Backend::CAres,
+        b"async"       => Backend::CAres,
+        b"libc"        => Backend::Libc,
+        b"system"      => Backend::System,
+        b"getaddrinfo" => Backend::Libc,
+    };
+}
 
 impl Backend {
     #[cfg(any(target_os = "macos", windows))]
@@ -441,14 +449,16 @@ pub enum Order {
     Ipv6first = 6,
 }
 
-pub(crate) static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
-    b"verbatim"  => Order::Verbatim,
-    b"ipv4first" => Order::Ipv4first,
-    b"ipv6first" => Order::Ipv6first,
-    b"0"         => Order::Verbatim,
-    b"4"         => Order::Ipv4first,
-    b"6"         => Order::Ipv6first,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static ORDER_MAP: Order = {
+        b"verbatim"  => Order::Verbatim,
+        b"ipv4first" => Order::Ipv4first,
+        b"ipv6first" => Order::Ipv6first,
+        b"0"         => Order::Verbatim,
+        b"4"         => Order::Ipv4first,
+        b"6"         => Order::Ipv6first,
+    };
+}
 
 impl Order {
     pub const DEFAULT: Self = Order::Verbatim;

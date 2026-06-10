@@ -24,9 +24,8 @@ pub use bun_options_types::global_cache::GlobalCache;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
-// TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
-// (matches `bun.FD.fromStdDir` pattern).
-pub type Dir = bun_sys::Fd;
+/// Owning directory handle (closes the fd on `Drop`).
+pub type Dir = bun_sys::Dir;
 /// Unified with the canonical
 /// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
@@ -216,19 +215,15 @@ pub use bun_options_types::BundlePackage;
 // `to_parser_module_type` shim in transpiler.rs.
 pub use bun_options_types::bundle_enums::ModuleType;
 
-// Kept for callers that reference the module-level static name; forwards to the
-// canonical const map on the upstream enum.
-pub static MODULE_TYPE_LIST: phf::Map<&'static [u8], ModuleType> = ModuleType::LIST;
-
 // Re-export of `bun_ast::Target`.
 // There is exactly ONE `Target`; re-export the canonical enum so
 // `BundleOptions.target`, `js_printer::Options.target`, the resolver, and css
 // targets all share one nominal type (kills the `to_bundle_enums_target` shim).
 pub(crate) use bun_ast::Target;
 
-// Forwarded to the canonical assoc-const so there is exactly one phf body.
-// Kept as a module-level name for callers that pre-date `Target::MAP`.
-pub static TARGET_MAP: phf::Map<&'static [u8], Target> = Target::MAP;
+// Re-export of the canonical map declared next to `Target`; kept as a
+// module-level name for callers that pre-date it.
+pub use bun_ast::target::TARGET_MAP;
 
 pub const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",
@@ -665,15 +660,17 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 
 /// File-extension → default [`Loader`] map.
 ///
-/// PERF: deliberately not a `phf::Map<&[u8], Loader>`. phf hashes the full key (SipHash
-/// over up to 9 bytes) + probes a displacement table + does a final memcmp on
-/// every lookup. With only 22 keys bucketing into 5 distinct lengths
+/// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
+/// key, probed a displacement table, and finished with a memcmp on every
+/// lookup). With only 22 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
 /// memcmp loop). This sits on the resolver hot path (`loaderFromPath` per
 /// import) and on CLI startup (`arguments::parse`, `run_command`). Same
-/// pattern as `clap::find_param` (12577e958d71). Unit struct keeps the
+/// pattern as `clap::find_param` (12577e958d71). Hand-written rather than
+/// `comptime_string_map!` because the macro cannot express the per-key
+/// `#[cfg(windows)]` `.sh` entry. Unit struct keeps the
 /// `DEFAULT_LOADERS.get(ext)` / `.contains_key(ext)` call-site shape so
 /// callers in `run_command.rs` / `NodeModuleModule.rs` / `arguments.rs` /
 /// `init_command.rs` / `multi_run.rs` are untouched.
@@ -1198,12 +1195,14 @@ impl SourceMapOption {
 }
 
 // hoisted from `impl SourceMapOption` — Rust forbids `static` in inherent impls.
-pub static SOURCE_MAP_OPTION_MAP: phf::Map<&'static [u8], SourceMapOption> = phf::phf_map! {
-    b"none" => SourceMapOption::None,
-    b"inline" => SourceMapOption::Inline,
-    b"external" => SourceMapOption::External,
-    b"linked" => SourceMapOption::Linked,
-};
+bun_core::comptime_string_map! {
+    pub static SOURCE_MAP_OPTION_MAP: SourceMapOption = {
+        b"none" => SourceMapOption::None,
+        b"inline" => SourceMapOption::Inline,
+        b"external" => SourceMapOption::External,
+        b"linked" => SourceMapOption::Linked,
+    };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackagesOption {
@@ -1228,10 +1227,12 @@ impl PackagesOption {
 }
 
 // hoisted from `impl PackagesOption` — Rust forbids `static` in inherent impls.
-pub static PACKAGES_OPTION_MAP: phf::Map<&'static [u8], PackagesOption> = phf::phf_map! {
-    b"external" => PackagesOption::External,
-    b"bundle" => PackagesOption::Bundle,
-};
+bun_core::comptime_string_map! {
+    pub static PACKAGES_OPTION_MAP: PackagesOption = {
+        b"external" => PackagesOption::External,
+        b"bundle" => PackagesOption::Bundle,
+    };
+}
 
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
@@ -1476,7 +1477,9 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
-            output_dir_handle: self.output_dir_handle,
+            // The owning handle stays with the parent; copying it here would
+            // close the parent's fd when the worker options drop.
+            output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
             node_modules_bundle_url: self.node_modules_bundle_url.clone(),
@@ -1967,12 +1970,12 @@ impl<'a> BundleOptions<'a> {
 
         if opts.write && !opts.output_dir.is_empty() {
             let handle = open_output_dir(&opts.output_dir)?;
-            opts.output_dir_handle = Some(handle);
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
-            let dir = bun_sys::get_fd_path(handle, &mut buf).map_err(bun_core::Error::from)?;
+            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
+            opts.output_dir_handle = Some(handle);
         }
 
         opts.polyfill_node_globals = opts.target == Target::Browser;
@@ -2041,7 +2044,7 @@ pub mod bundle_options_defaults {
 pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-        Ok(d) => Ok(d),
+        Ok(d) => Ok(Dir::from_fd(d)),
         Err(_) => {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
@@ -2063,7 +2066,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
             }
 
             match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-                Ok(handle) => Ok(handle),
+                Ok(handle) => Ok(Dir::from_fd(handle)),
                 Err(err2) => {
                     Output::print_errorln(format_args!(
                         "error: Unable to open \"{}\": \"{}\"",
@@ -2171,7 +2174,8 @@ pub struct TransformResult {
     pub warnings: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
     pub outbase: Box<[u8]>,
-    pub root_dir: Option<Dir>,
+    /// Non-owning view of `BundleOptions.output_dir_handle`; never close it.
+    pub root_dir: Option<bun_sys::Fd>,
 }
 
 impl TransformResult {
@@ -2653,13 +2657,15 @@ pub struct Placeholder {
 }
 
 // hoisted from `impl Placeholder` — Rust forbids `static` in inherent impls.
-pub static PLACEHOLDER_MAP: phf::Map<&'static [u8], PlaceholderField> = phf::phf_map! {
-    b"dir" => PlaceholderField::Dir,
-    b"name" => PlaceholderField::Name,
-    b"ext" => PlaceholderField::Ext,
-    b"hash" => PlaceholderField::Hash,
-    b"target" => PlaceholderField::Target,
-};
+bun_core::comptime_string_map! {
+    pub static PLACEHOLDER_MAP: PlaceholderField = {
+        b"dir" => PlaceholderField::Dir,
+        b"name" => PlaceholderField::Name,
+        b"ext" => PlaceholderField::Ext,
+        b"hash" => PlaceholderField::Hash,
+        b"target" => PlaceholderField::Target,
+    };
+}
 
 // PathTemplateConst is a const-friendly mirror of PathTemplate; convert to PathTemplate at use sites.
 #[derive(Debug, Clone, Copy)]

@@ -43,13 +43,15 @@ pub struct RuntimeDevelopmentPair {
     pub development: Option<bool>,
 }
 
-pub static RUNTIME_MAP: phf::Map<&'static [u8], RuntimeDevelopmentPair> = phf::phf_map! {
-    b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-    b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-    b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-    b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-    b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
-};
+bun_core::comptime_string_map! {
+    pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
+        b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+    };
+}
 
 /// Member-expression list for `Pragma.{factory,fragment}`.
 ///

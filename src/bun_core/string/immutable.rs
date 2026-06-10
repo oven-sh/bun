@@ -536,14 +536,17 @@ pub fn with_ascii_lowercase<R>(probe: &[u8], f: impl FnOnce(&[u8]) -> R) -> Opti
     Some(f(&buf[..len]))
 }
 
-/// Case-insensitive ASCII lookup in a `phf::Map` whose keys are already
-/// lowercase ASCII. Lowercases `self_` into a stack buffer and probes once.
+/// Case-insensitive ASCII lookup in a comptime string map whose keys are
+/// already lowercase ASCII.
 #[inline]
-pub fn in_map_case_insensitive<V: Copy>(
+pub fn in_map_case_insensitive<M: crate::comptime_string_map::ComptimeStringMap>(
     self_: &[u8],
-    map: &phf::Map<&'static [u8], V>,
-) -> Option<V> {
-    with_ascii_lowercase(self_, |lowered| map.get(lowered).copied()).flatten()
+    map: &M,
+) -> Option<M::Value>
+where
+    M::Value: Copy,
+{
+    map.lookup_ascii_case_insensitive(self_).copied()
 }
 
 #[inline]

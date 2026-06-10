@@ -548,6 +548,13 @@ impl Context {
 
     pub fn close(&mut self) {
         use c::NodeMode::*;
+        // `init()` may never have run (handle constructed but `init` failed
+        // argument validation or was never called); `deflateEnd`/`inflateEnd`
+        // on the zeroed stream would report `StreamError`.
+        if self.state.internal_state.is_null() {
+            self.mode = NONE;
+            return;
+        }
         let mut status = c::ReturnCode::Ok;
         match self.mode {
             // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.

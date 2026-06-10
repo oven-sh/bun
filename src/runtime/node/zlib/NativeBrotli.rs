@@ -465,7 +465,12 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            self.deinit_state();
+            // `init()` may never have run (handle constructed but `init`
+            // failed argument validation or was never called); there is no
+            // encoder/decoder state to free then.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             self.mode = bun_zlib::NodeMode::NONE;
         }
 

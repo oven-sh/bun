@@ -242,6 +242,12 @@ impl<'a> ZlibReaderArrayList<'a> {
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
+        // zlib streams express byte counts as 32-bit (`uInt`); reject an input
+        // that would truncate `avail_in` and silently decode only a prefix.
+        let Ok(avail_in) = uInt::try_from(input.len()) else {
+            return Err(ZlibError::InvalidArgument);
+        };
+
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
@@ -253,8 +259,8 @@ impl<'a> ZlibReaderArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
-            total_in: input.len() as _,
+            avail_in,
+            total_in: avail_in as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
             avail_out: list_len as uInt,
@@ -722,6 +728,14 @@ impl<'a> ZlibCompressorArrayList<'a> {
         list: &'a mut Vec<u8>,
         options: Options,
     ) -> Result<Box<Self>, ZlibError> {
+        // zlib streams express byte counts as 32-bit (`uInt`, and `uLong` is
+        // also 32-bit on Windows); reject an input that would truncate
+        // `avail_in` and silently compress only a prefix, or panic on the
+        // `deflateBound` cast below.
+        let Ok(avail_in) = uInt::try_from(input.len()) else {
+            return Err(ZlibError::InvalidArgument);
+        };
+
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
@@ -732,8 +746,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
-            total_in: input.len() as _,
+            avail_in,
+            total_in: avail_in as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
             avail_out: list_len as uInt,
@@ -770,12 +784,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         })?;
 
         // SAFETY: zlib initialized; deflateBound returns upper bound on output.
-        let bound = unsafe {
-            deflateBound(
-                &raw mut zlib_reader.zlib,
-                uLong::try_from(input.len()).expect("int cast"),
-            )
-        };
+        let bound = unsafe { deflateBound(&raw mut zlib_reader.zlib, uLong::from(avail_in)) };
         // ensureTotalCapacityPrecise → reserve_exact
         let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
         zlib_reader.list_ptr.reserve_exact(need);

@@ -452,24 +452,30 @@ mod _impl {
         }
 
         pub fn close(&mut self) {
-            let _ = match self.mode {
-                // SAFETY: state is a valid CCtx/DCtx for this mode.
-                NodeMode::ZSTD_COMPRESS => unsafe {
-                    c::ZSTD_CCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                // SAFETY: state is a valid DCtx set by init() for this mode.
-                NodeMode::ZSTD_DECOMPRESS => unsafe {
-                    c::ZSTD_DCtx_reset(
-                        self.state_ptr().cast(),
-                        c::ZSTD_reset_session_and_parameters,
-                    )
-                },
-                _ => unreachable!(),
-            };
-            self.deinit_state();
+            // `init()` may never have run (handle constructed but `init`
+            // failed argument validation or was never called);
+            // `ZSTD_*Ctx_reset` dereferences the context, so there is nothing
+            // to reset or free then.
+            if self.state.is_some() {
+                let _ = match self.mode {
+                    // SAFETY: state is a valid CCtx/DCtx for this mode.
+                    NodeMode::ZSTD_COMPRESS => unsafe {
+                        c::ZSTD_CCtx_reset(
+                            self.state_ptr().cast(),
+                            c::ZSTD_reset_session_and_parameters,
+                        )
+                    },
+                    // SAFETY: state is a valid DCtx set by init() for this mode.
+                    NodeMode::ZSTD_DECOMPRESS => unsafe {
+                        c::ZSTD_DCtx_reset(
+                            self.state_ptr().cast(),
+                            c::ZSTD_reset_session_and_parameters,
+                        )
+                    },
+                    _ => unreachable!(),
+                };
+                self.deinit_state();
+            }
             self.mode = NodeMode::NONE;
         }
 

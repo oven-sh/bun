@@ -33,8 +33,8 @@ pub struct ParsedSourceMap {
     /// maps `source_index` to the correct filename.
     pub external_source_names: Vec<Box<[u8]>>,
     /// In order to load source contents from a source-map after the fact,
-    /// a handle to the underlying source provider is stored. Within this pointer,
-    /// a flag is stored if it is known to be an inline or external source map.
+    /// a handle to the underlying source provider is stored, along with a
+    /// load hint recording whether the map is known to be inline or external.
     ///
     /// Source contents are large, we don't preserve them in memory. This has
     /// the downside of repeatedly re-decoding sourcemaps if multiple errors

@@ -254,7 +254,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
 // the C++ side declares in GeneratedJS2Native.h. The C++ output is invariant;
 // only the implementer of the symbol changes.
 //
-// Two ABI shapes (mirroring the Zig output exactly):
+// Two ABI shapes:
 //   • nativeCalls (type "zig")  → `${sym}_workaround(global) -> JSValue`
 //   • wrapperCalls (type "zig") → `${sym}(global, callframe) -> JSValue`
 //

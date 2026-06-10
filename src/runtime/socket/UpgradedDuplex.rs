@@ -48,12 +48,11 @@ bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_t
 #[derive(Default)]
 pub struct CertError {
     pub error_no: i32,
-    // Owned NUL-terminated copies (Zig: `[:0]const u8` allocated via `dupeZ`, freed in deinit).
-    // `None` represents the Zig default `""`.
+    // Owned NUL-terminated copies. `None` represents the default `""`.
     pub code: Option<Box<CStr>>,
     pub reason: Option<Box<CStr>>,
 }
-// Zig `CertError.deinit` only freed `code`/`reason`; `Box<CStr>` drops automatically — no explicit Drop needed.
+// `Box<CStr>` drops automatically — no explicit Drop needed.
 
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
@@ -74,11 +73,9 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `slot`.
 ///
-/// All four `get_js_handlers` slots follow the identical pattern from
-/// `UpgradedDuplex.zig:getJSHandlers` (lines 268/287/306/324):
+/// All four `get_js_handlers` slots follow the identical pattern:
 /// `NewFunctionWithData(global, null, 0, fn, self)` → `ensureStillAlive` →
-/// redundant `setFunctionData(self)` → `Strong.Optional.create`. The
-/// redundant `set_function_data` is preserved verbatim from the Zig source.
+/// redundant `setFunctionData(self)` → `Strong.Optional.create`.
 #[inline]
 fn lazy_js_handler(
     slot: &mut StrongOptional,
@@ -136,13 +133,12 @@ impl UpgradedDuplex {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
-        // Zig: `defer this.deinit();` — runs after the two calls below.
 
         (this.handlers.on_close)(this.handlers.ctx);
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 
-        // Early teardown (Zig calls deinit explicitly here; struct itself is dropped later by parent).
+        // Early teardown (struct itself is dropped later by parent).
         this.teardown();
     }
 
@@ -159,7 +155,6 @@ impl UpgradedDuplex {
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
-        // Zig `JSValue.getFunction` — `.get()` + callable check (`catch return orelse return`).
         let name = if msg_more { "write" } else { "end" };
         let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,
@@ -207,8 +202,7 @@ impl UpgradedDuplex {
     }
 
     fn on_internal_receive_data(&mut self, data: &[u8]) {
-        // PORT NOTE: reshaped for borrowck — Zig borrowed `wrapper` then called
-        // `self.resetTimeout()` (which needs &mut self). Reordered: reset first, then borrow.
+        // Note: reset the timeout first, then borrow `wrapper` (borrowck).
         if self.wrapper.is_some() {
             self.reset_timeout();
             if let Some(wrapper) = &mut self.wrapper {
@@ -310,7 +304,6 @@ impl UpgradedDuplex {
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
@@ -337,7 +330,6 @@ impl UpgradedDuplex {
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
@@ -442,7 +434,8 @@ impl UpgradedDuplex {
                 .reason
                 .as_deref()
                 .map_or(c"".as_ptr(), |c| c.as_ptr()),
-            // TODO(port): us_bun_verify_error_t may have more fields; Zig used implicit defaults.
+            // `struct us_bun_verify_error_t` (libusockets.h) has exactly these
+            // three fields: { int error; const char* code; const char* reason }.
         }
     }
 
@@ -462,7 +455,7 @@ impl UpgradedDuplex {
         }
 
         // reschedule the timer
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
@@ -629,5 +622,3 @@ pub(crate) extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_bo
             .unwrap_or(core::ptr::null_mut())
     }
 }
-
-// ported from: src/runtime/socket/UpgradedDuplex.zig

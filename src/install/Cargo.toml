@@ -20,7 +20,6 @@ workspace = true
 bytemuck = "1"
 strum.workspace = true
 thiserror.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true

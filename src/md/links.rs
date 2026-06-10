@@ -3,11 +3,10 @@ use crate::inlines;
 use crate::parser::{self, Parser};
 use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
-// PORT NOTE: aliases for the real `SpanType` / `SpanDetail` types (the Zig
-// original named them `Span` / `SpanAttrs`).
+// Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
+// `SpanAttrs` in the original implementation).
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
-type Off = OFF;
 
 /// Maximum parenthesis nesting depth inside a bare inline-link destination.
 /// CommonMark allows implementations to impose such a limit ("at least three
@@ -22,14 +21,36 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 /// wiki links are enabled, e.g. via `Bun.markdown.ansi`).
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
-/// Result of `try_match_bracket_link` — Zig anonymous return struct.
+/// Result of `try_match_bracket_link`.
 pub struct BracketLinkMatch {
     pub is_link: bool,
     pub label_end: usize,
     pub link_end: usize,
 }
 
-/// Result of `find_autolink` — Zig anonymous return struct.
+/// A successfully parsed link/image/wikilink whose opening span has been
+/// emitted. The caller renders `content[label_start..label_end]` as inline
+/// content, performs `leave`, and resumes at `link_end`. Returning this
+/// instead of recursing keeps label nesting iterative (arbitrary depth, no
+/// native stack growth).
+pub struct LabelParse {
+    pub label_start: usize,
+    pub label_end: usize,
+    pub link_end: usize,
+    pub leave: LabelLeave,
+}
+
+/// Close action matching the span opened by `enter_label_span` /
+/// `process_wiki_link`.
+pub enum LabelLeave {
+    /// Inside image alt text: no span was opened.
+    AltText,
+    Image,
+    Link,
+    Wikilink,
+}
+
+/// Result of `find_autolink`.
 pub struct Autolink {
     pub end_pos: usize,
     pub is_email: bool,
@@ -281,17 +302,54 @@ impl Parser<'_> {
         })
     }
 
+    /// Emit the opening span for a link/image whose label is about to be
+    /// rendered, and return the matching close action for the caller to run
+    /// once the label content has been emitted.
+    fn enter_label_span(
+        &mut self,
+        dest: &[u8],
+        title: &[u8],
+        is_image: bool,
+    ) -> Result<LabelLeave, parser::Error> {
+        if self.image_nesting_level > 0 {
+            // Inside image alt text: emit only text, no HTML tags
+            Ok(LabelLeave::AltText)
+        } else if is_image {
+            self.renderer.enter_span(
+                Span::Img,
+                SpanAttrs {
+                    href: dest,
+                    title,
+                    ..Default::default()
+                },
+            )?;
+            self.image_nesting_level += 1;
+            Ok(LabelLeave::Image)
+        } else {
+            self.renderer.enter_span(
+                Span::A,
+                SpanAttrs {
+                    href: dest,
+                    title,
+                    ..Default::default()
+                },
+            )?;
+            self.link_nesting_level += 1;
+            Ok(LabelLeave::Link)
+        }
+    }
+
     pub fn process_link(
         &mut self,
         content: &[u8],
         start: usize,
-        _base_off: Off,
         is_image: bool,
         brackets: &BracketMatches,
-    ) -> Result<Option<usize>, parser::Error> {
+        base: usize,
+    ) -> Result<Option<LabelParse>, parser::Error> {
         // start points at '['
         // Find matching ']', skipping code spans and HTML tags (which take precedence)
-        let Some(bracket) = self.match_bracket(content, start, brackets, 0) else {
+        let Some(bracket) = self.match_bracket(content, start, brackets, base) else {
             return Ok(None);
         };
         let has_inner_bracket = bracket.has_inner_bracket;
@@ -434,47 +492,27 @@ impl Parser<'_> {
                 // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                 if !is_image
                     && has_inner_bracket
-                    && self.label_contains_link(label, brackets, start + 1)
+                    && self.label_contains_link(label, brackets, base + start + 1)
                 {
                     return Ok(None);
                 }
 
-                if self.image_nesting_level > 0 {
-                    // Inside image alt text — emit only text, no HTML tags
-                    self.process_inline_content(label, 0)?;
-                } else if is_image {
-                    self.renderer.enter_span(
-                        Span::Img,
-                        SpanAttrs {
-                            href: dest,
-                            title,
-                            ..Default::default()
-                        },
-                    )?;
-                    self.image_nesting_level += 1;
-                    self.process_inline_content(label, 0)?;
-                    self.image_nesting_level -= 1;
-                    self.renderer.leave_span(Span::Img)?;
-                } else {
-                    self.renderer.enter_span(
-                        Span::A,
-                        SpanAttrs {
-                            href: dest,
-                            title,
-                            ..Default::default()
-                        },
-                    )?;
-                    self.link_nesting_level += 1;
-                    self.process_inline_content(label, 0)?;
-                    self.link_nesting_level -= 1;
-                    self.renderer.leave_span(Span::A)?;
-                }
-
-                return Ok(Some(pos));
+                let leave = self.enter_label_span(dest, title, is_image)?;
+                return Ok(Some(LabelParse {
+                    label_start: start + 1,
+                    label_end,
+                    link_end: pos,
+                    leave,
+                }));
             }
         }
 
-        // Reference link: [text][ref] or [text][] or shortcut [text]
+        // Reference link: [text][ref] or [text][] or shortcut [text].
+        // A reference label must start immediately after the closing ']'; a
+        // failed inline-link parse above may have advanced `pos` onto a later
+        // '[' (e.g. "[foo](bar [ref])"), which must not be read as the
+        // reference (try_match_bracket_link checks the byte after ']' too).
+        pos = label_end + 1;
         if pos < content.len() && content[pos] == b'[' {
             pos += 1;
             let ref_start = pos;
@@ -496,19 +534,24 @@ impl Parser<'_> {
                 };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
-                    // PORT NOTE: reshaped for borrowck — clone owned dest/title so the
-                    // &self borrow from lookup_ref_def is dropped before &mut self calls.
+                    // Clone the owned dest/title so the &self borrow from
+                    // lookup_ref_def is dropped before &mut self calls.
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                     // Link nesting prohibition
                     if !is_image
                         && has_inner_bracket
-                        && self.label_contains_link(label, brackets, start + 1)
+                        && self.label_contains_link(label, brackets, base + start + 1)
                     {
                         return Ok(None);
                     }
-                    self.render_ref_link(label, &dest, &title, is_image)?;
-                    return Ok(Some(pos));
+                    let leave = self.enter_label_span(&dest, &title, is_image)?;
+                    return Ok(Some(LabelParse {
+                        label_start: start + 1,
+                        label_end,
+                        link_end: pos,
+                        leave,
+                    }));
                 }
             }
         }
@@ -523,18 +566,24 @@ impl Parser<'_> {
         };
         if char_after_label != b'[' {
             if let Some(ref_def) = self.lookup_ref_def(label) {
-                // PORT NOTE: reshaped for borrowck — clone owned dest/title.
+                // Clone the owned dest/title so the &self borrow from
+                // lookup_ref_def is dropped before &mut self calls.
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                 // Link nesting prohibition
                 if !is_image
                     && has_inner_bracket
-                    && self.label_contains_link(label, brackets, start + 1)
+                    && self.label_contains_link(label, brackets, base + start + 1)
                 {
                     return Ok(None);
                 }
-                self.render_ref_link(label, &dest, &title, is_image)?;
-                return Ok(Some(label_end + 1));
+                let leave = self.enter_label_span(&dest, &title, is_image)?;
+                return Ok(Some(LabelParse {
+                    label_start: start + 1,
+                    label_end,
+                    link_end: label_end + 1,
+                    leave,
+                }));
             }
         }
 
@@ -582,12 +631,15 @@ impl Parser<'_> {
             {
                 p += 1;
             }
-            // Parse dest
+            // Parse dest (no line endings or unescaped '<' allowed, matching
+            // process_link: the lookahead and the parser must agree on what
+            // is a link or emphasis collection desyncs from rendering)
             if p < content.len() && content[p] == b'<' {
                 p += 1;
                 while p < content.len()
                     && content[p] != b'>'
                     && content[p] != b'\n'
+                    && content[p] != b'\r'
                     && content[p] != b'<'
                 {
                     if content[p] == b'\\' && p + 1 < content.len() {
@@ -708,14 +760,19 @@ impl Parser<'_> {
             }
         }
 
-        // Shortcut reference
-        let inner_label = &content[start + 1..label_end];
-        if self.lookup_ref_def(inner_label).is_some() {
-            return BracketLinkMatch {
-                is_link: true,
-                label_end,
-                link_end: label_end + 1,
-            };
+        // Shortcut reference: like process_link, a shortcut must not be
+        // followed by '[' (the lookahead and the parser must agree on what
+        // is a link or label_contains_link rejects constructs the parser
+        // renders)
+        if content.get(label_end + 1) != Some(&b'[') {
+            let inner_label = &content[start + 1..label_end];
+            if self.lookup_ref_def(inner_label).is_some() {
+                return BracketLinkMatch {
+                    is_link: true,
+                    label_end,
+                    link_end: label_end + 1,
+                };
+            }
         }
 
         BracketLinkMatch {
@@ -787,7 +844,7 @@ impl Parser<'_> {
         &mut self,
         content: &[u8],
         start: usize,
-    ) -> Result<Option<usize>, parser::Error> {
+    ) -> Result<Option<LabelParse>, parser::Error> {
         // start points at first '[', next char is also '['
         let mut pos = start + 2;
 
@@ -827,14 +884,9 @@ impl Parser<'_> {
 
         let inner_end = pos;
 
-        // Determine target and label
+        // Determine the target
         let target = if let Some(pp) = pipe_pos {
             &content[inner_start..pp]
-        } else {
-            &content[inner_start..inner_end]
-        };
-        let label = if let Some(pp) = pipe_pos {
-            &content[pp + 1..inner_end]
         } else {
             &content[inner_start..inner_end]
         };
@@ -852,51 +904,17 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
-        self.process_inline_content(label, 0)?;
-        self.renderer.leave_span(Span::Wikilink)?;
-
-        Ok(Some(pos + 2)) // skip both ']'
-    }
-
-    /// Render a reference link/image given the resolved ref def.
-    pub fn render_ref_link(
-        &mut self,
-        label_content: &[u8],
-        dest: &[u8],
-        title: &[u8],
-        is_image: bool,
-    ) -> Result<(), parser::Error> {
-        if self.image_nesting_level > 0 {
-            // Inside image alt text — emit only text, no HTML tags
-            self.process_inline_content(label_content, 0)?;
-        } else if is_image {
-            self.renderer.enter_span(
-                Span::Img,
-                SpanAttrs {
-                    href: dest,
-                    title,
-                    ..Default::default()
-                },
-            )?;
-            self.image_nesting_level += 1;
-            self.process_inline_content(label_content, 0)?;
-            self.image_nesting_level -= 1;
-            self.renderer.leave_span(Span::Img)?;
+        let label_start = if let Some(pp) = pipe_pos {
+            pp + 1
         } else {
-            self.renderer.enter_span(
-                Span::A,
-                SpanAttrs {
-                    href: dest,
-                    title,
-                    ..Default::default()
-                },
-            )?;
-            self.link_nesting_level += 1;
-            self.process_inline_content(label_content, 0)?;
-            self.link_nesting_level -= 1;
-            self.renderer.leave_span(Span::A)?;
-        }
-        Ok(())
+            inner_start
+        };
+        Ok(Some(LabelParse {
+            label_start,
+            label_end: inner_end,
+            link_end: pos + 2, // skip both ']'
+            leave: LabelLeave::Wikilink,
+        }))
     }
 
     pub fn find_autolink(&self, content: &[u8], start: usize) -> Option<Autolink> {
@@ -1014,5 +1032,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/links.zig

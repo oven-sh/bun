@@ -9,11 +9,8 @@ impl SourceProvider {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // safe: `SourceProvider` is an opaque `UnsafeCell`-backed ZST handle; `&mut` is
     // ABI-identical to a non-null pointer and C++ refcount mutation is interior.
     safe fn JSC__SourceProvider__deref(provider: &mut SourceProvider);
 }
-
-// ported from: src/jsc/SourceProvider.zig

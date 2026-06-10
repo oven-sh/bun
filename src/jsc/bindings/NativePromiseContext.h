@@ -7,7 +7,7 @@
 namespace Bun {
 
 // Opaque marker type so CompactPointerTuple's allowCompactPointers check
-// passes. The actual pointee is one of several Zig-side native types; we
+// passes. The actual pointee is one of several native types; we
 // cast through void* at the boundary.
 struct NativePromiseContextPointee {
     WTF_ALLOW_STRUCT_COMPACT_POINTERS;
@@ -36,7 +36,7 @@ public:
     // CompactPointerTuple, so this cell adds only one pointer of storage
     // beyond the JSCell header.
     //
-    // Must stay in sync with Tag in src/runtime/api/NativePromiseContext.zig.
+    // Must stay in sync with Tag in src/runtime/api/NativePromiseContext.rs.
     enum class Tag : uint8_t {
         HTTPServerRequestContext,
         HTTPSServerRequestContext,

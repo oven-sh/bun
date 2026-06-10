@@ -31,7 +31,7 @@ pub(crate) trait JSValueCryptoExt {
 }
 
 impl JSValueCryptoExt for JSValue {
-    /// Port of `JSValue.isSafeInteger` (JSValue.zig:140) — Number.isSafeInteger semantics.
+    /// `Number.isSafeInteger` semantics.
     #[inline]
     fn is_safe_integer(self) -> bool {
         if self.is_int32() {
@@ -51,9 +51,8 @@ impl JSValueCryptoExt for JSValue {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ExternCryptoJob — Zig `fn ExternCryptoJob(comptime name: []const u8) type`.
-// This does token-pasting to form C symbol names (`Bun__<name>Ctx__runTask`
-// etc.), so a `macro_rules!` is the correct port shape per PORTING.md.
+// ExternCryptoJob — token-pastes C symbol names (`Bun__<name>Ctx__runTask`
+// etc.), so a `macro_rules!` is the right shape.
 // ───────────────────────────────────────────────────────────────────────────
 macro_rules! extern_crypto_job {
     ($Name:ident, $name_str:literal) => {
@@ -108,7 +107,7 @@ macro_rules! extern_crypto_job {
 
             pub(crate) type Job = AnyTaskJob<ExternCtx>;
 
-            // Zig `comptime { @export(...) }` — exported C symbols.
+            // Exported C symbols.
             #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
             pub(crate) extern "C" fn __create(
                 global: &JSGlobalObject,
@@ -165,23 +164,20 @@ extern_crypto_job!(DhJob, "DhJob");
 extern_crypto_job!(SignJob, "SignJob");
 
 // ───────────────────────────────────────────────────────────────────────────
-// CryptoJob<Ctx> — Zig `fn CryptoJob(comptime Ctx: type) type`.
+// CryptoJob<Ctx>
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Trait expressing the duck-typed interface Zig's `CryptoJob` expects of `Ctx`.
+/// Trait expressing the interface `CryptoJob` expects of `Ctx`.
 pub trait CryptoJobCtx: Sized {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
-    /// Zig calls `ctx.runTask(ctx.result)`; in Rust the impl reads its own
-    /// `result` field directly.
-    // PORT NOTE: reshaped for borrowck — Zig passed `self.result` as a separate arg.
+    /// The impl reads its own `result` field directly.
     fn run_task(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue);
     fn deinit(&mut self);
 }
 
 /// Adapter binding a [`CryptoJobCtx`] + JS callback into an [`AnyTaskJobCtx`].
-/// `Drop` runs `inner.deinit()` then releases the callback handle, mirroring
-/// the Zig `CryptoJob.deinit` order.
+/// `Drop` runs `inner.deinit()` then releases the callback handle.
 pub struct CallbackCtx<C: CryptoJobCtx> {
     callback: StrongOptional,
     inner: C,
@@ -212,8 +208,8 @@ impl<C: CryptoJobCtx> Drop for CallbackCtx<C> {
     }
 }
 
-/// Zig `CryptoJob.initAndSchedule` — kept as a free fn since `CryptoJob<C>` is
-/// now a type alias for the foreign `AnyTaskJob<_>`.
+/// Kept as a free fn since `CryptoJob<C>` is
+/// a type alias for the foreign `AnyTaskJob<_>`.
 pub(crate) fn crypto_job_init_and_schedule<C: CryptoJobCtx>(
     global: &JSGlobalObject,
     callback: JSValue,
@@ -392,9 +388,8 @@ pub mod random {
                     .throw());
             }
 
-            // Zig: `std.crypto.random.intRangeLessThan(i64, min, max)` — port of
-            // `std.Random.uintLessThan(u64, max - min)` (Lemire's nearly-divisionless
-            // rejection sampling) backed by `bun_core::csprng` (BoringSSL RAND_bytes).
+            // Uniform random in [min, max) via Lemire's nearly-divisionless
+            // rejection sampling, backed by `bun_core::csprng` (BoringSSL RAND_bytes).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);
@@ -603,7 +598,7 @@ pub mod random {
                 buf.byte_len,
             )?;
 
-            // Zig keeps `size: usize` here (`buf.byte_len - offset`, both usize). The
+            // `size` is usize (`buf.byte_len - offset`, both usize). The
             // `assert_size` branch is bounded by `MAX_POSSIBLE_LENGTH` (≤ i32::MAX) so widening
             // its `u32` result is lossless; the default branch must NOT truncate to `u32` —
             // a >4 GiB ArrayBuffer remainder would silently fill only `(n % 2^32)` bytes.
@@ -658,7 +653,7 @@ pub mod random {
                 offset = assert_offset(global, offset_value, element_size, buf.byte_len)?;
             }
 
-            // Zig keeps `size: usize` here (`buf.byte_len - offset`, both usize). The
+            // `size` is usize (`buf.byte_len - offset`, both usize). The
             // `assert_size` branch is bounded by `MAX_POSSIBLE_LENGTH` (≤ i32::MAX) so widening
             // its `u32` result is lossless; the default branch must NOT truncate to `u32` —
             // a >4 GiB ArrayBuffer remainder would silently fill only `(n % 2^32)` bytes.
@@ -710,7 +705,7 @@ pub(crate) struct Scrypt {
     // the sync path's drop call `JSValue::unprotect()` on a buffer it never
     // protected, stealing a refcount from any independent protector. The async
     // path releases its protect via `Unprotect for Scrypt` in
-    // `CryptoJobCtx::deinit` instead (Zig: `deinit` vs `deinitSync`).
+    // `CryptoJobCtx::deinit` instead.
     password: StringOrBuffer,
     salt: StringOrBuffer,
     n: u32,
@@ -721,7 +716,8 @@ pub(crate) struct Scrypt {
 
     // used in async mode
     buf: StrongOptional, // Strong.Optional, default .empty
-    // TODO(port): lifetime — `result` borrows the ArrayBuffer backing held alive by `buf`.
+    // Invariant: `result` borrows the ArrayBuffer backing kept alive by `buf`;
+    // `buf` must stay set for as long as `result` is dereferenced.
     result: *mut [u8],
     err: Option<u32>,
 }
@@ -737,10 +733,8 @@ mod _impl {
     use crate::crypto::pbkdf2::{self, PBKDF2};
 
     impl Scrypt {
-        /// Zig: `fromJS(..., comptime is_async: bool) JSError!if (is_async) struct{@This(),JSValue} else @This()`.
-        /// Rust cannot vary the return type on a const-generic bool, so this always returns
-        /// `(Self, JSValue)`; the sync caller ignores the second element.
-        // PORT NOTE: reshaped — return type unified across IS_ASYNC.
+        /// The return type cannot vary on the const-generic bool, so this always
+        /// returns `(Self, JSValue)`; the sync caller ignores the second element.
         pub(crate) fn from_js<const IS_ASYNC: bool>(
             global: &JSGlobalObject,
             call_frame: &CallFrame,
@@ -772,8 +766,7 @@ mod _impl {
                 ));
             };
 
-            // Zig: `errdefer if (is_async) password.deinitAndUnprotect() else password.deinit()`.
-            // The `deinit()` half is `Drop for StringOrBuffer`; only the async branch took a
+            // On error: `Drop for StringOrBuffer` releases the data; only the async branch took a
             // `protect()` (inside `from_js_maybe_async`), so only that branch may unprotect —
             // an unconditional unprotect would steal a refcount on the sync path.
             let password = scopeguard::guard(password, |mut p| {
@@ -925,8 +918,8 @@ mod _impl {
                 result: std::ptr::from_mut::<[u8]>(&mut []),
                 err: None,
             };
-            // Re-arm the errdefer now that ownership moved into `ctx` — Zig's
-            // `errdefer` covers the `validateFunction`/`checkScryptParams` calls below.
+            // Re-arm the error guard now that ownership moved into `ctx` — it
+            // covers the `validateFunction`/`checkScryptParams` calls below.
             let ctx = scopeguard::guard(ctx, |mut c| {
                 if IS_ASYNC {
                     bun_jsc::Unprotect::unprotect(&mut c);
@@ -1091,8 +1084,7 @@ mod _impl {
         }
 
         fn deinit(&mut self) {
-            // Zig `Scrypt.deinit` (async path): `salt/password.deinitAndUnprotect()`.
-            // `Drop for StringOrBuffer` handles the deinit half when `CryptoJob` is freed.
+            // `Drop for StringOrBuffer` releases salt/password when `CryptoJob` is freed.
             bun_jsc::Unprotect::unprotect(self);
             self.buf.deinit();
         }
@@ -1112,11 +1104,10 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let data = PBKDF2::from_js(global_this, call_frame, false)?;
-        // PORT NOTE: Zig had `defer data.deinit()` plus an extra `data.deinit()` on
-        // the OOM branch (double-deinit). `PBKDF2`'s `StringOrBuffer` fields release
-        // on `Drop`, so the local just goes out of scope; the redundant call is gone.
+        // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
+        // just goes out of scope.
         let mut data = data;
-        // Zig: `JSValue.createBufferFromLength` → `JSBuffer__bufferFromLength`, which constructs
+        // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
         // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
@@ -1223,7 +1214,7 @@ mod _impl {
         let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
             CaseInsensitiveAsciiStringArrayHashMap::new();
 
-        // TODO(dylan-conway): cache the names
+        // Perf idea (dylan-conway): cache the names
         // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
         // for the duration of the call.
         unsafe {
@@ -1431,5 +1422,3 @@ mod _impl {
 } // mod _impl
 
 pub use _impl::{create_node_crypto_binding_zig, timing_safe_equal};
-
-// ported from: src/runtime/node/node_crypto_binding.zig

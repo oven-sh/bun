@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1472,3 +1472,88 @@ function runTest({
     rmSync(cwd, { recursive: true });
   }
 }
+
+describe.concurrent("test file discovery (scanner)", () => {
+  test("discovers tests in deeply nested directories and prunes dot-dirs and node_modules", async () => {
+    const files: Record<string, string> = {
+      "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,
+      "b_second.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b_second"); });`,
+      "styles.spec.tsx": `import { test } from "bun:test"; test("spec", () => { console.log("RAN spec"); });`,
+      "not-a-test.ts": `console.log("SHOULD NOT RUN plain");`,
+      "nested/deep/inner.test.ts": `import { test } from "bun:test"; test("inner", () => { console.log("RAN inner"); });`,
+      "nested/util.ts": `export const x = 1;`,
+      ".hidden/skipped.test.ts": `import { test } from "bun:test"; test("hidden", () => { console.log("SHOULD NOT RUN hidden"); });`,
+      "node_modules/pkg/skipped.test.ts": `import { test } from "bun:test"; test("nm", () => { console.log("SHOULD NOT RUN node_modules"); });`,
+    };
+    // Long directory chain so the scanner's directory FIFO and per-directory
+    // reads are exercised many times in a single scan.
+    let prefix = "chain";
+    for (let i = 0; i < 32; i++) {
+      prefix += `/d${i}`;
+      files[`${prefix}/leaf${i}.test.ts`] = `import { test } from "bun:test"; test("leaf${i}", () => {});`;
+    }
+    using dir = tempDir("scanner-discovery", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN b_second");
+    expect(stdout).toContain("RAN spec");
+    expect(stdout).toContain("RAN inner");
+    expect(stdout).not.toContain("SHOULD NOT RUN");
+    // 4 named tests + 32 chain leaves
+    expect(stderr).toContain(" 36 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("scanning a relative subdirectory only runs tests under it", async () => {
+    using dir = tempDir("scanner-subdir", {
+      "root_only.test.ts": `import { test } from "bun:test"; test("root", () => { console.log("RAN root"); });`,
+      "nested/inner.test.ts": `import { test } from "bun:test"; test("inner", () => { console.log("RAN inner"); });`,
+      "nested/deeper/most.test.ts": `import { test } from "bun:test"; test("most", () => { console.log("RAN most"); });`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./nested"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN inner");
+    expect(stdout).toContain("RAN most");
+    expect(stdout).not.toContain("RAN root");
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("scanning a relative file path that is not a directory runs that single file", async () => {
+    using dir = tempDir("scanner-single-file", {
+      "solo.test.ts": `import { test } from "bun:test"; test("solo", () => { console.log("RAN solo"); });`,
+      "other.test.ts": `import { test } from "bun:test"; test("other", () => { console.log("RAN other"); });`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./solo.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("RAN solo");
+    expect(stdout).not.toContain("RAN other");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+});

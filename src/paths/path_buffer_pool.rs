@@ -4,11 +4,9 @@
 //! make the stack memory usage more predictable. We keep up to 4 path buffers
 //! alive per thread at a time.
 //!
-//! PORT NOTE: Zig used `bun.ObjectPool<T, null, true, 4>` (a thread-safe
-//! 4-slot freelist). Rewritten over `thread_local!` + `RefCell<Vec<Box<T>>>`
-//! per PORTING.md §Concurrency (init-once / per-thread → no lock needed).
-//! Same observable behavior: at most 4 buffers cached per thread; excess `put`s
-//! drop. RAII guard replaces the manual `get`/`put` pairing.
+//! Implemented over `thread_local!` + `RefCell<Vec<Box<T>>>` (per-thread, so no
+//! lock needed): at most 4 buffers cached per thread; excess `put`s drop. An
+//! RAII guard replaces manual `get`/`put` pairing.
 
 use core::cell::RefCell;
 use core::marker::PhantomData;
@@ -21,9 +19,8 @@ const POOL_CAP: usize = 4;
 /// Per-thread pool of reusable path buffers.
 pub struct PathBufferPoolT<T: 'static + Default>(PhantomData<T>);
 
-// One thread-local Vec per buffer type. Zig's threadsafe pool used a global
-// lock; per-thread is closer to "use a thread-local allocator so mimalloc
-// deletes it on thread deinit" (the original comment) and avoids any lock.
+// One thread-local Vec per buffer type: per-thread storage means mimalloc
+// frees the buffers on thread deinit and no lock is needed.
 thread_local! {
     #[allow(clippy::vec_box)]
     static U8_POOL: RefCell<Vec<Box<PathBuffer>>> = const { RefCell::new(Vec::new()) };
@@ -74,14 +71,13 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
     /// Returns an RAII guard that derefs to `&mut T` and returns the buffer to
     /// the pool on `Drop`. Replaces manual `get`/`put` pairing.
     pub fn get() -> PoolGuard<T> {
-        // Zig leaves the buffer `undefined`; we zero-allocate on the (rare)
-        // cache-miss path instead — see `PoolStorage::new_boxed` for the
-        // soundness/perf justification.
+        // Zero-allocate on the (rare) cache-miss path — see
+        // `PoolStorage::new_boxed` for the soundness/perf justification.
         let buf = T::with_pool(|p| p.borrow_mut().pop()).unwrap_or_else(T::new_boxed);
         PoolGuard { buf: Some(buf) }
     }
 
-    /// Manual return path (kept for structure parity with Zig). Prefer dropping
+    /// Manual return path. Prefer dropping
     /// the `PoolGuard` instead.
     pub(crate) fn put(buf: Box<T>) {
         T::with_pool(|p| {
@@ -130,7 +126,7 @@ pub type w_path_buffer_pool = PathBufferPoolT<WPathBuffer>;
 
 /// `bun.path_buffer_pool.get()` — convenience wrapper returning the RAII guard.
 /// `Path<U>` callers store this in a `ManuallyDrop` and explicitly `put` on
-/// reset (matches Zig's manual get/put), so also expose `into_box`/free `put`.
+/// reset, so also expose `into_box`/free `put`.
 pub type Guard = PoolGuard<PathBuffer>;
 #[inline]
 pub fn get() -> PoolGuard<PathBuffer> {
@@ -157,5 +153,3 @@ pub type os_path_buffer_pool = w_path_buffer_pool;
 #[cfg(not(windows))]
 #[allow(non_camel_case_types)]
 pub type os_path_buffer_pool = path_buffer_pool;
-
-// ported from: src/paths/path_buffer_pool.zig

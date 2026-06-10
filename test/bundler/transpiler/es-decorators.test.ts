@@ -753,6 +753,178 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("private member calls in lowered classes", () => {
+    // When a class is lowered for standard decorators, `recv.#m(...)` becomes
+    // `__privateGet(recv, _m).call(recv, ...)`. The receiver must be evaluated
+    // exactly once: duplicating it re-runs side effects and makes the printed
+    // output grow exponentially for chains like `o.#m().#m().#m()`.
+    test("chained optional private calls do not explode the transpiled output size", () => {
+      const chain = "?.Foo.#m()".repeat(20);
+      const source = `class Foo {
+        static #x = -0;
+        static #m = function() {};
+        @decorator() est() {
+          return [o${chain}];
+        }
+      }`;
+
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const output = transpiler.transformSync(source);
+
+      // Exponential duplication produced ~47 MB for a 20-call chain; the
+      // single-evaluation lowering stays in the kilobytes.
+      expect(output.length).toBeLessThan(50_000);
+      // The lowered output must still be valid syntax.
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+
+    test("double-call private chains in decorated static field initializers stay linear", () => {
+      // Fuzzer-minimized variant: each `.#method()()` link re-lowers the whole
+      // receiver, so duplicating it doubles the printed output per link
+      // (~30 links allocated multiple GB before aborting).
+      const chain = ".#method()()".repeat(20);
+      const source = `class C {
+        @decorator() static s = new C()${chain.slice(0, -2)};
+        #method() { return 1e999; }
+      }`;
+
+      const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: true });
+      const output = transpiler.transformSync(source);
+
+      // Exponential duplication produced ~64 MB for 20 links; the
+      // single-evaluation lowering stays in the kilobytes.
+      expect(output.length).toBeLessThan(50_000);
+      // The lowered output must still be valid syntax.
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+
+    test("calling the result of a private method call evaluates each link once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let evals = 0;
+        class C {
+          @dec static s = new C().#method()().#method()().#method()();
+          #method() { evals++; const self = this; return () => self; }
+        }
+        console.log(C.s instanceof C, evals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("receiver temps are scoped per invocation, not shared across reentrant calls", async () => {
+      // A private getter runs user code inside __privateGet, between the
+      // `_obj = recv` write and the `.call(_obj)` read. If the getter reenters
+      // the same call site, a temp hoisted outside the method would be
+      // clobbered and the outer call would see the inner receiver. Declaring
+      // the temp inside the method body gives each invocation its own binding.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let nextId = 0;
+        let depth = 0;
+        const order = [];
+        class C {
+          get #g() {
+            if (depth++ === 0) make().run();
+            const self = this;
+            return function () { order.push(self.id + ":" + this.id); };
+          }
+          @dec run() { make().#g(); }
+        }
+        function make() { const c = new C(); c.id = ++nextId; return c; }
+        make().run();
+        console.log(JSON.stringify(order));
+      `);
+      expect(stderr).toBe("");
+      // Each entry pairs the receiver seen at getter time with the receiver
+      // the returned function was invoked on; they must always match.
+      expect(stdout).toBe('["4:4","2:2"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test("private method call receiver is evaluated exactly once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let receiverEvals = 0;
+        class Counter {
+          static #m = function (x) { return [this === Counter, x]; };
+          @dec test() {
+            return getCounter().#m(42);
+          }
+        }
+        function getCounter() { receiverEvals++; return Counter; }
+        console.log(JSON.stringify(new Counter().test()), receiverEvals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[true,42] 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("chained optional private method calls return the right value", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Chain {
+          #tag;
+          constructor(tag) { this.#tag = tag; }
+          #next() { return { Chain: new Chain(this.#tag + 1) }; }
+          @dec run(o) {
+            return o?.Chain.#next()?.Chain.#next()?.Chain.#next()?.Chain.tag();
+          }
+          tag() { return this.#tag; }
+        }
+        console.log(new Chain(0).run({ Chain: new Chain(10) }));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("13\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private method calls through `this` and identifier receivers still work", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Fast {
+          #p(n) { return "p" + n; }
+          @dec viaThis() { return this.#p(1); }
+          @dec viaIdent(other) { return other.#p(2); }
+        }
+        const f = new Fast();
+        console.log(f.viaThis(), f.viaIdent(new Fast()));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("p1 p2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Covers both temp placements in a decorated class expression: the method
+    // body receiver gets a per-invocation `var` inside the method, while the
+    // field initializer receiver is rewritten outside any function body, so
+    // its temp is hoisted to the nearest statement list through the
+    // class-expression path.
+    test("decorated class expression evaluates chained private call receivers once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let evals = 0;
+        let initEvals = 0;
+        function pick(x) { initEvals++; return x; }
+        const C = class Foo {
+          static #m = function (tag) { return { Foo, tag }; };
+          #p(tag) { return "i" + tag; }
+          @dec r = pick(this).#p("0");
+          @dec test(o) {
+            return o.effectful()?.Foo.#m("a")?.Foo.#m("b");
+          }
+        };
+        const o = { Foo: C, effectful() { evals++; return { Foo: C }; } };
+        const inst = new C();
+        console.log(inst.r, inst.test(o).tag, evals, initEvals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("i0 b 1 1\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

@@ -14,9 +14,6 @@ use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
-// Zig: `pub fn ReplTransforms(comptime P: type) type { return struct { ... } }`
-// — file-split mixin pattern. Round-D lowered to direct `impl P` block.
-
 use crate::p::P;
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
@@ -45,7 +42,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         // Collect all statements into a single array
-        // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump alloc + index fill
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
         for part in parts.iter() {
             for stmt in part.stmts.iter() {
@@ -220,7 +216,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        // PORT NOTE: G::Class is non-Copy (owns a Vec); the original
+                        // G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
                         let class_value = core::mem::take(&mut class.class);
                         let class_expr = self.new_expr(class_value, stmt.loc);
@@ -498,7 +494,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
         // Final output: hoisted declarations + IIFE call
         let final_stmts_count = hoisted_stmts.len() + 1;
-        // PERF(port): was bun.handleOom(arena.alloc(Stmt, n)) — bump Vec + into_bump_slice
         let mut final_stmts = BumpVec::with_capacity_in(final_stmts_count, bump);
         for stmt in hoisted_stmts.iter() {
             final_stmts.push(*stmt);
@@ -697,7 +692,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
-        // PERF(port): was bun.handleOom(arena.alloc(G.Property, 2)).
         // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object
@@ -804,7 +798,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BArray(arr) => {
                 let arr = arr.get();
                 let arr_items = arr.items();
-                // PERF(port): was bun.handleOom(arena.alloc(Expr, n))
                 let mut items = BumpVec::with_capacity_in(arr_items.len(), bump);
                 for (i, item) in arr_items.iter().enumerate() {
                     let expr = self.repl_convert_binding_to_expr(item.binding, bump);
@@ -837,7 +830,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             B::B::BObject(obj) => {
                 let obj = obj.get();
                 let obj_props = obj.properties();
-                // PERF(port): was bun.handleOom(arena.alloc(G.Property, n))
                 let mut properties = BumpVec::with_capacity_in(obj_props.len(), bump);
                 for prop in obj_props.iter() {
                     properties.push(G::Property {
@@ -869,7 +861,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 }
 
-/// Bump-allocate a single-element `G::DeclList` (Zig: `Decl.List.fromOwnedSlice(arena.dupe(...))`).
+/// Bump-allocate a single-element `G::DeclList`.
 #[inline]
 fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     let slice: &mut [G::Decl] = bump.alloc_slice_fill_with(1, |_| G::Decl {
@@ -878,5 +870,3 @@ fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
     });
     G::DeclList::from_arena_slice(slice)
 }
-
-// ported from: src/js_parser/ast/repl_transforms.zig

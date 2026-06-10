@@ -491,6 +491,16 @@ impl VMHolder {
 /// static-rooted and never freed), which enables the lock-free fast path in
 /// the checked entry points below.
 ///
+/// Known residual (pre-existing, strictly narrower than the bug this fixes):
+/// liveness is keyed by address only, so if a new VM is allocated at a dead
+/// VM's address, a stale producer that captured the old pointer passes the
+/// check and its task is delivered to the new VM instead of being dropped.
+/// That mis-delivery was already possible before this registry existed (the
+/// stale push landed at the same reused address, plus every freed-memory
+/// interleaving that is now closed). Eliminating it requires producers to
+/// carry a schedule-time generation token alongside the pointer — a
+/// follow-up that touches every producer struct.
+///
 /// Lock ordering: this lock is a leaf. The critical sections only touch the
 /// target's MPSC queue (wait-free push) and `wakeup()` (a syscall); they take
 /// no other locks.
@@ -3688,12 +3698,15 @@ impl VirtualMachine {
     /// `f` runs under the [`live_vm_registry`] lock, which `unregister_vm`
     /// (called before any free) also takes — so the VM cannot be freed while
     /// `f` runs. `f` must therefore be short and lock-free: pushing to the
-    /// MPSC queue, `wakeup()`, reading a flag.
+    /// MPSC queue, `wakeup()`, reading a flag. The `&VirtualMachine` handed to
+    /// `f` may be on a non-JS thread — `f` must restrict itself to the
+    /// documented thread-safe subset (the same contract as the `Sync` impl),
+    /// which is why this helper is crate-private rather than `pub`.
     // Deliberately takes `*mut` and is NOT `unsafe`: accepting a possibly
     // dangling pointer is the function's contract, and no deref happens until
     // the registry proves the pointee live (and holds off its free).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn with_live_vm<R>(
+    pub(crate) fn with_live_vm<R>(
         vm: *mut VirtualMachine,
         f: impl FnOnce(&VirtualMachine) -> R,
     ) -> Option<R> {

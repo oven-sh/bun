@@ -97,10 +97,11 @@ impl FSWatcher {
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
     /// the caller releases ownership of; the concurrent queue takes ownership
     /// and frees it on the JS thread after dispatch.
-    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
+    #[must_use]
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bool {
         // Called from watcher threads: `ctx` may point at a worker VM freed
         // by terminate() while an event was in flight — checked enqueue only.
-        let _ = VirtualMachine::try_enqueue_task_concurrent(self.ctx, task);
+        VirtualMachine::try_enqueue_task_concurrent(self.ctx, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -228,10 +229,22 @@ impl FSWatchTaskPosix {
             // until the JS thread drains and `heap::take`s it in `dispatch`.
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
-                self.ctx()
+                if !self
+                    .ctx()
                     .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
                         core::ptr::addr_of_mut!((*that).concurrent_task),
-                    ));
+                    ))
+                {
+                    // VM gone: `dispatch`/`run` will never consume the clone.
+                    // Reclaim it here (entries own plain heap bytes, no JSC
+                    // state) and balance the `ref_task()` above — both the
+                    // entry frees and `pending_activity_count` are safe from
+                    // this thread (atomic counter, mutex-guarded flag).
+                    let mut clone = bun_core::heap::take(that);
+                    clone.clean_entries();
+                    drop(clone);
+                    self.ctx().unref_task();
+                }
             }
             return;
         }

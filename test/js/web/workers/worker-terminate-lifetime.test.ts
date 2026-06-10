@@ -181,12 +181,14 @@ test.skipIf(!isASAN)(
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Check stderr first: on failure the sanitizer report is the useful
+    // output, and asserting on it surfaces the report text in the diff.
+    expect(stderr).not.toContain("AddressSanitizer");
     expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "done\n",
       exitCode: 0,
       signalCode: null,
     });
-    void stderr;
   },
   timeout,
 );

@@ -331,11 +331,15 @@ impl StatWatcherScheduler {
                 callback: update_timer,
             };
             // Checked: runs on the work-pool thread; `vm` may be a worker VM
-            // freed by terminate() while the restat ran.
-            let _ = VirtualMachine::try_enqueue_task_concurrent(
+            // freed by terminate() while the restat ran. On failure reclaim
+            // the holder here (plain `{ParentRef, AnyTask}` — no JSC state),
+            // since `update_timer` will never run to take it.
+            if !VirtualMachine::try_enqueue_task_concurrent(
                 (*this).vm.as_ptr(),
                 ConcurrentTask::create(Task::init(core::ptr::addr_of_mut!((*holder_ptr).task))),
-            );
+            ) {
+                drop(bun_core::heap::take(holder_ptr));
+            }
         }
     }
 

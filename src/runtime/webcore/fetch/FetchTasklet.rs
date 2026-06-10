@@ -65,7 +65,12 @@ pub struct FetchTasklet {
     pub http: Option<Box<AsyncHTTP<'static>>>,
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
-    pub javascript_vm: &'static VirtualMachine,
+    /// Owning VM, captured at `get()`. `BackRef` (not `&'static`): a worker
+    /// VM can be freed by terminate() while this tasklet is still referenced
+    /// from the HTTP thread, so holding a Rust reference would dangle.
+    /// JS-thread paths `get()` it (VM provably alive there); HTTP-thread
+    /// paths pass `as_ptr()` to the checked `VirtualMachine` accessors only.
+    pub javascript_vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
@@ -382,7 +387,7 @@ impl FetchTasklet {
         // `javascript_vm` may point at a freed worker VM (terminated while
         // this request was in flight on the HTTP thread) — only the checked
         // accessors may touch it.
-        let vm_ptr = core::ptr::from_ref(self_.javascript_vm).cast_mut();
+        let vm_ptr = self_.javascript_vm.as_ptr();
         if !VirtualMachine::is_shutting_down_or_freed(vm_ptr) {
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
@@ -786,9 +791,11 @@ impl FetchTasklet {
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
 
+        // JS-thread path: the VM is this thread's own live VM. Copy the
+        // `BackRef` out so the borrow below doesn't pin `self`.
         let vm = self.javascript_vm;
         // vm is shutting down we cannot touch JS
-        if vm.is_shutting_down() {
+        if vm.get().is_shutting_down() {
             // The certificate will never be checked; release the parked
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.
@@ -1652,7 +1659,7 @@ impl FetchTasklet {
             http_.enable_response_body_streaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        let _ = self.javascript_vm;
+        let _ = &self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
         self.clear_stream_cancel_handler();
@@ -1695,7 +1702,7 @@ impl FetchTasklet {
     ) -> Result<*mut FetchTasklet, BunError> {
         // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
         // this tasklet (process-lifetime singleton on the JS thread).
-        let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
+        let jsc_vm = bun_ptr::BackRef::new(global_this.bun_vm());
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
@@ -1976,7 +1983,7 @@ impl FetchTasklet {
     pub(crate) fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
         // Checked: the fetching VM may be a worker freed by terminate().
-        let vm_ptr = core::ptr::from_ref(this_ref.javascript_vm).cast_mut();
+        let vm_ptr = this_ref.javascript_vm.as_ptr();
         if VirtualMachine::is_shutting_down_or_freed(vm_ptr) {
             return;
         }
@@ -2283,7 +2290,7 @@ impl FetchTasklet {
         // will deinit when done with the http client (when is_done = true)
         // Checked accessors only: the fetching VM may be a worker freed by
         // terminate() while this request was in flight.
-        let vm_ptr = core::ptr::from_ref(task_ref.javascript_vm).cast_mut();
+        let vm_ptr = task_ref.javascript_vm.as_ptr();
         let queued = !VirtualMachine::is_shutting_down_or_freed(vm_ptr) && {
             // `ct` is the inline `concurrent_task` field of the heap tasklet;
             // the queue takes ownership of its `next` link. The embedded node

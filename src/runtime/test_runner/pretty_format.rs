@@ -1,4 +1,4 @@
-use core::cell::{Cell, RefCell};
+use core::cell::RefCell;
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
 
@@ -124,25 +124,6 @@ pub enum MessageLevel {
     Error = 2,
     Debug = 3,
     Info = 4,
-}
-
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageType {
-    Log = 0,
-    Dir = 1,
-    DirXML = 2,
-    Table = 3,
-    Trace = 4,
-    StartGroup = 5,
-    StartGroupCollapsed = 6,
-    EndGroup = 7,
-    Clear = 8,
-    Assert = 9,
-    Timing = 10,
-    Profile = 11,
-    ProfileEnd = 12,
-    Image = 13,
 }
 
 #[derive(Copy, Clone, Default)]
@@ -400,61 +381,6 @@ impl Drop for Formatter<'_> {
     }
 }
 
-/// `Display` adapter for formatting a single [`JSValue`].
-///
-/// `Display::fmt` only gives us `&self`, so the
-/// mutable handle is parked behind a `Cell` and moved out for the duration of
-/// the call — this preserves unique-borrow provenance without the
-/// `&shared → *const → *mut` cast that would be UB under Stacked Borrows.
-pub struct ZigFormatter<'a, 'b> {
-    pub formatter: Cell<Option<&'a mut Formatter<'b>>>,
-    pub global: &'b JSGlobalObject,
-    pub value: JSValue,
-}
-
-impl<'a, 'b> ZigFormatter<'a, 'b> {
-    pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
-        Self { formatter: Cell::new(Some(formatter)), global, value }
-    }
-}
-
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum WriteError {
-    #[error("UhOh")]
-    UhOh,
-}
-
-impl core::fmt::Display for ZigFormatter<'_, '_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Move the unique `&mut Formatter` out of the cell for the body;
-        // re-seat it (and clear `remaining_values`) on the way out so the
-        // adapter stays reusable.
-        let formatter: &mut Formatter<'_> = self
-            .formatter
-            .take()
-            .expect("ZigFormatter::fmt re-entered or used after consumption");
-
-        // Assigning a stack-local slice into `Formatter<'b>` would require `'b: 'local`,
-        // which borrowck rejects. The single-value path never reads `remaining_values`
-        // (only `StringPossiblyFormatted` consumes it, and `ZigFormatter` always emits a
-        // single tag), so leaving it `&[]` is observationally equivalent.
-        formatter.remaining_values = &[];
-        formatter.global_this = self.global;
-
-        let result = (|| {
-            let tag = Tag::get(self.value, self.global).map_err(|_| core::fmt::Error)?;
-            let mut adapter = bun_io::FmtAdapter::new(f);
-            formatter
-                .format::<_, false>(tag, &mut adapter, self.value, self.global)
-                .map_err(|_| core::fmt::Error)
-        })();
-
-        formatter.remaining_values = &[];
-        self.formatter.set(Some(formatter));
-        result
-    }
-}
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
 pub enum Tag {
@@ -620,20 +546,7 @@ impl Tag {
             | JSType::ModuleNamespaceObject
             | JSType::GlobalObject => Tag::Object,
 
-            JSType::ArrayBuffer
-            | JSType::Int8Array
-            | JSType::Uint8Array
-            | JSType::Uint8ClampedArray
-            | JSType::Int16Array
-            | JSType::Uint16Array
-            | JSType::Int32Array
-            | JSType::Uint32Array
-            | JSType::Float16Array
-            | JSType::Float32Array
-            | JSType::Float64Array
-            | JSType::BigInt64Array
-            | JSType::BigUint64Array
-            | JSType::DataView => Tag::TypedArray,
+            t if t.is_array_buffer_like() => Tag::TypedArray,
 
             JSType::HeapBigInt => Tag::BigInt,
 
@@ -2866,7 +2779,7 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     ) -> JsResult<()> {
         let global = self.global_this;
         self.format::<C>(
-            bun_jsc::console_object::formatter::TagResult { tag: tag.into(), cell },
+            bun_jsc::console_object::formatter::TagResult { tag, cell, custom: None },
             w,
             v,
             global,

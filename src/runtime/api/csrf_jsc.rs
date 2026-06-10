@@ -71,6 +71,67 @@ fn get_optional_int_u64(
     Ok(Some(num as u64))
 }
 
+/// Reads an optional string option that must be non-empty when present.
+/// `label` is the user-facing name used in the error message.
+fn parse_non_empty_opt(
+    options: JSValue,
+    global: &JSGlobalObject,
+    property: &'static [u8],
+    label: &str,
+) -> JsResult<Option<ZigStringSlice>> {
+    match get_optional_slice(options, global, property)? {
+        Some(slice) if slice.slice().is_empty() => {
+            Err(global.throw_invalid_arguments(format_args!("{label} must be a non-empty string")))
+        }
+        other => Ok(other),
+    }
+}
+
+/// Reads the optional `encoding` option. Returns `None` when absent.
+fn parse_encoding_opt(
+    options: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<Option<csrf::TokenFormat>> {
+    let Some(encoding_js) = options.get(global, "encoding")? else {
+        return Ok(None);
+    };
+    let encoding_enum =
+        NodeEncoding::from_js_with_default_on_empty(encoding_js, global, NodeEncoding::Base64url)?;
+    match encoding_enum {
+        Some(NodeEncoding::Base64) => Ok(Some(csrf::TokenFormat::Base64)),
+        Some(NodeEncoding::Base64url) => Ok(Some(csrf::TokenFormat::Base64Url)),
+        Some(NodeEncoding::Hex) => Ok(Some(csrf::TokenFormat::Hex)),
+        _ => Err(global.throw_invalid_arguments(format_args!(
+            "Invalid format: must be 'base64', 'base64url', or 'hex'"
+        ))),
+    }
+}
+
+/// Reads the optional `algorithm` option, restricted to the algorithms CSRF
+/// supports. Returns `None` when absent.
+fn parse_algorithm_opt(
+    options: JSValue,
+    global: &JSGlobalObject,
+) -> JsResult<Option<EvpAlgorithm>> {
+    let Some(algorithm_js) = options.get(global, "algorithm")? else {
+        return Ok(None);
+    };
+    if !algorithm_js.is_string() {
+        return Err(global.throw_invalid_argument_type_value("algorithm", "string", algorithm_js));
+    }
+    match algorithm_from_js_case_insensitive(global, algorithm_js)? {
+        Some(
+            algo @ (EvpAlgorithm::Blake2b256
+            | EvpAlgorithm::Blake2b512
+            | EvpAlgorithm::Sha256
+            | EvpAlgorithm::Sha384
+            | EvpAlgorithm::Sha512
+            | EvpAlgorithm::Sha512_256),
+        ) => Ok(Some(algo)),
+        _ => Err(global.throw_invalid_arguments(format_args!("Algorithm not supported"))),
+    }
+}
+
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
@@ -109,64 +170,16 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         }
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
-            if session_id_slice.slice().is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "sessionId must be a non-empty string"
-                )));
-            }
-            session_id = Some(session_id_slice);
-        }
+        session_id = parse_non_empty_opt(options_value, global, b"sessionId", "sessionId")?;
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(encoding_opt) = parse_encoding_opt(options_value, global)? {
+            encoding = encoding_opt;
         }
 
-        if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
-            if !algorithm_js.is_string() {
-                return Err(global.throw_invalid_argument_type_value(
-                    "algorithm",
-                    "string",
-                    algorithm_js,
-                ));
-            }
-            let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
-                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
-            };
+        // Extract algorithm (optional)
+        if let Some(algo) = parse_algorithm_opt(options_value, global)? {
             algorithm = algo;
-            match algorithm {
-                EvpAlgorithm::Blake2b256
-                | EvpAlgorithm::Blake2b512
-                | EvpAlgorithm::Sha256
-                | EvpAlgorithm::Sha384
-                | EvpAlgorithm::Sha512
-                | EvpAlgorithm::Sha512_256 => {}
-                _ => {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
-                    );
-                }
-            }
         }
     }
 
@@ -249,24 +262,11 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     if args.len() > 1 && args[1].is_object() {
         let options_value = args[1];
 
-        // Extract the secret (required)
-        if let Some(secret_slice) = get_optional_slice(options_value, global, b"secret")? {
-            if secret_slice.slice().is_empty() {
-                return Err(global
-                    .throw_invalid_arguments(format_args!("Secret must be a non-empty string")));
-            }
-            secret = Some(secret_slice);
-        }
+        // Extract the secret (optional; falls back to the per-VM default)
+        secret = parse_non_empty_opt(options_value, global, b"secret", "Secret")?;
 
         // Extract sessionId (optional)
-        if let Some(session_id_slice) = get_optional_slice(options_value, global, b"sessionId")? {
-            if session_id_slice.slice().is_empty() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "sessionId must be a non-empty string"
-                )));
-            }
-            session_id = Some(session_id_slice);
-        }
+        session_id = parse_non_empty_opt(options_value, global, b"sessionId", "sessionId")?;
 
         // Extract maxAge (optional)
         if let Some(max_age_js) = get_optional_int_u64(options_value, global, "maxAge")? {
@@ -274,53 +274,13 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract encoding (optional)
-        if let Some(encoding_js) = options_value.get(global, "encoding")? {
-            let Some(encoding_enum) = NodeEncoding::from_js_with_default_on_empty(
-                encoding_js,
-                global,
-                NodeEncoding::Base64url,
-            )?
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                )));
-            };
-            encoding = match encoding_enum {
-                NodeEncoding::Base64 => csrf::TokenFormat::Base64,
-                NodeEncoding::Base64url => csrf::TokenFormat::Base64Url,
-                NodeEncoding::Hex => csrf::TokenFormat::Hex,
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "Invalid format: must be 'base64', 'base64url', or 'hex'"
-                    )));
-                }
-            };
+        if let Some(encoding_opt) = parse_encoding_opt(options_value, global)? {
+            encoding = encoding_opt;
         }
-        if let Some(algorithm_js) = options_value.get(global, "algorithm")? {
-            if !algorithm_js.is_string() {
-                return Err(global.throw_invalid_argument_type_value(
-                    "algorithm",
-                    "string",
-                    algorithm_js,
-                ));
-            }
-            let Some(algo) = algorithm_from_js_case_insensitive(global, algorithm_js)? else {
-                return Err(global.throw_invalid_arguments(format_args!("Algorithm not supported")));
-            };
+
+        // Extract algorithm (optional)
+        if let Some(algo) = parse_algorithm_opt(options_value, global)? {
             algorithm = algo;
-            match algorithm {
-                EvpAlgorithm::Blake2b256
-                | EvpAlgorithm::Blake2b512
-                | EvpAlgorithm::Sha256
-                | EvpAlgorithm::Sha384
-                | EvpAlgorithm::Sha512
-                | EvpAlgorithm::Sha512_256 => {}
-                _ => {
-                    return Err(
-                        global.throw_invalid_arguments(format_args!("Algorithm not supported"))
-                    );
-                }
-            }
         }
     }
     // Verify the token

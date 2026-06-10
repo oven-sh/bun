@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (9.50 KB) {
+    "Response (9.68 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -243,6 +243,10 @@ describe("null body status", () => {
     // the bare-number init path skips the [200, 599] range check, so 103 is
     // reachable here (unlike in the constructor)
     expect(() => Response.json({ a: 1 }, 103)).toThrow(TypeError);
+  });
+
+  test("Response.json with object init 103 is rejected by the range check first", () => {
+    expect(() => Response.json({ a: 1 }, { status: 103 })).toThrow(RangeError);
   });
 
   test("statuses outside the null body set still accept a body", () => {

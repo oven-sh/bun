@@ -892,18 +892,26 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
         const fs = require("fs");
         const dir = process.argv[1];
 
-        // Warm up: let the FSEvents loop thread, mimalloc pools, and the
-        // PathWatcherManager fd cache reach steady state.
-        for (let i = 0; i < 1000; i++) fs.watch(dir, () => {}).close();
-        Bun.gc(true);
+        async function cycle(count) {
+          for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();
+          // close() delivers the 'close' event via queueMicrotask; without a
+          // drain, every iteration's pending microtask graph (~6 objects)
+          // survives the GC below and reads as growth.
+          await 1;
+          Bun.gc(true);
+        }
+
+        // Warm up: let the FSEvents loop thread, mimalloc pools, JSC heap
+        // sizing, and the PathWatcherManager caches reach steady state
+        // (one-time growth tapers off only after ~10k cycles).
+        for (let i = 0; i < 3; i++) await cycle(5000);
         const before = process.memoryUsage.rss();
 
         // With a ~700-byte resolved path, 5000 leaked dupeZ buffers is
         // ~3.5 MB of growth on unpatched builds. Keep the iteration count
         // low enough that rapid FSEventStream recreate doesn't exhaust the
         // kernel queue (FSEventStreamCreate -> NULL).
-        for (let i = 0; i < 5000; i++) fs.watch(dir, () => {}).close();
-        Bun.gc(true);
+        await cycle(5000);
         const after = process.memoryUsage.rss();
 
         const growthMB = (after - before) / 1024 / 1024;

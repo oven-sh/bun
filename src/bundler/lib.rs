@@ -229,8 +229,9 @@ pub(crate) use bun_ast::{Index, IndexInt};
 // Re-export the `options` module. `Loader`/`Target` live in
 // `bun_options_types::bundle_enums` — `options_impl` re-exports the canonical
 // defs, so there is exactly ONE nominal type for each across
-// bundler/resolver/js_parser. Bundler-only behaviour hangs off
-// `TargetExt`/`LoaderExt` extension traits in `options_impl`.
+// bundler/resolver/js_parser. Bundler-only behaviour hangs off the
+// `LoaderExt` extension trait in `options_impl` and `TargetExt` in
+// `bake_types`.
 pub mod options {
     pub use super::OutputFile;
     pub use super::options_impl::*;

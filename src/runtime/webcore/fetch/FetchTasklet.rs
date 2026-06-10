@@ -449,11 +449,21 @@ impl FetchTasklet {
     /// thread: the JSC handles (`response`, `promise`, `readable_stream_ref`,
     /// `abort_reason`, `check_server_identity`, `signal`, `native_response`),
     /// `sink` / `request_body_streaming_buffer` (their teardown drops stored
-    /// JS callbacks), `request_body` (blob teardown can release WTF strings —
-    /// see the cross-thread string hazard note near `Response::init`), and
-    /// the `http` box itself (`AsyncHTTP::clear_data` / `Drop` release
-    /// `ZigStringSlice`s with the same hazard).
+    /// JS callbacks), the blob/stream arms of `request_body` (blob teardown
+    /// can release WTF strings — see the cross-thread string hazard note near
+    /// `Response::init`), and the `http` box itself (`AsyncHTTP::clear_data`
+    /// / `Drop` release `ZigStringSlice`s with the same hazard).
     fn free_native_data_for_dead_vm(&mut self) {
+        // The `Sendfile` arm owns only an fd — native teardown, mirroring
+        // `HTTPRequestBody::detach`. An fd is a process-wide resource that
+        // would otherwise leak toward `EMFILE` under worker churn.
+        if let HTTPRequestBody::Sendfile(sendfile) = &mut self.request_body {
+            if sendfile.offset.max(sendfile.remain) > 0 {
+                sendfile.fd.close();
+            }
+            sendfile.offset = 0;
+            sendfile.remain = 0;
+        }
         // Aliases `response_buffer` (freed below); drop the view first.
         self.result.body = None;
         drop(self.result.certificate_info.take());
@@ -1760,8 +1770,11 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
-        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
-        // this tasklet (process-lifetime singleton on the JS thread).
+        // `bun_vm()` is the live per-thread VM at `get()` time, but a worker
+        // VM can be freed by terminate() before this tasklet dies — which is
+        // why the field is a `BackRef` and never dereferenced off the JS
+        // thread without the checked `VirtualMachine` accessors (see the
+        // `javascript_vm` field doc).
         let jsc_vm = bun_ptr::BackRef::new(global_this.bun_vm());
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,

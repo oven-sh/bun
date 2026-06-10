@@ -2151,9 +2151,11 @@ impl VirtualMachine {
             p.cast()
         };
         VM.set(Some(vm));
-        if opts.is_main_thread {
-            MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
-        }
+        // NOTE: `MAIN_THREAD_VM` is deliberately NOT published here — it is
+        // the lock-free liveness fast path in `with_live_vm` /
+        // `get_main_thread_vm`, which dereference it from other threads, so
+        // it must not point at this still-zeroed allocation. Published at the
+        // end of `init`, next to `register_vm`.
 
         // ConsoleObject is self-referential (buffers + adapters) — allocate
         // stable storage and init in place.
@@ -2346,6 +2348,14 @@ impl VirtualMachine {
         // leave a stale entry behind on an `Err` return. Worker VMs are
         // unregistered in `WebWorker::shutdown()` before the allocation is
         // freed; the main VM stays registered forever.
+        //
+        // `MAIN_THREAD_VM` is published only now, for the same reason:
+        // `with_live_vm` / `get_main_thread_vm` dereference it from other
+        // threads without the registry lock, so it must never point at a
+        // partially initialized VM.
+        if opts.is_main_thread {
+            MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
+        }
         live_vm_registry::register_vm(vm);
 
         Ok(vm)

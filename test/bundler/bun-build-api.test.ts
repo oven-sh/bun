@@ -1456,7 +1456,7 @@ describe("Bun.build", () => {
     );
   });
 
-  test("moduleFederation shared namespace imports keep namespace shape", async () => {
+  test("moduleFederation reports unsupported shared namespace imports", async () => {
     const dir = tempDirWithFiles(
       "bun-build-module-federation-shared-namespace",
       {
@@ -1481,17 +1481,12 @@ describe("Bun.build", () => {
         },
         "host.ts": `
           import * as shared from "shared-lib";
-          console.log(JSON.stringify({
-            origin: shared.origin,
-            count: shared.touch().count,
-            defaultOrigin: shared.default.origin,
-          }));
+          console.log(shared.origin);
         `,
       },
     );
-    installModuleFederationRuntimeFixture(dir);
 
-    const result = await Bun.build({
+    const result = await buildNoThrow({
       entrypoints: [join(dir, "host.ts")],
       outdir: join(dir, "out"),
       target: "bun",
@@ -1506,28 +1501,10 @@ describe("Bun.build", () => {
       },
     });
 
-    expect(result.success).toBe(true);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "out/host.js")],
-      cwd: dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe(
-      JSON.stringify({
-        origin: "host",
-        count: 1,
-        defaultOrigin: "host",
-      }),
+    expect(result.success).toBe(false);
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].message).toContain(
+      "Module Federation shared namespace imports are not supported yet",
     );
   });
 

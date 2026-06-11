@@ -6895,21 +6895,33 @@ pub mod bv2_impl {
                             ctx.named_imports,
                             i as u32,
                         );
-                        if !usage.needs_namespace {
-                            if let Err(err) = self.enqueue_module_federation_shared_proxy(
-                                &mut resolve_queue,
-                                ctx.target,
-                                source.path.source_dir(),
-                                source.index.0,
-                                import_record,
-                                i as u32,
-                                &shared,
-                                usage,
-                            ) {
-                                last_error = Some(err);
-                            }
+                        if usage.needs_namespace {
+                            self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            )
+                            .add_range_error_fmt(
+                                Some(source),
+                                import_record.range,
+                                format_args!(
+                                    "Module Federation shared namespace imports are not supported yet"
+                                ),
+                            );
                             continue;
                         }
+                        if let Err(err) = self.enqueue_module_federation_shared_proxy(
+                            &mut resolve_queue,
+                            ctx.target,
+                            source.path.source_dir(),
+                            source.index.0,
+                            import_record,
+                            i as u32,
+                            &shared,
+                            usage,
+                        ) {
+                            last_error = Some(err);
+                        }
+                        continue;
                     }
                 }
 

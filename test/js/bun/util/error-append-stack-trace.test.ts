@@ -24,7 +24,9 @@ test("Error.appendStackTrace with the same error as source and destination", asy
     env: {
       ...bunEnv,
       Malloc: "1",
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      // detect_leaks=0: with Malloc=1 LeakSanitizer sees JSC's exit-time
+      // allocations and would fail the child for unrelated reports.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
     stderr: "pipe",

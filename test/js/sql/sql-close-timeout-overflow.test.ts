@@ -100,7 +100,8 @@ if (isDockerEnabled()) {
       await container.ready;
       const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
       await using sql = new SQL(url, { max: 2 });
-      const reserved = await sql.reserve();
+      // disposal calls release(); it runs before the pool's own disposal
+      await using reserved = await sql.reserve();
       const err = await reserved.close({ timeout: 2 ** 31 }).then(
         () => null,
         e => e,
@@ -109,7 +110,6 @@ if (isDockerEnabled()) {
       // the rejected close must leave the reserved connection untouched
       const rows = await reserved`select 1 as x`;
       expect(rows[0]).toEqual({ x: 1 });
-      reserved.release();
     });
   });
 }

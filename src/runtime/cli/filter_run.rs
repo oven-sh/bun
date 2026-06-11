@@ -163,7 +163,7 @@ impl<'a> ProcessHandle<'a> {
             // the same read strategy as Bun.spawn (SubprocessPipeReader).
             // Required on OHOS (blocking pipe strategy causes infinite loop)
             // and safe on other Unix platforms.
-            let mut pipe_setup =
+            let pipe_setup =
                 |reader: &mut BufferedReader, fd: sys::Fd| -> Result<(), bun_core::Error> {
                     let _ = sys::set_nonblocking(fd);
                     reader.start(fd, true)?;

@@ -7,6 +7,7 @@
       "devDependencies": {
         "@lezer/common": "^1.2.3",
         "@lezer/cpp": "^1.1.3",
+        "@module-federation/runtime": "2.5.1",
         "@types/bun": "workspace:*",
         "bun-tracestrings": "github:oven-sh/bun.report#912ca63e26c51429d3e6799aa2a6ab079b188fd8",
         "esbuild": "^0.21.5",
@@ -93,6 +94,14 @@
     "@lezer/highlight": ["@lezer/highlight@1.2.3", "", { "dependencies": { "@lezer/common": "^1.3.0" } }, "sha512-qXdH7UqTvGfdVBINrgKhDsVTJTxactNNxLk7+UMwZhU13lMHaOBlJe9Vqp907ya56Y3+ed2tlqzys7jDkTmW0g=="],
 
     "@lezer/lr": ["@lezer/lr@1.4.3", "", { "dependencies": { "@lezer/common": "^1.0.0" } }, "sha512-yenN5SqAxAPv/qMnpWW0AT7l+SxVrgG+u0tNsRQWqbrz66HIl8DnEbBObvy21J5K7+I1v7gsAnlE2VQ5yYVSeA=="],
+
+    "@module-federation/error-codes": ["@module-federation/error-codes@2.5.1", "https://bnpm.byted.org/@module-federation/error-codes/-/error-codes-2.5.1.tgz", {}, "sha512-3KIR8XbEW0Y+Fn8IAnxzDWMvXQWiS40Z1TE/Fft9aTeXP9dDAM7AiVhjTh5yF2csAwHSt/1LJVZbiCmS13mE8A=="],
+
+    "@module-federation/runtime": ["@module-federation/runtime@2.5.1", "https://bnpm.byted.org/@module-federation/runtime/-/runtime-2.5.1.tgz", { "dependencies": { "@module-federation/error-codes": "2.5.1", "@module-federation/runtime-core": "2.5.1", "@module-federation/sdk": "2.5.1" } }, "sha512-Tf33FIpnQMn8FjIUAQMtSTYQgGibfh5vEvJihFO3q/hG9LiWwLMErZvOz/+wcPsE81gzHjYPxQgMKGSP3BuG8g=="],
+
+    "@module-federation/runtime-core": ["@module-federation/runtime-core@2.5.1", "https://bnpm.byted.org/@module-federation/runtime-core/-/runtime-core-2.5.1.tgz", { "dependencies": { "@module-federation/error-codes": "2.5.1", "@module-federation/sdk": "2.5.1" } }, "sha512-UMuMsWHXeMrm8Isl8YD6/s1jmTVau3SQhp9RO4Ln+eD2lrjM4hQSwOX2xPtfT1C1I4/E6hgyZQV1K1Q/3Zpr0Q=="],
+
+    "@module-federation/sdk": ["@module-federation/sdk@2.5.1", "https://bnpm.byted.org/@module-federation/sdk/-/sdk-2.5.1.tgz", { "peerDependencies": { "node-fetch": "^2.7.0 || ^3.3.2" }, "optionalPeers": ["node-fetch"] }, "sha512-FDhCx81ZCxX1oT/fyt/bW+gpPt287GR156E/Thv1yhb9XyNHGNkqe8zqJOipOMfb07E22OMzSzOulCBvAOgn3g=="],
 
     "@octokit/app": ["@octokit/app@14.1.0", "", { "dependencies": { "@octokit/auth-app": "^6.0.0", "@octokit/auth-unauthenticated": "^5.0.0", "@octokit/core": "^5.0.0", "@octokit/oauth-app": "^6.0.0", "@octokit/plugin-paginate-rest": "^9.0.0", "@octokit/types": "^12.0.0", "@octokit/webhooks": "^12.0.4" } }, "sha512-g3uEsGOQCBl1+W1rgfwoRFUIR6PtvB2T1E4RpygeUU5LrLvlOqcxrt5lfykIeRpUPpupreGJUYl70fqMDXdTpw=="],
 

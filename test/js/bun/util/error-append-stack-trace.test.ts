@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 // Appending an error's stack trace to itself made Vector::appendVector read
 // from its own freed buffer once the append grew past the vector's capacity.
-// Malloc=1 routes WTF allocations through the system allocator so ASan builds
-// can see the use-after-free; symbolize=0 keeps the failing child fast.
 test("Error.appendStackTrace with the same error as source and destination", async () => {
   const code = `
     function f(n) {
@@ -21,13 +19,18 @@ test("Error.appendStackTrace with the same error as source and destination", asy
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
-    env: {
-      ...bunEnv,
-      Malloc: "1",
-      // detect_leaks=0: with Malloc=1 LeakSanitizer sees JSC's exit-time
-      // allocations and would fail the child for unrelated reports.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
-    },
+    // Malloc=1 routes WTF allocations through the system allocator so ASan can
+    // see the use-after-free. symbolize=0 keeps a failing child fast, and
+    // detect_leaks=0 keeps LeakSanitizer from flagging JSC's exit-time
+    // allocations. Only ASan builds can observe the bug, and Malloc=1 is not
+    // safe to force on every platform's release build.
+    env: isASAN
+      ? {
+          ...bunEnv,
+          Malloc: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+        }
+      : bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

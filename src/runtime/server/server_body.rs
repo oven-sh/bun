@@ -2191,10 +2191,19 @@ where
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = self.config.websocket.as_ref() {
-                    old_ws.unprotect();
+                    // Skip when an idle `deinit_if_we_can` already released the
+                    // old context's protections (stopped server being
+                    // reloaded); a second unprotect would unbalance the
+                    // per-value protect counts.
+                    if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
+                        old_ws.unprotect();
+                    }
                 }
                 ws.global_object = bun_ptr::BackRef::new(global);
                 self.config.websocket = Some(ws);
+                // The newly installed context holds fresh protections; let the
+                // next idle pass release them.
+                self.flags.remove(ServerFlags::HANDLERS_RELEASED);
             } else {
                 // Not adopting it: release the protections taken in
                 // `WebSocketServerContext::on_create` so the handlers don't leak.

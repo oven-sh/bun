@@ -71,12 +71,15 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
   }
 
-  await main();
-  // The closure assigned to `globalThis.callback` inside `main()` captures
-  // `server`; left in place it roots the JS Server wrapper through every GC
-  // below, so the wrapper never finalizes and the native NewServer box (and
-  // everything its config owns) is still live at process exit.
-  globalThis.callback = undefined;
+  try {
+    await main();
+  } finally {
+    // The closure assigned to `globalThis.callback` inside `main()` captures
+    // `server`; left in place it roots the JS Server wrapper through every GC
+    // below, so the wrapper never finalizes and the native NewServer box (and
+    // everything its config owns) is still live at process exit.
+    globalThis.callback = undefined;
+  }
 
   if (closeActiveConnections) {
     await promise;

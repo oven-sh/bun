@@ -383,6 +383,25 @@ describe("errors", () => {
     expect(called).toBe(false);
   });
 
+  it("handles a 'target' whose toString throws", () => {
+    let called = false;
+    const opts = {
+      setup: () => {
+        called = true;
+      },
+      target: {
+        toString() {
+          throw new Error("target toString error");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("target toString error");
+    expect(called).toBe(false);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

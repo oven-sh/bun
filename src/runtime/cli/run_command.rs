@@ -59,6 +59,24 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
+/// OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd(),
+/// which can fail on hmdfs/tmpfs. If cwd is "/" or empty (the getcwd
+/// fallback), use $HOME instead.
+/// Remove when: OHOS fixes getcwd on hmdfs/tmpfs filesystems.
+#[cfg(target_env = "ohos")]
+pub(crate) fn ohos_set_pwd(
+    env: &mut DotEnv::Loader<'_>,
+    cwd: &[u8],
+) -> Result<(), bun_core::Error> {
+    let pwd = if cwd == b"/" || cwd.is_empty() {
+        bun_core::env_var::HOME::get().unwrap_or(cwd)
+    } else {
+        cwd
+    };
+    env.map.put(b"PWD", pwd)?;
+    Ok(())
+}
+
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
 // the shell escaper cannot silently diverge.
@@ -267,6 +285,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> Result<(), bun_core::Error> {
+        // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
+        // See ohos_set_pwd() for details.
+        #[cfg(target_env = "ohos")]
+        ohos_set_pwd(env, cwd)?;
+
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin = Self::find_shell(shell_search_path, cwd)
             .ok_or_else(|| bun_core::err!("MissingShell"))?;
@@ -2165,6 +2188,11 @@ impl RunCommand {
         original_script_for_bun_run: Option<&[u8]>,
     ) -> Result<::core::convert::Infallible, bun_core::Error> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
+
+        // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
+        // See ohos_set_pwd() for details.
+        #[cfg(target_env = "ohos")]
+        ohos_set_pwd(env, cwd)?;
 
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());

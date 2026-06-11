@@ -74,6 +74,13 @@ extern "C" bool is_executable_file(const char* path)
 #if defined(__OHOS__)
     // OHOS kernel bug: open(O_EXEC) doesn't check file x permission bit,
     // so a 0660 file incorrectly succeeds. Use access(X_OK) instead.
+    // But access(X_OK) returns true for directories (x bit = traversal),
+    // so we must also verify it is a regular file, not a directory.
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return false;
+    if (!S_ISREG(st.st_mode))
+        return false;
     return access(path, X_OK) == 0;
 #elif defined(O_EXEC)
     // macOS: O_EXEC correctly checks x permission.

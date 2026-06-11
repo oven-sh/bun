@@ -253,7 +253,16 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    const onClose = onTransactionDisconnected.bind(state);
+    const onTransactionClosed = onTransactionDisconnected.bind(state);
+    function onClose(err: Error) {
+      onTransactionClosed(err);
+      // The reservation holds one pool slot (queryCount/totalQueries) that is
+      // normally returned by reserved_sql.release(). When the underlying
+      // connection closes first (reserved_sql.close() or an unexpected
+      // disconnect), release() can no longer run, so return the slot here;
+      // otherwise a graceful sql.close() waits on it forever.
+      pool.release(pooledConnection);
+    }
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
@@ -387,6 +396,18 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      // closing the connection fires onClose, which returns the reservation's
+      // pool slot via pool.release
+      function closeConnection() {
+        if (state.connectionState & ReservedConnectionState.closed) {
+          return;
+        }
+        state.connectionState |= ReservedConnectionState.closed;
+        for (const query of reserveQueries) {
+          (query as Query<any, any>).cancel();
+        }
+        pooledConnection.close();
+      }
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
@@ -399,29 +420,23 @@ const SQL: typeof Bun.SQL = function SQL(
           const pending_queries = Array.from(reserveQueries);
           const pending_transactions = Array.from(reservedTransaction);
           const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
+            closeConnection();
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)])
+            // this chain is internal bookkeeping; the queries' own consumers
+            // observe their rejections
+            .catch(() => {})
+            .finally(() => {
+              clearTimeout(timer);
+              closeConnection();
+              resolve();
+            });
           return promise;
         }
       }
-      state.connectionState |= ReservedConnectionState.closed;
-      for (const query of reserveQueries) {
-        (query as Query<any, any>).cancel();
-      }
-
-      pooledConnection.close();
+      closeConnection();
 
       return Promise.$resolve(undefined);
     };

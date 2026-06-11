@@ -460,9 +460,6 @@ pub mod bv2_impl {
             /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
             /// .import_source`) when `features.react_fast_refresh` is on.
             pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
-            /// Mirrors `Framework.is_built_in_react` — read by
-            /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
-            pub(crate) is_built_in_react: bool,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -473,13 +470,11 @@ pub mod bv2_impl {
                 built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
-                is_built_in_react: bool,
             ) -> Self {
                 Self {
                     built_in_modules,
                     server_components,
                     react_fast_refresh,
-                    is_built_in_react,
                 }
             }
         }

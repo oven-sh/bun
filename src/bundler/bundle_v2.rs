@@ -6895,19 +6895,21 @@ pub mod bv2_impl {
                             ctx.named_imports,
                             i as u32,
                         );
-                        if let Err(err) = self.enqueue_module_federation_shared_proxy(
-                            &mut resolve_queue,
-                            ctx.target,
-                            source.path.source_dir(),
-                            source.index.0,
-                            import_record,
-                            i as u32,
-                            &shared,
-                            usage,
-                        ) {
-                            last_error = Some(err);
+                        if !usage.needs_namespace {
+                            if let Err(err) = self.enqueue_module_federation_shared_proxy(
+                                &mut resolve_queue,
+                                ctx.target,
+                                source.path.source_dir(),
+                                source.index.0,
+                                import_record,
+                                i as u32,
+                                &shared,
+                                usage,
+                            ) {
+                                last_error = Some(err);
+                            }
+                            continue;
                         }
-                        continue;
                     }
                 }
 

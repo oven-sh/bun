@@ -17,6 +17,7 @@ import {
   tempDirWithFilesAnon,
 } from "harness";
 import path, { dirname, join } from "path";
+import { pathToFileURL } from "url";
 import { buildNoThrow } from "./buildNoThrow";
 
 type ModuleFederationHostBundler = "webpack" | "rspack";
@@ -552,7 +553,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -618,7 +619,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -698,7 +699,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
         runtimePlugins: [
@@ -772,7 +773,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -1009,7 +1010,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
       },
@@ -1098,7 +1099,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           pluginApp: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
         runtimePlugins: [
@@ -1176,7 +1177,7 @@ describe("Bun.build", () => {
       target: "bun",
       moduleFederation: {
         remotes: {
-          moduleApp: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+          moduleApp: pathToFileURL(join(dir, "remote-entry.js")).href,
         },
         runtimePlugins: [
           [join(dir, "runtime-plugin.ts"), { flag: "module-options" }],
@@ -1256,7 +1257,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
           },
         },
       },
@@ -1429,7 +1430,7 @@ describe("Bun.build", () => {
       cmd: [
         bunExe(),
         "host.ts",
-        new URL(`file://${join(remoteDir, "out/remoteEntry.js.mjs")}`).href,
+        pathToFileURL(join(remoteDir, "out/remoteEntry.js.mjs")).href,
       ],
       cwd: hostDir,
       env: bunEnv,
@@ -1451,6 +1452,81 @@ describe("Bun.build", () => {
         exposedOrigin: "host",
         count: 2,
         hostFactoryCount: 1,
+      }),
+    );
+  });
+
+  test("moduleFederation shared namespace imports keep namespace shape", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-shared-namespace",
+      {
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+              export const origin = "host";
+              export const instance = { count: 0 };
+              export function touch() {
+                instance.count++;
+                return instance;
+              }
+              export default { origin, instance };
+            `,
+          },
+        },
+        "host.ts": `
+          import * as shared from "shared-lib";
+          console.log(JSON.stringify({
+            origin: shared.origin,
+            count: shared.touch().count,
+            defaultOrigin: shared.default.origin,
+          }));
+        `,
+      },
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        name: "host",
+        shared: {
+          "shared-lib": {
+            singleton: true,
+            version: "1.0.0",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        origin: "host",
+        count: 1,
+        defaultOrigin: "host",
       }),
     );
   });
@@ -1611,8 +1687,8 @@ describe("Bun.build", () => {
       cmd: [
         bunExe(),
         "host.ts",
-        new URL(`file://${join(strictRemoteDir, "out/remoteEntry.js.mjs")}`).href,
-        new URL(`file://${join(fallbackRemoteDir, "out/remoteEntry.js.mjs")}`).href,
+        pathToFileURL(join(strictRemoteDir, "out/remoteEntry.js.mjs")).href,
+        pathToFileURL(join(fallbackRemoteDir, "out/remoteEntry.js.mjs")).href,
       ],
       cwd: hostDir,
       env: bunEnv,
@@ -1961,6 +2037,30 @@ describe("Bun.build", () => {
         },
       } as any),
     ).toThrow("moduleFederation.exposes entry.import must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          shared: {
+            react: "",
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.shared entry must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          shared: {
+            react: {
+              import: "",
+            },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.shared entry.import must not be empty");
 
     expect(() =>
       Bun.build({

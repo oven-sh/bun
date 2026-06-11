@@ -136,7 +136,7 @@ pub mod js_bundler {
         property_name: &str,
     ) -> JsResult<Vec<Box<[u8]>>> {
         if value.is_string() {
-            return Ok(vec![js_value_to_boxed_string(
+            return Ok(vec![js_value_to_non_empty_boxed_string(
                 global_this,
                 value,
                 property_name,
@@ -153,7 +153,11 @@ pub mod js_bundler {
         let mut values = Vec::new();
         let mut iter = value.array_iterator(global_this)?;
         while let Some(entry) = iter.next()? {
-            values.push(js_value_to_boxed_string(global_this, entry, property_name)?);
+            values.push(js_value_to_non_empty_boxed_string(
+                global_this,
+                entry,
+                property_name,
+            )?);
         }
         Ok(values)
     }
@@ -454,7 +458,7 @@ pub mod js_bundler {
                     shared.push(options::ModuleFederationShared {
                         name,
                         import: options::ModuleFederationSharedImport::Path(
-                            js_value_to_boxed_string(
+                            js_value_to_non_empty_boxed_string(
                                 global_this,
                                 shared_value,
                                 "moduleFederation.shared entry",
@@ -482,11 +486,13 @@ pub mod js_bundler {
                         options::ModuleFederationSharedImport::Disabled
                     }
                     Some(import_value) if !import_value.is_undefined_or_null() => {
-                        options::ModuleFederationSharedImport::Path(js_value_to_boxed_string(
-                            global_this,
-                            import_value,
-                            "moduleFederation.shared entry.import",
-                        )?)
+                        options::ModuleFederationSharedImport::Path(
+                            js_value_to_non_empty_boxed_string(
+                                global_this,
+                                import_value,
+                                "moduleFederation.shared entry.import",
+                            )?,
+                        )
                     }
                     _ => options::ModuleFederationSharedImport::Auto,
                 };

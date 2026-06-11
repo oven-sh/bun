@@ -13289,3 +13289,104 @@ console.log("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// LISTEN/NOTIFY delivery does not require a live PostgreSQL server: a mock
+// backend speaking the wire protocol exercises the whole path end to end
+// without docker. BackendKeyData ('K') populates state.pid/state.secret, the
+// LISTEN simple-query ack resolves listen() and fires onlisten, pushed
+// NotificationResponse ('A') messages reach the onnotify callback (and are
+// dropped for channels without listeners), and tearing down the subscription
+// sends UNLISTEN on the dedicated listen connection.
+test("sql.listen delivers NotificationResponse payloads from a mock server", async () => {
+  const pkt = (type: string, body: Buffer) => {
+    const header = Buffer.alloc(5);
+    header.write(type, 0);
+    header.writeInt32BE(body.length + 4, 1);
+    return Buffer.concat([header, body]);
+  };
+  const int32 = (n: number) => {
+    const b = Buffer.alloc(4);
+    b.writeInt32BE(n, 0);
+    return b;
+  };
+  const cstr = (s: string) => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+
+  const authenticationOk = pkt("R", int32(0));
+  const backendKeyData = pkt("K", Buffer.concat([int32(7777), int32(424242)]));
+  const readyForQuery = pkt("Z", Buffer.from("I"));
+  const commandComplete = (tag: string) => pkt("C", cstr(tag));
+  const notification = (pid: number, channel: string, payload: string) =>
+    pkt("A", Buffer.concat([int32(pid), cstr(channel), cstr(payload)]));
+
+  const queries: string[] = [];
+  const server = net.createServer(socket => {
+    let startup = true;
+    socket.on("data", data => {
+      if (startup) {
+        startup = false;
+        socket.write(Buffer.concat([authenticationOk, backendKeyData, readyForQuery]));
+        return;
+      }
+      if (data[0] !== 0x51 /* 'Q' */) return;
+      // The Q message may be followed by Flush/Sync in the same segment; the
+      // int32 after the type byte covers itself plus the body, so the query
+      // text (sans trailing NUL) ends at offset `length`.
+      const length = data.readInt32BE(1);
+      const query = data.toString("utf8", 5, length);
+      queries.push(query);
+      if (query.startsWith("LISTEN")) {
+        socket.write(
+          Buffer.concat([
+            commandComplete("LISTEN"),
+            readyForQuery,
+            // No listener is registered for this channel: must be ignored.
+            notification(7777, "mock_other_channel", "ignore-me"),
+            notification(7777, "mock_channel", "first"),
+            notification(7777, "mock_channel", "sécond 🎉"),
+          ]),
+        );
+      } else {
+        socket.write(Buffer.concat([commandComplete("UNLISTEN"), readyForQuery]));
+      }
+    });
+    socket.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as net.AddressInfo).port;
+
+  const db = postgres({
+    url: `postgres://u@127.0.0.1:${port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+  try {
+    const received: string[] = [];
+    const { promise: gotBoth, resolve } = Promise.withResolvers<void>();
+    let onlistenCount = 0;
+    const sub = await db.listen(
+      "mock_channel",
+      payload => {
+        received.push(payload);
+        if (received.length === 2) resolve();
+      },
+      () => {
+        onlistenCount++;
+      },
+    );
+
+    expect(onlistenCount).toBe(1);
+    // pid/secret come from the BackendKeyData message via the native
+    // processId/secretKey getters.
+    expect(sub.state).toEqual({ pid: 7777, secret: 424242 });
+
+    await gotBoth;
+    expect(received).toEqual(["first", "sécond 🎉"]);
+
+    await sub.unlisten();
+    expect(queries).toEqual(['LISTEN "mock_channel"', 'UNLISTEN "mock_channel"']);
+  } finally {
+    await db.close().catch(() => {});
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

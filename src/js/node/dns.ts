@@ -322,6 +322,12 @@ function lookup(hostname, options, callback) {
     })
     .catch(err => {
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
+      // Node.js getaddrinfo errors (DNSException) carry the looked-up
+      // hostname both as a property and at the end of the message.
+      if (err.syscall === "getaddrinfo" && !err.hostname && hostname) {
+        err.hostname = hostname;
+        err.message = `${err.syscall} ${err.code} ${hostname}`;
+      }
       callback(err, undefined, undefined);
     });
 }

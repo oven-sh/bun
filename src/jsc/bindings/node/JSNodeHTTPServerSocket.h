@@ -67,6 +67,11 @@ public:
     bool isClosed() const;
     bool isAuthorized() const;
 
+    /* Switch the connection into CONNECT-style tunnel mode after an accepted
+     * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
+     * ondata callback as opaque data. */
+    void upgradeToTunnelMode();
+
     ~JSNodeHTTPServerSocket();
 
     JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* structure, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response);

@@ -649,9 +649,17 @@ describe("proxy Basic auth uses standard base64 (#31780)", () => {
 
 test("axios with https-proxy-agent", async () => {
   httpProxyServer.log.length = 0;
-  const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
-    rejectUnauthorized: false, // this should work with self-signed certs
-  });
+  // Like Node.js, the options passed to the HttpsProxyAgent constructor only
+  // configure the connection to the proxy itself; the TLS options for the
+  // tunneled target connection come from the request options. Axios cannot
+  // pass per-request TLS options, so use an agent subclass that adds them to
+  // the tunneled connection (the usual Node.js workaround).
+  class SelfSignedHttpsProxyAgent extends HttpsProxyAgent<string> {
+    connect(req: any, opts: any) {
+      return super.connect(req, { ...opts, rejectUnauthorized: false });
+    }
+  }
+  const httpsAgent = new SelfSignedHttpsProxyAgent(httpProxyServer.url);
 
   const result = await axios.get(httpsServer.url.href, {
     httpsAgent,

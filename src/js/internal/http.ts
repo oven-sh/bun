@@ -353,8 +353,26 @@ function emitErrorNt(msg, err, callback) {
 const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kNeedDrain = Symbol("kNeedDrain");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+
+// Cached HTTP Date header value, refreshed once a second like Node.js does.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+let utcCache;
+function utcDate() {
+  if (!utcCache) cacheUTCDate();
+  return utcCache;
+}
+function cacheUTCDate() {
+  const d = new Date();
+  utcCache = d.toUTCString();
+  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
+  if (typeof timer.unref === "function") timer.unref();
+}
+function resetUTCCache() {
+  utcCache = undefined;
+}
 
 function ipToInt(ip) {
   const octets = ip.split(".");
@@ -445,18 +463,27 @@ class ProxyConfig {
   }
 }
 
-function parseProxyConfigFromEnv(env, protocol, keepAlive) {
-  // We only support proxying for HTTP and HTTPS requests.
-  if (protocol !== "http:" && protocol !== "https:") return null;
+function parseProxyUrl(env, protocol) {
   // Get the proxy url - following the most popular convention, lower case takes precedence.
   // See https://about.gitlab.com/blog/we-need-to-talk-no-proxy/#http_proxy-and-https_proxy
   const proxyUrl = protocol === "https:" ? env.https_proxy || env.HTTPS_PROXY : env.http_proxy || env.HTTP_PROXY;
   // No proxy settings from the environment, ignore.
-  if (!proxyUrl) return null;
+  if (!proxyUrl) {
+    return null;
+  }
 
   if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
     throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
   }
+
+  return proxyUrl;
+}
+
+function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+  // We only support proxying for HTTP and HTTPS requests.
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  const proxyUrl = parseProxyUrl(env, protocol);
+  if (proxyUrl === null) return null;
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
@@ -527,6 +554,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kNeedDrain,
   kOptions,
   kOutHeaders,
   kParser,
@@ -549,6 +577,7 @@ export {
   noBodySymbol,
   optionsSymbol,
   parseProxyConfigFromEnv,
+  parseProxyUrl,
   reqSymbol,
   runSymbol,
   serverSymbol,
@@ -563,6 +592,7 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
+  utcDate,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
@@ -825,4 +826,77 @@ it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   });
 
   await promise;
+});
+
+// https://github.com/oven-sh/bun/issues/32126
+it("AES-GCM stays correct when OPENSSL_ia32cap masks AES-NI but not VAES", async () => {
+  const script = `
+    const crypto = require("node:crypto");
+    const assert = require("node:assert");
+    function run(alg, keyLen, pt) {
+      const key = Buffer.alloc(keyLen);
+      const iv = Buffer.alloc(12);
+      const c = crypto.createCipheriv(alg, key, iv);
+      const ct = Buffer.concat([c.update(pt), c.final()]);
+      const tag = c.getAuthTag();
+      const d = crypto.createDecipheriv(alg, key, iv);
+      d.setAuthTag(tag);
+      const rt = Buffer.concat([d.update(ct), d.final()]);
+      assert(rt.equals(pt), "round-trip failed for " + alg);
+      return { ct: ct.toString("hex"), tag: tag.toString("hex") };
+    }
+    // Decrypt the authentic NIST test-case-2 ciphertext separately: the broken
+    // dispatch emitted garbage plaintext while the tag still verified.
+    const d = crypto.createDecipheriv("aes-128-gcm", Buffer.alloc(16), Buffer.alloc(12));
+    d.setAuthTag(Buffer.from("ab6e47d42cec13bdf53a67b21257bddf", "hex"));
+    const decNist = Buffer.concat([
+      d.update(Buffer.from("0388dace60b6a392f328c2b971b2fe78", "hex")),
+      d.final(),
+    ]).toString("hex");
+    console.log(JSON.stringify({
+      gcm128: run("aes-128-gcm", 16, Buffer.alloc(16)),
+      gcm192: run("aes-192-gcm", 24, Buffer.alloc(16)),
+      gcm256: run("aes-256-gcm", 32, Buffer.alloc(16)),
+      big: run("aes-128-gcm", 16, Buffer.alloc(1024, 7)),
+      decNist,
+    }));
+  `;
+
+  async function runWithCaps(caps) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, OPENSSL_ia32cap: caps },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error(`child (OPENSSL_ia32cap=${caps}) exited with ${exitCode}: ${stderr}`);
+    }
+    return JSON.parse(stdout);
+  }
+
+  // "~0x200000000000000" clears AES-NI (CPUID.1:ECX bit 25) from the first
+  // OPENSSL_ia32cap word; ":~0x60000000000" additionally clears
+  // VAES/VPCLMULQDQ (CPUID.7:ECX bits 9-10) from the second. On non-x86-64
+  // platforms or CPUs without VAES, the masked runs dispatch the same as the
+  // unmasked one and pass trivially.
+  const [unmasked, aesniMasked, bothMasked] = await Promise.all(
+    [undefined, "~0x200000000000000", "~0x200000000000000:~0x60000000000"].map(runWithCaps),
+  );
+
+  // GCM spec (McGrew & Viega) test cases 2, 8 and 14: all-zero key, IV and
+  // 16-byte plaintext.
+  const expected = {
+    gcm128: { ct: "0388dace60b6a392f328c2b971b2fe78", tag: "ab6e47d42cec13bdf53a67b21257bddf" },
+    gcm192: { ct: "98e7247c07f0fe411c267e4384b0f600", tag: "2ff58d80033927ab8ef4d4587514f0fb" },
+    gcm256: { ct: "cea7403d4d606b6e074ec5d3baf39d18", tag: "d0d1c8a799996bf0265b98b5d48ab919" },
+    decNist: "00000000000000000000000000000000",
+    // Multi-block output has no published vector; it must be identical no
+    // matter which implementation the capability mask selects.
+    big: unmasked.big,
+  };
+  expect(unmasked).toEqual(expected);
+  expect(aesniMasked).toEqual(expected);
+  expect(bothMasked).toEqual(expected);
 });

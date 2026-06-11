@@ -36,6 +36,15 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // AES-GCM picked the stitched VAES implementation based on CPU bits alone,
+  // without checking that the key schedule came from aes_hw_set_encrypt_key.
+  // With OPENSSL_ia32cap masking AES-NI but not VAES, the VAES bulk assembly
+  // ran against a vpaes-format key schedule and silently produced wrong
+  // output. Upstream BoringSSL main has the same bug (its aarch64 branches
+  // gate on is_hwaes; the x86-64 VAES branches don't).
+  // https://github.com/oven-sh/bun/issues/32126
+  patches: ["patches/boringssl/gcm-vaes-requires-hwaes-key-schedule.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

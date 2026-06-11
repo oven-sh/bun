@@ -1093,6 +1093,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = user_route.server.cast_mut();
         let index = user_route.id;
 
+        // Same stopped-server guard as the `on_request` trampoline: once the
+        // idle pass after a graceful `stop()` has run, the JS wrapper (which
+        // owns the route list this dispatch reads) may already be collected,
+        // so close late requests on surviving keep-alive connections instead
+        // of dispatching them.
+        // SAFETY: `server` is the live backref stored in `user_route`.
+        if unsafe { (*server).flags.contains(ServerFlags::HANDLERS_RELEASED) } {
+            // S012: `NewAppResponse<SSL>` is a ZST opaque — safe deref.
+            let resp = bun_opaque::opaque_deref_mut(resp);
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
+
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = Self::prepare_js_request_context(
             server,

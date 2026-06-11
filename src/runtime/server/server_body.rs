@@ -2833,6 +2833,15 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
+        // Same stopped-server guard as the H1 `on_user_route_request`
+        // trampoline: after the idle release the JS wrapper that owns the
+        // route list may already be collected.
+        if server.flags.contains(ServerFlags::HANDLERS_RELEASED) {
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
+
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
             req,
@@ -3215,6 +3224,15 @@ where
         );
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
+
+        // Same stopped-server guard as the request trampolines: after the
+        // idle release the JS wrapper that owns the route list may already be
+        // collected, so refuse late upgrades on surviving connections.
+        if server_ref.flags.contains(ServerFlags::HANDLERS_RELEASED) {
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
 
         let should_deinit_context = core::cell::Cell::new(false);
         // SAFETY: `server_ptr` is the live heap server registered for this route;

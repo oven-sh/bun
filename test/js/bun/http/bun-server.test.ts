@@ -676,6 +676,68 @@ test("request on a surviving keep-alive connection after stop() closes instead o
   expect(exitCode).toBe(0);
 });
 
+test("request to a declared route on a surviving keep-alive connection after stop() closes instead of dispatching", async () => {
+  // Same scenario as above, but through the per-route uws trampoline
+  // (routes: { "/path": fn }) instead of the catch-all fetch dispatch.
+  const script = /* js */ `
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: { "/foo": () => new Response("foo") },
+      fetch() { return new Response("catch-all"); },
+    });
+
+    const firstResponse = Promise.withResolvers();
+    const outcome = Promise.withResolvers();
+    let buffered = "";
+    let stopped = false;
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, chunk) {
+          buffered += chunk.toString();
+          if (!stopped) {
+            if (buffered.includes("\\r\\n\\r\\nfoo")) {
+              buffered = "";
+              firstResponse.resolve();
+            }
+            return;
+          }
+          if (buffered.includes("HTTP/1.1 200")) outcome.resolve("served");
+        },
+        close() { outcome.resolve("closed"); },
+        error() { outcome.resolve("closed"); },
+      },
+    });
+
+    socket.write("GET /foo HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+    await firstResponse.promise;
+
+    // Nothing is in flight: the handler release runs inside stop().
+    server.stop();
+    stopped = true;
+
+    socket.write("GET /foo HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+    const result = await outcome.promise;
+    if (result !== "closed") throw new Error("late route request was served after stop(): " + result);
+    console.log("survived");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("survived\n");
+  expect(exitCode).toBe(0);
+});
+
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({

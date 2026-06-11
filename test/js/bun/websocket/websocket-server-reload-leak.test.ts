@@ -212,3 +212,142 @@ test("reloading a stopped server does not release another server's shared websoc
   expect({ afterReload, echoed }).toEqual({ afterReload: base + 2, echoed: "pong:hi" });
   expect(exitCode).toBe(0);
 });
+
+// A graceful stop() closes only the listener; websockets upgraded earlier
+// stay connected and, because each ServerWebSocket points at the inline
+// config.websocket.handler storage, they dispatch through whichever context a
+// reload() swaps in. The live-socket count must follow the swap or the idle
+// release runs while those sockets can still invoke the new handlers.
+test("reload of a gracefully stopped server keeps handlers protected while a websocket is still connected", async () => {
+  const script = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const protectedAsyncFns = () => heapStats().protectedObjectTypeCounts.AsyncFunction ?? 0;
+
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("ok");
+      },
+      // Plain functions so only the reload's async handlers are counted.
+      websocket: { open(ws) {}, message(ws, m) {} },
+    });
+
+    const opened = Promise.withResolvers();
+    const echoedMessage = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    const client = new WebSocket(server.url.href.replace("http", "ws"));
+    client.onopen = () => opened.resolve();
+    client.onmessage = e => echoedMessage.resolve(e.data);
+    client.onerror = () => {
+      opened.reject(new Error("client websocket errored"));
+      echoedMessage.reject(new Error("client websocket errored"));
+    };
+    client.onclose = () => closed.resolve();
+    await opened.promise;
+
+    // Graceful: the upgraded socket stays connected, so the server is not
+    // idle and nothing is released here.
+    server.stop();
+
+    server.reload({
+      fetch() { return new Response("reloaded"); },
+      websocket: {
+        async open(ws) {},
+        async message(ws, m) { ws.send("pong:" + m); },
+      },
+    });
+    // The connected socket now dispatches to the reload's handlers; they must
+    // still be protected.
+    const afterReload = protectedAsyncFns();
+
+    Bun.gc(true);
+    client.send("hi");
+    const echoed = await echoedMessage.promise;
+    client.close();
+    await closed.promise;
+    console.log(JSON.stringify({ base, afterReload, echoed }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { base, afterReload, echoed } = JSON.parse(stdout.trim());
+  expect({ afterReload, echoed }).toEqual({ afterReload: base + 2, echoed: "pong:hi" });
+  expect(exitCode).toBe(0);
+});
+
+// Same mechanism, opposite order: reload first (hot-reload style) while a
+// websocket is connected, then stop() gracefully. The carried-over count must
+// keep the idle release from firing until the socket actually closes.
+test("graceful stop after a reload keeps handlers protected while a websocket is still connected", async () => {
+  const script = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const protectedAsyncFns = () => heapStats().protectedObjectTypeCounts.AsyncFunction ?? 0;
+
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("ok");
+      },
+      websocket: { open(ws) {}, message(ws, m) {} },
+    });
+
+    const opened = Promise.withResolvers();
+    const echoedMessage = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    const client = new WebSocket(server.url.href.replace("http", "ws"));
+    client.onopen = () => opened.resolve();
+    client.onmessage = e => echoedMessage.resolve(e.data);
+    client.onerror = () => {
+      opened.reject(new Error("client websocket errored"));
+      echoedMessage.reject(new Error("client websocket errored"));
+    };
+    client.onclose = () => closed.resolve();
+    await opened.promise;
+
+    server.reload({
+      fetch() { return new Response("reloaded"); },
+      websocket: {
+        async open(ws) {},
+        async message(ws, m) { ws.send("pong:" + m); },
+      },
+    });
+
+    // The socket opened before the reload is still connected, so this
+    // graceful stop must not release the reload's handlers.
+    server.stop();
+    const afterStop = protectedAsyncFns();
+
+    Bun.gc(true);
+    client.send("hi");
+    const echoed = await echoedMessage.promise;
+    client.close();
+    await closed.promise;
+    console.log(JSON.stringify({ base, afterStop, echoed }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { base, afterStop, echoed } = JSON.parse(stdout.trim());
+  expect({ afterStop, echoed }).toEqual({ afterStop: base + 2, echoed: "pong:hi" });
+  expect(exitCode).toBe(0);
+});

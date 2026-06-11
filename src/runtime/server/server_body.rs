@@ -2198,6 +2198,17 @@ where
                     if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
                         old_ws.unprotect();
                     }
+                    // Sockets opened under the old context keep dispatching
+                    // through the same inline storage after the swap (each
+                    // `ServerWebSocket` holds a `BackRef` to
+                    // `config.websocket.handler`), so the live-socket count
+                    // must follow them. A fresh zero would make
+                    // `has_active_web_sockets()` report an idle server and let
+                    // `deinit_if_we_can` release the new handlers while those
+                    // sockets can still invoke them.
+                    ws.handler
+                        .active_connections
+                        .set(old_ws.handler.active_connections.get());
                 }
                 ws.global_object = bun_ptr::BackRef::new(global);
                 self.config.websocket = Some(ws);

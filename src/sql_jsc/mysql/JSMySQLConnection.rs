@@ -698,8 +698,22 @@ impl JSMySQLConnection {
         scopeguard::defer! {
             this.update_reference_type();
         }
-        let queries = this.get_queries_array();
-        this.connection_mut().clean_queue_and_close(None, queries);
+        use my_sql_connection::Status as S;
+        match this.connection.get().status {
+            // A close while the connect/handshake is still in flight gets no
+            // socket event (uws skips the on_close dispatch for sockets whose
+            // connect never completed), so the socket-close -> on_close ->
+            // fail chain never runs: fail directly so the JS onclose callback
+            // fires and the status goes terminal instead of staying
+            // Connecting forever.
+            S::Connecting | S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
+                this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
+            }
+            S::Connected | S::Disconnected | S::Failed => {
+                let queries = this.get_queries_array();
+                this.connection_mut().clean_queue_and_close(None, queries);
+            }
+        }
         Ok(JSValue::UNDEFINED)
     }
 

@@ -1440,7 +1440,27 @@ impl PostgresSQLConnection {
     }
 
     fn close(&self) {
-        self.disconnect();
+        // A close while the connect/handshake is still in flight gets no
+        // socket event: uws skips the on_close dispatch for sockets whose
+        // connect never completed, and `disconnect()` only tears down
+        // connected sockets. Fail the connection directly so the JS onclose
+        // callback fires, pending queries are rejected, and the in-flight
+        // socket is torn down instead of completing the handshake after
+        // close.
+        if !self.vm().is_shutting_down()
+            && matches!(
+                self.status.get(),
+                Status::Connecting | Status::SentStartupMessage
+            )
+        {
+            self.fail(b"Connection closed", AnyPostgresError::ConnectionClosed);
+            // closing an in-flight connect dispatches no socket event, so the
+            // poll ref taken at creation is released here rather than in a
+            // socket callback
+            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        } else {
+            self.disconnect();
+        }
         self.unregister_auto_flusher();
         self.write_buffer.with_mut(|b| b.clear_and_free());
     }

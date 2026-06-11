@@ -931,7 +931,11 @@ it.skipIf(isWindows)(
 );
 
 // https://github.com/oven-sh/bun/issues/32087
-describe("socket write while data is buffered natively", () => {
+// The writev fast path under test is compiled only on POSIX (`#[cfg(unix)]` in
+// write_or_end_buffered); on Windows how much data a send accepts is machine
+// dependent, so the "data is buffered natively" precondition cannot be
+// constructed reliably there.
+describe.skipIf(isWindows)("socket write while data is buffered natively", () => {
   // Byte-counting sink. Counts received bytes per fill value by scanning runs
   // with indexOf so multi-MB streams stay cheap to verify in debug builds.
   // STALL_ON_ACCEPT=1 blocks the event loop on accept so nothing is read

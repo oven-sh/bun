@@ -916,12 +916,24 @@ class PostgresAdapter
     } else if (this.#listenConnection && !this.#listenChannels.has(channel)) {
       await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
     }
+  }
 
-    // No remaining subscriptions — cancel any pending reconnect so it does not
-    // keep the event loop alive after the user is done listening.
-    if (this.#listenChannels.size === 0 && this.#listenReconnectTimer) {
+  // After the last subscription is removed there is nothing left to receive:
+  // drop the dedicated connection (and any pending reconnect) rather than
+  // keeping an idle ref()'d backend session that would hold the event loop
+  // open. The next listen() recreates it.
+  #closeListenConnectionIfIdle() {
+    if (this.#listenChannels.size > 0) return;
+    if (this.#listenReconnectTimer) {
       clearTimeout(this.#listenReconnectTimer);
       this.#listenReconnectTimer = null;
+    }
+    const conn = this.#listenConnection;
+    this.#listenConnection = null;
+    if (conn) {
+      try {
+        conn.close();
+      } catch {}
     }
   }
 

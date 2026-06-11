@@ -13321,10 +13321,12 @@ console.log("FIXTURE_DONE");
 // Minimal PostgreSQL wire-protocol backend for LISTEN/NOTIFY tests without
 // docker. The startup message gets AuthenticationOk + BackendKeyData(pid,
 // secret) + ReadyForQuery; every simple query is acked with CommandComplete +
-// ReadyForQuery, and LISTEN queries additionally push the configured
-// NotificationResponse ('A') messages. Received query texts are recorded in
-// `queries`.
-async function createMockListenServer(notifications: Array<{ channel: string; payload: string }>) {
+// ReadyForQuery, and a `LISTEN "x"` query additionally pushes the
+// NotificationResponse ('A') messages configured under `notificationsOnListen.x`.
+// Received query texts are recorded in `queries`.
+async function createMockListenServer(
+  notificationsOnListen: Record<string, Array<{ channel: string; payload: string }>>,
+) {
   const pkt = (type: string, body: Buffer) => {
     const header = Buffer.alloc(5);
     header.write(type, 0);
@@ -13348,6 +13350,8 @@ async function createMockListenServer(notifications: Array<{ channel: string; pa
     pkt("A", Buffer.concat([int32(pid), cstr(channel), cstr(payload)]));
 
   const queries: string[] = [];
+  let closedConnections = 0;
+  const closeWaiters: Array<() => void> = [];
   const server = net.createServer(socket => {
     let startup = true;
     socket.on("data", data => {
@@ -13364,16 +13368,22 @@ async function createMockListenServer(notifications: Array<{ channel: string; pa
       const query = data.toString("utf8", 5, length);
       queries.push(query);
       if (query.startsWith("LISTEN")) {
+        const listened = query.slice('LISTEN "'.length, -1);
+        const toSend = notificationsOnListen[listened] ?? [];
         socket.write(
           Buffer.concat([
             commandComplete("LISTEN"),
             readyForQuery,
-            ...notifications.map(n => notification(n.channel, n.payload)),
+            ...toSend.map(n => notification(n.channel, n.payload)),
           ]),
         );
       } else {
         socket.write(Buffer.concat([commandComplete("UNLISTEN"), readyForQuery]));
       }
+    });
+    socket.on("close", () => {
+      closedConnections++;
+      for (const resolve of closeWaiters.splice(0)) resolve();
     });
     socket.on("error", () => {});
   });
@@ -13385,6 +13395,11 @@ async function createMockListenServer(notifications: Array<{ channel: string; pa
     pid,
     secret,
     queries,
+    get closedConnections() {
+      return closedConnections;
+    },
+    waitForClose: () =>
+      closedConnections > 0 ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push(resolve)),
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }
@@ -13397,12 +13412,14 @@ async function createMockListenServer(notifications: Array<{ channel: string; pa
 // dropped for channels without listeners), and tearing down the subscription
 // sends UNLISTEN on the dedicated listen connection.
 test("sql.listen delivers NotificationResponse payloads from a mock server", async () => {
-  await using mock = await createMockListenServer([
-    // No listener is registered for this channel: must be ignored.
-    { channel: "mock_other_channel", payload: "ignore-me" },
-    { channel: "mock_channel", payload: "first" },
-    { channel: "mock_channel", payload: "sécond 🎉" },
-  ]);
+  await using mock = await createMockListenServer({
+    mock_channel: [
+      // No listener is registered for this channel: must be ignored.
+      { channel: "mock_other_channel", payload: "ignore-me" },
+      { channel: "mock_channel", payload: "first" },
+      { channel: "mock_channel", payload: "sécond 🎉" },
+    ],
+  });
   await using db = postgres({
     url: `postgres://u@127.0.0.1:${mock.port}/db`,
     max: 1,
@@ -13423,6 +13440,9 @@ test("sql.listen delivers NotificationResponse payloads from a mock server", asy
       onlistenCount++;
     },
   );
+  // A second channel keeps the dedicated connection alive when the first one
+  // is unlistened, so the UNLISTEN wire message is observable.
+  const keepalive = await db.listen("mock_keepalive", () => {});
 
   expect(onlistenCount).toBe(1);
   // pid/secret come from the BackendKeyData message via the native
@@ -13433,14 +13453,23 @@ test("sql.listen delivers NotificationResponse payloads from a mock server", asy
   expect(received).toEqual(["first", "sécond 🎉"]);
 
   await sub.unlisten();
-  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'UNLISTEN "mock_channel"']);
+  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'LISTEN "mock_keepalive"', 'UNLISTEN "mock_channel"']);
+
+  // Removing the last subscription closes the dedicated connection instead of
+  // sending another UNLISTEN.
+  await keepalive.unlisten();
+  await mock.waitForClose();
+  expect(mock.closedConnections).toBe(1);
+  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'LISTEN "mock_keepalive"', 'UNLISTEN "mock_channel"']);
 });
 
 // The subscription returned by listen() is an async disposable: leaving an
-// `await using` scope removes the listener, sending UNLISTEN on the dedicated
-// listen connection.
+// `await using` scope removes the listener; as the last subscription, that
+// also closes the dedicated listen connection.
 test("sql.listen subscription works with await using and unlistens on scope exit", async () => {
-  await using mock = await createMockListenServer([{ channel: "mock_using_channel", payload: "disposable" }]);
+  await using mock = await createMockListenServer({
+    mock_using_channel: [{ channel: "mock_using_channel", payload: "disposable" }],
+  });
   await using db = postgres({
     url: `postgres://u@127.0.0.1:${mock.port}/db`,
     max: 1,
@@ -13454,8 +13483,47 @@ test("sql.listen subscription works with await using and unlistens on scope exit
     expect(typeof sub[Symbol.asyncDispose]).toBe("function");
     expect(await gotPayload).toBe("disposable");
     expect(mock.queries).toEqual(['LISTEN "mock_using_channel"']);
+    expect(mock.closedConnections).toBe(0);
   }
-  // unlisten() resolves only after the server acks UNLISTEN, so by the time
-  // the block exits the query log must contain it.
-  expect(mock.queries).toEqual(['LISTEN "mock_using_channel"', 'UNLISTEN "mock_using_channel"']);
+  // Scope exit disposed the last subscription: the dedicated listen
+  // connection is closed rather than left holding the event loop.
+  await mock.waitForClose();
+  expect(mock.closedConnections).toBe(1);
+});
+
+// Without an explicit sql.close(), the ref()'d dedicated listen connection
+// must not keep the process alive once the last subscription is removed.
+test("process exits after the last unlisten without an explicit close", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("exit_chan", () => {});
+      await sub.unlisten();
+      console.log("UNLISTENED");
+      // Deliberately no sql.close(): the process must exit on its own.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the listen connection regresses into holding the
+    // event loop open forever.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("UNLISTENED\n");
+  expect(exitCode).toBe(0);
 });

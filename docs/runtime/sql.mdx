@@ -1335,7 +1335,7 @@ The subscription is an async disposable, so `await using` removes the listener a
 
 ##### Connection lifecycle
 
-Each `Bun.SQL` instance opens at most one **dedicated** PostgreSQL connection for `LISTEN`. All channels share that single connection, separate from the regular query pool. The connection is created lazily on the first `sql.listen()` call and closed on `sql.close()`.
+Each `Bun.SQL` instance opens at most one **dedicated** PostgreSQL connection for `LISTEN`. All channels share that single connection, separate from the regular query pool. The connection is created lazily on the first `sql.listen()` call and closed when the last subscription is removed (a later `listen()` recreates it) or on `sql.close()`.
 
 If the dedicated connection drops (network blip, server restart, `pg_terminate_backend`), Bun automatically reconnects with exponential backoff (250 ms → 32 s, with ±25% jitter) and re-issues `LISTEN` for every tracked channel. The `onlisten` callback fires again on every successful `LISTEN`, so you can use it to detect (re)connection.
 

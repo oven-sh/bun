@@ -6964,6 +6964,18 @@ describe.concurrent("RedisClient onclose/onconnect handler values", () => {
     `);
   });
 
+  // https://github.com/oven-sh/bun/issues/29145
+  test("assigning null to onclose does not crash on a manual close() after connecting", async () => {
+    await expectChildOk(`
+      ${helloServer}
+      const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port);
+      await client.connect();
+      client.onclose = null;
+      client.close();
+      console.log("ok");
+    `);
+  });
+
   test("callable onclose still receives the connection error", async () => {
     using server = Bun.listen({
       hostname: "127.0.0.1",

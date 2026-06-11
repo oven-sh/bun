@@ -619,6 +619,25 @@ test.concurrent("coverageThreshold is enforced for every reporter combination", 
   }
 });
 
+test.concurrent("coverageThreshold is enforced when coverageReporter is an empty array", async () => {
+  using dir = tempDir("coverage-threshold-no-reporter", {
+    "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\ncoverageReporter = []\n`,
+    "lib.js": `export function used() { return 1; }\nexport function unused() { return 2; }\nexport function alsoUnused() { return 3; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("a",()=>expect(used()).toBe(1));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("lcov-only reporter exits 0 when coverageThreshold is met", async () => {
   using dir = tempDir("coverage-threshold-met", {
     "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,

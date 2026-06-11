@@ -563,6 +563,17 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
+/// Ownership contract: `callback` is invoked with `callback_context` exactly
+/// once on every path — synchronously below when signing fails, otherwise
+/// from the JS thread once the HTTP request settles — so `callback_context`
+/// is always consumed by the callback, never by this function. The `Err`
+/// return only propagates a `JsTerminated` raised by that synchronous
+/// callback invocation; it never means the callback was skipped, so callers
+/// that leak a heap allocation into `callback_context` must not reclaim it
+/// on `Err` (the callback already consumed it; reclaiming would double-free).
+/// Any new fallible step added before the HTTP task is scheduled must keep
+/// this contract by routing its failure through `callback.fail(...)` like
+/// the sign error below.
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,

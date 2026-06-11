@@ -63,6 +63,11 @@ bun_core::declare_scope!(S3UploadStream, visible);
 
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
+/// Callback-ownership contract of this and the sibling wrappers over
+/// `execute_simple_s3_request` (`download`, `download_slice`, `delete`,
+/// `upload`): `callback` always consumes `callback_context` — synchronously
+/// on sign failure — even when the wrapper returns `Err`. See
+/// `execute_simple_s3_request`.
 pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
@@ -176,6 +181,9 @@ pub(crate) fn delete(
     )
 }
 
+/// Does not route through `execute_simple_s3_request` but upholds the same
+/// callback-ownership contract: `callback` always consumes
+/// `callback_context` (synchronously on sign failure), even on `Err`.
 pub(crate) fn list_objects(
     this: &S3Credentials,
     // The struct owns `Utf8Slice`s and is not
@@ -739,6 +747,12 @@ impl Drop for S3UploadStreamWrapper {
 /// Takes ownership of one `credentials` ref (adopted directly into the
 /// `MultiPartUpload`; not bumped). Callers pass `creds.dupe()`. On every
 /// early-return path the ref is explicitly released.
+///
+/// Callback-ownership contract (same as `execute_simple_s3_request`):
+/// `callback`, when supplied, is invoked with `callback_context` exactly once
+/// on every path — synchronously for the stream-validation failures below,
+/// otherwise once the upload settles — so the callback is the single owner
+/// of `callback_context` and skipping it would leak the caller's context.
 pub fn upload_stream(
     credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     path: &[u8],
@@ -756,25 +770,86 @@ pub fn upload_stream(
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
     let proxy_url = proxy.unwrap_or(b"");
-    if readable_stream.is_disturbed(global_this) {
+
+    // Shared exit for the stream-validation failures below: release the
+    // adopted credentials ref, deliver the failure through `callback` (which
+    // owns `callback_context` — see the contract above), and hand the caller
+    // a rejected promise.
+    fn fail_before_dispatch(
+        credentials: &bun_ptr::IntrusiveRc<S3Credentials>,
+        callback: Option<fn(S3UploadResult, *mut c_void)>,
+        callback_context: *mut c_void,
+        global_this: &JSGlobalObject,
+        err: Error::S3Error<'_>,
+        js_err: JSValue,
+    ) -> JsResult<JSValue> {
         credentials.deref();
-        return Ok(bun_jsc::JSPromise::rejected_promise(
+        if let Some(callback) = callback {
+            callback(S3UploadResult::Failure(err), callback_context);
+            // The callback was the delivery channel (fetch settles its own
+            // promise from it and discards this return value), so don't
+            // register the returned promise with the unhandled-rejection
+            // reporter.
+            return Ok(
+                bun_jsc::JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    js_err,
+                ),
+            );
+        }
+        Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js())
+    }
+
+    if readable_stream.is_disturbed(global_this) {
+        return fail_before_dispatch(
+            &credentials,
+            callback,
+            callback_context,
             global_this,
+            Error::S3Error {
+                code: b"ERR_STREAM_CANNOT_PIPE",
+                message: b"ReadableStream is already disturbed",
+            },
             strings::String::static_("ReadableStream is already disturbed")
                 .to_error_instance(global_this),
-        )
-        .to_js());
+        );
+    }
+    // Checked here, before anything is allocated: a locked stream would make
+    // `ResumableSink::init_exact_refs` below fail synchronously, re-entering
+    // `MultiPartUpload::fail` while `task.callback_context` is still null and
+    // releasing wrapper/task refs the rest of this function relies on. (The
+    // `.zig` reference lacks this check; that path crashed on the unwired
+    // context.)
+    if readable_stream.is_locked(global_this) {
+        let err = Error::S3Error {
+            code: b"ERR_STREAM_CANNOT_PIPE",
+            message: b"Stream already used, please create a new one",
+        };
+        let js_err = s3_error_to_js(&err, global_this, Some(path));
+        return fail_before_dispatch(
+            &credentials,
+            callback,
+            callback_context,
+            global_this,
+            err,
+            js_err,
+        );
     }
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
-            credentials.deref();
-            return Ok(bun_jsc::JSPromise::rejected_promise(
+            return fail_before_dispatch(
+                &credentials,
+                callback,
+                callback_context,
                 global_this,
+                Error::S3Error {
+                    code: b"ERR_STREAM_CANNOT_PIPE",
+                    message: b"ReadableStream is invalid",
+                },
                 strings::String::static_("ReadableStream is invalid")
                     .to_error_instance(global_this),
-            )
-            .to_js());
+            );
         }
         // The File/Bytes payload types
         // differ (`*FileReader` vs `*ByteStream`), so the arms are
@@ -803,8 +878,20 @@ pub fn upload_stream(
                     js_err.unprotect();
                 }
                 js_err.ensure_still_alive();
-                credentials.deref();
-                return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
+                // Same `S3Error` the mid-flight stream-error path produces in
+                // `write_end_request`; the direct promise keeps the stream's
+                // own error.
+                return fail_before_dispatch(
+                    &credentials,
+                    callback,
+                    callback_context,
+                    global_this,
+                    Error::S3Error {
+                        code: b"UnknownError",
+                        message: b"ReadableStream ended with an error",
+                    },
+                    js_err,
+                );
             }
         }
         ReadableStreamPtr::File(_) => {
@@ -831,8 +918,20 @@ pub fn upload_stream(
                     js_err.unprotect();
                 }
                 js_err.ensure_still_alive();
-                credentials.deref();
-                return Ok(bun_jsc::JSPromise::rejected_promise(global_this, js_err).to_js());
+                // Same `S3Error` the mid-flight stream-error path produces in
+                // `write_end_request`; the direct promise keeps the stream's
+                // own error.
+                return fail_before_dispatch(
+                    &credentials,
+                    callback,
+                    callback_context,
+                    global_this,
+                    Error::S3Error {
+                        code: b"UnknownError",
+                        message: b"ReadableStream ended with an error",
+                    },
+                    js_err,
+                );
             }
         }
         _ => {}
@@ -913,6 +1012,13 @@ pub fn upload_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
     // +1 because the ctx refs the sink
+    //
+    // INVARIANT: the stream was verified not locked/disturbed above, so this
+    // init cannot take its synchronous-failure path. That path would re-enter
+    // `MultiPartUpload::fail` → `resolve_thunk` with the still-null
+    // `task.callback_context`, and its `write_end_request`/`resolve` scope
+    // guards would drop both wrapper refs while `ctx`/`task` are still used
+    // below.
     ctx.sink = Some(ResumableSink::init_exact_refs(
         &global_static,
         readable_stream,

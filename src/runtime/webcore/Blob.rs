@@ -143,6 +143,10 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     ) -> JsTerminatedResult<JSValue>;
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue;
+    /// `H::on_read_bytes` runs exactly once on every path, including when
+    /// this returns `Err` (see the impl); it is never skipped, so the handler
+    /// is the single release point for whatever owns `ctx`.
+    ///
     /// # Safety
     /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
     /// until `H::on_read_bytes` is invoked (synchronously or via the async task).
@@ -523,6 +527,14 @@ impl BlobExt for Blob {
     /// callers that already special-case `shared_view()` can keep doing that and
     /// only call this when it's empty.
     ///
+    /// The handler runs exactly once on every path: synchronously for
+    /// in-memory stores and for S3 dispatch-time failures (a sign error such
+    /// as missing credentials delivers `ReadBytesResult::Err` before
+    /// `download`/`download_slice` return), asynchronously otherwise. An
+    /// `Err` return is only a `JsTerminated` propagated out of a synchronous
+    /// handler invocation — never "the read was skipped" — so callers must
+    /// not reclaim `ctx`'s owner on `Err`; the handler already consumed it.
+    ///
     /// # Safety
     /// `ctx` must be a valid, exclusively-accessible `*mut H` that stays alive
     /// until `H::on_read_bytes` is invoked.
@@ -630,6 +642,13 @@ impl BlobExt for Blob {
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
             let path = unsafe { &*path };
+            // Ownership of the task transfers to `Task::<H>::cb`, which
+            // `execute_simple_s3_request` guarantees runs exactly once even
+            // when `download`/`download_slice` return `Err` (a sign failure
+            // invokes it synchronously with `S3DownloadResult::Failure`
+            // before the `Err` propagates). The `?`s below therefore never
+            // leak the task, and reclaiming it on `Err` here would
+            // double-free.
             let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {

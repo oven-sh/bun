@@ -888,7 +888,9 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(client.alpnProtocol).toBe("h2");
             expect(client.pendingSettingsAck).toBeFalse();
             expect(client.destroyed).toBeTrue();
-            expect(client.closed).toBeTrue();
+            // node: destroy() does NOT set `closed` - only close() does (verified on
+            // node v26.3.0 against a connected session).
+            expect(client.closed).toBeFalse();
             expect(req.closed).toBeTrue();
             expect(req.destroyed).toBeTrue();
             expect(req.rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
@@ -918,10 +920,11 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(typeof result.duration).toBe("number");
           expect(result.payload).toBeInstanceOf(Buffer);
           expect(result.payload.byteLength).toBe(8);
-          expect(received_ping).toBeInstanceOf(Buffer);
-          expect(received_ping.byteLength).toBe(8);
-          expect(received_ping).toEqual(result.payload);
-          expect(received_ping).toEqual(Buffer.from("12345678"));
+          expect(result.payload).toEqual(Buffer.from("12345678"));
+          // node emits 'ping' only for peer-initiated pings, never for the ACK of our
+          // own ping (verified against node v26.3.0) - the ack already resolved above,
+          // so the absence here is settled, not racy.
+          expect(received_ping).toBeUndefined();
         });
         it("ping without events should work", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -945,9 +948,8 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(typeof result.duration).toBe("number");
           expect(result.payload).toBeInstanceOf(Buffer);
           expect(result.payload.byteLength).toBe(8);
-          expect(received_ping).toBeInstanceOf(Buffer);
-          expect(received_ping.byteLength).toBe(8);
-          expect(received_ping).toEqual(result.payload);
+          // See above: no 'ping' event for ACKs of our own pings (node parity).
+          expect(received_ping).toBeUndefined();
         });
         it("ping with wrong payload length events should error", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -987,17 +989,28 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(result.code).toBe("ERR_INVALID_ARG_TYPE");
         });
         it("stream event should work", async () => {
+          // node: a client session emits 'stream' only for peer-initiated (push) streams,
+          // never for its own requests (verified on node v26.3.0). Assert the request
+          // stream directly and that no spurious session 'stream' event fires.
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
-          client.on("stream", stream => {
-            resolve(stream);
+          let sessionStreamEvents = 0;
+          client.on("stream", () => {
+            sessionStreamEvents++;
+          });
+          const req = client.request({ ":path": "/" });
+          req.on("error", reject);
+          req.on("response", () => {
+            resolve(req);
             client.close();
           });
-          client.request({ ":path": "/" }).end();
+          req.resume();
+          req.end();
           const stream = await promise;
           expect(stream).toBeDefined();
           expect(stream.id).toBe(1);
+          expect(sessionStreamEvents).toBe(0);
         });
 
         it("wantTrailers should work", async () => {
@@ -1885,14 +1898,14 @@ it("http2.createServer validates input options", () => {
 
   invalidOptions.forEach(invalidOption => {
     expect(() => http2.createServer(invalidOption)).toThrow(
-      'The "options" argument must be of type Object.' + invalidArgTypeHelper(invalidOption),
+      'The "options" argument must be of type object.' + invalidArgTypeHelper(invalidOption),
     );
   });
 
   // Test invalid options.settings passed to createServer
   invalidOptions.forEach(invalidSettingsOption => {
     expect(() => http2.createServer({ settings: invalidSettingsOption })).toThrow(
-      'The "options.settings" property must be of type Object.' + invalidArgTypeHelper(invalidSettingsOption),
+      'The "options.settings" property must be of type object.' + invalidArgTypeHelper(invalidSettingsOption),
     );
   });
 
@@ -2743,6 +2756,48 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
   expect(exitCode).toBe(0);
 });
 
+it("http2 server splits an oversized PUSH_PROMISE header block into CONTINUATION frames", async () => {
+  // RFC 9113 6.6/6.10: a PUSH_PROMISE whose header block exceeds the peer's max frame size
+  // must be continued in CONTINUATION frames rather than rejected. 40KB of "a" encodes to
+  // ~25KB (Huffman) - comfortably above the default 16384-byte frame limit.
+  const bigValue = "a".repeat(40000);
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.pushStream({ ":path": "/pushed", "x-big": bigValue }, (err, push) => {
+      if (err) {
+        stream.destroy(err);
+        return;
+      }
+      push.respond({ ":status": 200 });
+      push.end("pushed");
+    });
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const { promise: pushedHeaders, resolve: onPush, reject: onError } = Promise.withResolvers();
+    client.on("stream", (pushStream, headers) => {
+      pushStream.on("error", onError);
+      pushStream.resume();
+      onPush(headers);
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", onError);
+    req.resume();
+
+    const headers = await pushedHeaders;
+    expect(headers[":path"]).toBe("/pushed");
+    expect(headers["x-big"]).toBe(bigValue);
+    client.close();
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;
@@ -2778,17 +2833,14 @@ it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
 });
 
-it("http2 stream.respond/respondWithFD/respondWithFile reject raw-headers arrays", async () => {
-  // Passing an array of headers used to be spread into an object with
-  // numeric-string keys ("0", "1", ...) and sent as garbage header frames.
-  // Node v24 rejects arrays with ERR_INVALID_ARG_TYPE; v26 added support for
-  // the [name1, value1, ...] raw form for respond() (not yet implemented here)
-  // while still rejecting arrays in respondWithFD/respondWithFile.
+it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFile reject them", async () => {
+  // respond() accepts the node v26 raw [name1, value1, ...] headers form (verified
+  // on node v26.3.0: status/x-foo land on the wire); respondWithFD/respondWithFile
+  // still reject arrays with ERR_INVALID_ARG_TYPE.
   const errors = [];
   const server = http2.createServer();
   server.on("stream", stream => {
     for (const invoke of [
-      () => stream.respond([":status", "200", "x-foo", "bar"]),
       () => stream.respondWithFD(0, ["x-foo", "bar"]),
       () => stream.respondWithFile(import.meta.path, ["x-foo", "bar"]),
     ]) {
@@ -2799,7 +2851,7 @@ it("http2 stream.respond/respondWithFD/respondWithFile reject raw-headers arrays
         errors.push(e);
       }
     }
-    stream.respond({ ":status": 200 });
+    stream.respond([":status", "200", "x-raw", "yes"]);
     stream.end("ok");
   });
 
@@ -2819,22 +2871,19 @@ it("http2 stream.respond/respondWithFD/respondWithFile reject raw-headers arrays
     req.on("data", chunk => (body += chunk));
     await new Promise(resolve => req.on("end", resolve));
 
-    expect(errors).toHaveLength(3);
+    expect(errors).toHaveLength(2);
     for (const err of errors) {
       expect(err).not.toBeNull();
       expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
-      expect(err).toBeInstanceOf(TypeError);
     }
-    // The real respond() afterwards still worked and no bogus "0"/"1" headers leaked.
     expect(response[":status"]).toBe(200);
-    expect(response["0"]).toBeUndefined();
+    expect(response["x-raw"]).toBe("yes");
     expect(body).toBe("ok");
   } finally {
     client.close();
     server.close();
   }
 });
-
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

@@ -7425,7 +7425,10 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                // ESPIPE: preadv2(RWF_NOWAIT) on pipe/FIFO fd returns
+                // "Illegal seek" — pipes don't support positional I/O.
+                // Disable RWF and fall back to plain read().
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4070 — only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
@@ -7455,7 +7458,10 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         if rc < 0 {
             let e = last_errno();
             match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
+                // ESPIPE: pwritev2(RWF_NOWAIT) on pipe/FIFO fd returns
+                // "Illegal seek" — pipes don't support positional I/O.
+                // Disable RWF and fall back to plain write().
+                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES | libc::ESPIPE => {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4123 — poll before issuing a blocking write.
                     return match bun_core::is_writable(fd) {

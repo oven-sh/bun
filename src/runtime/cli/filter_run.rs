@@ -15,6 +15,10 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
+#[cfg(unix)]
+use bun_io::FilePollFlag;
+#[cfg(unix)]
+use bun_io::PosixFlags;
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
@@ -101,6 +105,10 @@ impl<'a> ProcessHandle<'a> {
             // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
             let _ = env.map.put(b"PATH", &handle.config.PATH);
+            // OHOS: set $PWD so bash verifies CWD via stat() instead of getcwd().
+            // See ohos_set_pwd() for details.
+            #[cfg(target_env = "ohos")]
+            crate::cli::run_command::ohos_set_pwd(env, &handle.options.cwd)?;
             // Restores PATH unconditionally at block exit (success OR error).
             // Keep the guard armed for the whole block so `?` early-returns also
             // restore.
@@ -151,13 +159,28 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = stdout_fd {
-                let _ = sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
+            // Mark the BufferedReader as nonblocking + socket so it uses
+            // the same read strategy as Bun.spawn (SubprocessPipeReader).
+            // Required on OHOS (blocking pipe strategy causes infinite loop)
+            // and safe on other Unix platforms.
+            let mut pipe_setup =
+                |reader: &mut BufferedReader, fd: sys::Fd| -> Result<(), bun_core::Error> {
+                    let _ = sys::set_nonblocking(fd);
+                    reader.start(fd, true)?;
+                    reader.flags.insert(
+                        PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
+                    );
+                    if let Some(poll) = reader.handle.get_poll() {
+                        poll.set_flag(FilePollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Nonblocking);
+                    }
+                    Ok(())
+                };
+            if let Some(fd) = stdout_fd {
+                pipe_setup(&mut handle.stdout, fd)?;
             }
-            if let Some(stderr) = stderr_fd {
-                let _ = sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true)?;
+            if let Some(fd) = stderr_fd {
+                pipe_setup(&mut handle.stderr, fd)?;
             }
         }
         #[cfg(not(unix))]

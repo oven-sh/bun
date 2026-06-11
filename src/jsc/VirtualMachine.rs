@@ -1775,18 +1775,6 @@ pub struct RuntimeHooks {
     /// path. The caller gates the call on `vm.standalone_module_graph`.
     pub load_standalone_sourcemap:
         fn(path: &[u8]) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>>,
-    /// `bake::production::PerThread` source-map JSON lookup
-    /// (`pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`).
-    /// `pt` is the opaque `*mut PerThread` round-tripped through C++ via
-    /// `BakeGlobalObject__attachPerThreadData` / `…__getPerThreadData`;
-    /// `PerThread` lives in `bun_runtime::bake::production` (forward-dep
-    /// cycle), so `BakeSourceProvider::get_external_data` reaches it through
-    /// this slot. Returns the bundled `.map` JSON for `source_filename`, or
-    /// `None` if not in the table; the slice borrows
-    /// `PerThread.bundled_outputs` (lives for the bake build session, which
-    /// outlives any error-stack source-map resolution).
-    pub bake_per_thread_source_map:
-        unsafe fn(pt: *mut c_void, source_filename: &[u8]) -> Option<*const [u8]>,
     /// `TestReporterAgent.retroactivelyReportDiscoveredTests(agent)`.
     /// Walks the active test file's
     /// scope tree and emits `reportTestFoundWithLocation` for every test

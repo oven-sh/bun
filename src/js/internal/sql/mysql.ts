@@ -304,6 +304,12 @@ class PooledMySQLConnection {
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
+  /// when the current connect cycle started; 0 when not connecting. Connect
+  /// failures (server not yet accepting connections) are retried until
+  /// connectionTimeout elapses from this point.
+  connectStartedAt: number = 0;
+  connectAttempts: number = 0;
+  retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   #onConnected(err, connection) {
     if (err) {
@@ -313,61 +319,99 @@ class PooledMySQLConnection {
     }
 
     const connectionInfo = this.connectionInfo;
-    if (connectionInfo?.onconnect) {
-      connectionInfo.onconnect(err);
-    }
-    this.storedError = err;
-    if (!err) {
-      this.flags |= PooledConnectionFlags.canBeConnected;
-    }
-    this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
-    const onFinish = this.onFinish;
-    if (onFinish) {
-      this.queryCount = 0;
-      this.flags &= ~PooledConnectionFlags.reserved;
-      this.flags &= ~PooledConnectionFlags.preReserved;
-
-      // pool is closed, lets finish the connection
-      // pool is closed, lets finish the connection
-      if (err) {
-        onFinish(err);
-      } else {
-        this.connection?.close();
+    try {
+      // user code; a throw must not abort the pool bookkeeping below
+      // (the exception keeps propagating after the finally block runs)
+      if (connectionInfo?.onconnect) {
+        connectionInfo.onconnect(err);
       }
-      return;
+    } finally {
+      this.storedError = err;
+      if (!err) {
+        this.connectStartedAt = 0;
+        this.flags |= PooledConnectionFlags.canBeConnected;
+      }
+      this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
+      const onFinish = this.onFinish;
+      if (onFinish) {
+        this.queryCount = 0;
+        this.flags &= ~PooledConnectionFlags.reserved;
+        this.flags &= ~PooledConnectionFlags.preReserved;
+
+        // pool is closed, lets finish the connection
+        if (err) {
+          onFinish(err);
+        } else {
+          this.connection?.close();
+        }
+      } else {
+        this.adapter.release(this, true);
+      }
     }
-    this.adapter.release(this, true);
   }
 
   #onClose(err) {
     if (err) {
       err = wrapError(err);
     }
-    const connectionInfo = this.connectionInfo;
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(err);
-    }
-    this.state = PooledConnectionState.closed;
     this.connection = null;
     this.storedError = err;
-
-    // remove from ready connections if its there
-    this.adapter.readyConnections.delete(this);
-    const queries = new Set(this.queries);
-    this.queries?.clear?.();
-    this.queryCount = 0;
-    this.flags &= ~PooledConnectionFlags.reserved;
-
-    // notify all queries that the connection is closed
-    for (const onClose of queries) {
-      onClose(err);
+    if (this.#shouldRetryConnecting(err)) {
+      // The server is not accepting connections yet (e.g. still starting
+      // up). Keep the slot pending and retry with backoff instead of
+      // failing the queries that are waiting for a connection. The user's
+      // onclose callback only fires when the slot actually closes.
+      this.connectAttempts++;
+      const delay = Math.min(20 * 2 ** this.connectAttempts, 1000);
+      this.retryTimer = setTimeout(PooledMySQLConnection.#retryTimerFired, delay, this);
+      return;
     }
-    const onFinish = this.onFinish;
-    if (onFinish) {
-      onFinish(err);
-    }
+    // this connect cycle is over; a later retry() starts a fresh one
+    this.connectStartedAt = 0;
+    this.#finishClose(err);
+  }
 
-    this.adapter.release(this, true);
+  static #retryTimerFired(self: PooledMySQLConnection) {
+    self.retryTimer = null;
+    // conditions may have changed during the backoff (pool closing, waiters
+    // gone, retry budget elapsed), so re-check before dialing
+    if (self.#canKeepRetrying()) {
+      self.#startConnection();
+    } else {
+      self.#finishClose(self.storedError);
+    }
+  }
+
+  #finishClose(err) {
+    const connectionInfo = this.connectionInfo;
+    try {
+      // user code; a throw must not abort the pool bookkeeping below
+      // (the exception keeps propagating after the finally block runs)
+      if (connectionInfo?.onclose) {
+        connectionInfo.onclose(err);
+      }
+    } finally {
+      this.state = PooledConnectionState.closed;
+      this.storedError = err;
+
+      // remove from ready connections if its there
+      this.adapter.readyConnections.delete(this);
+      const queries = new Set(this.queries);
+      this.queries?.clear?.();
+      this.queryCount = 0;
+      this.flags &= ~PooledConnectionFlags.reserved;
+
+      // notify all queries that the connection is closed
+      for (const onClose of queries) {
+        onClose(err);
+      }
+      const onFinish = this.onFinish;
+      if (onFinish) {
+        onFinish(err);
+      }
+
+      this.adapter.release(this, true);
+    }
   }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions, adapter: MySQLAdapter) {
@@ -378,7 +422,58 @@ class PooledMySQLConnection {
   }
 
   #startConnection() {
+    if (this.connectStartedAt === 0) {
+      this.connectStartedAt = Date.now();
+      this.connectAttempts = 0;
+    }
     PooledMySQLConnection.createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
+  }
+
+  /// Connect failures (ERR_MYSQL_CONNECTION_FAILED) mean the server
+  /// accepted the TCP connection but closed it before the handshake
+  /// completed — typically it is still starting up, or an intermediary
+  /// (like a container port proxy) is up before the database is. Those are
+  /// retried until connectionTimeout elapses, as long as queries are
+  /// waiting on the pool. Refused connections
+  /// (ERR_MYSQL_CONNECTION_REFUSED) fail fast: nothing is listening,
+  /// and probes/healthchecks rely on the immediate error. Real server errors (authentication,
+  /// handshake errors) and closes of established connections are not
+  /// retried here.
+  #shouldRetryConnecting(err: Error | null): boolean {
+    // connect failures come from the native layer as options objects that
+    // wrapError turned into MySQLError instances with a typed code
+    if (!(err instanceof MySQLError) || err.code !== "ERR_MYSQL_CONNECTION_FAILED") {
+      return false;
+    }
+    return this.#canKeepRetrying();
+  }
+
+  #canKeepRetrying(): boolean {
+    if (this.adapter.closed || this.onFinish !== null) {
+      return false;
+    }
+    // only retry while queries are actually waiting for a connection
+    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
+      return false;
+    }
+    // an explicit connectionTimeout of 0 disables the connect timer, and with
+    // it the retry budget
+    const connectionTimeout = this.connectionInfo.connectionTimeout ?? 30 * 1000;
+    if (connectionTimeout <= 0) {
+      return false;
+    }
+    return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
+  }
+
+  /// Returns true if a scheduled connect retry was cancelled — in that case
+  /// nothing is in flight and no onClose/onConnected callback will fire.
+  cancelRetry(): boolean {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+      return true;
+    }
+    return false;
   }
 
   onClose(onClose: (err: Error) => void) {
@@ -396,6 +491,7 @@ class PooledMySQLConnection {
     }
     // reset error and state
     this.storedError = null;
+    this.connectStartedAt = 0;
     this.state = PooledConnectionState.pending;
     // retry connection
     this.#startConnection();
@@ -672,6 +768,11 @@ class MySQLAdapter
         for (const pending of reservedQueue) {
           pending(connection.storedError, connection);
         }
+        // draining the queues may have been the last pending work — a
+        // graceful close() is waiting on this callback
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
+        }
       }
       return;
     }
@@ -766,6 +867,12 @@ class MySQLAdapter
         switch (connection.state) {
           case PooledConnectionState.pending:
             {
+              if (connection.cancelRetry()) {
+                // a connect retry was scheduled; nothing is in flight so
+                // there is no onClose/onConnected to wait for
+                connection.state = PooledConnectionState.closed;
+                break;
+              }
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);

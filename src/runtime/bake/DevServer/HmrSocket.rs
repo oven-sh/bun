@@ -206,7 +206,6 @@ impl HmrSocket {
                 response[1..].copy_from_slice(&rbi.get().to_ne_bytes());
 
                 let _ = ws.send(&response, Opcode::Binary, false, true);
-                self.notify_inspector_client_navigation(pattern, Some(rbi));
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
@@ -384,26 +383,5 @@ impl HmrSocket {
         // SAFETY: `s` was heap-allocated in `new()`'s caller; this is the sole
         // owner reclaiming it. Matches `s.dev.arena().destroy(s)`.
         drop(unsafe { bun_core::heap::take(s) });
-    }
-
-    fn notify_inspector_client_navigation(
-        &self,
-        pattern: &[u8],
-        rbi: super::route_bundle::IndexOptional,
-    ) {
-        if self.inspector_connection_id > -1 {
-            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
-            let dev = unsafe { self.dev() };
-            if let Some(agent) = dev.inspector() {
-                let mut pattern_str = bun_core::String::init(pattern);
-                // `defer pattern_str.deref()` → Drop on bun_core::String
-                agent.notify_client_navigated(
-                    dev.inspector_server_id,
-                    self.inspector_connection_id,
-                    &mut pattern_str,
-                    rbi.map(|i| i.get() as i32).unwrap_or(-1),
-                );
-            }
-        }
     }
 }

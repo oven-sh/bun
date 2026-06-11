@@ -12829,6 +12829,87 @@ CREATE TABLE ${table_name} (
 
         await db.unlisten("test_onlisten_timing");
       });
+
+      test("close with an invalid timeout rejects without tearing down subscriptions", async () => {
+        await using db = postgres(options);
+        const { promise: gotFirst, resolve: resolveFirst } = Promise.withResolvers<string>();
+        const { promise: gotSecond, resolve: resolveSecond } = Promise.withResolvers<string>();
+
+        await db.listen("test_close_invalid_timeout", payload => {
+          if (payload === "first") resolveFirst(payload);
+          if (payload === "second") resolveSecond(payload);
+        });
+        await db.notify("test_close_invalid_timeout", "first");
+        expect(await gotFirst).toBe("first");
+
+        // Validation must happen before any teardown: the failed close must not
+        // destroy the existing subscription or the dedicated listen connection.
+        await expect(db.close({ timeout: -1 })).rejects.toThrow();
+
+        await db.notify("test_close_invalid_timeout", "second");
+        expect(await gotSecond).toBe("second");
+
+        await db.unlisten("test_close_invalid_timeout");
+      });
+
+      test("unlisten(channel, fn) also removes that subscription's onlisten on reconnect", async () => {
+        await using db = postgres(options);
+        const { promise: reconnected, resolve: resolveReconnect } = Promise.withResolvers<void>();
+        let onlisten1Fires = 0;
+        let onlisten2Fires = 0;
+
+        const fn1 = () => {};
+        const fn2 = () => {};
+        const sub = await db.listen("test_unlisten_onlisten_pair", fn1, () => {
+          onlisten1Fires++;
+        });
+        await db.listen("test_unlisten_onlisten_pair", fn2, () => {
+          if (++onlisten2Fires === 2) resolveReconnect();
+        });
+        expect(onlisten1Fires).toBe(1);
+        expect(onlisten2Fires).toBe(1);
+
+        // Removing fn1 must also remove its paired onlisten.
+        await db.unlisten("test_unlisten_onlisten_pair", fn1);
+
+        // Force a reconnect; the channel is still live through fn2.
+        await db.unsafe("SELECT pg_terminate_backend($1)", [sub.state.pid]).catch(() => {});
+        await reconnected;
+
+        expect(onlisten2Fires).toBe(2);
+        // fn1's onlisten must not have re-fired after its subscription was removed.
+        expect(onlisten1Fires).toBe(1);
+
+        await db.unlisten("test_unlisten_onlisten_pair");
+      });
+
+      test("unlisten racing an in-flight listen resolves cleanly and skips onlisten", async () => {
+        await using db = postgres(options);
+        let onlistenFired = false;
+
+        // listen() registers synchronously, then awaits the connection; unlisten
+        // immediately after removes the channel before LISTEN is sent.
+        const listenPromise = db.listen(
+          "test_unlisten_inflight",
+          () => {},
+          () => {
+            onlistenFired = true;
+          },
+        );
+        await db.unlisten("test_unlisten_inflight");
+
+        const sub = await listenPromise;
+        expect(onlistenFired).toBe(false);
+
+        // The channel must still be usable by a fresh subscription afterwards.
+        const { promise: gotPayload, resolve: resolvePayload } = Promise.withResolvers<string>();
+        await db.listen("test_unlisten_inflight", p => resolvePayload(p));
+        await db.notify("test_unlisten_inflight", "fresh");
+        expect(await gotPayload).toBe("fresh");
+
+        await sub.unlisten();
+        await db.unlisten("test_unlisten_inflight");
+      });
     });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())

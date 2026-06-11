@@ -2695,9 +2695,9 @@ declare module "bun" {
     /**
      * Configure Module Federation for this build.
      *
-     * This option is parsed and validated by Bun's native bundler. Runtime loading,
-     * remote entry generation, manifests, and shared dependency resolution are not
-     * implemented yet.
+     * Generated host and remote code imports `@module-federation/runtime`.
+     * Projects using this option must install that package alongside their app
+     * dependencies.
      */
     moduleFederation?: ModuleFederationOptions;
     publicPath?: string;

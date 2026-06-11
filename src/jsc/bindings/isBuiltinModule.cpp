@@ -79,7 +79,6 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "inspector/promises"_s,
     "_stream_passthrough"_s,
     "diagnostics_channel"_s,
-    "bun:module-federation-runtime"_s,
 };
 
 namespace Bun {

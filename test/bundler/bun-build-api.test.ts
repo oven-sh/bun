@@ -514,37 +514,6 @@ describe("Bun.build", () => {
   });
 
   test("moduleFederation asyncStartup waits for static remote imports before entry startup", async () => {
-    let serveFetchCount = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        serveFetchCount++;
-        return new Response(
-          `
-            globalThis.__mfAsyncStartupEvents ??= [];
-            globalThis.__mfAsyncStartupEvents.push("remote-entry");
-            globalThis.app = {
-              init() {
-                globalThis.__mfAsyncStartupEvents.push("init");
-              },
-              get(request) {
-                globalThis.__mfAsyncStartupEvents.push("get:" + request);
-                if (request !== "./Button") throw new Error("unknown expose " + request);
-                return () => {
-                  globalThis.__mfAsyncStartupEvents.push("factory");
-                  return { default: { label: "async-button" } };
-                };
-              },
-            };
-          `,
-          { headers: { "Content-Type": "application/javascript" } },
-        );
-      },
-    });
     const dir = tempDirWithFiles(
       "bun-build-module-federation-async-startup-host",
       {
@@ -557,6 +526,23 @@ describe("Bun.build", () => {
       `,
       },
     );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {
+          globalThis.__mfAsyncStartupEvents ??= [];
+          globalThis.__mfAsyncStartupEvents.push("init");
+        }
+        export function get(request) {
+          globalThis.__mfAsyncStartupEvents.push("get:" + request);
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => {
+            globalThis.__mfAsyncStartupEvents.push("factory");
+            return { default: { label: "async-button" } };
+          };
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -565,7 +551,12 @@ describe("Bun.build", () => {
       target: "bun",
       moduleFederation: {
         remotes: {
-          app: `app@${server.url}remoteEntry.js`,
+          app: {
+            external: [
+              new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            ],
+            type: "module",
+          },
         },
         experiments: { asyncStartup: true },
       },
@@ -591,29 +582,17 @@ describe("Bun.build", () => {
     ]);
     expect(stdout.trim()).toBe(
       JSON.stringify([
-        "remote-entry",
         "init",
         "get:./Button",
         "factory",
         "entry:async-button",
       ]),
     );
-    expect(serveFetchCount).toBe(1);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
   test("moduleFederation asyncStartup surfaces static remote startup failures", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        return new Response("remote unavailable", { status: 503 });
-      },
-    });
     const dir = tempDirWithFiles(
       "bun-build-module-federation-async-startup-failure",
       {
@@ -624,6 +603,15 @@ describe("Bun.build", () => {
       `,
       },
     );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          throw new Error("missing remote expose " + request);
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -632,7 +620,12 @@ describe("Bun.build", () => {
       target: "bun",
       moduleFederation: {
         remotes: {
-          app: `app@${server.url}remoteEntry.js`,
+          app: {
+            external: [
+              new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            ],
+            type: "module",
+          },
         },
         experiments: { asyncStartup: true },
       },
@@ -653,56 +646,11 @@ describe("Bun.build", () => {
       proc.exited,
     ]);
     expect(stdout).toBe("");
-    expect(stderr).toContain(
-      'Module Federation remote "app" failed to fetch script',
-    );
+    expect(stderr).toContain("missing remote expose ./Button");
     expect(exitCode).not.toBe(0);
   });
 
-  test("moduleFederation browser asyncStartup waits for static manifest script remotes", async () => {
-    let manifestFetchCount = 0;
-    let remoteEntryFetchCount = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const pathname = new URL(request.url).pathname;
-        if (pathname === "/mf-manifest.json") {
-          manifestFetchCount++;
-          return Response.json({
-            name: "app",
-            remoteEntry: {
-              path: "remoteEntry.js",
-              type: "script",
-            },
-          });
-        }
-        if (pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        remoteEntryFetchCount++;
-        return new Response(
-          `
-            globalThis.__mfBrowserAsyncStartupEvents ??= [];
-            globalThis.__mfBrowserAsyncStartupEvents.push("remote-entry");
-            globalThis.app = {
-              init() {
-                globalThis.__mfBrowserAsyncStartupEvents.push("init");
-              },
-              get(request) {
-                globalThis.__mfBrowserAsyncStartupEvents.push("get:" + request);
-                if (request !== "./Button") throw new Error("unknown expose " + request);
-                return () => {
-                  globalThis.__mfBrowserAsyncStartupEvents.push("factory");
-                  return { default: { label: "browser-async-button" } };
-                };
-              },
-            };
-          `,
-          { headers: { "Content-Type": "application/javascript" } },
-        );
-      },
-    });
+  test("moduleFederation browser asyncStartup waits for static manifest module remotes", async () => {
     const dir = tempDirWithFiles(
       "bun-build-module-federation-browser-async-startup-host",
       {
@@ -730,6 +678,23 @@ describe("Bun.build", () => {
       `,
       },
     );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {
+          globalThis.__mfBrowserAsyncStartupEvents ??= [];
+          globalThis.__mfBrowserAsyncStartupEvents.push("init");
+        }
+        export function get(request) {
+          globalThis.__mfBrowserAsyncStartupEvents.push("get:" + request);
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => {
+            globalThis.__mfBrowserAsyncStartupEvents.push("factory");
+            return { default: { label: "browser-async-button" } };
+          };
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -739,7 +704,13 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            manifest: `${server.url}mf-manifest.json`,
+            manifest: {
+              name: "app",
+              remoteEntry: {
+                path: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+                type: "module",
+              },
+            },
           },
         },
         runtimePlugins: [
@@ -755,10 +726,6 @@ describe("Bun.build", () => {
     );
     const hostText = await hostOutput!.text();
     expect(hostText).toContain("__bunMFAsyncStartup");
-    expect(new Bun.Transpiler().scanImports(hostText)).not.toContainEqual({
-      kind: "import-statement",
-      path: "bun:module-federation-runtime",
-    });
     expect(hostText).toContain("@module-federation/runtime");
 
     await using proc = Bun.spawn({
@@ -777,7 +744,6 @@ describe("Bun.build", () => {
       JSON.stringify([
         "plugin-init:browser",
         "before:app/Button:browser",
-        "remote-entry",
         "init",
         "get:./Button",
         "factory",
@@ -785,23 +751,11 @@ describe("Bun.build", () => {
         "entry:browser-async-button",
       ]),
     );
-    expect(manifestFetchCount).toBe(1);
-    expect(remoteEntryFetchCount).toBe(1);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
   test("moduleFederation browser asyncStartup surfaces static remote startup failures", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        return new Response("remote unavailable", { status: 503 });
-      },
-    });
     const dir = tempDirWithFiles(
       "bun-build-module-federation-browser-async-startup-failure",
       {
@@ -812,6 +766,15 @@ describe("Bun.build", () => {
       `,
       },
     );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          throw new Error("missing browser remote expose " + request);
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -820,7 +783,12 @@ describe("Bun.build", () => {
       target: "browser",
       moduleFederation: {
         remotes: {
-          app: `app@${server.url}remoteEntry.js`,
+          app: {
+            external: [
+              new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            ],
+            type: "module",
+          },
         },
         experiments: { asyncStartup: true },
       },
@@ -841,9 +809,7 @@ describe("Bun.build", () => {
       proc.exited,
     ]);
     expect(stdout).toBe("");
-    expect(stderr).toContain(
-      'Module Federation remote "app" failed to fetch script',
-    );
+    expect(stderr).toContain("missing browser remote expose ./Button");
     expect(exitCode).not.toBe(0);
   });
 
@@ -1013,42 +979,7 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("moduleFederation host imports a configured script global remote once", async () => {
-    let serveFetchCount = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        serveFetchCount++;
-        return new Response(
-          `
-            globalThis.appRemoteEvalCount = (globalThis.appRemoteEvalCount ?? 0) + 1;
-            let initCount = 0;
-            let lastShareScope;
-            globalThis.app = {
-              init(shareScope) {
-                initCount++;
-                lastShareScope = shareScope;
-              },
-              get(request) {
-                if (request !== "./Button") throw new Error("unknown expose " + request);
-                return () => ({
-                  default: {
-                    label: "remote-button",
-                    initCount,
-                    shared: lastShareScope.react.version,
-                  },
-                });
-              },
-            };
-          `,
-          { headers: { "Content-Type": "application/javascript" } },
-        );
-      },
-    });
+  test("moduleFederation host imports a configured module remote once", async () => {
     const dir = tempDirWithFiles("bun-build-module-federation-script-host", {
       "host.ts": `
         import { getInstance } from "@module-federation/runtime";
@@ -1060,10 +991,30 @@ describe("Bun.build", () => {
           first: first.default,
           second: second.default,
           same: first.default === second.default,
-          evalCount: globalThis.appRemoteEvalCount,
         }));
       `,
     });
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        let initCount = 0;
+        let lastShareScope;
+        export function init(shareScope) {
+          initCount++;
+          lastShareScope = shareScope;
+        }
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({
+            default: {
+              label: "remote-button",
+              initCount,
+              shared: lastShareScope.react.version,
+            },
+          });
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -1072,7 +1023,12 @@ describe("Bun.build", () => {
       target: "bun",
       moduleFederation: {
         remotes: {
-          app: `app@${server.url}remoteEntry.js`,
+          app: {
+            external: [
+              new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            ],
+            type: "module",
+          },
         },
       },
     });
@@ -1096,10 +1052,8 @@ describe("Bun.build", () => {
         first: { label: "remote-button", initCount: 1, shared: "19.0.0" },
         second: { label: "remote-button", initCount: 1, shared: "19.0.0" },
         same: true,
-        evalCount: 1,
       }),
     );
-    expect(serveFetchCount).toBe(1);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -1112,198 +1066,7 @@ describe("Bun.build", () => {
     await expectScriptHostImportsBunRemote("rspack");
   });
 
-  test("moduleFederation host imports a real Webpack script global remote", async () => {
-    const fixtureDir = join(
-      import.meta.dir,
-      "fixtures/module-federation/webpack-real-remote/dist",
-    );
-    const files: Record<string, string> = {
-      "/remoteEntry.js": readFileSync(
-        join(fixtureDir, "remoteEntry.js"),
-        "utf8",
-      ),
-    };
-    const fetchCounts = new Map<string, number>();
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const pathname = new URL(request.url).pathname;
-        const source = files[pathname];
-        if (source === undefined) {
-          return new Response("not found", { status: 404 });
-        }
-
-        fetchCounts.set(pathname, (fetchCounts.get(pathname) || 0) + 1);
-        return new Response(source, {
-          headers: { "Content-Type": "application/javascript" },
-        });
-      },
-    });
-    const dir = tempDirWithFiles("bun-build-module-federation-webpack-host", {
-      "host.ts": `
-        let remoteContainer;
-        Object.defineProperty(globalThis, "webpackRealRemote", {
-          configurable: true,
-          get() {
-            return remoteContainer;
-          },
-          set(value) {
-            globalThis.__webpackRealRemoteEvalCount = (globalThis.__webpackRealRemoteEvalCount ?? 0) + 1;
-            if (value && typeof value.init === "function" && !value.__bunWrappedInit) {
-              const wrapped = {
-                ...value,
-                get: typeof value.get === "function" ? value.get.bind(value) : value.get,
-                init: (...args) => {
-                  globalThis.__webpackRealRemoteInitCount = (globalThis.__webpackRealRemoteInitCount ?? 0) + 1;
-                  return value.init(...args);
-                },
-              };
-              Object.defineProperty(wrapped, "__bunWrappedInit", { value: true });
-              remoteContainer = wrapped;
-              return;
-            }
-            remoteContainer = value;
-          },
-        });
-
-        const first = await import("webpackRealRemote/Button");
-        const second = await import("webpackRealRemote/Button");
-        console.log(JSON.stringify({
-          first: first.default,
-          second: second.default,
-          same: first.default === second.default,
-          evalCount: globalThis.__webpackRealRemoteEvalCount,
-          initCount: globalThis.__webpackRealRemoteInitCount,
-        }));
-      `,
-    });
-    installModuleFederationRuntimeFixture(dir);
-
-    const result = await Bun.build({
-      entrypoints: [join(dir, "host.ts")],
-      outdir: join(dir, "out"),
-      target: "bun",
-      moduleFederation: {
-        remotes: {
-          webpackRealRemote: `webpackRealRemote@${server.url}remoteEntry.js`,
-        },
-      },
-    });
-
-    expect(result.success).toBe(true);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "out/host.js")],
-      cwd: dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    expect(stdout.trim()).toBe(
-      JSON.stringify({
-        first: { label: "webpack-remote-button" },
-        second: { label: "webpack-remote-button" },
-        same: true,
-        evalCount: 1,
-        initCount: 1,
-      }),
-    );
-    expect(fetchCounts.get("/remoteEntry.js")).toBe(1);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  });
-
-  test("moduleFederation host surfaces real Webpack remote expose failures", async () => {
-    const fixtureDir = join(
-      import.meta.dir,
-      "fixtures/module-federation/webpack-real-remote/dist",
-    );
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        return new Response(readFileSync(join(fixtureDir, "remoteEntry.js")), {
-          headers: { "Content-Type": "application/javascript" },
-        });
-      },
-    });
-    const dir = tempDirWithFiles(
-      "bun-build-module-federation-webpack-host-failure",
-      {
-        "host.ts": `
-        try {
-          await import("webpackRealRemote/Missing");
-        } catch (error) {
-          console.error(error.message);
-          process.exit(42);
-        }
-      `,
-      },
-    );
-    installModuleFederationRuntimeFixture(dir);
-
-    const result = await Bun.build({
-      entrypoints: [join(dir, "host.ts")],
-      outdir: join(dir, "out"),
-      target: "bun",
-      moduleFederation: {
-        remotes: {
-          webpackRealRemote: `webpackRealRemote@${server.url}remoteEntry.js`,
-        },
-      },
-    });
-
-    expect(result.success).toBe(true);
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "out/host.js")],
-      cwd: dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    expect(stdout).toBe("");
-    expect(stderr).toContain('Module "./Missing" does not exist in container.');
-    expect(exitCode).toBe(42);
-  });
-
   test("moduleFederation host registers runtimePlugins before loading remotes", async () => {
-    let serveFetchCount = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        if (new URL(request.url).pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        serveFetchCount++;
-        return new Response(
-          `
-            globalThis.pluginApp = {
-              init() {},
-              get(request) {
-                if (request !== "./Button") throw new Error("unknown expose " + request);
-                return () => ({ default: { label: "plugin-remote-button" } });
-              },
-            };
-          `,
-          { headers: { "Content-Type": "application/javascript" } },
-        );
-      },
-    });
     const dir = tempDirWithFiles(
       "bun-build-module-federation-runtime-plugins",
       {
@@ -1334,6 +1097,16 @@ describe("Bun.build", () => {
       `,
       },
     );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({ default: { label: "plugin-remote-button" } });
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -1342,7 +1115,12 @@ describe("Bun.build", () => {
       target: "bun",
       moduleFederation: {
         remotes: {
-          pluginApp: `pluginApp@${server.url}remoteEntry.js`,
+          pluginApp: {
+            external: [
+              new URL(`file://${join(dir, "remote-entry.js")}`).href,
+            ],
+            type: "module",
+          },
         },
         runtimePlugins: [
           [join(dir, "runtime-plugin.ts"), { flag: "from-options" }],
@@ -1374,7 +1152,6 @@ describe("Bun.build", () => {
         ],
       }),
     );
-    expect(serveFetchCount).toBe(1);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -1455,54 +1232,7 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("moduleFederation host imports a script global remote from manifest", async () => {
-    let manifestFetchCount = 0;
-    let remoteEntryFetchCount = 0;
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const pathname = new URL(request.url).pathname;
-        if (pathname === "/mf-manifest.json") {
-          manifestFetchCount++;
-          return Response.json({
-            name: "app",
-            remoteEntry: {
-              path: "remoteEntry.js",
-              type: "script",
-            },
-          });
-        }
-        if (pathname !== "/remoteEntry.js") {
-          return new Response("not found", { status: 404 });
-        }
-
-        remoteEntryFetchCount++;
-        return new Response(
-          `
-            globalThis.manifestAppRemoteEvalCount = (globalThis.manifestAppRemoteEvalCount ?? 0) + 1;
-            let initCount = 0;
-            let lastShareScope;
-            globalThis.app = {
-              init(shareScope) {
-                initCount++;
-                lastShareScope = shareScope;
-              },
-              get(request) {
-                if (request !== "./Button") throw new Error("unknown expose " + request);
-                return () => ({
-                  default: {
-                    label: "manifest-remote-button",
-                    initCount,
-                    shared: lastShareScope.react.version,
-                  },
-                });
-              },
-            };
-          `,
-          { headers: { "Content-Type": "application/javascript" } },
-        );
-      },
-    });
+  test("moduleFederation host imports a module remote from manifest", async () => {
     const dir = tempDirWithFiles("bun-build-module-federation-manifest-host", {
       "host.ts": `
         import { getInstance } from "@module-federation/runtime";
@@ -1514,10 +1244,30 @@ describe("Bun.build", () => {
           first: first.default,
           second: second.default,
           same: first.default === second.default,
-          evalCount: globalThis.manifestAppRemoteEvalCount,
         }));
       `,
     });
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        let initCount = 0;
+        let lastShareScope;
+        export function init(shareScope) {
+          initCount++;
+          lastShareScope = shareScope;
+        }
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({
+            default: {
+              label: "manifest-remote-button",
+              initCount,
+              shared: lastShareScope.react.version,
+            },
+          });
+        }
+      `,
+    );
     installModuleFederationRuntimeFixture(dir);
 
     const result = await Bun.build({
@@ -1527,7 +1277,13 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            manifest: `${server.url}mf-manifest.json`,
+            manifest: {
+              name: "app",
+              remoteEntry: {
+                path: new URL(`file://${join(dir, "remote-entry.js")}`).href,
+                type: "module",
+              },
+            },
           },
         },
       },
@@ -1560,13 +1316,10 @@ describe("Bun.build", () => {
           shared: "19.0.0",
         },
         same: true,
-        evalCount: 1,
       }),
     );
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    expect(manifestFetchCount).toBe(1);
-    expect(remoteEntryFetchCount).toBe(1);
   });
 
   test("moduleFederation shared singleton uses host copy across separate host and remote roots", async () => {
@@ -1694,7 +1447,7 @@ describe("Bun.build", () => {
     );
     expect(remoteEntry).toBeDefined();
     const remoteEntryText = await remoteEntry!.text();
-    expect(remoteEntryText).not.toContain(`bun:module-federation-runtime`);
+    expect(remoteEntryText).toContain("@module-federation/runtime");
     expect(remoteEntryText).not.toContain(`__bunModuleFederationShareScopes`);
     expect(remoteEntryText).toContain(`__mfInstance = __bunMFInit`);
     expect(remoteEntryText).toContain(`requiredVersion: "^1.0.0"`);

@@ -470,3 +470,45 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
 });
+
+// #30443 — child_process.spawn() with a 4+ entry stdio array used to fail
+// with "connect ENOENT" after ~13 iterations because the extra pipe fd was
+// double-closed (Subprocess.finalizeStreams closed it, then the adopted
+// net.Socket closed it again). The fd was then reused by a new spawn's
+// extra pipe, and the net.Socket for the new one still had a stale poll
+// reference, so epoll_ctl(ADD) failed.
+it.skipIf(isWindows)("repeated spawn with 4+ stdio entries does not leak fds (#30443)", async () => {
+  // Pre-fix:
+  //   - debug+ASAN: fd double-close debugAssert panics at iteration ~14
+  //   - release:    epoll_ctl EBADF once fds start colliding around 44-50
+  // 60 iterations is enough to catch both modes; runs in ~2s under debug.
+  const N = 60;
+  let succeeded = 0;
+  let lastErr: string | null = null;
+  for (let i = 1; i <= N; i++) {
+    try {
+      // `true` is the smallest possible child — exits immediately.
+      const child = spawn("true", [], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+      });
+      // Eagerly touch the extra pipe — this is what forces #getBunSpawnIo
+      // to materialize the fd as a net.Socket, which is where the crash
+      // was triggered under Bun. Playwright (the real-world repro) hits
+      // this path via an immediate `child.pid` access.
+      const extra = child.stdio[3] as NodeJS.ReadableStream | null;
+      if (extra && "on" in extra) {
+        extra.on("data", () => {});
+        extra.on("error", () => {});
+      }
+      await new Promise<void>((resolve, reject) => {
+        child.on("error", reject);
+        child.on("exit", () => resolve());
+      });
+      succeeded++;
+    } catch (e: any) {
+      lastErr = e?.message ?? String(e);
+      break;
+    }
+  }
+  expect({ succeeded, lastErr }).toEqual({ succeeded: N, lastErr: null });
+});

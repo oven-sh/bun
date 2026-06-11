@@ -39,7 +39,7 @@ mod _impl {
                 encoding
             };
 
-            // PORT NOTE: encoder::write_u8/write_u16 take the encoding as a const-generic
+            // encoder::write_u8/write_u16 take the encoding as a const-generic
             // `u8` (stable-Rust workaround for `adt_const_params`) — `dispatch_encoding!`
             // expands the runtime `encoding` into nine monomorphized arms.
             // SAFETY: `s` and `buf` are valid slices derived above; the source/destination
@@ -63,7 +63,6 @@ mod _impl {
                 // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
                 }, |E| unsafe { encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
             };
-            // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {
                 return false;
             };
@@ -121,10 +120,8 @@ mod _impl {
                 _ => {}
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig grew two slices (`contents`, `buf`) into the
-            // same underlying buffer and mutated `contents.len` in place. Here we track offsets
-            // and use copy_within (src/dst share `buf`).
-            // PERF(port): was memcpy (non-overlapping) — profile if memmove-vs-memcpy matters here.
+            // `contents` and the fill destination share the same underlying buffer,
+            // so track offsets and use copy_within (src/dst overlap within `buf`).
             let mut contents_len = written;
             let mut buf_offset = written;
 
@@ -143,5 +140,3 @@ mod _impl {
         }
     }
 } // mod _impl
-
-// ported from: src/runtime/node/buffer.zig

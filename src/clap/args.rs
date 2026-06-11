@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
 
-/// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
+/// Arg-iterator surface. Implemented by
 /// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
 /// owned results) and is used standalone.
 pub trait ArgIter<'a> {
@@ -20,7 +20,7 @@ impl ExampleArgIterator {
 }
 
 /// Pop the first element of `remain`, advancing the slice. Shared body for
-/// `SliceIterator::next` / `OsIterator::next` (the .zig spec duplicates them).
+/// `SliceIterator::next` / `OsIterator::next`.
 #[inline]
 fn pop_first<'a>(remain: &mut &'a [&'a [u8]]) -> Option<&'a [u8]> {
     if remain.is_empty() {
@@ -61,8 +61,7 @@ impl<'a> ArgIter<'a> for SliceIterator<'a> {
 /// An argument iterator which wraps the ArgIterator in ::std.
 /// On windows, this iterator allocates.
 pub struct OsIterator {
-    // PORT NOTE: the Zig `arena: bun.ArenaAllocator` field was dropped — non-AST crate,
-    // and `remain` borrows the process-global argv so nothing is allocated per-call.
+    // `remain` borrows the process-global argv, so nothing is allocated per-call.
     pub remain: &'static [&'static [u8]],
 
     /// The executable path (this is the first argument passed to the program)
@@ -81,8 +80,6 @@ impl OsIterator {
         res
     }
 
-    // PORT NOTE: `deinit` dropped — it only freed the arena, which no longer exists.
-
     pub fn next(&mut self) -> Option<&'static [u8]> {
         pop_first(&mut self.remain)
     }
@@ -99,10 +96,8 @@ impl ArgIter<'static> for OsIterator {
     }
 }
 
-/// Process argv as a `&'static` slice of `&'static [u8]`.
-///
-/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
-/// `BUN_OPTIONS` injection.
+/// Process argv as a `&'static` slice of `&'static [u8]` — the process-global
+/// view that includes `BUN_OPTIONS` injection.
 ///
 /// This used to project `&ZStr → &[u8]` through a `OnceLock<Vec<&[u8]>>`,
 /// which (a) allocated a Vec on the `--version` startup path and (b) emitted a
@@ -127,8 +122,8 @@ pub enum ShellIteratorError {
     DanglingEscape,
     #[error("QuoteNotClosed")]
     QuoteNotClosed,
-    // PORT NOTE: Zig union included `mem.Allocator.Error` (OutOfMemory). Vec aborts on OOM
-    // under the global mimalloc allocator, so that variant is dropped.
+    // There is no OutOfMemory variant: Vec aborts
+    // on OOM under the global mimalloc allocator.
 }
 
 bun_core::named_error_set!(ShellIteratorError);
@@ -136,7 +131,6 @@ bun_core::named_error_set!(ShellIteratorError);
 /// An argument iterator that takes a string and parses it into arguments, simulating
 /// how shells split arguments.
 pub struct ShellIterator<'a> {
-    // PORT NOTE: the Zig `arena: bun.ArenaAllocator` field was dropped (non-AST crate).
     // Allocated results are returned as `Cow::Owned` instead of arena-backed slices.
     pub str: &'a [u8],
 }
@@ -157,8 +151,6 @@ impl<'a> ShellIterator<'a> {
         ShellIterator { str }
     }
 
-    // PORT NOTE: `deinit` dropped — it only freed the arena, which no longer exists.
-
     pub fn next(&mut self) -> Result<Option<Cow<'a, [u8]>>, ShellIteratorError> {
         // Whenever possible, this iterator will return slices into `str` instead of
         // allocating. Sometimes this is not possible, for example, escaped characters
@@ -167,8 +159,7 @@ impl<'a> ShellIterator<'a> {
         let mut start: usize = 0;
         let mut state = State::SkipWhitespace;
 
-        // PORT NOTE: reshaped for borrowck — copy the slice ref so we can reassign
-        // `self.str` before returning (Zig used `defer iter.str = ...`).
+        // Copy the slice ref so we can reassign `self.str` before returning.
         let s: &'a [u8] = self.str;
 
         for (i, &c) in s.iter().enumerate() {
@@ -284,8 +275,8 @@ impl<'a> ShellIterator<'a> {
                 // The state we end up when after the escape character (`\`). All these
                 // states do is transition back into the previous state.
                 // TODO: Are there any escape sequences that does transform the second
-                //       character into something else? For example, in Zig, `\n` is
-                //       transformed into the line feed ascii character.
+                //       character into something else (e.g. `\n` into the line feed
+                //       ascii character)?
                 State::NoQuoteEscape => {
                     state = State::NoQuote;
                 }
@@ -320,7 +311,6 @@ impl<'a> ShellIterator<'a> {
         // the rest we have to the list and return that.
         if !list.is_empty() {
             list.extend_from_slice(res);
-            // PERF(port): was arena-backed `toOwnedSlice()`.
             return Ok(Some(Cow::Owned(list)));
         }
         Ok(Some(Cow::Borrowed(res)))
@@ -342,17 +332,23 @@ mod tests {
         }
     }
 
-    fn test_shell_iterator_ok(str: &[u8], allocations: usize, expect: &[&[u8]]) {
-        // TODO(port): Zig used `testing.FailingAllocator` to cap/count allocations.
-        // No allocator injection in the Rust port; `allocations` is unused.
-        let _ = allocations;
+    fn test_shell_iterator_ok(str: &[u8], expected_owned_results: usize, expect: &[&[u8]]) {
+        // There is no allocator injection to count raw allocations with,
+        // but every allocating result surfaces as a
+        // `Cow::Owned`, so counting owned results checks the same property: the
+        // borrowed (zero-copy) fast path is taken whenever possible.
+        let mut owned_results: usize = 0;
         let mut it = ShellIterator::init(str);
 
         for e in expect {
             match it.next() {
                 Ok(actual) => {
                     assert!(actual.is_some());
-                    assert_eq!(*e, &*actual.unwrap());
+                    let actual = actual.unwrap();
+                    if matches!(actual, Cow::Owned(_)) {
+                        owned_results += 1;
+                    }
+                    assert_eq!(*e, &*actual);
                 }
                 Err(err) => panic!("expected {:?}, got error {:?}", e, err),
             }
@@ -361,7 +357,7 @@ mod tests {
         match it.next() {
             Ok(actual) => {
                 assert!(actual.is_none());
-                // TODO(port): assert_eq!(allocations, allocator.allocations);
+                assert_eq!(expected_owned_results, owned_results);
             }
             Err(err) => panic!("expected end of iterator, got error {:?}", err),
         }
@@ -433,5 +429,3 @@ mod tests {
         test_shell_iterator_err(b"a\\", ShellIteratorError::DanglingEscape);
     }
 }
-
-// ported from: src/clap/args.zig

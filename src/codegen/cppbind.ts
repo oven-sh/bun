@@ -1,8 +1,8 @@
 /*
 
-cppbind - C++ to Zig binding generator for Bun
+cppbind - C++ binding generator for Bun
 
-This tool automatically generates Zig bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
+This tool automatically generates Rust bindings for C++ functions marked with [[ZIG_EXPORT(...)]] attributes.
 It runs automatically when C++ files change during the build process.
 
 To run manually:
@@ -18,7 +18,7 @@ To run manually:
        printf("hello world\n");
    }
    ```
-   Zig usage: `bun.cpp.hello_world();`
+   Rust usage: `bun_jsc::cpp::hello_world();`
 
 2. **zero_is_throw** - Function returns JSValue, where .zero indicates an exception:
    ```cpp
@@ -29,7 +29,7 @@ To run manually:
        return result;
    }
    ```
-   Zig usage: `try bun.cpp.create_object(globalThis);`
+   Rust usage: `bun_jsc::cpp::create_object(global_this)?;`
 
 3. **check_slow** - Function that may throw, performs runtime exception checking:
    ```cpp
@@ -39,7 +39,7 @@ To run manually:
        RETURN_IF_EXCEPTION(scope, );
    }
    ```
-   Zig usage: `try bun.cpp.process_data(globalThis);`
+   Rust usage: `bun_jsc::cpp::process_data(global_this)?;`
 
 ### Parameters
 
@@ -401,7 +401,7 @@ type ExportTag = "check_slow" | "zero_is_throw" | "false_is_throw" | "null_is_th
 
 // ─────────────────────────── Rust output (cpp.rs) ───────────────────────────
 //
-// Mirror of `generateZigFn` for the Rust port: each `[[ZIG_EXPORT(mode)]]` C++
+// Each `[[ZIG_EXPORT(mode)]]` C++
 // function gets a typed `pub fn` in `bun_jsc::cpp` that wraps the raw extern in
 // the appropriate exception scope and converts to `JsResult`. The wrapper opens
 // the scope *before* calling into C++ so the callee's `DECLARE_THROW_SCOPE` dtor
@@ -421,7 +421,7 @@ const rustSharedTypes: Record<string, string> = {
   // Primitives
   "bool": "bool",
   // `char` signedness is platform-dependent (signed on x86_64-linux/windows,
-  // unsigned on aarch64); match Zig's `c_char` so a future by-value return
+  // unsigned on aarch64); use `core::ffi::c_char` so a future by-value return
   // doesn't silently sign-flip.
   "char": "core::ffi::c_char",
   "unsigned char": "u8",
@@ -560,7 +560,7 @@ function generateRustType(type: CppType, parent: CppType | null): string {
     // Unknown opaque — only valid behind a pointer (the per-type shim casts the
     // pointee). Behind a pointer we degrade to c_void; in by-value position that
     // would emit `-> core::ffi::c_void` (a ZST in Rust → silent ABI corruption),
-    // so match the Zig generator and fail loudly at the C++ source location.
+    // so fail loudly at the C++ source location.
     if (parent?.type === "pointer") return "core::ffi::c_void";
     throwError(
       type.position,
@@ -661,7 +661,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
 
   const globalArg = fn.parameters.find(p => isGlobalObjectPtr(p.type));
   if (!globalArg) {
-    // Same constraint as the Zig generator; emit a stub so the module still
+    // Emit a stub so the module still
     // compiles and the symbol name is greppable.
     rustWrap.push(`// skipped ${fn.name}: ${fn.tag} requires a JSGlobalObject* parameter`);
     return;
@@ -672,8 +672,8 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
     // Inline the `top_scope!` body (rather than the `call_check_slow` *function* form,
     // which routes `SourceLocation::from_caller()` → thread-local intern probe per call
     // in debug builds). This is the highest-volume mode — keep it as cheap as the
-    // zero/false/null arms below. `src!()` resolves to the wrapper file/line, matching
-    // Zig's `cpp.zig` (`@src()` inside the wrapper); `#[track_caller]` would be a no-op
+    // zero/false/null arms below. `src!()` resolves to the wrapper file/line;
+    // `#[track_caller]` would be a no-op
     // against a syntactic `file!()`, so don't emit it.
     rustWrap.push(
       `#[inline]`,
@@ -709,7 +709,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   } else assertNever(fn.tag);
 
   // `validation_scope!` expands `src!()` syntactically (resolves to this generated
-  // file/line — parity with Zig's `@src()` inside cpp.zig wrappers). `#[track_caller]`
+  // file/line). `#[track_caller]`
   // can't influence a compile-time `file!()`, so don't emit it.
   rustWrap.push(
     `#[inline]`,

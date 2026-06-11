@@ -12,8 +12,6 @@ use crate::node::Encoding;
 #[derive(Default)]
 pub struct Crypto {}
 
-// Zig: `comptime { _ = CryptoObject__create; }` — force-reference block, dropped.
-
 impl Crypto {
     #[bun_jsc::host_fn(method)]
     pub fn timing_safe_equal(
@@ -25,9 +23,9 @@ impl Crypto {
     }
 
     // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
-    // TODO(port): Zig return type is bare `JSValue` but the error branch returns
-    // `ERR(..).throw()` (a `bun.JSError`). Mirroring as JsResult<JSValue> here; verify
-    // DOMJIT shim expectations.
+    // DOMJIT operations report failure by throwing on the VM and returning the empty
+    // value (`JSValue::ZERO`); the generated wrapper returns the raw EncodedJSValue and
+    // the JIT checks for a pending exception after the call.
     pub fn timing_safe_equal_without_type_checks(
         &self,
         global: &JSGlobalObject,
@@ -40,9 +38,8 @@ impl Crypto {
         let len = array_a.len();
 
         if array_b.len() != len {
-            // TODO(port): see note above re: return type — DOMJIT shim expects bare JSValue
-            // but the Zig error branch returns `bun.JSError`. Mirror by throwing then
-            // returning the encoded error-builder JSValue.
+            // Throw, then return the empty value — the DOMJIT wrapper surfaces the
+            // pending exception (the C-ABI shim encodes it as zero).
             let _ = global
                 .err(
                     bun_jsc::ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,
@@ -98,15 +95,14 @@ impl Crypto {
         global: &JSGlobalObject,
         array: &JSUint8Array,
     ) -> JSValue {
-        // Zig `array.slice()` yields `[]u8` (mutable). `JSUint8Array::slice()` takes
+        // `JSUint8Array::slice()` takes
         // `&mut self`; use ptr()/len() (which take `&self`) to avoid the &mut requirement.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` writable bytes while the
         // typed-array cell is alive; `ffi::slice_mut` tolerates `(null, 0)` for detached.
         random_data(global, unsafe {
             bun_core::ffi::slice_mut(array.ptr(), array.len())
         });
-        // Zig: @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))) — encode the cell
-        // pointer back into a JSValue.
+        // Encode the cell pointer back into a JSValue.
         JSValue::from_encoded(std::ptr::from_ref::<JSUint8Array>(array) as usize)
     }
 
@@ -137,7 +133,7 @@ impl Crypto {
         // randomUUID must have been called already many times before this kicks
         // in so we can skip the rare_data pointer check.
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
-        // NOTE(port): upstream lacks `rare_data_unchecked`; `rare_data()` lazy-inits anyway.
+        // `rare_data()` lazy-inits, so no unchecked accessor is needed.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
 
         uuid.print(
@@ -175,7 +171,6 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     }
 }
 
-// Zig: `comptime { @export(&jsc.toJSHostFn(Bun__randomUUIDv7_), .{ .name = "Bun__randomUUIDv7" }) }`
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
@@ -259,7 +254,6 @@ pub(crate) fn bun_random_uuid_v7(
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
-// Zig: `comptime { @export(&jsc.toJSHostFn(Bun__randomUUIDv5_), .{ .name = "Bun__randomUUIDv5" }) }`
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
 pub(crate) fn bun_random_uuid_v5(
     global: &JSGlobalObject,
@@ -310,7 +304,7 @@ pub(crate) fn bun_random_uuid_v5(
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `name` is a ZigString.Slice in Zig (borrow-or-own UTF-8). Port as bun_core::ZigStringSlice.
+    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
     let name: bun_core::ZigStringSlice = 'brk: {
         if name_value.is_string() {
             let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
@@ -398,10 +392,7 @@ pub(crate) fn bun_random_uuid_v5(
 pub(crate) extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
-    // PORTING.md: allocator.create(T) → Box::new. Box::new aborts on OOM, so the
-    // Zig `catch return globalThis.throwOutOfMemoryValue()` arm is unreachable.
+    // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.
     // `JsClass::to_js` boxes `self` internally and transfers ownership to the JS wrapper.
     Crypto::default().to_js(global)
 }
-
-// ported from: src/runtime/webcore/Crypto.zig

@@ -1,5 +1,4 @@
 //! Node-API (N-API) implementation.
-//! Port of src/napi/napi.zig.
 //!
 //! The full implementation lives in `napi_body.rs` and depends on
 //! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
@@ -26,5 +25,3 @@ bun_opaque::opaque_ffi! {
 // TODO(blocked): bun_collections::LinearFifo
 // TODO(blocked): bun_threading::Condvar
 pub struct ThreadsafeFunction(());
-
-// ported from: src/napi/napi.zig

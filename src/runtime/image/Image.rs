@@ -1216,8 +1216,8 @@ impl Image {
             deliver,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
-            shared: Arc::clone(&self.shared),
-            share_decode: self.shared.images.load(Ordering::Relaxed) > 1,
+            shared: (self.shared.images.load(Ordering::Relaxed) > 1)
+                .then(|| Arc::clone(&self.shared)),
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         // First in-flight task ⇒ hold a Strong ref to the wrapper so GC can't
@@ -1304,10 +1304,11 @@ impl Image {
             deliver: Deliver::Uint8Array,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
-            shared: Arc::clone(&self.shared),
-            // Synchronous JS-thread encode must never block on a worker's
-            // in-flight decode, so it always takes the unshared path.
-            share_decode: false,
+            // The unshared path, always: the synchronous JS-thread encode
+            // must never block on a worker's in-flight decode — and the
+            // `ManuallyDrop` above skips field drops, so this arm must not
+            // own anything (an `Arc` here would leak its refcount).
+            shared: None,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         task.run();
@@ -1507,13 +1508,14 @@ pub struct PipelineTask<'a> {
     deliver: Deliver,
     max_pixels: u64,
     auto_orient: bool,
-    /// Clone-family decode cache (see `SharedDecode`); `Arc` snapshot taken
-    /// on the JS thread at schedule time so the worker never touches `Image`
-    /// fields.
-    shared: Arc<SharedDecode>,
-    /// Whether the family had more than one live image at schedule time —
-    /// gates `decode_oriented`'s shared path.
-    share_decode: bool,
+    /// `Some` ⇒ the clone family had more than one live image at schedule
+    /// time and the worker dedupes full-resolution decodes through this
+    /// cache (see `decode_oriented`); the `Arc` snapshot is taken on the JS
+    /// thread so the worker never touches `Image` fields. `None` ⇒ the
+    /// unshared pre-`clone()` path. This is an OWNING field: any constructor
+    /// whose task skips `Drop` (`encode_for_body`'s `ManuallyDrop`) must
+    /// pass `None` or release it manually.
+    shared: Option<Arc<SharedDecode>>,
     result: TaskResult,
 }
 
@@ -1652,7 +1654,7 @@ impl TaskPixels {
 
 impl<'a> PipelineTask<'a> {
     /// Decode + EXIF auto-orient. When this image had live clones at
-    /// schedule time (`share_decode`) and the decode would be
+    /// schedule time (`self.shared` is `Some`) and the decode would be
     /// full-resolution anyway, it goes through the family's cache: the first
     /// task to arrive decodes while siblings block on the lock, then
     /// everyone shares the same pixels. Otherwise this is exactly the
@@ -1674,9 +1676,10 @@ impl<'a> PipelineTask<'a> {
         // decode is full-resolution regardless — stats, placeholder,
         // transcodes, and every non-JPEG format (their decoders ignore the
         // hint) — dedupes through the family cache.
-        let share = self.share_decode
-            && (src_format != codecs::Format::Jpeg || (hint.target_w == 0 && hint.target_h == 0));
-        if share {
+        let share = self.shared.as_ref().filter(|_| {
+            src_format != codecs::Format::Jpeg || (hint.target_w == 0 && hint.target_h == 0)
+        });
+        if let Some(shared) = share {
             // Everything that shapes the decoded pixels goes into the key:
             // the input bytes (a mutated source ArrayBuffer or a rewritten
             // file re-decodes instead of being served stale pixels) and the
@@ -1694,7 +1697,7 @@ impl<'a> PipelineTask<'a> {
             // this path performs the identical full-resolution decode, so
             // blocking a sibling until the fill finishes is strictly cheaper
             // than letting it duplicate the work.
-            let mut slot = self.shared.cache.lock();
+            let mut slot = shared.cache.lock();
             if slot.key == key {
                 if let Some(arc) = slot.decoded.upgrade() {
                     return Ok(TaskPixels::Shared(arc));

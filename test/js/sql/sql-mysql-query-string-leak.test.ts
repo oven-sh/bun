@@ -65,36 +65,50 @@ test("MySQL: query string is not leaked across query lifecycle", async () => {
 
       const sql = new SQL({ url: \`mysql://root@127.0.0.1:\${port}/db\`, max: 1 });
 
-      // Warm up: first query allocates connection buffers, JIT, etc.
-      await sql.unsafe("select 1").simple();
-
       // Each query string is ~512 KiB and unique (so JSC can't dedupe/intern
       // them) and goes through the full create -> run -> finalize lifecycle.
       // 200 iterations x 512 KiB = ~100 MiB of string payload.
       const ITERATIONS = 200;
       const CHUNK = 512 * 1024;
 
+      // The label keeps every string unique across both batches.
+      async function runBatch(count, label) {
+        for (let i = 0; i < count; i++) {
+          const pad = Buffer.alloc(CHUNK, 0x61 + (i % 26)).toString("latin1");
+          // Embed the bulk as a comment so the mock server's OK reply is valid
+          // regardless of content.
+          const q = "select 1 /* " + label + " " + pad + " " + i + " */";
+          await sql.unsafe(q).simple();
+          if ((i & 15) === 15) Bun.gc(true);
+        }
+      }
+
+      // Give the MySQLQuery wrappers a chance to be finalized so cleanup()
+      // runs and drops its (single) ref on each query string.
+      async function drainFinalizers() {
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setImmediate(r));
+          Bun.gc(true);
+        }
+      }
+
+      // Warm up with the same workload so connection buffers, JIT, and the
+      // allocator high-water mark (the inter-GC peak of the transient query
+      // strings; RSS rarely shrinks back) are all established before the
+      // baseline snapshot. The measured delta then isolates *retained*
+      // strings instead of first-touch heap growth.
+      await runBatch(32, "warmup");
+      await drainFinalizers();
+
       Bun.gc(true);
       const rssBefore = process.memoryUsage.rss();
 
-      for (let i = 0; i < ITERATIONS; i++) {
-        const pad = Buffer.alloc(CHUNK, 0x61 + (i % 26)).toString("latin1");
-        // Embed the bulk as a comment so the mock server's OK reply is valid
-        // regardless of content; suffix makes every string unique.
-        const q = "select 1 /* " + pad + " " + i + " */";
-        await sql.unsafe(q).simple();
-        if ((i & 15) === 15) Bun.gc(true);
-      }
+      await runBatch(ITERATIONS, "measured");
 
       await sql.close({ timeout: 0 }).catch(() => {});
       server.close();
 
-      // Give the MySQLQuery wrappers a chance to be finalized so cleanup()
-      // runs and drops its (single) ref on each query string.
-      for (let i = 0; i < 8; i++) {
-        await new Promise(r => setImmediate(r));
-        Bun.gc(true);
-      }
+      await drainFinalizers();
 
       const rssAfter = process.memoryUsage.rss();
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
@@ -121,7 +135,7 @@ test("MySQL: query string is not leaked across query lifecycle", async () => {
   // runs higher under bun-asan even with the fix; widen the threshold there.
   expect(deltaMiB).toBeLessThan(isASAN ? 256 : 50);
   expect(exitCode).toBe(0);
-  // 200 × 512 KiB round-trips plus ~20 Bun.gc(true) calls in an ASAN debug
+  // ~230 × 512 KiB round-trips plus ~30 Bun.gc(true) calls in an ASAN debug
   // subprocess take ~6–17s; the 5s default is too tight. Same reason as
   // postgres-tls-ctx-leak.test.ts.
 }, 60_000);

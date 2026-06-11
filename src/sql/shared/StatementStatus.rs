@@ -5,9 +5,3 @@ pub enum Status {
     Prepared,
     Failed,
 }
-
-impl Status {
-    pub fn is_running(self) -> bool {
-        self == Status::Parsing
-    }
-}

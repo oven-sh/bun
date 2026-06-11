@@ -136,8 +136,7 @@ for (const [name, asyncMessage] of [
       ]),
     ),
   ],
-  // Degenerate notice with declared length 4 and no field list at all; unlike
-  // ErrorResponse, notice decoding treats this as an empty notice.
+  // Degenerate notice: declared length 4, no field list at all.
   ["empty NoticeResponse", pkt("N", Buffer.alloc(0))],
   // 'v' = NegotiateProtocolVersion, which the client does not handle explicitly
   ["unknown message type", pkt("v", Buffer.concat([int32(0), int32(0)]))],

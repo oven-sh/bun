@@ -11,6 +11,8 @@ pub mod shared {
     pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]
     pub mod sql_query_result_mode;
+    #[path = "StackReader.rs"]
+    pub mod stack_reader;
     #[path = "StatementStatus.rs"]
     pub mod statement_status;
 
@@ -18,6 +20,7 @@ pub mod shared {
     pub use connection_flags::ConnectionFlags;
     pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
+    pub use stack_reader::StackReader;
 }
 
 pub mod mysql {
@@ -107,7 +110,7 @@ pub mod mysql {
         pub use handshake_response41::HandshakeResponse41;
         pub use handshake_v10::HandshakeV10;
         pub use local_infile_request::LocalInfileRequest;
-        pub use new_reader::{Decode, NewReader, NewReaderOf, ReadableInt, ReaderContext};
+        pub use new_reader::{Decode, NewReader, ReadableInt, ReaderContext};
         pub use new_writer::{NewWriter, NewWriterWrap, Packet, WriterContext, write_wrap};
         pub use ok_packet::OKPacket;
         pub use packet_header::PacketHeader;

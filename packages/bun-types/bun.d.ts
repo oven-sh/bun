@@ -8520,7 +8520,8 @@ declare module "bun" {
      * (recorded operations are ignored, like {@link placeholder}):
      * per-channel min/max/sum/squaresSum/mean/stdev and min/max positions,
      * `isOpaque`, greyscale `entropy` and `sharpness` estimates, and the
-     * `dominant` sRGB colour — e.g. for placeholder backgrounds.
+     * `dominant` colour in the image's own colour space (see
+     * {@link Image.Stats.dominant}) — e.g. for placeholder backgrounds.
      *
      * @example
      * ```ts

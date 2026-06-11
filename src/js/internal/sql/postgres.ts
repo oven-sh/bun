@@ -936,25 +936,6 @@ class PostgresAdapter
       } catch {}
     }
   }
-
-  // After the last subscription is removed there is nothing left to receive:
-  // drop the dedicated connection (and any pending reconnect) rather than
-  // keeping an idle ref()'d backend session that would hold the event loop
-  // open. The next listen() recreates it.
-  #closeListenConnectionIfIdle() {
-    if (this.#listenChannels.size > 0) return;
-    if (this.#listenReconnectTimer) {
-      clearTimeout(this.#listenReconnectTimer);
-      this.#listenReconnectTimer = null;
-    }
-    const conn = this.#listenConnection;
-    this.#listenConnection = null;
-    if (conn) {
-      try {
-        conn.close();
-      } catch {}
-    }
-  }
 }
 
 export default {

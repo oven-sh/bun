@@ -13352,8 +13352,10 @@ async function createMockListenServer(
   const queries: string[] = [];
   let closedConnections = 0;
   const closeWaiters: Array<() => void> = [];
+  const liveSockets = new Set<net.Socket>();
   const server = net.createServer(socket => {
     let startup = true;
+    liveSockets.add(socket);
     socket.on("data", data => {
       if (startup) {
         startup = false;
@@ -13382,6 +13384,7 @@ async function createMockListenServer(
       }
     });
     socket.on("close", () => {
+      liveSockets.delete(socket);
       closedConnections++;
       for (const resolve of closeWaiters.splice(0)) resolve();
     });
@@ -13400,6 +13403,11 @@ async function createMockListenServer(
     },
     waitForClose: () =>
       closedConnections > 0 ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push(resolve)),
+    // Push a NotificationResponse to every live connection, independent of any
+    // LISTEN ack (tests asynchronous NOTIFY delivery).
+    notify: (channel: string, payload: string) => {
+      for (const socket of liveSockets) socket.write(notification(channel, payload));
+    },
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }
@@ -13525,5 +13533,61 @@ test("process exits after the last unlisten without an explicit close", async ()
 
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("UNLISTENED\n");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32127: a process whose only pending
+// work is an active listen() subscription must stay alive waiting for
+// notifications instead of exiting once the LISTEN round-trip completes. The
+// notification is only sent after the child printed SUBSCRIBED (top-level
+// await resolved, event loop otherwise empty), so the child can only see it if
+// the subscription held the process open; removing the last subscription in
+// the notify callback then frees the process again.
+test("process stays alive while subscribed and exits after the notification is handled", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("stay_alive_chan", async payload => {
+        console.log("GOT " + payload);
+        // Last subscription: closes the dedicated connection, freeing the process.
+        await sub.unlisten();
+      });
+      console.log("SUBSCRIBED");
+      // Deliberately nothing else keeping the event loop alive.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if notification delivery or the unlisten teardown regresses.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  let stdout = "";
+  let notified = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (!notified && stdout.includes("SUBSCRIBED\n")) {
+      notified = true;
+      mock.notify("stay_alive_chan", "ping");
+    }
+  }
+  const exitCode = await proc.exited;
+
+  // An exit before GOT means the subscription did not keep the process alive.
+  expect(stdout).toBe("SUBSCRIBED\nGOT ping\n");
   expect(exitCode).toBe(0);
 });

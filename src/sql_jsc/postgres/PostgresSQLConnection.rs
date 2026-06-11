@@ -1045,13 +1045,19 @@ impl PostgresSQLConnection {
         event_loop.exit();
         // === defer block ===
         if self.status.get() == Status::Connected
+            && !self
+                .flags
+                .get()
+                .contains(ConnectionFlags::KEEP_ALIVE_REQUESTED)
             && !self.has_query_running()
             && self.write_buffer.get().remaining().is_empty()
         {
             // Don't keep the process alive when there's nothing to do.
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         } else if self.status.get() == Status::Connected {
-            // Keep the process alive if there's something to do.
+            // Keep the process alive if there's something to do (or JS asked
+            // for it via ref(), e.g. a LISTEN connection waiting for
+            // notifications).
             self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
         }
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
@@ -1368,11 +1374,23 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 impl PostgresSQLConnection {
-    bun_jsc::poll_ref_hostfns!(
-        field = poll_ref,
-        ctx = vm_ctx,
-        after = |this: &Self| this.update_has_pending_activity(),
-    );
+    // Hand-written instead of `bun_jsc::poll_ref_hostfns!` because the request
+    // must be sticky: `on_data`'s tail block drops the poll ref whenever the
+    // connection goes idle, which would silently undo a plain `ref()` on the
+    // next data event (see KEEP_ALIVE_REQUESTED in ConnectionFlags).
+    pub fn do_ref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn do_unref(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        this.update_flags(|f| f.remove(ConnectionFlags::KEEP_ALIVE_REQUESTED));
+        this.poll_ref.with_mut(|p| p.unref(this.vm_ctx()));
+        this.update_has_pending_activity();
+        Ok(JSValue::UNDEFINED)
+    }
 
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();

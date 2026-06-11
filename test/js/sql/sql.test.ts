@@ -12879,3 +12879,37 @@ console.log("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// `sql.close({ timeout })` is documented in seconds and `setTimeout` is armed
+// with `timeout * 1000`. The validation upper bound was `timeout > 2 ** 31`,
+// which checked the seconds value against the millisecond limit — so any
+// `timeout` in (2147483.648, 2 ** 31] seconds passed validation, then the
+// millisecond product overflowed and `setTimeout` clamped to 1 ms, force-
+// closing the pool ~1 ms later and cancelling in-flight queries instead of
+// waiting the requested time. The bound now lives on the millisecond product.
+// See https://github.com/oven-sh/bun/issues/32096.
+describe("Bun.SQL close({ timeout }) — millisecond-product upper bound", () => {
+  // Smallest integer where the seconds value still fits in `2 ** 31` but the
+  // millisecond product (2_147_484_000) overflows the 32-bit signed range.
+  const TIMEOUT_THAT_OVERFLOWS_MS = 2_147_484;
+
+  test.each(["postgres", "mysql"])("rejects an overflowing timeout (%s)", async adapter => {
+    const sql = new SQL(`${adapter}://user:pass@127.0.0.1:1/db`);
+    await expect(sql.close({ timeout: TIMEOUT_THAT_OVERFLOWS_MS })).rejects.toThrow(
+      /must be a non-negative integer less than 2\^31 \/ 1000/,
+    );
+  });
+
+  test("accepts a timeout at the millisecond limit", async () => {
+    const sql = new SQL("postgres://user:pass@127.0.0.1:1/db");
+    // 2_147_483 * 1000 = 2_147_483_000 < 2 ** 31, so this fits.
+    await expect(sql.close({ timeout: 2_147_483 })).resolves.toBeUndefined();
+  });
+
+  test("still rejects negative timeouts", async () => {
+    const sql = new SQL("postgres://user:pass@127.0.0.1:1/db");
+    await expect(sql.close({ timeout: -1 })).rejects.toThrow(
+      /must be a non-negative integer less than 2\^31 \/ 1000/,
+    );
+  });
+});

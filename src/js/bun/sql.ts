@@ -390,8 +390,12 @@ const SQL: typeof Bun.SQL = function SQL(
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+        if (timeout < 0 || timeout !== timeout || timeout * 1000 > 2 ** 31) {
+          throw $ERR_INVALID_ARG_VALUE(
+            "options.timeout",
+            timeout,
+            "must be a non-negative integer less than 2^31 / 1000",
+          );
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
@@ -656,8 +660,12 @@ const SQL: typeof Bun.SQL = function SQL(
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
-        if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-          throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+        if (timeout < 0 || timeout !== timeout || timeout * 1000 > 2 ** 31) {
+          throw $ERR_INVALID_ARG_VALUE(
+            "options.timeout",
+            timeout,
+            "must be a non-negative integer less than 2^31 / 1000",
+          );
         }
 
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {

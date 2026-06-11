@@ -56,16 +56,17 @@ describe.each([
 
     test("Should not crash when not returning a promise when stream is in progress", async () => {
       var called = false;
+      let controller;
+      const pulled = Promise.withResolvers();
       await runInServer(
         {
           async fetch() {
             var stream = new ReadableStream({
               type: "direct",
-              pull(controller) {
-                controller.write("hey");
-                setTimeout(() => {
-                  controller.end();
-                }, 100);
+              pull(c) {
+                c.write("hey");
+                controller = c;
+                pulled.resolve();
               },
             });
 
@@ -74,8 +75,11 @@ describe.each([
         },
         async url => {
           called = true;
+          const responsePromise = fetch(url);
+          await pulled.promise;
+          controller.end();
           // the response stays open until controller.end() is called
-          expect(await fetch(url).then(res => res.text())).toBe("hey");
+          expect(await responsePromise.then(res => res.text())).toBe("hey");
         },
       );
 

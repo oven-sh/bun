@@ -1,5 +1,8 @@
 import { sleep } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tls } from "harness";
+import { heapStats } from "bun:jsc";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -144,4 +147,99 @@ test("cancel() fires when the client disconnects while waiting for end()", async
   // instead of waiting for an end() that will never come
   await cancelled.promise;
   await response.text().catch(() => {});
+});
+
+// endFromJS() can hit transport backpressure right after the HEADERS frame on
+// QUIC and park a pending flush; the server must drain it instead of
+// finalizing the sink and truncating the response (HTTP3ContentLengthMismatch).
+describe("end() under transport backpressure over h3", () => {
+  function serveH3(body: () => ReadableStream) {
+    return Bun.serve({
+      port: 0,
+      tls,
+      // @ts-expect-error http3 is not in the public types yet
+      http3: true,
+      http1: false,
+      fetch: () => new Response(body()),
+    });
+  }
+  const h3fetch = (server: any) =>
+    fetch(`https://${server.hostname}:${server.port}/`, {
+      // @ts-expect-error protocol is bun-specific
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    });
+
+  test("async pull() that ends synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.write("hey");
+            c.end();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+
+  test("sync pull() that ends from a microtask", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          pull(c: any) {
+            c.write("hey");
+            queueMicrotask(() => c.end());
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+});
+
+// The controller's detach() used to skip the close callback when it was
+// wrapped in an AsyncContextFrame (stream constructed inside
+// AsyncLocalStorage.run()), so the request context waiting for end() was
+// never released and every request leaked its ReadableStream.
+test("sync pull() under AsyncLocalStorage releases the request on end()", async () => {
+  const als = new AsyncLocalStorage();
+  let controller: any;
+  let pulled: any;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return als.run({}, () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(c: any) {
+              c.write("hey");
+              controller = c;
+              pulled.resolve();
+            },
+          } as any),
+        ),
+      );
+    },
+  });
+
+  async function once() {
+    pulled = Promise.withResolvers();
+    const responsePromise = fetch(server.url);
+    await pulled.promise;
+    controller.end();
+    const response = await responsePromise;
+    expect(await response.text()).toBe("hey");
+  }
+
+  for (let i = 0; i < 20; i++) await once();
+  Bun.gc(true);
+  await Bun.sleep(10);
+  Bun.gc(true);
+  const counts = heapStats().objectTypeCounts;
+  expect(counts.ReadableStream ?? 0).toBeLessThan(10);
 });

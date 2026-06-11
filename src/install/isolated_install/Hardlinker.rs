@@ -273,6 +273,24 @@ impl Hardlinker {
                                             self.dest.slice_z(),
                                         ) {
                                             sys::Result::Ok(()) => {}
+                                            sys::Result::Err(link_err2)
+                                                if matches!(
+                                                    link_err2.get_errno(),
+                                                    sys::E::EPERM | sys::E::EACCES
+                                                ) =>
+                                            {
+                                                // OHOS: retry also blocked; copy instead
+                                                if crate::copy_file_fallback(
+                                                    entry.dir,
+                                                    entry.basename,
+                                                    Fd::cwd(),
+                                                    self.dest.slice_z(),
+                                                )
+                                                .is_err()
+                                                {
+                                                    break 'body Some(link_err2);
+                                                }
+                                            }
                                             sys::Result::Err(link_err2) => {
                                                 break 'body Some(link_err2);
                                             }
@@ -291,6 +309,25 @@ impl Hardlinker {
                                             self.dest.slice_z(),
                                         ) {
                                             sys::Result::Ok(()) => {}
+                                            sys::Result::Err(link_err2)
+                                                if matches!(
+                                                    link_err2.get_errno(),
+                                                    sys::E::EPERM | sys::E::EACCES
+                                                ) =>
+                                            {
+                                                // OHOS: linkat blocked even after creating
+                                                // parent dir; fall back to copy.
+                                                if crate::copy_file_fallback(
+                                                    entry.dir,
+                                                    entry.basename,
+                                                    Fd::cwd(),
+                                                    self.dest.slice_z(),
+                                                )
+                                                .is_err()
+                                                {
+                                                    break 'body Some(link_err2);
+                                                }
+                                            }
                                             sys::Result::Err(link_err2) => {
                                                 break 'body Some(link_err2);
                                             }
@@ -298,32 +335,19 @@ impl Hardlinker {
                                     }
                                     sys::E::EPERM | sys::E::EACCES => {
                                         // OHOS SELinux blocks linkat; fall back to copy
-                                        // Ensure parent directory exists (may not on first install)
                                         let Some(dest_parent) = self.dest.dirname() else {
                                             break 'body Some(link_err1);
                                         };
                                         let _ = Fd::cwd().make_path(dest_parent);
-                                        let inf = match sys::File::openat(entry.dir, entry.basename, sys::O::RDONLY, 0) {
-                                            Ok(f) => f,
-                                            Err(_) => break 'body Some(link_err1),
-                                        };
-                                        // Try create; if EACCES/EPERM, unlink first then retry
-                                        let outf = match sys::File::create(Fd::cwd(), self.dest.slice(), true) {
-                                            Ok(f) => f,
-                                            Err(ref e) if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM => {
-                                                let _ = sys::unlinkat(Fd::cwd(), self.dest.slice_z());
-                                                match sys::File::create(Fd::cwd(), self.dest.slice(), true) {
-                                                    Ok(f) => f,
-                                                    Err(_) => break 'body Some(link_err1),
-                                                }
-                                            }
-                                            Err(_) => break 'body Some(link_err1),
-                                        };
-                                        if sys::copy_file::copy_file(inf.handle(), outf.handle()).is_err() {
+                                        if crate::copy_file_fallback(
+                                            entry.dir,
+                                            entry.basename,
+                                            Fd::cwd(),
+                                            self.dest.slice_z(),
+                                        )
+                                        .is_err()
+                                        {
                                             break 'body Some(link_err1);
-                                        }
-                                        if let Ok(stat) = sys::fstat(inf.handle()) {
-                                            let _ = sys::fchmod(outf.handle(), stat.st_mode);
                                         }
                                     }
                                     _ => break 'body Some(link_err1),

@@ -1,7 +1,7 @@
 import { getDevServerDeinitCount } from "bun:internal-for-testing";
 import html from "./index.html";
-import { expect, test } from "bun:test";
-import { fullGC } from "bun:jsc";
+import { afterAll, expect, test } from "bun:test";
+import { fullGC, heapStats } from "bun:jsc";
 
 expect(process.cwd()).toBe(import.meta.dir);
 
@@ -72,6 +72,11 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
   }
 
   await main();
+  // The closure assigned to `globalThis.callback` inside `main()` captures
+  // `server`; left in place it roots the JS Server wrapper through every GC
+  // below, so the wrapper never finalizes and the native NewServer box (and
+  // everything its config owns) is still live at process exit.
+  globalThis.callback = undefined;
 
   if (closeActiveConnections) {
     await promise;
@@ -108,6 +113,42 @@ const cases = [
   { closeActiveConnections: false, sendAnyRequests: false, websocket: 8 },
   { closeActiveConnections: true, sendAnyRequests: false, websocket: 8 },
 ];
+
+function liveServerWrappers() {
+  const c = heapStats().objectTypeCounts;
+  return (c.HTTPServer ?? 0) + (c.DebugHTTPServer ?? 0) + (c.HTTPSServer ?? 0) + (c.DebugHTTPSServer ?? 0);
+}
+// `objectTypeCounts` includes the (lazily created) prototype object once the
+// first server has been constructed. Create-and-stop one trivial server here
+// so the prototype is materialized but the instance is freed; the afterAll
+// check then asserts every dev-server case returns to this baseline (i.e. zero
+// live wrapper instances and the native boxes were actually freed).
+let serverWrapperBaseline: number;
+test("baseline: stopped server wrapper collects", async () => {
+  await (async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    server.stop(true);
+  })();
+  for (let i = 0; i < 10 && liveServerWrappers() > 1; i++) {
+    Bun.gc(true);
+    fullGC();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  serverWrapperBaseline = liveServerWrappers();
+  expect(serverWrapperBaseline).toBeLessThanOrEqual(1);
+});
+
+afterAll(async () => {
+  // Drain any deferred deinit task scheduled during the final case's GC, then
+  // assert every JS Server wrapper has actually been collected — i.e. the
+  // native NewServer boxes are freed, not just the embedded dev servers.
+  for (let i = 0; i < 10 && liveServerWrappers() > serverWrapperBaseline; i++) {
+    Bun.gc(true);
+    fullGC();
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  expect(liveServerWrappers()).toBe(serverWrapperBaseline);
+});
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {
   test(

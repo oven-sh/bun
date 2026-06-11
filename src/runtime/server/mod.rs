@@ -220,6 +220,7 @@ bitflags::bitflags! {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
+        const HANDLERS_RELEASED           = 1 << 3;
     }
 }
 
@@ -1666,6 +1667,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
+            }
+            // No request or upgrade can reach the user's handler callbacks once
+            // the listener is gone, the in-flight count is zero, and there are
+            // no live websockets. Release their `Strong` handles now: a handler
+            // defined in a scope that closes over the JS `Server` value
+            // otherwise forms a native↔JS cycle (box → Strong(handler) →
+            // lexical environment → Server wrapper → m_ctx → box) that the GC
+            // cannot see through, so the wrapper never finalizes and the box is
+            // never freed.
+            if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
+                self.flags.insert(ServerFlags::HANDLERS_RELEASED);
+                self.config.on_request = None;
+                self.config.on_node_http_request = None;
+                self.config.on_error = None;
+                self.on_clienterror.deinit();
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.unprotect();
+                }
             }
             self.unref();
 

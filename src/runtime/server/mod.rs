@@ -1027,6 +1027,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
+        // `deinit_if_we_can` releases the handler Strongs once the server is
+        // fully idle after a graceful `stop()`. A surviving keep-alive
+        // connection can still deliver one more request after that; there is
+        // nothing left to dispatch it to, so close the connection instead of
+        // calling a released handler.
+        // SAFETY: `this` is the live server backref registered as the uws
+        // userdata; no other borrow derived from it is alive here.
+        if unsafe { (*this).config.on_request.is_none() } {
+            // S012: `NewAppResponse<SSL>` is a ZST opaque — safe deref.
+            let resp = bun_opaque::opaque_deref_mut(resp);
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
+
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
             this,
@@ -1160,6 +1175,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
+
+        // `deinit_if_we_can` releases the handler Strongs once the server is
+        // fully idle after a graceful `stop()`. A surviving keep-alive
+        // connection can still deliver one more request after that; there is
+        // nothing left to dispatch it to, so close the connection instead of
+        // forwarding a released callback to the C++ request handler.
+        // SAFETY: `this` is the live server backref registered as the uws
+        // userdata; no other borrow derived from it is alive here.
+        if unsafe { (*this).config.on_node_http_request.is_none() } {
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
 
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.

@@ -1151,3 +1151,37 @@ pub(crate) enum PackageManifestError {
 bun_core::impl_tag_error!(PackageManifestError);
 
 bun_core::named_error_set!(PackageManifestError);
+
+/// Fallback for when `linkat` / `symlinkat` is blocked by SELinux (OHOS) or
+/// similar security policy. Opens the source file, creates the destination
+/// (retrying with unlink on EACCES/EPERM), copies the content, and preserves
+/// the source file's permissions.
+///
+/// Shared by `Hardlinker`, `PackageInstall::install_with_hardlink`,
+/// `PackageInstall::install_with_symlink`, and `TarballStream::apply_symlink`.
+#[cfg(not(windows))]
+pub(crate) fn copy_file_fallback(
+    src_dir: bun_sys::Fd,
+    src_name: &bun_core::ZStr,
+    dest_dir: bun_sys::Fd,
+    dest_path_z: &bun_core::ZStr,
+) -> bun_sys::Result<()> {
+    use bun_sys::{self as sys};
+    let inf = sys::File::openat(src_dir, src_name, sys::O::RDONLY, 0)?;
+    let dest_path: &[u8] = dest_path_z;
+    let outf = match sys::File::create(dest_dir, dest_path, true) {
+        Ok(f) => f,
+        Err(ref e)
+            if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM =>
+        {
+            let _ = sys::unlinkat(dest_dir, dest_path_z);
+            sys::File::create(dest_dir, dest_path, true)?
+        }
+        Err(e) => return Err(e),
+    };
+    sys::copy_file::copy_file(inf.handle(), outf.handle())?;
+    if let Ok(stat) = sys::fstat(inf.handle()) {
+        let _ = sys::fchmod(outf.handle(), stat.st_mode);
+    }
+    Ok(())
+}

@@ -1655,12 +1655,29 @@ impl<'a> PackageInstall<'a> {
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
                                         let _ = sys::unlinkat(destination_dir, entry.path);
-                                        sys::linkat(
+                                        match sys::linkat(
                                             entry.dir,
                                             entry.basename,
                                             destination_dir.fd(),
                                             entry.path,
-                                        )?;
+                                        ) {
+                                            Ok(()) => {}
+                                            Err(retry_err)
+                                                if matches!(
+                                                    retry_err.get_errno(),
+                                                    sys::E::EPERM | sys::E::EACCES
+                                                ) =>
+                                            {
+                                                // OHOS: retry also blocked; copy instead
+                                                crate::copy_file_fallback(
+                                                    entry.dir,
+                                                    entry.basename,
+                                                    destination_dir.fd(),
+                                                    entry.path,
+                                                )?;
+                                            }
+                                            Err(retry_err) => return Err(retry_err.into()),
+                                        }
                                     }
                                     sys::E::EXDEV => {
                                         return Err(bun_core::err!("NotSameFileSystem"));
@@ -1670,15 +1687,12 @@ impl<'a> PackageInstall<'a> {
                                     }
                                     sys::E::EPERM | sys::E::EACCES => {
                                         // OHOS SELinux blocks hard links; fall back to copy
-                                        // File is RAII (Drop closes FD), no manual cleanup needed
-                                        let inf = sys::File::openat(entry.dir, entry.basename.as_bytes(), sys::O::RDONLY, 0)?;
-                                        let outf = sys::File::create(destination_dir.fd(), entry.path.as_bytes(), true)?;
-                                        let result = sys::copy_file::copy_file(inf.handle(), outf.handle());
-                                        // Preserve source file permissions after copy
-                                        if let Ok(stat) = sys::fstat(inf.handle()) {
-                                            let _ = sys::fchmod(outf.handle(), stat.st_mode);
-                                        }
-                                        result?;
+                                        crate::copy_file_fallback(
+                                            entry.dir,
+                                            entry.basename,
+                                            destination_dir.fd(),
+                                            entry.path,
+                                        )?;
                                     }
                                     _ => return Err(err.into()),
                                 }
@@ -1866,7 +1880,24 @@ impl<'a> PackageInstall<'a> {
                                 match err.get_errno() {
                                     sys::E::EEXIST => {
                                         let _ = sys::unlinkat(destination_dir, entry.path);
-                                        sys::symlinkat(entry.basename, destination_dir.fd(), entry.path)?;
+                                        match sys::symlinkat(entry.basename, destination_dir.fd(), entry.path) {
+                                            Ok(()) => {}
+                                            Err(retry_err)
+                                                if matches!(
+                                                    retry_err.get_errno(),
+                                                    sys::E::EPERM | sys::E::EACCES
+                                                ) =>
+                                            {
+                                                // OHOS: retry also blocked; copy instead
+                                                crate::copy_file_fallback(
+                                                    destination_dir.fd(),
+                                                    entry.path,
+                                                    destination_dir.fd(),
+                                                    entry.path,
+                                                )?;
+                                            }
+                                            Err(retry_err) => return Err(retry_err.into()),
+                                        }
                                     }
                                     sys::E::EPERM | sys::E::EACCES => {
                                         // OHOS SELinux blocks symlinkat; fall back to copy
@@ -1874,27 +1905,12 @@ impl<'a> PackageInstall<'a> {
                                             return Err(err.into());
                                         };
                                         let _ = destination_dir.make_path(dir);
-                                        let inf = match sys::File::openat(destination_dir.fd(), entry.path, sys::O::RDONLY, 0) {
-                                            Ok(f) => f,
-                                            Err(_) => return Err(err.into()),
-                                        };
-                                        let outf = match sys::File::create(destination_dir.fd(), entry.path, true) {
-                                            Ok(f) => f,
-                                            Err(ref e) if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM => {
-                                                let _ = sys::unlinkat(destination_dir, entry.path);
-                                                match sys::File::create(destination_dir.fd(), entry.path, true) {
-                                                    Ok(f) => f,
-                                                    Err(_) => return Err(err.into()),
-                                                }
-                                            }
-                                            Err(_) => return Err(err.into()),
-                                        };
-                                        if sys::copy_file::copy_file(inf.handle(), outf.handle()).is_err() {
-                                            return Err(err.into());
-                                        }
-                                        if let Ok(stat) = sys::fstat(inf.handle()) {
-                                            let _ = sys::fchmod(outf.handle(), stat.st_mode);
-                                        }
+                                        crate::copy_file_fallback(
+                                            destination_dir.fd(),
+                                            entry.path,
+                                            destination_dir.fd(),
+                                            entry.path,
+                                        )?;
                                     }
                                     _ => return Err(err.into()),
                                 }

@@ -1594,15 +1594,18 @@ describe("Bun.Image clone()", () => {
     expect([decodePngRaw(a).w, decodePngRaw(b).w]).toEqual([8, 4]);
   });
 
-  test("clone snapshots constructor options and last-known dimensions", async () => {
+  test("clone snapshots constructor options; dimension getters start fresh", async () => {
     const big = new Bun.Image(gradientPng, { maxPixels: 4 }); // 16×16 > 4
     await expect(big.clone().png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_TOO_MANY_PIXELS" });
 
     const base = new Bun.Image(cornersPng);
     await base.metadata();
     const clone = base.clone();
-    expect([clone.width, clone.height]).toEqual([4, 3]);
+    // width/height are -1 until the clone's own first awaited terminal.
+    expect([clone.width, clone.height]).toEqual([-1, -1]);
     expect(await clone.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+    expect([clone.width, clone.height]).toEqual([4, 3]);
+    expect([base.width, base.height]).toEqual([4, 3]);
   });
 
   test("clone of a detached ArrayBuffer source rejects like the parent would", async () => {

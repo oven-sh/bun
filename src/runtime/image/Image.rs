@@ -367,7 +367,12 @@ impl Image {
         mem::size_of::<Image>()
             + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
-                Source::Owned(b) => b.len(),
+                // Clones share the buffer; splitting the charge keeps a
+                // family's total at ~one buffer instead of N of them. Only
+                // Image wrappers hold this Arc, so the count is the family
+                // size (atomic load; an estimate racing a concurrent clone
+                // is fine).
+                Source::Owned(b) => b.len() / Arc::strong_count(b),
                 Source::Path(p) => p.len(),
             }
     }
@@ -688,8 +693,11 @@ impl Image {
             pipeline: Cell::new(self.pipeline.get()),
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
-            last_width: Cell::new(self.last_width.get()),
-            last_height: Cell::new(self.last_height.get()),
+            // `.width`/`.height` are documented as -1 until THIS instance's
+            // first awaited terminal; the parent's last terminal output says
+            // nothing about the clone's pipeline.
+            last_width: Cell::new(-1),
+            last_height: Cell::new(-1),
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
             shared: Arc::clone(&self.shared),

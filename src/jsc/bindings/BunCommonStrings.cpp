@@ -45,7 +45,7 @@ void CommonStrings::visit(Visitor& visitor)
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);
 template void CommonStrings::visit(JSC::SlotVisitor&);
 
-// Must be kept in sync with method.zig
+// Must be kept in sync with src/http_types/Method.rs
 enum class HTTPMethod : uint8_t {
     httpACL = 0,
     httpBIND = 1,
@@ -201,7 +201,7 @@ extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZi
     return JSValue::encode(toJS(globalObject, commonString));
 }
 
-// Must be kept in sync with src/http/FetchCacheMode.zig
+// Must be kept in sync with src/http_types/FetchCacheMode.rs
 enum class FetchCacheMode : uint8_t {
     Default = 0,
     NoStore = 1,
@@ -234,7 +234,7 @@ extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zi
     }
 }
 
-// Must be kept in sync with src/http/FetchRedirect.zig
+// Must be kept in sync with src/http_types/FetchRedirect.rs
 enum class FetchRedirect : uint8_t {
     Follow = 0,
     Manual = 1,
@@ -258,7 +258,7 @@ extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, 
     }
 }
 
-// Must be kept in sync with src/http/FetchRequestMode.zig
+// Must be kept in sync with src/http_types/FetchRequestMode.rs
 enum class FetchRequestMode : uint8_t {
     SameOrigin = 0,
     NoCors = 1,

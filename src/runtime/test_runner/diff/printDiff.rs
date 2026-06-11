@@ -51,7 +51,6 @@ pub fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — all intermediate Vecs below were arena-allocated in Zig.
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -175,7 +174,7 @@ pub fn print_diff_main(
         diff_segments = new_diff_segments;
 
         // Forward pass: unskip segments after non-equal segments
-        // PORT NOTE: reshaped for borrowck (capture len before mutable slice borrow)
+        // reshaped for borrowck (capture len before mutable slice borrow)
         let len = diff_segments.len();
         for i in 0..len {
             if diff_segments[i].mode != DiffSegmentMode::Equal {
@@ -292,8 +291,8 @@ pub enum DiffSegmentMode {
     Modified,
 }
 
-// TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership.
+// `removed`/`inserted` borrow from caller input and diff_match_patch output
+// (tracked by `'a`).
 #[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
@@ -396,7 +395,7 @@ fn print_truncated_line(
     }
 
     if config.enable_ansi_colors {
-        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97 — Zig printDiff.zig:177
+        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
     }
     // The context is shown on both sides, so we truncate line.len - 2 * context
     write!(
@@ -643,7 +642,6 @@ pub fn print_diff(
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free.
     let mut removed_line_number: usize = 1;
     let mut inserted_line_number: usize = 1;
     let mut removed_diff_lines: usize = 0;
@@ -653,8 +651,8 @@ pub fn print_diff(
 
     let mut was_skipped = false;
     for (i, segment) in diff_segments.iter().enumerate() {
-        // PORT NOTE: Zig `defer { removed_line_number += ...; inserted_line_number += ...; }` —
-        // applied at the end of the loop body and before `continue` below.
+        // `removed_line_number` / `inserted_line_number` are bumped at the end
+        // of the loop body and before `continue` below.
 
         if (was_skipped && !segment.skip) || (has_skipped_segments && i == 0 && !segment.skip) {
             // have to calculate the length of the non-skipped segment
@@ -682,7 +680,6 @@ pub fn print_diff(
             DiffSegmentMode::Equal => {
                 if segment.skip {
                     was_skipped = true;
-                    // defer:
                     removed_line_number += segment.removed_line_count;
                     inserted_line_number += segment.inserted_line_count;
                     continue;
@@ -715,7 +712,6 @@ pub fn print_diff(
             }
         }
 
-        // defer:
         removed_line_number += segment.removed_line_count;
         inserted_line_number += segment.inserted_line_count;
     }
@@ -724,5 +720,3 @@ pub fn print_diff(
 
     print_diff_footer(writer, config, removed_diff_lines, inserted_diff_lines)
 }
-
-// ported from: src/test_runner/diff/printDiff.zig

@@ -8,7 +8,7 @@
 #include <wtf/MathExtras.h>
 #include <cmath>
 
-// Zig exports for visible width calculation
+// Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
@@ -38,7 +38,7 @@ struct WrapAnsiOptions {
 };
 
 // ============================================================================
-// String Width Calculation (using Zig implementation)
+// String Width Calculation
 // ============================================================================
 
 template<typename Char>

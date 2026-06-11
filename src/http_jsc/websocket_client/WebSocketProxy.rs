@@ -14,13 +14,13 @@ pub(crate) struct WebSocketProxy {
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
     /// TLS tunnel for wss:// through HTTP proxy
-    // TODO(port): lifetime — intrusive refcount (Drop calls shutdown()+deref()); not in LIFETIMES.tsv
+    // Holds one intrusive ref; Drop calls shutdown()+deref().
     tunnel: Option<NonNull<WebSocketProxyTunnel>>,
 }
 
 impl WebSocketProxy {
     /// Initialize a new WebSocketProxy
-    // PORT NOTE: params are owned (Zig caller transfers allocator ownership; freed in deinit)
+    // params are owned (caller transfers ownership; freed in deinit)
     pub(crate) fn init(
         target_host: Box<[u8]>,
         target_is_https: bool,
@@ -75,5 +75,3 @@ impl Drop for WebSocketProxy {
         }
     }
 }
-
-// ported from: src/http_jsc/websocket_client/WebSocketProxy.zig

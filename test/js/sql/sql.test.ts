@@ -1457,7 +1457,9 @@ if (isDockerEnabled()) {
             login_md5.username +
             ":" +
             (login_md5.password || "") +
-            "@localhost:" +
+            "@" +
+            container.host +
+            ":" +
             container.port.toString() +
             "/" +
             options.db,
@@ -2298,7 +2300,7 @@ if (isDockerEnabled()) {
       }
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
     });
 
     test("dynamic table name", async () => {

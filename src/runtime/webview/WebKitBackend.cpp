@@ -39,7 +39,7 @@ namespace WK {
 using namespace JSC;
 using namespace WebViewProto;
 
-// Spawn + process-exit watch in Zig (reuses bun.spawn.Process / EVFILT_PROC).
+// Spawn + process-exit watch implemented in HostProcess.rs (EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
@@ -131,7 +131,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
 {
     if (sock && !dead) return true;
 
-    // Host died (rejectAllAndMarkDead ran). The Zig side cleared its
+    // Host died (rejectAllAndMarkDead ran). HostProcess.rs cleared its
     // instance in onProcessExit, so Bun__WebViewHost__ensure will spawn a
     // fresh child. Clear stale state and try again — the old rx/txQueue
     // bytes are for the dead socket.
@@ -212,7 +212,7 @@ void HostClient::onWritable()
 
 // Open + mmap the child-written shm segment. The child already munmapped
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
-// because the Zig allocator wrapper poisons with @memset(undefined) in
+// because the child's allocator poisons the buffer in
 // safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
 // mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
@@ -665,7 +665,7 @@ void close(JSWebView* view)
 } // namespace WK
 } // namespace Bun
 
-// Called from Zig's onProcessExit (EVFILT_PROC). The socket onClose may or
+// Called from HostProcess.rs's onProcessExit (EVFILT_PROC). The socket onClose may or
 // may not have fired (crash = no FIN). Idempotent with onClose.
 extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 {
@@ -678,10 +678,8 @@ extern "C" void Bun__WebViewHost__childDied(int32_t signo)
 
 #else // !OS(DARWIN)
 
-// HostProcess.zig references this unconditionally via @extern; Zig's dead-code
-// elimination doesn't trigger because the TaggedPointer dispatch switch in
-// process.zig pulls in all ProcessExitHandler arms. spawn() itself is gated
-// on Environment.isMac so this is never called.
+// HostProcess.rs references this symbol unconditionally. spawn() itself is
+// gated on macOS so this is never called.
 extern "C" void Bun__WebViewHost__childDied(int32_t) {}
 
 #endif // OS(DARWIN)

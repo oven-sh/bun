@@ -32,5 +32,3 @@ impl PacketHeader {
         ]
     }
 }
-
-// ported from: src/sql/mysql/protocol/PacketHeader.zig

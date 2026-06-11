@@ -31,7 +31,7 @@ export function union(name: string, alternatives: NamedAlternatives): NamedUnion
 
 /**
  * The order of types in this union is significant. Each type is tried in order, and the first one
- * that successfully converts determines the active field in the corresponding Zig tagged union.
+ * that successfully converts determines the active field in the corresponding native tagged union.
  *
  * This means that it is an error to specify `RawAny` or `StrongAny` as anything other than the
  * last alternative, as conversion to any subsequent types would never be attempted.

@@ -50,7 +50,6 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     }
 
     // TODO: make static cast instead of jscast
-    // Use Zig::GlobalObject's function
     return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
 }
 
@@ -88,7 +87,6 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    // Use Zig::GlobalObject's function
     return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
 }
 
@@ -148,7 +146,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             }
 
             // We unconditionally prefix the key with "bake:" inside
-            // BakeProdResolve in production.zig.
+            // BakeProdResolve.
             //
             // But if someone does: `await import(resolve(import.meta.dir, "nav.ts"))`
             // we don't actually want to load it from the Bake production module

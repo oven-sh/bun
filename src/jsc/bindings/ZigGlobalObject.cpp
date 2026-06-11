@@ -355,7 +355,7 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
-// Declare the Zig functions for LazyProperty initializers
+// Declare the native functions for LazyProperty initializers
 extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
@@ -841,8 +841,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
 extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject*)
 {
     // The JSC module loader registry is no longer a JS Map; snapshot/restore
-    // is no longer supported. The only Zig declaration of this symbol has no
-    // callers, so this is dead code kept for ABI compatibility.
+    // is no longer supported. This symbol has no callers, so this is dead
+    // code kept for ABI compatibility.
     return nullptr;
 }
 
@@ -1042,10 +1042,6 @@ extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
-    // Zig__GlobalObject__promiseRejectionTracker(
-    //     obj, prom, reject == JSC::JSPromiseRejectionOperation::Reject ? 0 : 1);
-
-    // Do this in C++ for now
     auto* globalObj = static_cast<GlobalObject*>(obj);
 
     switch (operation) {
@@ -3034,8 +3030,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
 // ===================== start conditional builtin globals =====================
 // These functions register globals based on runtime conditions (e.g. CLI flags,
-// environment variables, etc.). See `Run.addConditionalGlobals()` in bun_js.zig
-// for where these are called.
+// environment variables, etc.). See `add_conditional_globals()` in
+// src/runtime/cli/run_command.rs for where these are called.
 
 /// `globalThis.gc()` is an alias for `Bun.gc(true)`
 /// Note that `vm` is a `VirtualMachine*`
@@ -3621,7 +3617,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     memset(&res.result, 0, sizeof res.result);
 
     // require(esm) needs the entire dependency graph to load without yielding
-    // to microtasks. The async fetch path goes through Zig's transpiler thread
+    // to microtasks. The async fetch path goes through the transpiler thread
     // pool; route to the synchronous fetch instead so the returned promise is
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
@@ -3691,7 +3687,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
-    // dispatching here. Don't call back into Zig (which opens an
+    // dispatching here. Don't call back into native code (which opens an
     // ExceptionValidationScope) with an exception still pending.
     RETURN_IF_EXCEPTION(scope, result);
 
@@ -3706,7 +3702,7 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         //
         // Instead, when the module yielded, capture the async capability's
         // promise. Its resolution value is the module's final completion
-        // value; the --print loop in bun.js.zig already unwraps promises
+        // value; the --print loop in run_command.rs already unwraps promises
         // via asAnyPromise + Bun__onResolveEntryPointResult.
         JSC::JSValue valueToStore = result;
         if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {

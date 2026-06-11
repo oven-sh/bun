@@ -178,7 +178,7 @@ using namespace WebCore;
 
 typedef uint8_t ExpectFlags;
 
-// Note: keep this in sync with Expect.Flags implementation in zig (at expect.zig)
+// Note: keep this in sync with Flags in src/runtime/test_runner/expect.rs
 // clang disable unused warning
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-variable"
@@ -2244,7 +2244,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
-// native code at the top of the event loop (e.g. runFromJSThread in node_fs.zig)
+// native code at the top of the event loop (e.g. run_from_js_thread in node_fs.rs)
 // where there's no JS call stack, but the promise being rejected has an await
 // chain that tells us where the user's code is.
 //
@@ -2611,7 +2611,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 
         if (auto* object = dynamicDowncast<JSObject>(cell)) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-            scope.release(); // zig binding handles exceptions
+            scope.release(); // the extern-C caller checks for the pending exception
             JSValue lengthValue = object->getIfPropertyExists(globalObject, globalObject->vm().propertyNames->length);
             RETURN_IF_EXCEPTION(scope, 0);
             if (lengthValue) {
@@ -4946,7 +4946,7 @@ void JSC__VM__holdAPILock(JSC::VM* arg0, void* ctx, void (*callback)(void* arg0)
 }
 
 // The following two functions are copied 1:1 from JSLockHolder to provide a
-// new, more ergonomic binding for interacting with the lock from Zig
+// new, more ergonomic binding for interacting with the lock from native code
 // https://github.com/WebKit/WebKit/blob/main/Source/JavaScriptCore/runtime/JSLock.cpp
 
 extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
@@ -5108,7 +5108,7 @@ JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObj
     return JSC::JSValue::encode(value);
 }
 
-// This enum must match the zig enum in src/jsc/bindings/JSValue.zig JSValue.BuiltinName
+// This enum must match BuiltinName in src/jsc/lib.rs
 enum class BuiltinNamesMap : uint8_t {
     method,
     headers,
@@ -6463,8 +6463,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
-    // Note: _ is now set in Zig code (repl.zig) after extracting the value from
-    // the REPL transform wrapper. We don't set it here anymore.
+    // Note: _ is now set in src/runtime/cli/repl.rs after extracting the value
+    // from the REPL transform wrapper. We don't set it here anymore.
 
     return JSC::JSValue::encode(result);
 }

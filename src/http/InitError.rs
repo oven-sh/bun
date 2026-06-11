@@ -11,5 +11,3 @@ pub enum InitError {
 }
 
 bun_core::named_error_set!(InitError);
-
-// ported from: src/http/InitError.zig

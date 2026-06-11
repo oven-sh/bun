@@ -1,7 +1,7 @@
 import { sleep } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { tls } from "harness";
-import { heapStats } from "bun:jsc";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 test("HTTPResponseSink displays correct message", async () => {
@@ -212,17 +212,19 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
   using server = Bun.serve({
     port: 0,
     fetch() {
-      return als.run({}, () =>
-        new Response(
-          new ReadableStream({
-            type: "direct",
-            pull(c: any) {
-              c.write("hey");
-              controller = c;
-              pulled.resolve();
-            },
-          } as any),
-        ),
+      return als.run(
+        {},
+        () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              pull(c: any) {
+                c.write("hey");
+                controller = c;
+                pulled.resolve();
+              },
+            } as any),
+          ),
       );
     },
   });

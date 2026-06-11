@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -588,4 +588,53 @@ All files  |    0.00 |    0.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32118
+test.concurrent("coverageThreshold is enforced for every reporter combination", async () => {
+  using dir = tempDir("coverage-threshold-reporters", {
+    "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,
+    "lib.js": `export function used() { return 1; }\nexport function unused() { return 2; }\nexport function alsoUnused() { return 3; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("a",()=>expect(used()).toBe(1));`,
+  });
+
+  // lib.js has 1/3 functions covered, below the 0.9 threshold: the run must
+  // exit 1 no matter which reporters are enabled.
+  for (const reporterArgs of [
+    ["--coverage-reporter=lcov"],
+    ["--coverage-reporter=text"],
+    ["--coverage-reporter=text", "--coverage-reporter=lcov"],
+    [],
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", ...reporterArgs],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect({ reporterArgs, exitCode }).toEqual({ reporterArgs, exitCode: 1 });
+  }
+});
+
+test.concurrent("lcov-only reporter exits 0 when coverageThreshold is met", async () => {
+  using dir = tempDir("coverage-threshold-met", {
+    "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,
+    "lib.js": `export function used() { return 1; }\nexport function alsoUsed() { return 2; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {used,alsoUsed} from "./lib.js"; test("a",()=>expect(used()+alsoUsed()).toBe(3));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8")).toContain("end_of_record");
+  expect(exitCode).toBe(0);
 });

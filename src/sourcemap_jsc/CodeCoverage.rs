@@ -76,6 +76,19 @@ impl Report {
         (self.functions_which_have_executed.count() as f64) / total_count
     }
 
+    /// Per-file coverage fractions, with `failing` set relative to `threshold`.
+    /// `stmts` is not checked against the threshold (the metric is less accurate).
+    pub fn coverage_fraction(&self, threshold: Fraction) -> Fraction {
+        let functions = self.function_coverage_fraction();
+        let lines = self.lines_coverage_fraction();
+        Fraction {
+            functions,
+            lines,
+            stmts: self.stmts_coverage_fraction(),
+            failing: functions < threshold.functions || lines < threshold.lines,
+        }
+    }
+
     pub fn generate(
         global_this: &JSGlobalObject,
         byte_range_mapping: &mut ByteRangeMapping,
@@ -185,24 +198,16 @@ pub mod text {
         Ok(())
     }
 
+    /// Writes one table row for `report`. `vals` is the precomputed result of
+    /// `report.coverage_fraction(threshold)`.
     pub fn write_format<const ENABLE_COLORS: bool>(
         report: &Report,
         max_filename_length: usize,
-        fraction: &mut Fraction,
+        vals: Fraction,
+        threshold: Fraction,
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let failing = *fraction;
-        let fns = report.function_coverage_fraction();
-        let lines = report.lines_coverage_fraction();
-        let stmts = report.stmts_coverage_fraction();
-        fraction.functions = fns;
-        fraction.lines = lines;
-        fraction.stmts = stmts;
-
-        let failed = fns < failing.functions || lines < failing.lines; // || stmts < failing.stmts;
-        fraction.failing = failed;
-
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
             filename = bun_paths::resolve_path::relative(base_path, filename);
@@ -211,9 +216,9 @@ pub mod text {
         write_format_with_values::<ENABLE_COLORS>(
             filename,
             max_filename_length,
-            *fraction,
-            failing,
-            failed,
+            vals,
+            threshold,
+            vals.failing,
             writer,
             true,
         )?;
@@ -914,7 +919,8 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
         Err(_) => return global_this.throw_out_of_memory_value(),
     };
 
-    let mut coverage_fraction = Fraction::default();
+    let threshold = Fraction::default();
+    let coverage_fraction = report.coverage_fraction(threshold);
 
     // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
@@ -922,7 +928,8 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     if text::write_format::<false>(
         &report,
         source_url.utf8_byte_length(),
-        &mut coverage_fraction,
+        coverage_fraction,
+        threshold,
         b"",
         &mut buf,
     )

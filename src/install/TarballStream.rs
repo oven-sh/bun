@@ -1465,7 +1465,17 @@ fn make_symlink(
     }
     match bun_sys::symlinkat(target, dest_fd, path) {
         Ok(()) => true,
-        Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
+        Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+            let Some(dir) = bun_paths::dirname(path_slice) else {
+                return false;
+            };
+            let _ = dest_fd.make_path(dir);
+            bun_sys::symlinkat(target, dest_fd, path).is_ok()
+        }
+        Err(e) if e.get_errno() == bun_sys::E::EPERM || e.get_errno() == bun_sys::E::EACCES => {
+            // OHOS SELinux blocks symlinkat. Ensure parent dir exists and retry.
+            // A copy fallback is not safe here: the symlink target points at
+            // another tarball entry that may not be on disk yet.
             let Some(dir) = bun_paths::dirname(path_slice) else {
                 return false;
             };

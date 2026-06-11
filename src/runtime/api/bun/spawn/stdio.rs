@@ -108,13 +108,14 @@ impl Stdio {
     }
 
     pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        // OHOS: memfd writes not visible to fstat (see use_memfd).
+        #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))))]
         {
             let _ = (is_sync, has_max_buffer);
             return false;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
@@ -124,13 +125,16 @@ impl Stdio {
     }
 
     pub fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        // OHOS: memfd writes not visible to fstat after child exits
+        // (verified 2026-06-11: dup2(memfd,1/2) → child writes → fstat size=0).
+        // Fall through to socketpair on OHOS.
+        #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))))]
         {
             let _ = index;
             return false;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         {
             use crate::api::bun_process::spawn_sys;
             if !spawn_sys::can_use_memfd() {

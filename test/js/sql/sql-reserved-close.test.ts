@@ -252,7 +252,7 @@ async function startMysqlServer() {
 
 test("postgres: sql.close() resolves after reserved.close()", async () => {
   await using pg = await startPostgresServer();
-  const sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 2, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 2, connectionTimeout: 5 });
 
   const reserved = await sql.reserve();
   expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
@@ -271,7 +271,7 @@ test("postgres: sql.close() resolves after reserved.close()", async () => {
 
 test("postgres: sql.close() resolves after the server drops a reserved connection", async () => {
   await using pg = await startPostgresServer();
-  const sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
 
   const reserved = await sql.reserve();
   expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
@@ -286,7 +286,7 @@ test("postgres: sql.close() resolves after the server drops a reserved connectio
 test("postgres: reserved.close({ timeout }) closes the connection once pending queries finish", async () => {
   const queryReceived = Promise.withResolvers<net.Socket>();
   await using pg = await startPostgresServer(socket => queryReceived.resolve(socket));
-  const sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
 
   const reserved = await sql.reserve();
   // queries are lazy; execute() dispatches without awaiting
@@ -315,7 +315,7 @@ test("postgres: reserved.close({ timeout }) cancels in-flight queries when the t
     const queryReceived = Promise.withResolvers<net.Socket>();
     // never answers queries, so the timeout always fires
     await using pg = await startPostgresServer(socket => queryReceived.resolve(socket));
-    const sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
 
     const reserved = await sql.reserve();
     const pending = reserved`select 1 as x`.simple().execute();
@@ -339,7 +339,7 @@ test("postgres: reserved.close({ timeout }) cancels in-flight queries when the t
 
 test("postgres: pool stays usable after reserved.close()", async () => {
   await using pg = await startPostgresServer();
-  const sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
 
   const first = await sql.reserve();
   expect(await first`select 1 as x`.simple()).toEqual([{ x: "1" }]);
@@ -364,7 +364,7 @@ test("postgres: pool stays usable after reserved.close()", async () => {
 
 test("mysql: sql.close() resolves after reserved.close()", async () => {
   await using my = await startMysqlServer();
-  const sql = new SQL({ url: `mysql://root@127.0.0.1:${my.port}/db`, max: 2, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `mysql://root@127.0.0.1:${my.port}/db`, max: 2, connectionTimeout: 5 });
 
   const reserved = await sql.reserve();
   expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
@@ -377,7 +377,7 @@ test("mysql: sql.close() resolves after reserved.close()", async () => {
 
 test("mysql: pool stays usable after reserved.close()", async () => {
   await using my = await startMysqlServer();
-  const sql = new SQL({ url: `mysql://root@127.0.0.1:${my.port}/db`, max: 1, connectionTimeout: 5 });
+  await using sql = new SQL({ url: `mysql://root@127.0.0.1:${my.port}/db`, max: 1, connectionTimeout: 5 });
 
   const first = await sql.reserve();
   expect(await first`select 1 as x`.simple()).toEqual([{ x: "1" }]);

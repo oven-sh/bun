@@ -379,6 +379,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 if (scope.exception())
                     return;
 
+                if (!item.isString()) {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, makeString("paths["_s, paths.size(), "]"_s), "string"_s, item);
+                    return;
+                }
+
                 WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
                 if (scope.exception())
                     return;

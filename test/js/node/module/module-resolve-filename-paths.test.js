@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
@@ -180,6 +180,80 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
     expect(resolved).toBe(resolve(dir, "node_modules/babel-plugin-react-compiler/dist/index.js"));
   } finally {
     cleanup();
+  }
+});
+
+test("require.resolve throws ERR_INVALID_ARG_TYPE for non-string options.paths entries", () => {
+  let err;
+  try {
+    require.resolve("nonexistent-pkg-for-paths-test", { paths: [ArrayBuffer] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+  expect(err.message).toBe('The "paths[0]" argument must be of type string. Received function ArrayBuffer');
+
+  err = undefined;
+  try {
+    require.resolve("nonexistent-pkg-for-paths-test", { paths: [{}] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+  expect(err.message).toBe('The "paths[0]" argument must be of type string. Received an instance of Object');
+});
+
+test("require with non-string options.paths entries does not crash", () => {
+  let err;
+  try {
+    require("nonexistent-pkg-for-paths-test", { paths: [ArrayBuffer, ArrayBuffer, Set] });
+  } catch (e) {
+    err = e;
+  }
+  // Node ignores the second argument to require(); Bun forwards options.paths
+  // to the resolver, so the non-string entry is rejected.
+  expect(err.code).toBe(isBun ? "ERR_INVALID_ARG_TYPE" : "MODULE_NOT_FOUND");
+});
+
+test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE for non-string options.paths entries", () => {
+  const fakeParent = new Module("/some/other/directory/file.js");
+  fakeParent.filename = "/some/other/directory/file.js";
+  fakeParent.paths = Module._nodeModulePaths("/some/other/directory");
+
+  let err;
+  try {
+    Module._resolveFilename("nonexistent-pkg-for-paths-test", fakeParent, false, { paths: [5] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+  expect(err.message).toBe('The "paths[0]" argument must be of type string. Received type number (5)');
+});
+
+test("require.resolve resolves relative options.paths entries against the working directory", () => {
+  const { path: dir, cleanup } = createTempDir("relative-paths-entry", {
+    "node_modules/relative-paths-pkg/package.json": JSON.stringify({ name: "relative-paths-pkg", main: "index.js" }),
+    "node_modules/relative-paths-pkg/index.js": "module.exports = 'relative-paths-pkg';",
+  });
+
+  try {
+    const relDir = relative(process.cwd(), dir);
+    const resolved = require.resolve("relative-paths-pkg", { paths: [relDir] });
+    expect(resolved).toBe(resolve(dir, "node_modules/relative-paths-pkg/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve does not crash on relative or empty options.paths entries", () => {
+  for (const entry of ["some-relative-dir", "", "."]) {
+    let err;
+    try {
+      require.resolve("nonexistent-pkg-for-paths-test", { paths: [entry] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("MODULE_NOT_FOUND");
   }
 });
 

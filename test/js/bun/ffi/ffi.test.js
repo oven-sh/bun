@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   JSCallback,
+  linkSymbols,
   ptr,
   read,
   suffix,
@@ -674,6 +675,21 @@ it(".ptr is not leaked", () => {
   for (let fn of [Bun.password.hash, Bun.password.verify, it]) {
     expect(fn).not.toHaveProperty("ptr");
     expect(fn.ptr).toBeUndefined();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32103
+it("ffi functions are inspected as functions, not classes", () => {
+  const cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+  try {
+    const {
+      symbols: { returnsFortyTwo },
+    } = linkSymbols({ returnsFortyTwo: { ptr: cb.ptr, returns: "int32_t", args: [] } });
+    expect(Bun.inspect(returnsFortyTwo)).toBe("[Function: returnsFortyTwo]");
+    expect(returnsFortyTwo()).toBe(42);
+    expect(() => new returnsFortyTwo()).toThrow(TypeError);
+  } finally {
+    cb.close();
   }
 });
 

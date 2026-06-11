@@ -1288,6 +1288,15 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
+        //
+        // `on_read_bytes` runs exactly once on every path of this call,
+        // including `Err` (an S3 dispatch failure such as a missing-
+        // credentials sign error delivers the result synchronously; the
+        // `Err` is a `JsTerminated` raised by that invocation). On `Err` the
+        // handler has therefore already reclaimed the chain, unwound the
+        // `pending_tasks`/`this_ref` bump above, and settled `outer` — there
+        // is nothing to release here, and unwinding would double-free the
+        // chain and underflow `pending_tasks`.
         unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }

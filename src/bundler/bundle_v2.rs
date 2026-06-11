@@ -5558,8 +5558,6 @@ pub mod bv2_impl {
                 bun_js_printer::quote_for_json(&remote.alias, &mut json, true)?;
                 json.append_slice(b",\n      \"entry\": ")?;
                 append_json_string_or_null(&mut json, remote.entry.as_deref())?;
-                json.append_slice(b",\n      \"manifest\": ")?;
-                append_module_federation_manifest(&mut json, remote.manifest.as_ref())?;
                 json.append_slice(b",\n      \"type\": ")?;
                 bun_js_printer::quote_for_json(
                     match remote.remote_type {
@@ -5862,30 +5860,6 @@ pub mod bv2_impl {
         } else {
             b"false".as_slice()
         })?)
-    }
-
-    fn append_module_federation_manifest(
-        json: &mut bun_core::MutableString,
-        manifest: Option<&options::ModuleFederationRemoteManifest>,
-    ) -> Result<(), Error> {
-        match manifest {
-            Some(options::ModuleFederationRemoteManifest::Url(value)) => {
-                bun_js_printer::quote_for_json(value, json, true)
-            }
-            Some(options::ModuleFederationRemoteManifest::Inline(value)) => {
-                Ok(json.append_slice(value)?)
-            }
-            None => Ok(json.append_slice(b"null")?),
-        }
-    }
-
-    fn module_federation_manifest_cache_key(
-        manifest: &options::ModuleFederationRemoteManifest,
-    ) -> &[u8] {
-        match manifest {
-            options::ModuleFederationRemoteManifest::Url(value)
-            | options::ModuleFederationRemoteManifest::Inline(value) => value,
-        }
     }
 
     fn append_module_federation_runtime_plugin_import(
@@ -7805,41 +7779,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        fn append_module_federation_register_remote_from_manifest(
-            code: &mut bun_core::MutableString,
-            remote: &options::ModuleFederationRemote,
-        ) -> Result<(), Error> {
-            code.append_slice(b"const __bunMFManifestRemote = ")?;
-            append_module_federation_manifest(code, remote.manifest.as_ref())?;
-            code.append_slice(b";\nconst __bunMFManifest = typeof __bunMFManifestRemote === \"string\" ? await fetch(__bunMFManifestRemote).then((response) => {\n  if (!response.ok) throw new Error(`Module Federation remote manifest failed to load \"${__bunMFManifestRemote}\": ${response.status} ${response.statusText}`);\n  return response.json();\n}) : __bunMFManifestRemote;\nconst __bunMFRemoteEntry = __bunMFManifest?.metaData?.remoteEntry ?? __bunMFManifest?.remoteEntry;\nlet __bunMFRemoteEntryPath = typeof __bunMFRemoteEntry === \"string\" ? __bunMFRemoteEntry : (__bunMFRemoteEntry?.path || __bunMFRemoteEntry?.entry || __bunMFRemoteEntry?.name);\nlet __bunMFRemoteType = (typeof __bunMFRemoteEntry === \"object\" ? __bunMFRemoteEntry?.type : undefined) ?? __bunMFManifest?.type;\nlet __bunMFRemoteGlobal = __bunMFManifest?.metaData?.globalName ?? (typeof __bunMFRemoteEntry === \"object\" ? __bunMFRemoteEntry?.globalName : undefined) ?? __bunMFManifest?.globalName ?? __bunMFManifest?.global ?? __bunMFManifest?.name;\nif (!__bunMFRemoteEntryPath) throw new Error(\"Module Federation remote manifest is missing remoteEntry.path or entry\");\nif (__bunMFRemoteType === \"script\") __bunMFRemoteType = \"global\";\nconst __bunMFRemoteEntryUrl = typeof __bunMFManifestRemote === \"string\" ? new URL(__bunMFRemoteEntryPath, __bunMFManifestRemote).href : __bunMFRemoteEntryPath;\nregisterRemotes([{ name: ")?;
-            bun_js_printer::quote_for_json(&remote.alias, code, true)?;
-            code.append_slice(b", alias: ")?;
-            bun_js_printer::quote_for_json(&remote.alias, code, true)?;
-            code.append_slice(b", entry: __bunMFRemoteEntryUrl, type: __bunMFRemoteType || ")?;
-            bun_js_printer::quote_for_json(
-                match remote.remote_type {
-                    options::ModuleFederationRemoteType::Module => b"module".as_slice(),
-                    options::ModuleFederationRemoteType::Script => b"global".as_slice(),
-                },
-                code,
-                true,
-            )?;
-            code.append_slice(b", entryGlobalName: ")?;
-            if remote.global_name.is_some() {
-                append_json_string_or_null(code, remote.global_name.as_deref())?;
-            } else {
-                code.append_slice(b"__bunMFRemoteGlobal")?;
-            }
-            code.append_slice(b", shareScope: ")?;
-            bun_js_printer::quote_for_json(
-                remote.share_scope.as_deref().unwrap_or(b"default"),
-                code,
-                true,
-            )?;
-            code.append_slice(b" }], { force: true });\n")?;
-            Ok(())
-        }
-
         fn generate_module_federation_remote_proxy(
             &self,
             remote: &options::ModuleFederationRemote,
@@ -7893,38 +7832,34 @@ pub mod bv2_impl {
                     code.append_slice(b"getInstance((instance) => !!instance).registerPlugins(__bunMFRuntimePlugins);\n")?;
                 }
             }
-            if remote.manifest.is_some() {
-                Self::append_module_federation_register_remote_from_manifest(&mut code, remote)?;
-            } else {
-                code.append_slice(b"registerRemotes([")?;
-                code.append_slice(b"{ name: ")?;
-                bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
-                code.append_slice(b", alias: ")?;
-                bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
-                code.append_slice(b", entry: ")?;
-                bun_js_printer::quote_for_json(entry, &mut code, true)?;
-                code.append_slice(b", type: ")?;
-                bun_js_printer::quote_for_json(
-                    match remote.remote_type {
-                        options::ModuleFederationRemoteType::Module => b"module".as_slice(),
-                        options::ModuleFederationRemoteType::Script => b"global".as_slice(),
-                    },
-                    &mut code,
-                    true,
-                )?;
-                code.append_slice(b", shareScope: ")?;
-                bun_js_printer::quote_for_json(
-                    remote.share_scope.as_deref().unwrap_or(b"default"),
-                    &mut code,
-                    true,
-                )?;
-                if remote.global_name.is_some() {
-                    code.append_slice(b", entryGlobalName: ")?;
-                    append_json_string_or_null(&mut code, remote.global_name.as_deref())?;
-                }
-                code.append_slice(b" }")?;
-                code.append_slice(b"], { force: true });\n")?;
+            code.append_slice(b"registerRemotes([")?;
+            code.append_slice(b"{ name: ")?;
+            bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
+            code.append_slice(b", alias: ")?;
+            bun_js_printer::quote_for_json(&remote.alias, &mut code, true)?;
+            code.append_slice(b", entry: ")?;
+            bun_js_printer::quote_for_json(entry, &mut code, true)?;
+            code.append_slice(b", type: ")?;
+            bun_js_printer::quote_for_json(
+                match remote.remote_type {
+                    options::ModuleFederationRemoteType::Module => b"module".as_slice(),
+                    options::ModuleFederationRemoteType::Script => b"global".as_slice(),
+                },
+                &mut code,
+                true,
+            )?;
+            code.append_slice(b", shareScope: ")?;
+            bun_js_printer::quote_for_json(
+                remote.share_scope.as_deref().unwrap_or(b"default"),
+                &mut code,
+                true,
+            )?;
+            if remote.global_name.is_some() {
+                code.append_slice(b", entryGlobalName: ")?;
+                append_json_string_or_null(&mut code, remote.global_name.as_deref())?;
             }
+            code.append_slice(b" }")?;
+            code.append_slice(b"], { force: true });\n")?;
             if async_startup {
                 code.append_slice(b"return await loadRemote(")?;
             } else {
@@ -7975,10 +7910,6 @@ pub mod bv2_impl {
             key.extend_from_slice(expose);
             key.push(0);
             key.extend_from_slice(entry);
-            key.push(0);
-            if let Some(manifest) = &remote.manifest {
-                key.extend_from_slice(module_federation_manifest_cache_key(manifest));
-            }
             key.push(0);
             key.extend_from_slice(remote_type);
             key.push(0);

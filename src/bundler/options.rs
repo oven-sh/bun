@@ -79,16 +79,9 @@ pub struct ModuleFederationRemote {
     pub alias: Box<[u8]>,
     pub external: Vec<Box<[u8]>>,
     pub entry: Option<Box<[u8]>>,
-    pub manifest: Option<ModuleFederationRemoteManifest>,
     pub remote_type: ModuleFederationRemoteType,
     pub global_name: Option<Box<[u8]>>,
     pub share_scope: Option<Box<[u8]>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ModuleFederationRemoteManifest {
-    Url(Box<[u8]>),
-    Inline(Box<[u8]>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

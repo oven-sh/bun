@@ -3050,30 +3050,8 @@ declare module "bun" {
     remotes?: Record<
       string,
       | string
-      | string[]
       | {
-          external?: string | string[];
-          manifest?:
-            | string
-            | {
-                name?: string;
-                remoteEntry?:
-                  | string
-                  | {
-                      name?: string;
-                      path?: string;
-                      entry?: string;
-                      type?: "module" | "script";
-                    };
-                entry?: string;
-                type?: "module" | "script";
-                globalName?: string;
-                global?: string;
-                module?: string;
-                moduleEntry?: string;
-              };
-          type?: "module" | "script";
-          name?: string;
+          external: string;
           shareScope?: string;
         }
     >;

@@ -171,110 +171,17 @@ pub mod js_bundler {
         Ok(values)
     }
 
-    fn append_module_federation_manifest_string_prop(
-        global_this: &JSGlobalObject,
-        json: &mut OwnedString,
-        object: JSValue,
-        name: &'static [u8],
-        first: &mut bool,
-    ) -> JsResult<()> {
-        let Some(slice) = object.get_optional_slice(global_this, name)? else {
-            return Ok(());
-        };
-        if !*first {
-            json.append_slice(b",").map_err(|_| JsError::OutOfMemory)?;
-        }
-        *first = false;
-        bun_js_printer::quote_for_json(name, json, true).map_err(|_| JsError::OutOfMemory)?;
-        json.append_slice(b":").map_err(|_| JsError::OutOfMemory)?;
-        bun_js_printer::quote_for_json(slice.slice(), json, true)
-            .map_err(|_| JsError::OutOfMemory)?;
-        drop(slice);
-        Ok(())
-    }
-
-    fn parse_module_federation_remote_manifest(
+    fn js_value_to_non_empty_boxed_string(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<options::ModuleFederationRemoteManifest> {
-        if value.is_string() {
-            return Ok(options::ModuleFederationRemoteManifest::Url(
-                js_value_to_boxed_string(
-                    global_this,
-                    value,
-                    "moduleFederation.remotes entry.manifest",
-                )?,
-            ));
+        property_name: &str,
+    ) -> JsResult<Box<[u8]>> {
+        let value = js_value_to_boxed_string(global_this, value, property_name)?;
+        if value.is_empty() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("{} must not be empty", property_name)));
         }
-        if !value.is_object() || value.is_array() {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "moduleFederation.remotes entry.manifest must be a string or an object"
-            )));
-        }
-
-        let mut json = OwnedString::default();
-        json.append_slice(b"{").map_err(|_| JsError::OutOfMemory)?;
-        let mut first = true;
-        for name in [
-            b"name".as_slice(),
-            b"entry".as_slice(),
-            b"type".as_slice(),
-            b"globalName".as_slice(),
-            b"global".as_slice(),
-            b"module".as_slice(),
-            b"moduleEntry".as_slice(),
-        ] {
-            append_module_federation_manifest_string_prop(
-                global_this,
-                &mut json,
-                value,
-                name,
-                &mut first,
-            )?;
-        }
-
-        match value.get(global_this, "remoteEntry")? {
-            Some(remote_entry) if !remote_entry.is_undefined_or_null() => {
-                if !first {
-                    json.append_slice(b",").map_err(|_| JsError::OutOfMemory)?;
-                }
-                json.append_slice(b"\"remoteEntry\":")
-                    .map_err(|_| JsError::OutOfMemory)?;
-                if remote_entry.is_string() {
-                    let slice = remote_entry.to_slice_or_null(global_this)?;
-                    bun_js_printer::quote_for_json(slice.slice(), &mut json, true)
-                        .map_err(|_| JsError::OutOfMemory)?;
-                    drop(slice);
-                } else if remote_entry.is_object() && !remote_entry.is_array() {
-                    json.append_slice(b"{").map_err(|_| JsError::OutOfMemory)?;
-                    let mut first_remote_entry = true;
-                    for name in [
-                        b"name".as_slice(),
-                        b"path".as_slice(),
-                        b"entry".as_slice(),
-                        b"type".as_slice(),
-                    ] {
-                        append_module_federation_manifest_string_prop(
-                            global_this,
-                            &mut json,
-                            remote_entry,
-                            name,
-                            &mut first_remote_entry,
-                        )?;
-                    }
-                    json.append_slice(b"}").map_err(|_| JsError::OutOfMemory)?;
-                } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "moduleFederation.remotes entry.manifest.remoteEntry must be a string or an object"
-                    )));
-                }
-            }
-            _ => {}
-        }
-        json.append_slice(b"}").map_err(|_| JsError::OutOfMemory)?;
-        Ok(options::ModuleFederationRemoteManifest::Inline(
-            json.to_owned_slice(),
-        ))
+        Ok(value)
     }
 
     fn for_each_js_object_entry(
@@ -427,7 +334,6 @@ pub mod js_bundler {
     ) -> JsResult<Vec<options::ModuleFederationRemote>> {
         fn normalize_remote_external(
             external: &[u8],
-            remote_type: Option<options::ModuleFederationRemoteType>,
         ) -> (
             Option<Box<[u8]>>,
             options::ModuleFederationRemoteType,
@@ -437,7 +343,7 @@ pub mod js_bundler {
                 if at > 0 && at + 1 < external.len() {
                     return (
                         Some(Box::from(&external[at + 1..])),
-                        remote_type.unwrap_or(options::ModuleFederationRemoteType::Script),
+                        options::ModuleFederationRemoteType::Script,
                         Some(Box::from(&external[..at])),
                     );
                 }
@@ -445,7 +351,7 @@ pub mod js_bundler {
 
             (
                 Some(Box::from(external)),
-                remote_type.unwrap_or_default(),
+                options::ModuleFederationRemoteType::Module,
                 None,
             )
         }
@@ -456,19 +362,17 @@ pub mod js_bundler {
             value,
             "moduleFederation.remotes",
             |alias, remote_value| {
-                if remote_value.is_string() || remote_value.is_array() {
-                    let external = js_value_to_non_empty_string_list(
+                if remote_value.is_string() {
+                    let external = js_value_to_non_empty_boxed_string(
                         global_this,
                         remote_value,
                         "moduleFederation.remotes entry",
                     )?;
-                    let (entry, remote_type, global_name) =
-                        normalize_remote_external(&external[0], None);
+                    let (entry, remote_type, global_name) = normalize_remote_external(&external);
                     remotes.push(options::ModuleFederationRemote {
                         alias,
-                        external,
+                        external: vec![external],
                         entry,
-                        manifest: None,
                         remote_type,
                         global_name,
                         share_scope: None,
@@ -478,27 +382,18 @@ pub mod js_bundler {
 
                 if !remote_value.is_object() || remote_value.is_array() {
                     return Err(global_this.throw_invalid_arguments(format_args!(
-                        "moduleFederation.remotes entry must be a string, an array of strings, or an object"
+                        "moduleFederation.remotes entry must be a string or an object"
                     )));
                 }
 
-                let external_value = remote_value
+                let Some(external_value) = remote_value
                     .get(global_this, "external")?
-                    .filter(|value| !value.is_undefined_or_null());
-                let manifest = match remote_value.get(global_this, "manifest")? {
-                    Some(manifest_value) if !manifest_value.is_undefined_or_null() => {
-                        Some(parse_module_federation_remote_manifest(
-                            global_this,
-                            manifest_value,
-                        )?)
-                    }
-                    _ => None,
-                };
-                if external_value.is_none() && manifest.is_none() {
+                    .filter(|value| !value.is_undefined_or_null())
+                else {
                     return Err(global_this.throw_invalid_arguments(format_args!(
-                        "moduleFederation.remotes entry.external or entry.manifest is required"
+                        "moduleFederation.remotes entry.external is required"
                     )));
-                }
+                };
                 let share_scope =
                     match remote_value.get_optional_slice(global_this, b"shareScope")? {
                         Some(slice) => {
@@ -508,53 +403,19 @@ pub mod js_bundler {
                         }
                         None => None,
                     };
-                let remote_type = match remote_value.get_optional_slice(global_this, b"type")? {
-                    Some(type_value) => {
-                        let result = match type_value.slice() {
-                            b"module" => options::ModuleFederationRemoteType::Module,
-                            b"script" => options::ModuleFederationRemoteType::Script,
-                            _ => {
-                                return Err(global_this.throw_invalid_arguments(format_args!(
-                                    "moduleFederation.remotes entry.type must be one of \"module\", \"script\""
-                                )));
-                            }
-                        };
-                        drop(type_value);
-                        Some(result)
-                    }
-                    None => None,
-                };
-                let global_name = match remote_value.get_optional_slice(global_this, b"name")? {
-                    Some(slice) => {
-                        let owned = Box::from(slice.slice());
-                        drop(slice);
-                        Some(owned)
-                    }
-                    None => None,
-                };
-                let external = if let Some(external_value) = external_value {
-                    js_value_to_non_empty_string_list(
-                        global_this,
-                        external_value,
-                        "moduleFederation.remotes entry.external",
-                    )?
-                } else {
-                    Vec::new()
-                };
-                let (entry, remote_type, parsed_global_name) =
-                    if let Some(first_external) = external.first() {
-                        normalize_remote_external(first_external, remote_type)
-                    } else {
-                        (None, remote_type.unwrap_or_default(), None)
-                    };
+                let external = js_value_to_non_empty_boxed_string(
+                    global_this,
+                    external_value,
+                    "moduleFederation.remotes entry.external",
+                )?;
+                let (entry, remote_type, global_name) = normalize_remote_external(&external);
 
                 remotes.push(options::ModuleFederationRemote {
                     alias,
-                    external,
+                    external: vec![external],
                     entry,
-                    manifest,
                     remote_type,
-                    global_name: global_name.or(parsed_global_name),
+                    global_name,
                     share_scope,
                 });
                 Ok(())

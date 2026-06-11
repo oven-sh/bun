@@ -454,7 +454,7 @@ describe("Bun.build", () => {
         remotes: {
           remote: "remote@http://localhost:3001/remoteEntry.js",
           other: {
-            external: ["other@http://localhost:3002/remoteEntry.js"],
+            external: "other@http://localhost:3002/remoteEntry.js",
             shareScope: "default",
           },
         },
@@ -552,10 +552,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: [
-              new URL(`file://${join(dir, "remote-entry.js")}`).href,
-            ],
-            type: "module",
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -621,10 +618,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: [
-              new URL(`file://${join(dir, "remote-entry.js")}`).href,
-            ],
-            type: "module",
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -650,7 +644,7 @@ describe("Bun.build", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test("moduleFederation browser asyncStartup waits for static manifest module remotes", async () => {
+  test("moduleFederation browser asyncStartup waits for static module remotes", async () => {
     const dir = tempDirWithFiles(
       "bun-build-module-federation-browser-async-startup-host",
       {
@@ -704,13 +698,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            manifest: {
-              name: "app",
-              remoteEntry: {
-                path: new URL(`file://${join(dir, "remote-entry.js")}`).href,
-                type: "module",
-              },
-            },
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
         runtimePlugins: [
@@ -784,10 +772,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: [
-              new URL(`file://${join(dir, "remote-entry.js")}`).href,
-            ],
-            type: "module",
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
         experiments: { asyncStartup: true },
@@ -1024,10 +1009,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            external: [
-              new URL(`file://${join(dir, "remote-entry.js")}`).href,
-            ],
-            type: "module",
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
       },
@@ -1116,10 +1098,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           pluginApp: {
-            external: [
-              new URL(`file://${join(dir, "remote-entry.js")}`).href,
-            ],
-            type: "module",
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
         runtimePlugins: [
@@ -1232,7 +1211,7 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("moduleFederation host imports a module remote from manifest", async () => {
+  test("moduleFederation host imports a configured module remote with share scope", async () => {
     const dir = tempDirWithFiles("bun-build-module-federation-manifest-host", {
       "host.ts": `
         import { getInstance } from "@module-federation/runtime";
@@ -1277,13 +1256,7 @@ describe("Bun.build", () => {
       moduleFederation: {
         remotes: {
           app: {
-            manifest: {
-              name: "app",
-              remoteEntry: {
-                path: new URL(`file://${join(dir, "remote-entry.js")}`).href,
-                type: "module",
-              },
-            },
+            external: new URL(`file://${join(dir, "remote-entry.js")}`).href,
           },
         },
       },
@@ -1921,9 +1894,7 @@ describe("Bun.build", () => {
           },
         },
       } as any),
-    ).toThrow(
-      "moduleFederation.remotes entry.external must be a string or an array of strings",
-    );
+    ).toThrow("moduleFederation.remotes entry.external must be a string");
 
     expect(() =>
       Bun.build({
@@ -1934,7 +1905,7 @@ describe("Bun.build", () => {
           },
         },
       } as any),
-    ).toThrow("moduleFederation.remotes entry must not be empty");
+    ).toThrow("moduleFederation.remotes entry must be a string or an object");
 
     expect(() =>
       Bun.build({
@@ -1945,7 +1916,7 @@ describe("Bun.build", () => {
           },
         },
       } as any),
-    ).toThrow("moduleFederation.remotes entry.external must not be empty");
+    ).toThrow("moduleFederation.remotes entry.external must be a string");
 
     expect(() =>
       Bun.build({
@@ -1956,22 +1927,18 @@ describe("Bun.build", () => {
           },
         },
       } as any),
-    ).toThrow(
-      "moduleFederation.remotes entry.external or entry.manifest is required",
-    );
+    ).toThrow("moduleFederation.remotes entry.external is required");
 
     expect(() =>
       Bun.build({
         entrypoints,
         moduleFederation: {
           remotes: {
-            remote: { manifest: 1 },
+            remote: { external: "" },
           },
         },
       } as any),
-    ).toThrow(
-      "moduleFederation.remotes entry.manifest must be a string or an object",
-    );
+    ).toThrow("moduleFederation.remotes entry.external must not be empty");
 
     expect(() =>
       Bun.build({

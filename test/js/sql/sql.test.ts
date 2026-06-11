@@ -12735,13 +12735,13 @@ CREATE TABLE ${table_name} (
       test("sql.listen rejects invalid channel names", async () => {
         await using db = postgres(options);
         // empty string
-        expect(db.listen("", () => {})).rejects.toThrow();
+        await expect(db.listen("", () => {})).rejects.toThrow();
         // null bytes are forbidden by PostgreSQL identifiers
-        expect(db.listen("with\0null", () => {})).rejects.toThrow();
+        await expect(db.listen("with\0null", () => {})).rejects.toThrow();
         // non-callable onnotify
-        expect(db.listen("ch", 42 as any)).rejects.toThrow();
+        await expect(db.listen("ch", 42 as any)).rejects.toThrow();
         // non-callable onlisten
-        expect(db.listen("ch", () => {}, 42 as any)).rejects.toThrow();
+        await expect(db.listen("ch", () => {}, 42 as any)).rejects.toThrow();
       });
 
       test("sql.notify validates arguments", async () => {
@@ -12754,9 +12754,9 @@ CREATE TABLE ${table_name} (
 
       test("sql.unlisten validates arguments", async () => {
         await using db = postgres(options);
-        expect(db.unlisten("")).rejects.toThrow();
-        expect(db.unlisten("with\0null")).rejects.toThrow();
-        expect(db.unlisten("ch", 42 as any)).rejects.toThrow();
+        await expect(db.unlisten("")).rejects.toThrow();
+        await expect(db.unlisten("with\0null")).rejects.toThrow();
+        await expect(db.unlisten("ch", 42 as any)).rejects.toThrow();
       });
 
       test("unlisten() returned from listen() is idempotent", async () => {

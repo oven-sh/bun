@@ -1527,3 +1527,236 @@ describe("Bun.Image.backend", () => {
     }
   });
 });
+
+// ─── clone() ────────────────────────────────────────────────────────────────
+
+describe("Bun.Image clone()", () => {
+  test("returns a new Image inheriting the ops recorded so far", async () => {
+    const base = new Bun.Image(cornersPng).rotate(90);
+    const clone = base.clone();
+    expect(clone).toBeInstanceOf(Bun.Image);
+    expect(clone).not.toBe(base);
+    // Inherited rotate(90) of the 4×3 fixture → 3×4.
+    const out = decodePngRaw(await clone.png().bytes());
+    expect([out.w, out.h]).toEqual([3, 4]);
+  });
+
+  test("ops recorded after clone() are independent in both directions", async () => {
+    const base = new Bun.Image(gradientPng);
+    const clone = base.clone().resize(4, 4);
+    base.resize(8, 8);
+    const [fromBase, fromClone] = await Promise.all([base.png().bytes(), clone.png().bytes()]);
+    expect([decodePngRaw(fromBase).w, decodePngRaw(fromBase).h]).toEqual([8, 8]);
+    expect([decodePngRaw(fromClone).w, decodePngRaw(fromClone).h]).toEqual([4, 4]);
+  });
+
+  test("output format set on a clone doesn't leak to the parent", async () => {
+    const base = new Bun.Image(cornersPng);
+    const webpClone = base.clone().webp();
+    const [baseOut, cloneOut] = await Promise.all([base.bytes(), webpClone.bytes()]);
+    expect(baseOut.subarray(1, 4)).toEqual(new Uint8Array([0x50, 0x4e, 0x47])); // "PNG" (source format reused)
+    expect(cloneOut.subarray(0, 4)).toEqual(new Uint8Array([0x52, 0x49, 0x46, 0x46])); // "RIFF"
+  });
+
+  test("concurrent fan-out over one buffer: each clone gets its own output", async () => {
+    const base = new Bun.Image(gradientPng);
+    const sizes = [2, 3, 4, 6, 8, 12];
+    const outs = await Promise.all(sizes.map(s => base.clone().resize(s, s).png().bytes()));
+    for (let i = 0; i < sizes.length; i++) {
+      const d = decodePngRaw(outs[i]);
+      expect([d.w, d.h]).toEqual([sizes[i], sizes[i]]);
+    }
+  });
+
+  test("clone output is byte-identical to a fresh instance with the same ops", async () => {
+    const base = new Bun.Image(gradientPng);
+    // Concurrent clones take the shared-decode path; fresh instances don't.
+    const [a, b] = await Promise.all([base.clone().resize(8, 8).png().bytes(), base.clone().flop().png().bytes()]);
+    expect(a).toEqual(await new Bun.Image(gradientPng).resize(8, 8).png().bytes());
+    expect(b).toEqual(await new Bun.Image(gradientPng).flop().png().bytes());
+  });
+
+  test("clone of a path-backed image", async () => {
+    using dir = tempDir("image-clone-path", { "src.png": Buffer.from(gradientPng) });
+    const base = new Bun.Image(join(String(dir), "src.png"));
+    const [a, b] = await Promise.all([
+      base.clone().resize(4, 4).png().bytes(),
+      base.clone().resize(2, 2).png().bytes(),
+    ]);
+    expect([decodePngRaw(a).w, decodePngRaw(b).w]).toEqual([4, 2]);
+  });
+
+  test("clone of a Bun.file-backed image", async () => {
+    using dir = tempDir("image-clone-file", { "src.png": Buffer.from(gradientPng) });
+    const base = Bun.file(join(String(dir), "src.png")).image();
+    const clone = base.clone();
+    const [a, b] = await Promise.all([base.resize(8, 8).png().bytes(), clone.resize(4, 4).png().bytes()]);
+    expect([decodePngRaw(a).w, decodePngRaw(b).w]).toEqual([8, 4]);
+  });
+
+  test("clone snapshots constructor options and last-known dimensions", async () => {
+    const big = new Bun.Image(gradientPng, { maxPixels: 4 }); // 16×16 > 4
+    await expect(big.clone().png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_TOO_MANY_PIXELS" });
+
+    const base = new Bun.Image(cornersPng);
+    await base.metadata();
+    const clone = base.clone();
+    expect([clone.width, clone.height]).toEqual([4, 3]);
+    expect(await clone.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+  });
+
+  test("clone of a detached ArrayBuffer source rejects like the parent would", async () => {
+    const ab = new Uint8Array(gradientPng).buffer.slice(0);
+    const base = new Bun.Image(ab);
+    const clone = base.clone();
+    structuredClone(ab, { transfer: [ab] }); // detaches `ab`
+    await expect(clone.png().bytes()).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+  });
+
+  test("concurrent mixed terminals across a clone family", async () => {
+    const base = new Bun.Image(gradientPng);
+    const [bytes, stats, meta, lqip, rotated] = await Promise.all([
+      base.clone().resize(8, 8).png().bytes(),
+      base.clone().stats(),
+      base.clone().metadata(),
+      base.clone().placeholder(),
+      base.clone().rotate(90).png().bytes(),
+    ]);
+    expect(decodePngRaw(bytes).w).toBe(8);
+    expect(stats.channels).toHaveLength(4);
+    expect(meta).toEqual({ width: 16, height: 16, format: "png" });
+    expect(lqip).toStartWith("data:image/png;base64,");
+    expect([decodePngRaw(rotated).w, decodePngRaw(rotated).h]).toEqual([16, 16]);
+  });
+});
+
+// ─── stats() ────────────────────────────────────────────────────────────────
+
+describe("Bun.Image stats()", () => {
+  test("solid colour: exact channel stats, dominant, entropy 0, sharpness 0", async () => {
+    // Channel values of the form 16k+8 sit exactly on a histogram bin centre,
+    // so `dominant` reports them verbatim.
+    const png = makePng(8, 8, () => [40, 136, 232, 255]);
+    const s = await new Bun.Image(png).stats();
+    expect(s.isOpaque).toBe(true);
+    expect(s.entropy).toBe(0);
+    expect(s.sharpness).toBe(0);
+    expect(s.dominant).toEqual({ r: 40, g: 136, b: 232 });
+    expect(s.channels).toHaveLength(4);
+    expect(s.channels[0]).toEqual({
+      min: 40,
+      max: 40,
+      sum: 40 * 64,
+      squaresSum: 40 * 40 * 64,
+      mean: 40,
+      stdev: 0,
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0,
+    });
+    // Alpha channel of an opaque image is constant 255.
+    expect(s.channels[3].min).toBe(255);
+    expect(s.channels[3].max).toBe(255);
+    expect(s.channels[3].stdev).toBe(0);
+  });
+
+  test("sum/squaresSum/mean/stdev match their definitions on a gradient", async () => {
+    // Recompute the expected values from the same pixel function the
+    // gradientPng fixture uses (16×16, v = round((x+y)/30·255) in r=g=b).
+    const vals: number[] = [];
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) vals.push(Math.round(((x + y) / 30) * 255));
+    const n = vals.length;
+    const sum = vals.reduce((a, v) => a + v, 0);
+    const sq = vals.reduce((a, v) => a + v * v, 0);
+    const stdev = Math.sqrt((sq - (sum * sum) / n) / (n - 1)); // sample stdev, like Sharp/vips
+
+    const s = await new Bun.Image(gradientPng).stats();
+    for (const c of [0, 1, 2]) {
+      expect(s.channels[c].sum).toBe(sum);
+      expect(s.channels[c].squaresSum).toBe(sq);
+      expect(s.channels[c].mean).toBeCloseTo(sum / n, 10);
+      expect(s.channels[c].stdev).toBeCloseTo(stdev, 10);
+    }
+    // min 0 only at (0,0); max 255 only at (15,15).
+    expect(s.channels[0].min).toBe(0);
+    expect(s.channels[0].max).toBe(255);
+    expect([s.channels[0].minX, s.channels[0].minY]).toEqual([0, 0]);
+    expect([s.channels[0].maxX, s.channels[0].maxY]).toEqual([15, 15]);
+  });
+
+  test("isOpaque flips on a single translucent pixel, with its position", async () => {
+    const png = makePng(4, 4, (x, y) => [10, 20, 30, x === 2 && y === 1 ? 128 : 255]);
+    const s = await new Bun.Image(png).stats();
+    expect(s.isOpaque).toBe(false);
+    expect(s.channels[3].min).toBe(128);
+    expect([s.channels[3].minX, s.channels[3].minY]).toEqual([2, 1]);
+  });
+
+  test("dominant picks the majority colour; 50/50 two-tone entropy is exactly 1", async () => {
+    // 60% white / 40% black → the white bin wins; 248 is its centre.
+    const majority = makePng(10, 10, x => (x < 6 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    expect((await new Bun.Image(majority).stats()).dominant).toEqual({ r: 248, g: 248, b: 248 });
+
+    // Two luma values at p=0.5 each → Shannon entropy of exactly 1 bit.
+    const even = makePng(8, 8, x => (x < 4 ? [255, 255, 255, 255] : [0, 0, 0, 255]));
+    expect((await new Bun.Image(even).stats()).entropy).toBe(1);
+  });
+
+  test("sharpness: a hard edge scores, a flat image doesn't", async () => {
+    const flat = makePng(8, 8, () => [128, 128, 128, 255]);
+    const edge = makePng(8, 8, x => (x < 4 ? [0, 0, 0, 255] : [255, 255, 255, 255]));
+    expect((await new Bun.Image(flat).stats()).sharpness).toBe(0);
+    expect((await new Bun.Image(edge).stats()).sharpness).toBeGreaterThan(10);
+  });
+
+  test("stats() describes the source — recorded ops are ignored", async () => {
+    const plain = await new Bun.Image(gradientPng).stats();
+    const piped = await new Bun.Image(gradientPng).resize(2, 2).rotate(90).modulate({ brightness: 2 }).stats();
+    expect(piped).toEqual(plain);
+  });
+
+  test("a recorded resize doesn't shrink the decode stats run on (JPEG IDCT hint)", async () => {
+    // JPEG decode honours a resize target via IDCT downscaling; stats must
+    // decode at full resolution regardless, or means/positions would be
+    // computed on a 1/8-scale image.
+    const jpeg = await new Bun.Image(makePng(64, 64, (x, y) => [(x * 4) & 255, (y * 4) & 255, (x ^ y) & 255, 255]))
+      .jpeg({ quality: 90 })
+      .bytes();
+    const plain = await new Bun.Image(jpeg).stats();
+    const withResize = new Bun.Image(jpeg).resize(4, 4);
+    expect(await withResize.stats()).toEqual(plain);
+    // The dimension getters reflect the full source, not the resize target.
+    expect([withResize.width, withResize.height]).toEqual([64, 64]);
+  });
+
+  test("JPEG source: dominant lands in the right bin, alpha reads opaque", async () => {
+    const jpeg = await new Bun.Image(makePng(16, 16, () => [40, 136, 232, 255])).jpeg({ quality: 95 }).bytes();
+    const s = await new Bun.Image(jpeg).stats();
+    // JPEG is lossy — allow the neighbouring bin but nothing further.
+    expect(Math.abs(s.dominant.r - 40)).toBeLessThanOrEqual(16);
+    expect(Math.abs(s.dominant.g - 136)).toBeLessThanOrEqual(16);
+    expect(Math.abs(s.dominant.b - 232)).toBeLessThanOrEqual(16);
+    expect(s.isOpaque).toBe(true);
+    expect(s.channels[3].min).toBe(255);
+  });
+
+  test("width/height getters reflect source dimensions after stats()", async () => {
+    const img = new Bun.Image(gradientPng);
+    await img.stats();
+    expect([img.width, img.height]).toEqual([16, 16]);
+  });
+
+  test("stats() respects maxPixels", async () => {
+    await expect(new Bun.Image(gradientPng, { maxPixels: 4 }).stats()).rejects.toMatchObject({
+      code: "ERR_IMAGE_TOO_MANY_PIXELS",
+    });
+  });
+
+  test("identical stats from clones sharing a decode", async () => {
+    const base = new Bun.Image(makePng(8, 8, () => [72, 72, 72, 255]));
+    const [s1, s2] = await Promise.all([base.clone().stats(), base.clone().stats()]);
+    expect(s1).toEqual(s2);
+    expect(s1.dominant).toEqual({ r: 72, g: 72, b: 72 });
+  });
+});

@@ -10,6 +10,8 @@
 
 use core::cell::Cell;
 use core::mem;
+use core::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 
 use crate::generated_classes::PropertyName;
 use crate::webcore::Blob;
@@ -27,6 +29,7 @@ use bun_jsc::{
     JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
+use bun_threading::Guarded;
 
 use super::codecs;
 use super::exif;
@@ -78,6 +81,9 @@ pub struct Image {
     /// collect the wrapper without polling `hasPendingActivity` every cycle.
     this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
+    /// Decode-sharing state for this image's clone family (`clone()` passes
+    /// the `Arc` along; independently constructed images never share one).
+    shared: Arc<SharedDecode>,
 }
 
 impl Default for Image {
@@ -91,6 +97,42 @@ impl Default for Image {
             last_height: Cell::new(-1),
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
+            shared: Arc::new(SharedDecode::default()),
+        }
+    }
+}
+
+/// State shared by every `Image` in one clone family so concurrent
+/// full-resolution pipelines (`stats()`, `placeholder()`, transcodes, any
+/// non-JPEG source) decode the input once instead of once per member. See
+/// `decode_oriented` for when sharing engages.
+struct SharedDecode {
+    /// Live `Image` wrappers holding this `Arc`. Decode-sharing only engages
+    /// when > 1 — a lone image keeps today's per-terminal hinted decode
+    /// (JPEG IDCT downscale) byte-for-byte. Touched from the JS thread
+    /// (`clone()`) and GC sweep (`finalize()`), hence atomic.
+    images: AtomicU32,
+    /// Full-resolution post-auto-orient pixels of the family's input. `Weak`
+    /// so the cache pins nothing once no in-flight task holds the `Arc` —
+    /// overlapping terminals (the `Promise.all` fan-out) share one decode,
+    /// an idle family costs no memory, and a fully sequential family simply
+    /// re-decodes. `key` fingerprints everything that shapes the decode so a
+    /// mutated source buffer, a changed file, or a `Bun.Image.backend` flip
+    /// can never be served stale pixels.
+    cache: Guarded<DecodeCacheSlot>,
+}
+
+#[derive(Default)]
+struct DecodeCacheSlot {
+    key: u64,
+    decoded: Weak<codecs::Decoded>,
+}
+
+impl Default for SharedDecode {
+    fn default() -> Self {
+        Self {
+            images: AtomicU32::new(1),
+            cache: Guarded::init(DecodeCacheSlot::default()),
         }
     }
 }
@@ -108,8 +150,9 @@ pub enum Source {
     ///    more than the dupe it replaces.
     JsBuffer,
     /// Owned — Blob inputs (the Blob's store may be sliced/freed independently)
-    /// and decoded data: URLs.
-    Owned(Vec<u8>),
+    /// and decoded data: URLs. `Arc` so `clone()` shares the bytes instead of
+    /// duping them per clone; the buffer is immutable once stored.
+    Owned(Arc<Vec<u8>>),
     /// Owned, NUL-terminated. Read on the worker thread.
     Path(ZBox),
     /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
@@ -312,6 +355,7 @@ impl Image {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
+        self.shared.images.fetch_sub(1, Ordering::Relaxed);
         self.this_ref.with_mut(|r| r.finalize());
         // `source` is dropped by Box drop.
     }
@@ -392,7 +436,7 @@ fn source_from_js(
                 )));
             }
             out.truncate(r.written);
-            return Ok(Source::Owned(out));
+            return Ok(Source::Owned(Arc::new(out)));
         }
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
@@ -419,7 +463,7 @@ fn source_from_js(
         // independently).
         let view = blob.shared_view();
         if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+            return Ok(Source::Owned(Arc::new(view.to_vec())));
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
@@ -618,6 +662,48 @@ impl Image {
     #[bun_jsc::host_fn(method)]
     pub fn do_format_avif(&self, g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.set_format(g, cf, codecs::Format::Avif)
+    }
+
+    /// `.clone()` — Sharp-style snapshot: a NEW `Image` sharing this one's
+    /// input and a copy of the ops recorded so far, so one upload can fan out
+    /// into several independent pipelines. Clone-family members also share
+    /// `SharedDecode`, so overlapping full-resolution decodes happen once.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_clone(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let source = match self.source.get() {
+            // The new wrapper gets its own `sourceJS` cached slot pointing at
+            // the same ArrayBuffer — set after `to_js()` below.
+            Source::JsBuffer => Source::JsBuffer,
+            Source::Owned(b) => Source::Owned(Arc::clone(b)),
+            // Path strings are tiny; an owned copy keeps the sources
+            // independent (no shared ZBox plumbing for a few bytes).
+            Source::Path(p) => Source::Path(ZBox::from_bytes(p.as_bytes())),
+            // Same JS Blob; each instance reads it independently. Once either
+            // side's read completes, that side swaps to `.Owned` as usual.
+            Source::Blob(strong) => Source::Blob(Strong::create(strong.get(), global)),
+        };
+        self.shared.images.fetch_add(1, Ordering::Relaxed);
+        let img = Box::new(Image {
+            source: JsCell::new(source),
+            pipeline: Cell::new(self.pipeline.get()),
+            max_pixels: self.max_pixels,
+            auto_orient: self.auto_orient,
+            last_width: Cell::new(self.last_width.get()),
+            last_height: Cell::new(self.last_height.get()),
+            this_ref: JsCell::new(JsRef::empty()),
+            pending_tasks: Cell::new(0),
+            shared: Arc::clone(&self.shared),
+        });
+        let cloned = img.to_js(global);
+        if matches!(self.source.get(), Source::JsBuffer) {
+            // `None` ⇒ the slot was never populated (shouldn't happen for a
+            // live `.JsBuffer`); leave the clone's slot empty and its
+            // terminals reject as detached, same as the parent would.
+            if let Some(src) = js::source_js_get_cached(callframe.this()) {
+                js::source_js_set_cached(cloned, global, src);
+            }
+        }
+        Ok(cloned)
     }
 }
 
@@ -847,7 +933,7 @@ impl Image {
                 Err(_) => return Ok(JSValue::NULL),
             };
             let img = Box::new(Image {
-                source: JsCell::new(Source::Owned(bytes)),
+                source: JsCell::new(Source::Owned(Arc::new(bytes))),
                 ..Default::default()
             });
             return Ok(img.to_js(global));
@@ -1023,6 +1109,17 @@ impl Image {
         self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
+    /// `.stats()` — pixel-derived statistics of the SOURCE image (recorded
+    /// ops are ignored, like `.placeholder()`): per-channel min/max/sum/
+    /// squaresSum/mean/stdev + min/max positions, `isOpaque`, greyscale
+    /// `entropy`, laplacian `sharpness`, and the `dominant` sRGB colour from
+    /// a 4096-bin 3D histogram — the same shape (and dominant algorithm) as
+    /// Sharp's `stats()`.
+    #[bun_jsc::host_fn(method)]
+    pub fn do_stats(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        self.schedule(global, cf.this(), Kind::Stats, Deliver::Uint8Array)
+    }
+
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
     /// then `Bun.write(dest, encoded)` — same path as `await Bun.write(...)`, so
     /// `dest` may be a path string, `Bun.file()`, `Bun.s3()`, or an fd. Resolves
@@ -1111,6 +1208,8 @@ impl Image {
             deliver,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
+            shared: Arc::clone(&self.shared),
+            share_decode: self.shared.images.load(Ordering::Relaxed) > 1,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         // First in-flight task ⇒ hold a Strong ref to the wrapper so GC can't
@@ -1197,6 +1296,10 @@ impl Image {
             deliver: Deliver::Uint8Array,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
+            shared: Arc::clone(&self.shared),
+            // Synchronous JS-thread encode must never block on a worker's
+            // in-flight decode, so it always takes the unshared path.
+            share_decode: false,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         task.run();
@@ -1220,7 +1323,7 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. } | TaskResult::Stats(..) => unreachable!(),
         }
     }
 }
@@ -1321,7 +1424,7 @@ impl<'a> BlobReadChain<'a> {
                 // — drop the redundant read instead and re-enter `schedule()`
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
-                    image.source.set(Source::Owned(bytes));
+                    image.source.set(Source::Owned(Arc::new(bytes)));
                 } else {
                     drop(bytes);
                 }
@@ -1396,6 +1499,13 @@ pub struct PipelineTask<'a> {
     deliver: Deliver,
     max_pixels: u64,
     auto_orient: bool,
+    /// Clone-family decode cache (see `SharedDecode`); `Arc` snapshot taken
+    /// on the JS thread at schedule time so the worker never touches `Image`
+    /// fields.
+    shared: Arc<SharedDecode>,
+    /// Whether the family had more than one live image at schedule time —
+    /// gates `decode_oriented`'s shared path.
+    share_decode: bool,
     result: TaskResult,
 }
 
@@ -1468,6 +1578,10 @@ pub enum Kind {
     /// hash itself never crosses the JS boundary unless we add an
     /// `as: "hash"` option later.
     Placeholder,
+    /// `.stats()` — decode → single-pass channel statistics + histograms on
+    /// the worker. Like `.placeholder()`, stats are OF the source: recorded
+    /// pipeline ops are not applied.
+    Stats,
 }
 
 pub enum TaskResult {
@@ -1482,11 +1596,132 @@ pub enum TaskResult {
         h: u32,
         format: codecs::Format,
     },
+    /// Boxed — the payload is ~400 bytes and only exists for `.stats()`.
+    Stats(Box<ImageStats>),
     Err(codecs::Error),
     IoErr(sys::Error),
 }
 
+/// Decoded pixels for one task: exclusively owned (the non-shared path —
+/// identical to pre-`clone()` behaviour) or a handle on the clone family's
+/// shared decode.
+enum TaskPixels {
+    Owned(codecs::Decoded),
+    Shared(Arc<codecs::Decoded>),
+}
+
+impl core::ops::Deref for TaskPixels {
+    type Target = codecs::Decoded;
+    fn deref(&self) -> &codecs::Decoded {
+        match self {
+            TaskPixels::Owned(d) => d,
+            TaskPixels::Shared(a) => a,
+        }
+    }
+}
+
+impl TaskPixels {
+    /// Exclusive `Decoded` for the mutating encode path, plus — for the
+    /// shared case — the `Arc` the caller keeps alive until the task is done
+    /// (maximises the window in which sibling tasks can still upgrade the
+    /// cache's `Weak`). The copy is one memcpy of the RGBA frame; decode
+    /// sharing saves a full decode per sibling, which dwarfs it.
+    fn into_parts(self) -> (codecs::Decoded, Option<Arc<codecs::Decoded>>) {
+        match self {
+            TaskPixels::Owned(d) => (d, None),
+            TaskPixels::Shared(a) => (
+                codecs::Decoded {
+                    rgba: a.rgba.clone(),
+                    width: a.width,
+                    height: a.height,
+                    icc_profile: a.icc_profile.clone(),
+                },
+                Some(a),
+            ),
+        }
+    }
+}
+
 impl<'a> PipelineTask<'a> {
+    /// Decode + EXIF auto-orient. When this image had live clones at
+    /// schedule time (`share_decode`) and the decode would be
+    /// full-resolution anyway, it goes through the family's cache: the first
+    /// task to arrive decodes while siblings block on the lock, then
+    /// everyone shares the same pixels. Otherwise this is exactly the
+    /// pre-`clone()` path — hinted decode, no hashing, no locking.
+    fn decode_oriented(
+        &self,
+        input: &[u8],
+        src_format: codecs::Format,
+        hint: codecs::DecodeHint,
+    ) -> Result<TaskPixels, codecs::Error> {
+        // Share only when sharing doesn't change the decode this task would
+        // do anyway. The JPEG decoder downscales during IDCT when a resize
+        // target is known (`hint`), which both skips work and shrinks every
+        // later stage — sharing one full-resolution decode across
+        // different-size variants benchmarks SLOWER than per-task hinted
+        // decodes (resizing from the full frame costs more than the saved
+        // decode; Sharp/libvips likewise shrink-on-load per pipeline). So a
+        // hinted JPEG task keeps the unshared path, while everything whose
+        // decode is full-resolution regardless — stats, placeholder,
+        // transcodes, and every non-JPEG format (their decoders ignore the
+        // hint) — dedupes through the family cache.
+        let share = self.share_decode
+            && (src_format != codecs::Format::Jpeg || (hint.target_w == 0 && hint.target_h == 0));
+        if share {
+            // Everything that shapes the decoded pixels goes into the key:
+            // the input bytes (a mutated source ArrayBuffer or a rewritten
+            // file re-decodes instead of being served stale pixels) and the
+            // knobs below. `max_pixels`/`auto_orient` are family-uniform
+            // (read-only after construction, copied by `clone()`) but folded
+            // in anyway; `backend` can change between tasks via
+            // `Bun.Image.backend`.
+            let seed = self
+                .max_pixels
+                .wrapping_mul(31)
+                .wrapping_add(u64::from(codecs::BACKEND.load(Ordering::Relaxed)) << 1)
+                .wrapping_add(u64::from(self.auto_orient));
+            let key = bun_wyhash::hash_with_seed(seed, input);
+            // The lock is held across the decode on purpose: every task on
+            // this path performs the identical full-resolution decode, so
+            // blocking a sibling until the fill finishes is strictly cheaper
+            // than letting it duplicate the work.
+            let mut slot = self.shared.cache.lock();
+            if slot.key == key {
+                if let Some(arc) = slot.decoded.upgrade() {
+                    return Ok(TaskPixels::Shared(arc));
+                }
+            }
+            let mut d = codecs::decode(input, self.max_pixels, codecs::DecodeHint::default())?;
+            self.orient(&mut d, input, src_format)?;
+            let arc = Arc::new(d);
+            slot.key = key;
+            slot.decoded = Arc::downgrade(&arc);
+            Ok(TaskPixels::Shared(arc))
+        } else {
+            let mut d = codecs::decode(input, self.max_pixels, hint)?;
+            self.orient(&mut d, input, src_format)?;
+            Ok(TaskPixels::Owned(d))
+        }
+    }
+
+    /// EXIF auto-orient: applied BEFORE any user op so resize targets and
+    /// metadata report the visually-upright dimensions, the way Sharp does.
+    fn orient(
+        &self,
+        d: &mut codecs::Decoded,
+        input: &[u8],
+        src_format: codecs::Format,
+    ) -> Result<(), codecs::Error> {
+        if self.auto_orient && src_format == codecs::Format::Jpeg {
+            let orient = exif::read_jpeg(input);
+            if orient != exif::Orientation::Normal {
+                apply_orientation(d, orient)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Runs on a `WorkPool` thread. No JSC access.
     pub fn run(&mut self) {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
@@ -1593,7 +1828,15 @@ impl<'a> PipelineTask<'a> {
         // can be over-shrunk and then upscaled, throwing away detail.
         // (flip/flop are pure mirrors that never change w/h, so the hint
         //  stays valid through them.)
-        let hint: codecs::DecodeHint = if let Some(r) = self.pipeline.resize {
+        //
+        // Encode kinds only: the hint describes the ENCODE pipeline's resize
+        // target. `.stats()`/`.placeholder()` are OF the source and skip the
+        // pipeline, so a recorded resize must not downscale their decode.
+        let resize_hint = match self.kind {
+            Kind::Encode(_) => self.pipeline.resize,
+            Kind::Metadata | Kind::Placeholder | Kind::Stats => None,
+        };
+        let hint: codecs::DecodeHint = if let Some(r) = resize_hint {
             let mut tw = r.w;
             // r.h==0 means "preserve aspect" — constrain on width only.
             let mut th = if r.h != 0 { r.h } else { r.w };
@@ -1613,46 +1856,49 @@ impl<'a> PipelineTask<'a> {
             codecs::DecodeHint::default()
         };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
-            Ok(d) => d,
+        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
+
+        let pixels = match self.decode_oriented(input, src_format, hint) {
+            Ok(p) => p,
             Err(e) => {
                 self.result = TaskResult::Err(e);
                 return;
             }
         };
-        // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc.
-
-        let src_format = codecs::Format::sniff(input).unwrap_or(codecs::Format::Png);
-
-        // EXIF auto-orient: applied BEFORE any user op so resize targets and
-        // metadata report the visually-upright dimensions, the way Sharp does.
-        if self.auto_orient && src_format == codecs::Format::Jpeg {
-            let orient = exif::read_jpeg(input);
-            if orient != exif::Orientation::Normal {
-                if let Err(e) = apply_orientation(&mut decoded, orient) {
-                    self.result = TaskResult::Err(e);
-                    return;
-                }
-            }
-        }
+        // `defer decoded.deinit()` — `codecs::Decoded` Drop frees rgba/icc
+        // (for the shared case, when the last task's `Arc` drops).
 
         if matches!(self.kind, Kind::Metadata) {
             // Reached only for HEIC/AVIF (probe fell through).
             self.result = TaskResult::Meta {
-                w: decoded.width,
-                h: decoded.height,
+                w: pixels.width,
+                h: pixels.height,
                 format: src_format,
             };
             return;
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+            self.result = match make_placeholder(&pixels.rgba, pixels.width, pixels.height) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
             return;
         }
+
+        if matches!(self.kind, Kind::Stats) {
+            self.result = match compute_stats(&pixels) {
+                Ok(st) => TaskResult::Stats(st),
+                Err(e) => TaskResult::Err(e),
+            };
+            return;
+        }
+
+        // Encode path mutates, so take exclusive pixels. `_family_keepalive`
+        // holds the family's shared decode until this task finishes, so a
+        // sibling clone that starts while we resize/encode still hits the
+        // cache instead of finding a dead `Weak`.
+        let (mut decoded, _family_keepalive) = pixels.into_parts();
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
             self.result = TaskResult::Err(e);
@@ -1724,6 +1970,12 @@ impl<'a> PipelineTask<'a> {
             TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
+            }
+            TaskResult::Stats(st) => {
+                image.last_width.set(i32::try_from(st.w).expect("int cast"));
+                image
+                    .last_height
+                    .set(i32::try_from(st.h).expect("int cast"));
             }
             _ => {}
         }
@@ -1885,6 +2137,45 @@ impl<'a> PipelineTask<'a> {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
+            TaskResult::Stats(st) => {
+                let obj = JSValue::create_empty_object(global, 5);
+                let channels = match JSValue::create_empty_array(global, st.channels.len()) {
+                    Ok(v) => v,
+                    Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                };
+                for (i, ch) in st.channels.iter().enumerate() {
+                    let c = JSValue::create_empty_object(global, 10);
+                    c.put(global, b"min", JSValue::js_number(f64::from(ch.min)));
+                    c.put(global, b"max", JSValue::js_number(f64::from(ch.max)));
+                    // u64 → f64 may round above 2^53; the JS number is the
+                    // best representation available either way.
+                    c.put(global, b"sum", JSValue::js_number(ch.sum as f64));
+                    c.put(
+                        global,
+                        b"squaresSum",
+                        JSValue::js_number(ch.squares_sum as f64),
+                    );
+                    c.put(global, b"mean", JSValue::js_number(ch.mean));
+                    c.put(global, b"stdev", JSValue::js_number(ch.stdev));
+                    c.put(global, b"minX", JSValue::js_number(f64::from(ch.min_x)));
+                    c.put(global, b"minY", JSValue::js_number(f64::from(ch.min_y)));
+                    c.put(global, b"maxX", JSValue::js_number(f64::from(ch.max_x)));
+                    c.put(global, b"maxY", JSValue::js_number(f64::from(ch.max_y)));
+                    if channels.put_index(global, i as u32, c).is_err() {
+                        return promise.reject(global, Err(jsc::JsError::Thrown));
+                    }
+                }
+                obj.put(global, b"channels", channels);
+                obj.put(global, b"isOpaque", JSValue::from(st.is_opaque));
+                obj.put(global, b"entropy", JSValue::js_number(st.entropy));
+                obj.put(global, b"sharpness", JSValue::js_number(st.sharpness));
+                let dom = JSValue::create_empty_object(global, 3);
+                dom.put(global, b"r", JSValue::js_number(f64::from(st.dominant[0])));
+                dom.put(global, b"g", JSValue::js_number(f64::from(st.dominant[1])));
+                dom.put(global, b"b", JSValue::js_number(f64::from(st.dominant[2])));
+                obj.put(global, b"dominant", dom);
+                promise.resolve(global, obj)?;
+            }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,
             TaskResult::IoErr(e) => promise.reject(global, Ok(e.to_js(global)))?,
         }
@@ -1981,6 +2272,188 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
         w: rendered.w,
         h: rendered.h,
     })
+}
+
+/// `.stats()` payload, computed on the worker. Shape mirrors Sharp's
+/// `stats()`: `stdev` is the sample standard deviation (n−1 denominator, the
+/// vips formula), min/max positions are the first occurrence in scan order,
+/// `dominant` is the centre of the fullest bin of a 16×16×16 RGB histogram.
+/// Channels are always the 4 of the RGBA pixel model every decode emits —
+/// an alpha-less source reports a constant-255 alpha channel.
+pub struct ImageStats {
+    w: u32,
+    h: u32,
+    channels: [ChannelStats; 4],
+    is_opaque: bool,
+    entropy: f64,
+    sharpness: f64,
+    dominant: [u8; 3],
+}
+
+#[derive(Clone, Copy, Default)]
+struct ChannelStats {
+    min: u8,
+    max: u8,
+    sum: u64,
+    squares_sum: u64,
+    mean: f64,
+    stdev: f64,
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+/// `.stats()` body — runs on the worker over the decoded (auto-oriented)
+/// RGBA. One pass accumulates everything except `sharpness`, which needs a
+/// neighbourhood and gets its own pass over the luma plane built here.
+fn compute_stats(d: &codecs::Decoded) -> Result<Box<ImageStats>, codecs::Error> {
+    let (w, h) = (d.width, d.height);
+    let n = u64::from(w) * u64::from(h);
+    let mut stats = Box::new(ImageStats {
+        w,
+        h,
+        channels: [ChannelStats::default(); 4],
+        is_opaque: true,
+        entropy: 0.0,
+        sharpness: 0.0,
+        dominant: [8, 8, 8],
+    });
+    if n == 0 {
+        return Ok(stats);
+    }
+
+    #[derive(Clone, Copy)]
+    struct Acc {
+        min: u8,
+        max: u8,
+        min_i: u64,
+        max_i: u64,
+        sum: u64,
+        // Cannot overflow for any decodable image: 255² per pixel caps a u64
+        // at ~2.8e14 pixels ≈ 1.1 PB of RGBA, far past any allocatable frame.
+        sq: u64,
+    }
+    let mut acc = [Acc {
+        min: 255,
+        max: 0,
+        min_i: 0,
+        max_i: 0,
+        sum: 0,
+        sq: 0,
+    }; 4];
+    // `dominant`: Sharp's algorithm — 4096-bin (16³) RGB histogram, alpha
+    // dropped, answer is the fullest bin's centre. u64 counts so a raised
+    // `maxPixels` can't overflow a bin.
+    let mut hist3d = vec![0u64; 4096];
+    // `entropy`: Shannon entropy of a 256-bin greyscale histogram. Integer
+    // BT.601 luma (77/150/29, Σ=256) — documented as an estimate; vips
+    // converts through LAB so Sharp's absolute numbers differ slightly.
+    let mut luma_hist = [0u64; 256];
+    // The luma plane feeds the `sharpness` laplacian pass below; n bytes on
+    // top of the 4n RGBA, so allocate fallibly like the decoders do.
+    let mut luma: Vec<u8> = Vec::new();
+    if luma.try_reserve_exact(n as usize).is_err() {
+        return Err(codecs::Error::OutOfMemory);
+    }
+
+    for (i, px) in d.rgba.chunks_exact(4).enumerate() {
+        for (&v, a) in px.iter().zip(acc.iter_mut()) {
+            if v < a.min {
+                a.min = v;
+                a.min_i = i as u64;
+            }
+            if v > a.max {
+                a.max = v;
+                a.max_i = i as u64;
+            }
+            a.sum += u64::from(v);
+            a.sq += u64::from(v) * u64::from(v);
+        }
+        let (r, g, b) = (u32::from(px[0]), u32::from(px[1]), u32::from(px[2]));
+        hist3d[(((r >> 4) << 8) | ((g >> 4) << 4) | (b >> 4)) as usize] += 1;
+        // (77·255 + 150·255 + 29·255 + 128) >> 8 == 255 — can't escape the
+        // table.
+        let y = ((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8;
+        luma_hist[usize::from(y)] += 1;
+        luma.push(y);
+        if px[3] != 255 {
+            stats.is_opaque = false;
+        }
+    }
+
+    let nf = n as f64;
+    for (out, a) in stats.channels.iter_mut().zip(acc.iter()) {
+        // `.max(0.0)` guards f64 rounding driving the radicand a hair
+        // negative on constant channels.
+        let stdev = if n > 1 {
+            ((a.sq as f64 - (a.sum as f64) * (a.sum as f64) / nf) / (nf - 1.0))
+                .max(0.0)
+                .sqrt()
+        } else {
+            0.0
+        };
+        *out = ChannelStats {
+            min: a.min,
+            max: a.max,
+            sum: a.sum,
+            squares_sum: a.sq,
+            mean: a.sum as f64 / nf,
+            stdev,
+            min_x: (a.min_i % u64::from(w)) as u32,
+            min_y: (a.min_i / u64::from(w)) as u32,
+            max_x: (a.max_i % u64::from(w)) as u32,
+            max_y: (a.max_i / u64::from(w)) as u32,
+        };
+    }
+
+    for &count in &luma_hist {
+        if count > 0 {
+            let p = count as f64 / nf;
+            stats.entropy -= p * p.log2();
+        }
+    }
+
+    let mut best = 0usize;
+    for (i, &count) in hist3d.iter().enumerate().skip(1) {
+        if count > hist3d[best] {
+            best = i;
+        }
+    }
+    stats.dominant = [
+        ((best >> 8) as u8) * 16 + 8,
+        (((best >> 4) & 0xF) as u8) * 16 + 8,
+        ((best & 0xF) as u8) * 16 + 8,
+    ];
+
+    // `sharpness`: standard deviation of the (3×3, scale-9) laplacian over
+    // the luma plane — Sharp's estimate. Interior pixels only (vips extends
+    // the border instead; the difference is negligible past icon sizes);
+    // 0 when there is no interior.
+    if w >= 3 && h >= 3 {
+        let stride = w as usize;
+        let (mut sum, mut sq) = (0.0f64, 0.0f64);
+        for y in 1..(h as usize - 1) {
+            for x in 1..(w as usize - 1) {
+                let i = y * stride + x;
+                let lap = f64::from(
+                    i32::from(luma[i - stride])
+                        + i32::from(luma[i - 1])
+                        + i32::from(luma[i + 1])
+                        + i32::from(luma[i + stride])
+                        - 4 * i32::from(luma[i]),
+                ) / 9.0;
+                sum += lap;
+                sq += lap * lap;
+            }
+        }
+        let cnt = f64::from(w - 2) * f64::from(h - 2);
+        if cnt > 1.0 {
+            stats.sharpness = ((sq - sum * sum / cnt) / (cnt - 1.0)).max(0.0).sqrt();
+        }
+    }
+
+    Ok(stats)
 }
 
 /// Map a resize spec to concrete output dims given the current dims.

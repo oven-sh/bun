@@ -8277,6 +8277,62 @@ declare module "bun" {
       height: number;
       format: Format;
     }
+
+    /**
+     * Statistics for one channel of the RGBA pixel model every decode
+     * produces, in `[red, green, blue, alpha]` order. Sources without an
+     * alpha channel (JPEG, opaque PNG) report a constant-255 alpha channel.
+     */
+    interface ChannelStats {
+      /** Smallest value in the channel (0–255). */
+      min: number;
+      /** Largest value in the channel (0–255). */
+      max: number;
+      /** Sum of all values. */
+      sum: number;
+      /** Sum of all values squared. */
+      squaresSum: number;
+      /** Arithmetic mean of the values. */
+      mean: number;
+      /** Sample standard deviation (n−1 denominator, like Sharp/libvips). */
+      stdev: number;
+      /** x coordinate of the first pixel (scan order) holding `min`. */
+      minX: number;
+      /** y coordinate of the first pixel (scan order) holding `min`. */
+      minY: number;
+      /** x coordinate of the first pixel (scan order) holding `max`. */
+      maxX: number;
+      /** y coordinate of the first pixel (scan order) holding `max`. */
+      maxY: number;
+    }
+
+    /**
+     * Pixel-derived statistics of the source image, resolved by
+     * {@link Image.stats}. The shape matches Sharp's `stats()`.
+     */
+    interface Stats {
+      /** Per-channel statistics, always `[red, green, blue, alpha]`. */
+      channels: [ChannelStats, ChannelStats, ChannelStats, ChannelStats];
+      /** `true` unless any pixel's alpha is below 255. */
+      isOpaque: boolean;
+      /**
+       * Shannon entropy of a 256-bin greyscale histogram — a busyness
+       * estimate. `0` for a flat single-colour image, up to 8 for noise.
+       */
+      entropy: number;
+      /**
+       * Standard deviation of a 3×3 Laplacian over the greyscale image — a
+       * focus estimate. `0` for a flat image; blurry images score lower than
+       * sharp ones.
+       */
+      sharpness: number;
+      /**
+       * Most dominant sRGB colour, from a 4,096-bin (16×16×16) histogram —
+       * the same algorithm as Sharp. Values are bin centres, so each
+       * component has the form `16·k + 8`.
+       */
+      dominant: { r: number; g: number; b: number };
+    }
   }
 
   /**
@@ -8342,6 +8398,28 @@ declare module "bun" {
     static clipboardChangeCount(): number;
 
     constructor(input: string | ArrayBuffer | NodeJS.TypedArray | Blob, options?: Image.ConstructorOptions);
+
+    /**
+     * Snapshot this instance into a new, independent `Image` sharing the
+     * same input (no copy), with a copy of the operations recorded so far.
+     * Use it to fan one source out into several pipelines. Concurrent
+     * pipelines in a clone family that decode at full resolution — `stats`,
+     * `placeholder`, transcodes, and any non-JPEG source — share a single
+     * decode; JPEG pipelines with a `resize` keep per-pipeline
+     * shrink-on-load decoding (like Sharp), which is faster than sharing a
+     * full-resolution decode.
+     *
+     * @example
+     * ```ts
+     * const base = new Bun.Image(upload);
+     * const [card, square, og] = await Promise.all([
+     *   base.clone().resize(1280, 1024).webp({ quality: 80 }).bytes(),
+     *   base.clone().resize(640, 640).webp({ quality: 80 }).bytes(),
+     *   base.clone().resize(1200, 630).jpeg({ quality: 82 }).bytes(),
+     * ]);
+     * ```
+     */
+    clone(): Image;
 
     /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
@@ -8431,6 +8509,20 @@ declare module "bun" {
     toBase64(): Promise<string>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
+    /**
+     * Decode and compute pixel-derived statistics of the *source* image
+     * (recorded operations are ignored, like {@link placeholder}):
+     * per-channel min/max/sum/squaresSum/mean/stdev and min/max positions,
+     * `isOpaque`, greyscale `entropy` and `sharpness` estimates, and the
+     * `dominant` sRGB colour — e.g. for placeholder backgrounds.
+     *
+     * @example
+     * ```ts
+     * const { dominant, isOpaque } = await new Bun.Image(upload).stats();
+     * const css = `rgb(${dominant.r} ${dominant.g} ${dominant.b})`;
+     * ```
+     */
+    stats(): Promise<Image.Stats>;
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;

@@ -50,6 +50,36 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 // => { width: 1920, height: 1080, format: "jpeg" }
 ```
 
+## Statistics
+
+`.stats()` decodes the image and computes pixel-derived statistics — per-channel `min`/`max`/`sum`/`squaresSum`/`mean`/`stdev` with min/max positions, `isOpaque`, greyscale `entropy` and `sharpness` estimates, and the dominant sRGB color from a 4,096-bin histogram (the same shape and dominant-color algorithm as Sharp's `stats()`):
+
+```ts
+const { dominant, isOpaque, channels } = await new Bun.Image(input).stats();
+const background = `rgb(${dominant.r} ${dominant.g} ${dominant.b})`; // paint behind the LQIP
+channels[0].mean; // average red value
+```
+
+Statistics describe the _source_ image — chained operations like `resize` are ignored, the same as `.placeholder()`. Channels are always reported in `[red, green, blue, alpha]` order; sources without an alpha channel report a constant-255 alpha.
+
+## Clone
+
+`.clone()` snapshots an instance into a new, independent pipeline sharing the same input without copying it — Sharp's `clone()`. Use it to fan one upload out into several delivery variants:
+
+```ts
+const base = new Bun.Image(upload, { maxPixels: 100_000_000 });
+const [card, square, max1920, social] = await Promise.all([
+  base.clone().resize(1280, 1024).webp({ quality: 80 }).bytes(),
+  base.clone().resize(640, 640).webp({ quality: 80 }).bytes(),
+  base.clone().resize(1920, 1920, { fit: "inside", withoutEnlargement: true }).webp({ quality: 80 }).bytes(),
+  base.clone().resize(1200, 630).jpeg({ quality: 82 }).bytes(),
+]);
+```
+
+Operations recorded before `.clone()` are copied into the clone; operations recorded after affect only the instance they're called on.
+
+Concurrent pipelines in a clone family that decode at full resolution — `.stats()`, `.placeholder()`, format transcodes, and any non-JPEG source — share a single decode of the input. JPEG pipelines with a `.resize()` keep per-pipeline shrink-on-load decoding (the M/8 IDCT fast path, same strategy as Sharp), which beats sharing a full-resolution decode.
+
 ## Resize
 
 ```ts

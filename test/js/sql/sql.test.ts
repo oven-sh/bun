@@ -2300,7 +2300,7 @@ if (isDockerEnabled()) {
       }
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_FAILED");
+      expect(error.code).toBe("ERR_POSTGRES_CONNECTION_REFUSED");
     });
 
     test("dynamic table name", async () => {

@@ -1273,65 +1273,6 @@ fn load_standalone_sourcemap(
     unsafe { (*graph).find(path)?.sourcemap.load() }
 }
 
-/// `pt.source_maps.get(filename) → pt.bundled_outputs[idx].value.asSlice()`.
-/// The body lives here (not in
-/// `bun_sourcemap_jsc`) because `PerThread` names `bun_bundler::OutputFile`;
-/// the low tier holds only the opaque pointer round-tripped through C++.
-///
-/// # Safety
-/// `pt` is the live `*mut bake::production::PerThread` previously attached via
-/// `BakeGlobalObject__attachPerThreadData` (caller checked
-/// `BakeGlobalObject__isBakeGlobalObject` first). Called on the JS thread.
-/// The returned slice borrows `pt.bundled_outputs` and is valid for the bake
-/// build session (outlives the caller's `parse_json` use).
-unsafe fn bake_per_thread_source_map(
-    pt: *mut c_void,
-    source_filename: &[u8],
-) -> Option<*const [u8]> {
-    // SAFETY: per fn contract — `pt` is the unerased `*mut PerThread` C++
-    // stored opaquely; only this crate knows its layout.
-    let pt = unsafe { &*pt.cast::<crate::bake::production::PerThread>() };
-    let idx = pt.source_maps.get(source_filename)?;
-    Some(std::ptr::from_ref::<[u8]>(
-        pt.bundled_outputs[idx.get() as usize].value.as_slice(),
-    ))
-}
-
-/// `BakeSourceProvider.getExternalData`.
-/// Link-time-resolved by `bun_sourcemap` (declared `extern "Rust"` there) so
-/// `SavedSourceMap::get_with_content`'s `BakeSourceProvider` branch reaches the
-/// real lookup instead of a stub. Returns `None`
-/// if not running under a `Bake::GlobalObject` (caller falls back to disk read),
-/// otherwise the bundled `.map` JSON for `source_filename` (or `b""` if absent).
-#[unsafe(no_mangle)]
-pub(crate) static __BUN_BAKE_EXTERNAL_SOURCEMAP: fn(source_filename: &[u8]) -> Option<*const [u8]> =
-    bake_external_sourcemap;
-
-fn bake_external_sourcemap(source_filename: &[u8]) -> Option<*const [u8]> {
-    unsafe extern "C" {
-        fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-        fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
-    }
-    let global = VirtualMachine::get().global;
-    // SAFETY: `global` is the live JSGlobalObject for this VM thread.
-    if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
-        return None;
-    }
-    // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
-    let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
-    if pt.is_null() {
-        // `m_perThreadData` is null between VM init and `PerThread::attach`;
-        // no bundled outputs exist yet, so fall back to disk.
-        return None;
-    }
-    // SAFETY: per `bake_per_thread_source_map` contract — `pt` is the live
-    // non-null `*mut PerThread` per above; called on the JS thread.
-    if let Some(slice) = unsafe { bake_per_thread_source_map(pt, source_filename) } {
-        return Some(slice);
-    }
-    Some(std::ptr::from_ref::<[u8]>(b""))
-}
-
 /// `node_cluster_binding.handleInternalMessageChild(global, data)` — the
 /// `IPCInstance.handleIPCMessage` `.internal` arm.
 ///
@@ -1468,7 +1409,6 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_on_before_print,
     console_print_runtime_object,
     load_standalone_sourcemap,
-    bake_per_thread_source_map,
     apply_standalone_runtime_flags,
     parse_worker_exec_argv_allow_addons,
     cron_clear_all_teardown,

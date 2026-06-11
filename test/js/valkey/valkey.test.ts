@@ -1,6 +1,6 @@
 import { randomUUIDv7, RedisClient, spawn } from "bun";
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import { join } from "node:path";
 import {
   ctx as _ctx,
@@ -6901,3 +6901,103 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
     });
   });
 }
+
+// These tests don't need a real Redis server: they use in-process TCP
+// listeners to drive the client's connect/close paths.
+describe.concurrent("RedisClient onclose/onconnect handler values", () => {
+  // Accepts the connection, then immediately closes it, so the client runs
+  // its close path (which invokes onclose) without a Redis server.
+  const closingServer = `
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open(s) { s.end(); }, data() {} },
+    });
+  `;
+
+  // Replies to HELLO with an empty RESP3 map, enough for the client to
+  // consider the connection established (which invokes onconnect).
+  const helloServer = `
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open() {}, data(s) { s.write("%0\\r\\n"); } },
+    });
+  `;
+
+  async function expectChildOk(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr: stderr.includes("ASSERTION FAILED") ? stderr : "" }).toEqual({
+      stdout: "ok",
+      exitCode: 0,
+      stderr: "",
+    });
+  }
+
+  test.each(["{}", "42", "null", "undefined", '"not a function"'])(
+    "assigning %s to onclose does not crash when the connection closes",
+    async value => {
+      await expectChildOk(`
+        ${closingServer}
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port, { maxRetries: 0 });
+        client.onclose = ${value};
+        try { await client.connect(); } catch {}
+        console.log("ok");
+      `);
+    },
+  );
+
+  test("assigning a non-callable to onconnect does not crash on successful connect", async () => {
+    await expectChildOk(`
+      ${helloServer}
+      const client = new Bun.RedisClient("redis://127.0.0.1:" + server.port);
+      client.onconnect = {};
+      await client.connect();
+      client.close();
+      console.log("ok");
+    `);
+  });
+
+  test("callable onclose still receives the connection error", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.end();
+        },
+        data() {},
+      },
+    });
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { maxRetries: 0 });
+    const { promise, resolve } = Promise.withResolvers<Error>();
+    client.onclose = resolve;
+    client.connect().catch(() => {});
+    expect(await promise).toBeInstanceOf(Error);
+  });
+
+  test("callable onconnect still fires after connecting", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open() {},
+        data(s) {
+          s.write("%0\r\n");
+        },
+      },
+    });
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    client.onconnect = () => resolve();
+    await client.connect();
+    await promise;
+    client.close();
+  });
+});

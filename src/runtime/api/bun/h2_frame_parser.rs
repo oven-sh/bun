@@ -1238,6 +1238,11 @@ pub struct H2FrameParser {
     remaining_length: Cell<i32>,
     // buffer if more data is needed for the current frame
     read_buffer: JsCell<MutableString>,
+    // depth of read dispatches currently on the stack (read()/on_native_read);
+    // detach() defers freeing read_buffer/write_buffer/hpack while > 0 because a
+    // re-entrant teardown from a frame handler must not free memory the
+    // in-flight parse still references (deinit() frees them later).
+    read_dispatch_depth: Cell<u32>,
 
     // local Window limits the download of data
     // current window size for the connection
@@ -7339,23 +7344,36 @@ impl H2FrameParser {
         // of the function, and the window-size update still runs on the error
         // path.
         let array_buffer = buffer.as_pinned_arraybuffer(global_object);
-        let result = (|| {
-            if let Some(array_buffer) = &array_buffer {
-                let mut bytes = array_buffer.byte_slice();
+        // This entry point is only used for JS-stream sockets (createConnection
+        // hands us chunks from a user Duplex; real sockets feed on_native_read).
+        // A frame handler dispatched while parsing can transfer or detach this
+        // buffer, and a transferred backing store can be freed by GC before the
+        // loop finishes - so parse from a parser-owned copy of the chunk and let
+        // go of the pin immediately.
+        let owned: Option<Vec<u8>> = array_buffer
+            .as_ref()
+            .map(|array_buffer| array_buffer.byte_slice().to_vec());
+        if let Some(array_buffer) = &array_buffer {
+            array_buffer.unpin();
+        }
+        let result = if let Some(owned) = &owned {
+            this.read_dispatch_depth
+                .set(this.read_dispatch_depth.get() + 1);
+            let parse = (|| {
+                let mut bytes = owned.as_slice();
                 // read all the bytes
                 while !bytes.is_empty() {
                     let result = this.read_bytes(bytes)?;
                     bytes = &bytes[result..];
                 }
                 Ok(JSValue::UNDEFINED)
-            } else {
-                Err(global_object
-                    .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
-            }
-        })();
-        if let Some(array_buffer) = &array_buffer {
-            array_buffer.unpin();
-        }
+            })();
+            this.read_dispatch_depth
+                .set(this.read_dispatch_depth.get() - 1);
+            parse
+        } else {
+            Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
+        };
         this.increment_window_size_if_needed();
         result
     }
@@ -7363,6 +7381,8 @@ impl H2FrameParser {
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         self.ref_();
+        self.read_dispatch_depth
+            .set(self.read_dispatch_depth.get() + 1);
         let mut bytes = data;
         let result: JsResult<()> = (|| {
             while !bytes.is_empty() {
@@ -7371,6 +7391,8 @@ impl H2FrameParser {
             }
             Ok(())
         })();
+        self.read_dispatch_depth
+            .set(self.read_dispatch_depth.get() - 1);
         self.increment_window_size_if_needed();
         self.deref();
         result
@@ -7506,6 +7528,7 @@ impl H2FrameParser {
             current_frame: Cell::new(None),
             remaining_length: Cell::new(0),
             read_buffer: JsCell::new(MutableString::default()),
+            read_dispatch_depth: Cell::new(0),
             window_size: Cell::new(DEFAULT_WINDOW_SIZE),
             used_window_size: Cell::new(0),
             remote_window_size: Cell::new(DEFAULT_WINDOW_SIZE),
@@ -7700,6 +7723,16 @@ impl H2FrameParser {
         self.uncork();
         self.unregister_auto_flush();
         self.detach_native_socket();
+
+        // A teardown triggered from inside a frame handler (session.destroy()
+        // while read()/on_native_read is still parsing) must not free the
+        // buffers the in-flight parse references: a fragmented frame's Payload
+        // points into read_buffer and the HPACK handle may still be decoding.
+        // Leave the allocations to a later detach()/deinit() outside the
+        // dispatch.
+        if self.read_dispatch_depth.get() > 0 {
+            return;
+        }
 
         // Free the allocation, not just the length: `reset()` would only
         // clear `len`; detach() is reachable from JS without a following `deinit`, so the

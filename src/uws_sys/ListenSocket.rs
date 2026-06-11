@@ -110,7 +110,10 @@ impl ListenSocket {
         NonNull::new(p.cast::<T>())
     }
 
-    pub fn on_server_name(&mut self, cb: extern "C" fn(*mut ListenSocket, *const c_char)) {
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+    ) {
         us_listen_socket_on_server_name(self, cb)
     }
 }
@@ -137,6 +140,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char),
+        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
     );
 }

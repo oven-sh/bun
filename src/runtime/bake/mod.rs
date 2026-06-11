@@ -547,8 +547,9 @@ pub struct SplitBundlerOptions {
 // duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
 // (DevServer.rs) wants the keystone Cow-backed types defined above. Until the
 // two struct families unify (tracked by the `convert_file_system_router_type`
-// note in bake_body.rs), bridge by-value here so `server/mod.rs` can hand
-// `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
+// note in bake_body.rs), bridge by-value here so `DevServer::from_server_config`
+// (DevServer.rs) can hand the `UserOptions` behind `config.dev_server_options`
+// straight into `DevServer::init`. All `&'static [u8]` →
 // `Cow::Borrowed` / `Box<[u8]>` projections are by-reference (no copy of the
 // underlying arena bytes).
 impl From<bake_body::FileSystemRouterType> for FileSystemRouterType {

@@ -1006,7 +1006,7 @@ export async function describeWithContainer(
     return;
   }
 
-  (concurrent && Bun.version !== "1.2.22" ? describe.concurrent : describe)(label, () => {
+  (concurrent ? describe.concurrent : describe)(label, () => {
     // Create a container descriptor with stable references and a ready promise
     let readyResolver: () => void;
     let readyRejecter: (error: any) => void;

@@ -8,7 +8,7 @@ use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
     self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
-    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    JsResult, StringJsc as _, VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, IdentityContext, OffsetByteList, StringMap};
@@ -418,6 +418,7 @@ impl PostgresSQLConnection {
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
+        (get_on_notification, set_on_notification => onnotification_get_cached, onnotification_set_cached),
     }
 
     pub fn setup_tls(&self) {
@@ -2976,8 +2977,8 @@ impl PostgresSQLConnection {
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {
-                debug!("UNSUPPORTED NotificationResponse");
-                let _resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                let resp = protocol::NotificationResponse::decode_internal(reader.reborrow())?;
+                self.dispatch_notification(&resp.channel, &resp.payload);
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
@@ -3018,6 +3019,60 @@ impl PostgresSQLConnection {
 
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.status.get() == Status::Connected)
+    }
+
+    /// Backend process ID delivered via the BackendKeyData ('K') message during
+    /// connection setup. Returns 0 before the message has been received. Useful
+    /// for `pg_terminate_backend(pid)` and matches the `state.pid` field exposed
+    /// by postgres.js.
+    pub fn get_process_id(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.backend_key_data.get().process_id)
+    }
+
+    /// Backend secret key delivered via BackendKeyData ('K'). Required to issue
+    /// a CancelRequest on a separate connection. Matches `state.secret` in
+    /// postgres.js.
+    pub fn get_secret_key(this: &Self, _: &JSGlobalObject) -> JSValue {
+        JSValue::from(this.backend_key_data.get().secret_key)
+    }
+
+    /// Invoke the JS `onnotification` callback (if set) with `(channel, payload)`
+    /// for a NotificationResponse ('A') message. The callback is queued as a
+    /// microtask rather than called synchronously: we are inside the socket
+    /// data handler here, and user JS must not re-enter the protocol parser
+    /// mid-message.
+    pub fn dispatch_notification(&self, channel: &[u8], payload: &[u8]) {
+        let Some(js_value) = self.js_value.try_get() else {
+            return;
+        };
+        if self.vm().is_shutting_down() {
+            return;
+        }
+        debug!(
+            "dispatchNotification: channel={} payload.len={}",
+            bstr::BStr::new(channel),
+            payload.len()
+        );
+        js_value.ensure_still_alive();
+        let Some(callback) = js::onnotification_get_cached(js_value) else {
+            return;
+        };
+        if !callback.is_callable() {
+            return;
+        }
+        callback.ensure_still_alive();
+        let global = self.global();
+        // clone_utf8 copies into a ref-counted WTFStringImpl so the JSValue is
+        // safe to use after the NotificationResponse buffers are freed.
+        let channel_js = match bun_core::String::clone_utf8(channel).to_js(global) {
+            Ok(v) => v,
+            Err(e) => return global.report_active_exception_as_unhandled(e),
+        };
+        let payload_js = match bun_core::String::clone_utf8(payload).to_js(global) {
+            Ok(v) => v,
+            Err(e) => return global.report_active_exception_as_unhandled(e),
+        };
+        global.queue_microtask(callback, &[channel_js, payload_js]);
     }
 
     pub fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {

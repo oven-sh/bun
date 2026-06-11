@@ -29,7 +29,8 @@ test("Error.appendStackTrace with the same error as source and destination", asy
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toMatch(/(ERROR|SUMMARY): AddressSanitizer/);
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 });

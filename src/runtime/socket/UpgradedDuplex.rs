@@ -67,6 +67,11 @@ pub struct Handlers {
     pub on_writable: fn(*mut ()),
     pub on_error: fn(*mut (), JSValue),
     pub on_timeout: fn(*mut ()),
+    /// A new resumable TLS session (serialized SSL_SESSION) - node's
+    /// `'session'` event on the wrapping TLSSocket.
+    pub on_session: fn(*mut (), &[u8]),
+    /// An NSS key-log line - node's `'keylog'` event.
+    pub on_keylog: fn(*mut (), &[u8]),
 }
 
 use crate::jsc_hooks::timer_all_mut as timer_all;
@@ -108,6 +113,20 @@ impl UpgradedDuplex {
         // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
         let this = unsafe { &mut *this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
+    }
+
+    fn on_session(this: *mut Self, session: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onSession ({})", session.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_session)(this.handlers.ctx, session);
+    }
+
+    fn on_keylog(this: *mut Self, line: &[u8]) {
+        bun_output::scoped_log!(UpgradedDuplex, "onKeylog ({})", line.len());
+        // SAFETY: SSLWrapper handlers ctx is `self as *mut Self`; live for the wrapper's lifetime.
+        let this = unsafe { &mut *this };
+        (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -314,6 +333,8 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
 
@@ -347,6 +368,8 @@ impl UpgradedDuplex {
                 on_data: Self::on_data,
                 on_close: Self::on_close,
                 write: Self::internal_write,
+                on_session: Some(Self::on_session),
+                on_keylog: Some(Self::on_keylog),
             },
         )?);
         // Success: disarm the errdefer.

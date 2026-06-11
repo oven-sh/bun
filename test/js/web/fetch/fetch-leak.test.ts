@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -143,7 +143,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       }
       expect(last).toBeLessThan(first * 10);
     },
-    20 * 1000,
+    // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
+    // requests - pure throughput that a debug build cannot fit in 20s.
+    isDebug ? 120 * 1000 : 20 * 1000,
   );
 });
 

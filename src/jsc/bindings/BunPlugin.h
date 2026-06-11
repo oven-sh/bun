@@ -99,10 +99,7 @@ public:
     };
 };
 
-} // namespace Bun
-
-namespace Bun {
 class GlobalObject;
 JSC::JSValue runVirtualModule(Bun::GlobalObject*, BunString* specifier, bool& wasModuleMock);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-}
+} // namespace Bun

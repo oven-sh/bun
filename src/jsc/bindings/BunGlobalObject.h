@@ -798,10 +798,6 @@ public:
     }
 };
 
-} // namespace Bun
-
-namespace Bun {
-
 ALWAYS_INLINE void* vm(Bun::GlobalObject* globalObject)
 {
     return globalObject->bunVM();

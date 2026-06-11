@@ -8327,9 +8327,15 @@ declare module "bun" {
        */
       sharpness: number;
       /**
-       * Most dominant sRGB colour, from a 4,096-bin (16×16×16) histogram —
-       * the same algorithm as Sharp. Values are bin centres, so each
-       * component has the form `16·k + 8`.
+       * Most dominant colour, from a 4,096-bin (16×16×16) histogram of the
+       * decoded pixels — the same algorithm as Sharp. Values are bin
+       * centres, so each component has the form `16·k + 8`.
+       *
+       * Like every other statistic here, this is computed in the image's
+       * own colour space: sRGB for untagged and sRGB sources (the
+       * overwhelming default). Sources carrying a non-sRGB ICC profile
+       * (Display P3, Adobe RGB) report source-space components, consistent
+       * with `channels`.
        */
       dominant: { r: number; g: number; b: number };
     }

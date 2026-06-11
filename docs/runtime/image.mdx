@@ -52,7 +52,7 @@ const { width, height, format } = await new Bun.Image(input).metadata();
 
 ## Statistics
 
-`.stats()` decodes the image and computes pixel-derived statistics — per-channel `min`/`max`/`sum`/`squaresSum`/`mean`/`stdev` with min/max positions, `isOpaque`, greyscale `entropy` and `sharpness` estimates, and the dominant sRGB color from a 4,096-bin histogram (the same shape and dominant-color algorithm as Sharp's `stats()`):
+`.stats()` decodes the image and computes pixel-derived statistics — per-channel `min`/`max`/`sum`/`squaresSum`/`mean`/`stdev` with min/max positions, `isOpaque`, greyscale `entropy` and `sharpness` estimates, and the dominant color from a 4,096-bin histogram (the same shape and dominant-color algorithm as Sharp's `stats()`):
 
 ```ts
 const { dominant, isOpaque, channels } = await new Bun.Image(input).stats();
@@ -60,7 +60,7 @@ const background = `rgb(${dominant.r} ${dominant.g} ${dominant.b})`; // paint be
 channels[0].mean; // average red value
 ```
 
-Statistics describe the _source_ image — chained operations like `resize` are ignored, the same as `.placeholder()`. Channels are always reported in `[red, green, blue, alpha]` order; sources without an alpha channel report a constant-255 alpha.
+Statistics describe the _source_ image — chained operations like `resize` are ignored, the same as `.placeholder()`. Channels are always reported in `[red, green, blue, alpha]` order; sources without an alpha channel report a constant-255 alpha. All statistics (including `dominant`) are computed over the decoded pixels in the image's own color space — sRGB for the overwhelming majority of images; sources tagged with a non-sRGB ICC profile (Display P3, Adobe RGB) report source-space values, since the pipeline preserves the profile instead of converting.
 
 ## Clone
 

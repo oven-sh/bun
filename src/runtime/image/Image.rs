@@ -1120,9 +1120,13 @@ impl Image {
     /// `.stats()` — pixel-derived statistics of the SOURCE image (recorded
     /// ops are ignored, like `.placeholder()`): per-channel min/max/sum/
     /// squaresSum/mean/stdev + min/max positions, `isOpaque`, greyscale
-    /// `entropy`, laplacian `sharpness`, and the `dominant` sRGB colour from
-    /// a 4096-bin 3D histogram — the same shape (and dominant algorithm) as
-    /// Sharp's `stats()`.
+    /// `entropy`, laplacian `sharpness`, and the `dominant` colour from a
+    /// 4096-bin 3D histogram — the same shape (and dominant algorithm) as
+    /// Sharp's `stats()`. All values are computed over the decoded pixels,
+    /// which stay in the source colour space (the pipeline carries the ICC
+    /// profile instead of converting — see the encode path), so a non-sRGB
+    /// source reports source-space numbers where Sharp would convert to
+    /// sRGB first.
     #[bun_jsc::host_fn(method)]
     pub fn do_stats(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         self.schedule(global, cf.this(), Kind::Stats, Deliver::Uint8Array)
@@ -2361,12 +2365,6 @@ fn compute_stats(d: &codecs::Decoded) -> Result<Box<ImageStats>, codecs::Error> 
     // BT.601 luma (77/150/29, Σ=256) — documented as an estimate; vips
     // converts through LAB so Sharp's absolute numbers differ slightly.
     let mut luma_hist = [0u64; 256];
-    // The luma plane feeds the `sharpness` laplacian pass below; n bytes on
-    // top of the 4n RGBA, so allocate fallibly like the decoders do.
-    let mut luma: Vec<u8> = Vec::new();
-    if luma.try_reserve_exact(n as usize).is_err() {
-        return Err(codecs::Error::OutOfMemory);
-    }
 
     for (i, px) in d.rgba.chunks_exact(4).enumerate() {
         for (&v, a) in px.iter().zip(acc.iter_mut()) {
@@ -2387,7 +2385,6 @@ fn compute_stats(d: &codecs::Decoded) -> Result<Box<ImageStats>, codecs::Error> 
         // table.
         let y = ((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8;
         luma_hist[usize::from(y)] += 1;
-        luma.push(y);
         if px[3] != 255 {
             stats.is_opaque = false;
         }
@@ -2438,21 +2435,46 @@ fn compute_stats(d: &codecs::Decoded) -> Result<Box<ImageStats>, codecs::Error> 
     ];
 
     // `sharpness`: standard deviation of the (3×3, scale-9) laplacian over
-    // the luma plane — Sharp's estimate. Interior pixels only (vips extends
-    // the border instead; the difference is negligible past icon sizes);
-    // 0 when there is no interior.
+    // the greyscale image — Sharp's estimate. Interior pixels only (vips
+    // extends the border instead; the difference is negligible past icon
+    // sizes); 0 when there is no interior. Luma rows are recomputed into a
+    // 3-row rolling window so stats() stays O(width) extra memory — a full
+    // image-sized luma plane would add 25% to the peak on top of the
+    // decoded RGBA.
     if w >= 3 && h >= 3 {
         let stride = w as usize;
+        let mut rows: [Vec<u8>; 3] = [const { Vec::new() }; 3];
+        for row in &mut rows {
+            if row.try_reserve_exact(stride).is_err() {
+                return Err(codecs::Error::OutOfMemory);
+            }
+            row.resize(stride, 0);
+        }
+        let luma_row = |y: usize, out: &mut [u8]| {
+            let base = y * stride * 4;
+            for (px, out_y) in d.rgba[base..base + stride * 4]
+                .chunks_exact(4)
+                .zip(out.iter_mut())
+            {
+                let (r, g, b) = (u32::from(px[0]), u32::from(px[1]), u32::from(px[2]));
+                *out_y = ((r * 77 + g * 150 + b * 29 + 128) >> 8) as u8;
+            }
+        };
+        luma_row(0, &mut rows[0]);
+        luma_row(1, &mut rows[1]);
         let (mut sum, mut sq) = (0.0f64, 0.0f64);
         for y in 1..(h as usize - 1) {
-            for x in 1..(w as usize - 1) {
-                let i = y * stride + x;
+            luma_row(y + 1, &mut rows[(y + 1) % 3]);
+            let prev = &rows[(y - 1) % 3];
+            let cur = &rows[y % 3];
+            let next = &rows[(y + 1) % 3];
+            for x in 1..(stride - 1) {
                 let lap = f64::from(
-                    i32::from(luma[i - stride])
-                        + i32::from(luma[i - 1])
-                        + i32::from(luma[i + 1])
-                        + i32::from(luma[i + stride])
-                        - 4 * i32::from(luma[i]),
+                    i32::from(prev[x])
+                        + i32::from(cur[x - 1])
+                        + i32::from(cur[x + 1])
+                        + i32::from(next[x])
+                        - 4 * i32::from(cur[x]),
                 ) / 9.0;
                 sum += lap;
                 sq += lap * lap;

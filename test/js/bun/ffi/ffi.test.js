@@ -848,6 +848,8 @@ it("FFI functions are not constructors", () => {
     // a native construct handler must never return a primitive
     expect(() => new lib.symbols.fn()).toThrow(TypeError);
     expect(() => Reflect.construct(lib.symbols.fn, [])).toThrow(TypeError);
+    // non-constructible functions inspect as functions, not classes (#32103)
+    expect(Bun.inspect(lib.symbols.fn)).toBe("[Function: fn]");
   } finally {
     cb.close();
   }
@@ -857,6 +859,7 @@ it("FFI functions are not constructors", () => {
   expect(freemem()).toBeGreaterThan(0);
   expect(() => new freemem()).toThrow(TypeError);
   expect(() => Reflect.construct(freemem, [])).toThrow(TypeError);
+  expect(Bun.inspect(freemem)).toBe("[Function: freemem]");
 });
 
 const libPath =

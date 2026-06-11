@@ -1124,9 +1124,15 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
   `;
 
   // Drives the native buffered-write path the same way net.ts's own stream
-  // machinery does: Socket.prototype._write -> handle.$write. The _write
-  // callback fires synchronously iff the kernel accepted the whole chunk, so
-  // a false return from writeDirect means bytes are now buffered natively.
+  // machinery does: Socket.prototype._write -> handle.$write, bypassing the
+  // Writable serialization so two writes reach the native layer while data is
+  // still buffered. writeDirect returns true iff the _write callback fired
+  // synchronously (kernel took the whole chunk); false means bytes are now
+  // buffered natively. The final write's callback is resolved only once the
+  // native buffer has fully drained (net.ts retries it on every drain event
+  // and fires it when the buffer empties), so we can end() without racing the
+  // flush: net.ts's _final half-closes via shutdown(), which discards any
+  // still-buffered bytes.
   const clientFixture = /* js */ `
     import net from "node:net";
     const phase = process.argv[2]; // "loss" | "dup"
@@ -1142,6 +1148,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       };
       const sent = { a: 0, i: 0, s: 0, other: 0 };
       let sawPartial = false;
+      let finalChunk;
       if (phase === "loss") {
         // Build a native remainder far larger than the kernel can accept in
         // one writev; the follow-up write's writev then always stops inside
@@ -1151,11 +1158,8 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
           sawPartial = !writeDirect(A);
           sent.a += A.length;
         }
-        if (sawPartial) {
-          const S = Buffer.alloc(64 * 1024, 0x73);
-          writeDirect(S);
-          sent.s = S.length;
-        }
+        finalChunk = Buffer.alloc(64 * 1024, 0x73);
+        sent.s = finalChunk.length;
       } else {
         // Leave a small (< 1MB) native remainder...
         for (let attempt = 0; attempt < 64 && !sawPartial; attempt++) {
@@ -1163,25 +1167,30 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
           sawPartial = !writeDirect(C);
           sent.a += C.length;
         }
-        if (sawPartial) {
-          // ...then block the event loop (so the native flush cannot run)
-          // while the peer drains the kernel buffers, and write a chunk the
-          // kernel will accept past the end of the buffered remainder
-          // (written > buffered.len).
-          Bun.sleepSync(1500);
-          const I = Buffer.alloc(32 * 1024 * 1024, 0x69);
-          writeDirect(I);
-          sent.i = I.length;
-        }
+        // ...then block the event loop (so the native flush cannot run) while
+        // the peer drains the kernel buffers, so the next writev accepts all
+        // of the buffered remainder plus a prefix of the new chunk
+        // (written > buffered.len).
+        if (sawPartial) Bun.sleepSync(1500);
+        finalChunk = Buffer.alloc(32 * 1024 * 1024, 0x69);
+        sent.i = finalChunk.length;
       }
       if (!sawPartial) {
         console.error("precondition failed: no direct write left data in the native buffer");
         sock.destroy();
         process.exit(3);
       }
+      // This write lands on the buffered path (the bug site). Its callback
+      // fires only once the whole native buffer has flushed to the peer.
+      const { promise: flushed, resolve } = Promise.withResolvers();
+      sock._write(finalChunk, "buffer", () => resolve());
+      // bytesWritten is flushed + still-buffered bytes, captured before the
+      // flush so it reflects everything handed to the native layer.
       sent.bw = sock.bytesWritten;
-      console.log(JSON.stringify(sent));
-      sock.end();
+      flushed.then(() => {
+        console.log(JSON.stringify(sent));
+        sock.end();
+      });
     });
     sock.on("error", err => {
       console.error("client socket error:", err);

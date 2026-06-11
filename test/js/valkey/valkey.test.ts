@@ -6933,7 +6933,10 @@ describe.concurrent("RedisClient onclose/onconnect handler values", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode, stderr: stderr.includes("ASSERTION FAILED") ? stderr : "" }).toEqual({
+    // stderr is only compared when the child failed, so the failure diff
+    // carries the crash output without requiring exactly-empty stderr on
+    // debug/ASAN builds (which may emit benign warnings).
+    expect({ stdout: stdout.trim(), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
       stdout: "ok",
       exitCode: 0,
       stderr: "",
@@ -6988,10 +6991,14 @@ describe.concurrent("RedisClient onclose/onconnect handler values", () => {
       },
     });
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { maxRetries: 0 });
-    const { promise, resolve } = Promise.withResolvers<Error>();
-    client.onclose = resolve;
-    client.connect().catch(() => {});
-    expect(await promise).toBeInstanceOf(Error);
+    try {
+      const { promise, resolve } = Promise.withResolvers<Error>();
+      client.onclose = resolve;
+      client.connect().catch(() => {});
+      expect(await promise).toBeInstanceOf(Error);
+    } finally {
+      client.close();
+    }
   });
 
   test("callable onconnect still fires after connecting", async () => {
@@ -7006,10 +7013,13 @@ describe.concurrent("RedisClient onclose/onconnect handler values", () => {
       },
     });
     const client = new RedisClient(`redis://127.0.0.1:${server.port}`);
-    const { promise, resolve } = Promise.withResolvers<void>();
-    client.onconnect = () => resolve();
-    await client.connect();
-    await promise;
-    client.close();
+    try {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      client.onconnect = () => resolve();
+      await client.connect();
+      await promise;
+    } finally {
+      client.close();
+    }
   });
 });

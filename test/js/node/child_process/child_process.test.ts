@@ -1,7 +1,7 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import path from "path";
@@ -469,4 +469,53 @@ it("spawnSync(does-not-exist)", () => {
   expect(x.output).toEqual([null, null, null]);
   expect(x.stdout).toEqual(null);
   expect(x.stderr).toEqual(null);
+});
+
+describe("extra stdio pipes (fd >= 3)", () => {
+  // A child that reads everything sent to one extra fd and writes back what it
+  // received (prefixed) on another extra fd. Exercises BOTH directions of an
+  // extra duplex pipe: parent->child (read fd) and child->parent (write fd).
+  const echoFixture = (readFd: number, writeFd: number) => `
+    const fs = require("node:fs");
+    let buf = "";
+    const r = fs.createReadStream(null, { fd: ${readFd} });
+    const w = fs.createWriteStream(null, { fd: ${writeFd} });
+    r.on("data", d => (buf += d));
+    r.on("end", () => { w.write("ECHO:" + buf); w.end(); });
+  `;
+
+  // Regression: on Windows, adopting the extra pipe fd completed synchronously
+  // inside net.connect(), then connect() re-set `connecting = true`, stranding
+  // every parent->child write (the "connect" event had already fired). The
+  // child->parent direction always worked. See net.ts Socket.prototype.connect.
+  // This passed on POSIX before the fix; on Windows it failed (parent->child
+  // write dropped -> child never ends -> no echo).
+  it("parent can write to an extra pipe and read the child's reply (fd3 in, fd4 out)", async () => {
+    using dir = tempDir("extra-fd-write", {
+      "child.js": echoFixture(3, 4),
+    });
+
+    const child = spawn(bunExe(), [path.join(String(dir), "child.js")], {
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let fd4 = "";
+    let stderr = "";
+    // The child's reply comes back over fd4 (child->parent direction).
+    child.stdio[4]!.on("data", d => (fd4 += d));
+    child.stderr!.on("data", d => (stderr += d));
+    child.on("error", reject);
+    child.on("close", code => {
+      if (code !== 0) reject(new Error(`child exited code=${code} stderr=${stderr} fd4=${JSON.stringify(fd4)}`));
+      else resolve(fd4);
+    });
+
+    // The bug stranded exactly this write.
+    child.stdio[3]!.write("payload-from-parent");
+    child.stdio[3]!.end();
+
+    expect(await promise).toBe("ECHO:payload-from-parent");
+  });
 });

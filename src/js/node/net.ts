@@ -885,6 +885,14 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd) {
+      // Adopting an existing fd can complete synchronously — on Windows a pipe
+      // fd is opened with uv_pipe_open inside doConnect(), which fires
+      // SocketHandlers.open (clearing `connecting` and emitting "connect")
+      // before doConnect() returns. Set `connecting` BEFORE the call so a
+      // synchronous open can clear it; setting it afterwards (as the non-fd
+      // path does below) would clobber the already-completed connection and
+      // strand every subsequent write waiting for a "connect" that already fired.
+      this.connecting = true;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -904,7 +912,9 @@ Socket.prototype.connect = function connect(...args) {
       process.nextTick(() => {
         this.resume();
       });
-      this.connecting = true;
+      // For the fd path `connecting` was already set above (before doConnect),
+      // so a synchronous open could clear it — don't re-set it here.
+      if (!fd) this.connecting = true;
     }
     if (fd) {
       return this;

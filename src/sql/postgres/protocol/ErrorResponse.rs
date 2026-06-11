@@ -41,6 +41,20 @@ impl ErrorResponse {
     ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(NewReader { wrapped: context })
     }
+
+    /// `NoticeResponse` decode: a declared length below 4 decodes as an empty
+    /// notice instead of failing, unlike `ErrorResponse`.
+    pub fn decode_notice_internal<Container: super::new_reader::ReaderContext>(
+        mut reader: NewReader<Container>,
+    ) -> Result<Self, AnyPostgresError> {
+        let remaining_bytes = reader.length()?.saturating_sub(4);
+        if remaining_bytes > 0 {
+            return Ok(Self {
+                messages: FieldMessage::decode_list::<Container>(reader)?,
+            });
+        }
+        Ok(Self::default())
+    }
 }
 
 // `to_js` lives on an extension trait in the `bun_sql_jsc` crate.

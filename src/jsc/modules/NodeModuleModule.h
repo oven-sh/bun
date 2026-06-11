@@ -31,10 +31,6 @@ struct PathResolveModule {
 };
 JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String request, PathResolveModule parent);
 
-}
-
-namespace Bun {
-
 void generateNativeModule_NodeModule(                                     
   JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     
   Vector<JSC::Identifier, 4> &exportNames,

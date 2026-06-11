@@ -628,13 +628,15 @@ console.log(greet("world"));`,
 
       expect(result.success).toBe(true);
       expect(result.outputs.length).toBe(2);
-      expect(result.outputs[0].loader).toBe("html");
-      expect(result.outputs[1].kind).toBe("sourcemap");
+      const htmlOutput = result.outputs.find(o => o.loader === "html");
+      const mapOutput = result.outputs.find(o => o.kind === "sourcemap");
+      expect(htmlOutput).toBeDefined();
+      expect(mapOutput).toBeDefined();
 
-      const html = await result.outputs[0].text();
+      const html = await htmlOutput!.text();
       expect(html).toContain("//# sourceMappingURL=");
 
-      const map = JSON.parse(await result.outputs[1].text());
+      const map = JSON.parse(await mapOutput!.text());
       expect(map.version).toBe(3);
       expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
     });

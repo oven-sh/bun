@@ -1438,7 +1438,10 @@ impl CommandLineReporter {
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) -> Result<(), bun_core::Error> {
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
+        // With no reporters (`coverageReporter = []` in bunfig) there is still
+        // work to do when a coverageThreshold is configured: the per-file
+        // fractions decide the exit code.
+        if !REPORTERS_TEXT && !REPORTERS_LCOV && !opts.fail_on_low_coverage {
             return Ok(());
         }
 
@@ -1564,13 +1567,9 @@ impl CommandLineReporter {
         } else if REPORTERS_LCOV {
             bun::perf::trace("TestCommand.printCodeCoverageLCov")
         } else {
-            // Unreachable by construction.
-            unreachable!("No reporters enabled")
+            // No reporters enabled: only the coverageThreshold evaluation runs.
+            bun::perf::trace("TestCommand.printCodeCoverageThresholdOnly")
         };
-
-        if !REPORTERS_TEXT && !REPORTERS_LCOV {
-            unreachable!("No reporters enabled");
-        }
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
 

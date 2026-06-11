@@ -1998,7 +1998,19 @@ impl Lockfile {
             ZStr::from_buf(&tmpname_buf, written - 1)
         };
 
-        let file = match File::openat(Fd::cwd(), tmpname, sys::O::CREAT | sys::O::WRONLY, 0o777) {
+        // Create the temp lockfile with its final permissions; fchmod below
+        // keeps the existing post-write permission normalization.
+        let filemode: sys::Mode = if save_format == LockfileFormat::Text {
+            0o644
+        } else {
+            0o755
+        };
+        let file = match File::openat(
+            Fd::cwd(),
+            tmpname,
+            sys::O::CREAT | sys::O::WRONLY,
+            filemode,
+        ) {
             sys::Result::Err(e) => {
                 Output::err(
                     e,
@@ -2023,10 +2035,6 @@ impl Lockfile {
         #[cfg(unix)]
         {
             // chmod 755 for binary, 644 for plaintext
-            let mut filemode: sys::Mode = 0o755;
-            if save_format == LockfileFormat::Text {
-                filemode = 0o644;
-            }
             match sys::fchmod(file.handle, filemode) {
                 sys::Result::Err(e) => {
                     let _ = file.close(); // close error is non-actionable

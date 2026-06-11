@@ -1376,6 +1376,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     if (mode & 0o4) != 0 {
         mode |= 0o1;
     }
+    let mode = Mode::try_from(mode).expect("int cast");
     #[cfg(windows)]
     {
         let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
@@ -1383,7 +1384,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).expect("int cast")) {
+        match bun_sys::mkdirat_z(dest_fd, path, mode) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}
@@ -1392,7 +1393,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
                         return;
                     };
                     let _ = dest_fd.make_path(dir);
-                    let _ = bun_sys::mkdirat_z(dest_fd, path, 0o777);
+                    let _ = bun_sys::mkdirat_z(dest_fd, path, mode);
                 }
             },
         }

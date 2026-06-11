@@ -1537,7 +1537,17 @@ pub(crate) fn download_to_path(
             }
         };
         let url_str_copy: Box<[u8]> = Box::from(url_str);
-        let url = bun_url::URL::parse(&url_str_copy);
+
+        // Support file:// protocol for local tarballs (e.g., CI cross-compile)
+        if strings::has_prefix(&url_str_copy, b"file://") {
+            let path = &url_str_copy[b"file://".len()..];
+            let path_str = String::from_utf8_lossy(path);
+            let raw_data = std::fs::read(std::path::Path::new(path_str.as_ref()))
+                .map_err(|e| bun_core::Error::from(std::io::Error::new(e.kind(), format!("reading local tarball {}: {}", path_str, e))))?;
+            compressed_archive_bytes.list = raw_data.into();
+            // Skip HTTP fetch, goto decompress below
+        } else {
+            let url = bun_url::URL::parse(&url_str_copy);
         {
             // The unconditional
             // `progress.end()` below is sufficient: no fallible call sits between
@@ -1580,7 +1590,8 @@ pub(crate) fn download_to_path(
                 200 => {}
                 _ => return Err(err!("NetworkError")),
             }
-        }
+            }  // end HTTP block
+        }  // end else (HTTP fetch)
 
         let mut tarball_bytes: Vec<u8> = Vec::new();
         {

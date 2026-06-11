@@ -22,12 +22,26 @@ function wrapError(error: Error | MySQLErrorOptions) {
   return new MySQLError(error.message, error);
 }
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
+  function onResolveMySQLQuery(
+    query,
+    result,
+    commandTag,
+    count,
+    queries,
+    is_last,
+    last_insert_rowid,
+    affected_rows,
+    statement,
+  ) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
+    if (statement) {
+      result.statement = statement;
+      result.columns = statement.columns;
+    }
 
     // CALL <proc>() and multi-statement strings can yield several result sets.
     // Accumulate until the server clears SERVER_MORE_RESULTS_EXISTS (is_last).
@@ -83,6 +97,9 @@ export interface MySQLDotZig {
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number | bigint,
+      affected_rows: number,
+      statement: Bun.SQL.ResultStatement | undefined,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

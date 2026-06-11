@@ -421,12 +421,23 @@ class PooledMySQLConnection {
     this.#startConnection();
   }
 
-  #startConnection() {
+  async #startConnection() {
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    PooledMySQLConnection.createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
+    // store the handle right away (not only in #onConnected) so a forced
+    // pool close can tear down a connection whose handshake is in flight
+    this.connection = await PooledMySQLConnection.createConnection(
+      this.connectionInfo,
+      this.#onConnected.bind(this),
+      this.#onClose.bind(this),
+    );
+    if (this.onFinish !== null) {
+      // the pool was force-closed while the native handle was being created;
+      // close it now so onClose fires and onFinish settles
+      this.connection?.close();
+    }
   }
 
   /// Connect failures (ERR_MYSQL_CONNECTION_FAILED) mean the server

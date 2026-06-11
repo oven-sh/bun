@@ -660,6 +660,11 @@ class PooledPostgresConnection {
       this.#onConnected.bind(this),
       this.#onClose.bind(this),
     );
+    if (this.onFinish !== null) {
+      // the pool was force-closed while the native handle was being created;
+      // close it now so onClose fires and onFinish settles
+      this.connection?.close();
+    }
   }
 
   /// Connect failures (ERR_POSTGRES_CONNECTION_FAILED) mean the server

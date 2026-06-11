@@ -4736,7 +4736,9 @@ pub(super) fn finalize_bundle(
                 failures,
                 ErrorPageKind::Bundler,
                 // SAFETY: agent ptr is from `dev.inspector()` just above; live for this scope.
-                inspector_agent_ptr.map(|p| unsafe { &*p }),
+                // `take()` so the queued-request loop and the fallback below
+                // do not notify the inspector a second time for this bundle.
+                inspector_agent_ptr.take().map(|p| unsafe { &*p }),
             )?;
         }
 

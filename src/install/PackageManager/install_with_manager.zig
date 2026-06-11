@@ -86,6 +86,7 @@ pub fn installWithManager(
             if (manager.options.enable.fail_early) Global.crash();
         },
         .ok => {
+            manager.has_loaded_lockfile = true;
             if (manager.subcommand == .update) {
                 // existing lockfile, get the original version is updating
                 const lockfile = manager.lockfile;
@@ -192,6 +193,35 @@ pub fn installWithManager(
                 );
 
                 had_any_diffs = manager.summary.hasDiffs();
+
+                // When --filter is used with --frozen-lockfile (e.g. Docker builds
+                // copying only a subset of workspace package.json files), missing
+                // workspaces appear as removals in the diff. Only suppress diffs
+                // when all removals match workspaces that exist in the loaded
+                // lockfile but were not found during workspace discovery on disk.
+                if (had_any_diffs and manager.options.filter_patterns.len > 0 and
+                    manager.options.enable.frozen_lockfile and
+                    manager.summary.remove > 0 and manager.summary.add == 0 and
+                    manager.summary.update == 0 and !manager.summary.overrides_changed and
+                    !manager.summary.catalogs_changed and
+                    manager.summary.added_trusted_dependencies.count() == 0 and
+                    manager.summary.removed_trusted_dependencies.count() == 0 and
+                    !manager.summary.patched_dependencies_changed)
+                {
+                    // Count workspaces in the loaded lockfile that were not
+                    // found during workspace discovery (absent from disk).
+                    // If this matches the removal count, all removals are
+                    // from missing workspace manifests, not intentional edits.
+                    var missing_workspace_count: u32 = 0;
+                    for (manager.lockfile.workspace_paths.keys()) |name_hash| {
+                        if (!lockfile.workspace_paths.contains(name_hash)) {
+                            missing_workspace_count += 1;
+                        }
+                    }
+                    if (manager.summary.remove == missing_workspace_count) {
+                        had_any_diffs = false;
+                    }
+                }
 
                 if (!had_any_diffs) {
                     // always grab latest scripts for root package

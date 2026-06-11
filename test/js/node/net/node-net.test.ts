@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import {
   BlockList,
@@ -929,3 +929,198 @@ it.skipIf(isWindows)(
   },
   60_000,
 );
+
+// https://github.com/oven-sh/bun/issues/32087
+describe("socket write while data is buffered natively", () => {
+  // Byte-counting sink. Counts received bytes per fill value by scanning runs
+  // with indexOf so multi-MB streams stay cheap to verify in debug builds.
+  // STALL_ON_ACCEPT=1 blocks the event loop on accept so nothing is read
+  // while the client writes, keeping the kernel buffers full.
+  const serverFixture = /* js */ `
+    import net from "node:net";
+    const KNOWN = [0x61, 0x69, 0x73]; // 'a', 'i', 's'
+    const counts = { a: 0, i: 0, s: 0, other: 0 };
+    const runs = [];
+    let total = 0;
+    function scan(d) {
+      total += d.length;
+      let pos = 0;
+      while (pos < d.length) {
+        const byte = d[pos];
+        if (!KNOWN.includes(byte)) {
+          counts.other++;
+          pos++;
+          continue;
+        }
+        const ch = String.fromCharCode(byte);
+        let end = d.length;
+        for (const other of KNOWN) {
+          if (other === byte) continue;
+          const idx = d.indexOf(other, pos);
+          if (idx !== -1 && idx < end) end = idx;
+        }
+        counts[ch] += end - pos;
+        if (runs.length === 0 || runs[runs.length - 1] !== ch) runs.push(ch);
+        pos = end;
+      }
+    }
+    const server = net.createServer(c => {
+      c.on("data", scan);
+      let printed = false;
+      const done = () => {
+        if (printed) return;
+        printed = true;
+        console.log(JSON.stringify({ total, counts, runs }));
+        c.destroy();
+        server.close();
+      };
+      c.on("end", done);
+      c.on("close", done);
+      c.on("error", done);
+      if (process.env.STALL_ON_ACCEPT === "1") {
+        Bun.sleepSync(1500);
+      }
+    });
+    server.listen(0, "127.0.0.1", () => {
+      console.log(JSON.stringify({ port: server.address().port }));
+    });
+  `;
+
+  // Drives the native buffered-write path the same way net.ts's own stream
+  // machinery does: Socket.prototype._write -> handle.$write. The _write
+  // callback fires synchronously iff the kernel accepted the whole chunk, so
+  // a false return from writeDirect means bytes are now buffered natively.
+  const clientFixture = /* js */ `
+    import net from "node:net";
+    const phase = process.argv[2]; // "loss" | "dup"
+    const port = Number(process.argv[3]);
+    const sock = net.connect(port, "127.0.0.1", () => {
+      sock.setNoDelay(true);
+      const writeDirect = chunk => {
+        let fired = false;
+        sock._write(chunk, "buffer", () => {
+          fired = true;
+        });
+        return fired;
+      };
+      const sent = { a: 0, i: 0, s: 0, other: 0 };
+      let sawPartial = false;
+      if (phase === "loss") {
+        // Build a native remainder far larger than the kernel can accept in
+        // one writev; the follow-up write's writev then always stops inside
+        // the old buffered data (written < buffered.len).
+        for (let attempt = 0; attempt < 8 && !sawPartial; attempt++) {
+          const A = Buffer.alloc(16 * 1024 * 1024, 0x61);
+          sawPartial = !writeDirect(A);
+          sent.a += A.length;
+        }
+        if (sawPartial) {
+          const S = Buffer.alloc(64 * 1024, 0x73);
+          writeDirect(S);
+          sent.s = S.length;
+        }
+      } else {
+        // Leave a small (< 1MB) native remainder...
+        for (let attempt = 0; attempt < 64 && !sawPartial; attempt++) {
+          const C = Buffer.alloc(1024 * 1024, 0x61);
+          sawPartial = !writeDirect(C);
+          sent.a += C.length;
+        }
+        if (sawPartial) {
+          // ...then block the event loop (so the native flush cannot run)
+          // while the peer drains the kernel buffers, and write a chunk the
+          // kernel will accept past the end of the buffered remainder
+          // (written > buffered.len).
+          Bun.sleepSync(1500);
+          const I = Buffer.alloc(32 * 1024 * 1024, 0x69);
+          writeDirect(I);
+          sent.i = I.length;
+        }
+      }
+      if (!sawPartial) {
+        console.error("precondition failed: no direct write left data in the native buffer");
+        sock.destroy();
+        process.exit(3);
+      }
+      sent.bw = sock.bytesWritten;
+      console.log(JSON.stringify(sent));
+      sock.end();
+    });
+    sock.on("error", err => {
+      console.error("client socket error:", err);
+      process.exit(2);
+    });
+  `;
+
+  async function* lines(stream: ReadableStream<Uint8Array>) {
+    const decoder = new TextDecoder();
+    let buf = "";
+    for await (const chunk of stream) {
+      buf += decoder.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n")) !== -1) {
+        yield buf.slice(0, i);
+        buf = buf.slice(i + 1);
+      }
+    }
+    if (buf.length) yield buf;
+  }
+
+  // "loss": after a partial writev that stops inside the previously buffered
+  // data, the unsent new chunk must be kept (not dropped).
+  // "dup": after a partial writev that consumes all previously buffered data
+  // plus a prefix of the new chunk, the bytes that hit the wire must not be
+  // buffered (and resent) again.
+  it.each(["loss", "dup"] as const)(
+    "a partial writev keeps exactly the unsent suffix (%s)",
+    async phase => {
+      using dir = tempDir("writev-remainder", {
+        "server-fixture.mjs": serverFixture,
+        "client-fixture.mjs": clientFixture,
+      });
+
+      await using server = Bun.spawn({
+        cmd: [bunExe(), "server-fixture.mjs"],
+        env: phase === "loss" ? { ...bunEnv, STALL_ON_ACCEPT: "1" } : bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const serverStderr = server.stderr.text();
+      const serverLines = lines(server.stdout);
+      const portLine = await serverLines.next();
+      if (portLine.done) throw new Error(`server exited before printing its port: ${await serverStderr}`);
+      const { port } = JSON.parse(portLine.value);
+
+      await using client = Bun.spawn({
+        cmd: [bunExe(), "client-fixture.mjs", phase, String(port)],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [clientOut, clientErr, clientExit] = await Promise.all([
+        client.stdout.text(),
+        client.stderr.text(),
+        client.exited,
+      ]);
+      if (clientExit !== 0) throw new Error(`client failed (exit ${clientExit}): ${clientErr}`);
+      const sent = JSON.parse(clientOut.trim().split("\n").pop()!);
+
+      const resultLine = await serverLines.next();
+      if (resultLine.done) throw new Error(`server exited before printing its result: ${await serverStderr}`);
+      const result = JSON.parse(resultLine.value);
+
+      const totalSent = sent.a + sent.i + sent.s;
+      expect(result).toEqual({
+        total: totalSent,
+        counts: { a: sent.a, i: sent.i, s: sent.s, other: 0 },
+        runs: phase === "loss" ? ["a", "s"] : ["a", "i"],
+      });
+      // handle.bytesWritten is flushed bytes + natively buffered bytes, so it
+      // must equal the submitted total as soon as the writes return.
+      expect(sent.bw).toBe(totalSent);
+    },
+    90_000,
+  );
+});

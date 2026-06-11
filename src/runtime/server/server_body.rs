@@ -2247,6 +2247,13 @@ where
                 ));
             }
         }
+
+        // A stopped (idle) server can never invoke the handlers this reload
+        // just installed, and they would otherwise pin the JS wrapper through
+        // the native↔JS cycle the idle release exists to break. Re-run the
+        // idle pass so they are released immediately. No-op while the server
+        // is still listening or has work in flight.
+        self.deinit_if_we_can();
     }
 
     pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {

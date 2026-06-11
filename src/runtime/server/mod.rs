@@ -1676,12 +1676,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // lexical environment → Server wrapper → m_ctx → box) that the GC
             // cannot see through, so the wrapper never finalizes and the box is
             // never freed.
+            //
+            // The `Option<Strong>` / `StrongOptional` releases are idempotent,
+            // so they run on every idle pass (a reload on a stopped server may
+            // have installed fresh handlers since the last one). The websocket
+            // unprotect is counted per value, so it runs at most once per
+            // protected context: HANDLERS_RELEASED is set here and cleared by
+            // `on_reload_from_zig` when it installs a new protected context.
+            self.config.on_request = None;
+            self.config.on_node_http_request = None;
+            self.config.on_error = None;
+            self.on_clienterror.deinit();
             if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
                 self.flags.insert(ServerFlags::HANDLERS_RELEASED);
-                self.config.on_request = None;
-                self.config.on_node_http_request = None;
-                self.config.on_error = None;
-                self.on_clienterror.deinit();
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.unprotect();
                 }

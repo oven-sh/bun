@@ -105,6 +105,45 @@ test("stopping an idle server releases its websocket handler protections", async
   expect(exitCode).toBe(0);
 });
 
+// reload() on a stopped (idle) server installs handlers that can never be
+// invoked. The reload re-runs the idle release so they do not reinstate the
+// cycle the idle release exists to break.
+test("a stopped server's reload releases the newly installed websocket handler protections", async () => {
+  const script = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const protectedAsyncFns = () => heapStats().protectedObjectTypeCounts.AsyncFunction ?? 0;
+
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      fetch() { return new Response("ok"); },
+      websocket: { async open(ws) {}, async message(ws, m) {} },
+    });
+    server.stop(true);
+    const afterStop = protectedAsyncFns();
+    server.reload({
+      fetch() { return new Response("reloaded"); },
+      websocket: { async open(ws) {}, async message(ws, m) {} },
+    });
+    const afterReload = protectedAsyncFns();
+    console.log(JSON.stringify({ base, afterStop, afterReload }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { base, afterStop, afterReload } = JSON.parse(stdout.trim());
+  expect({ afterStop, afterReload }).toEqual({ afterStop: base, afterReload: base });
+  expect(exitCode).toBe(0);
+});
+
 // gcProtect is counted per value. When two servers share the same handler
 // functions, each onCreate protects them once. The idle release of a stopped
 // server drops that server's count; a later reload() of the stopped server

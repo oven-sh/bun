@@ -31,6 +31,7 @@ use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
+use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -1078,77 +1079,15 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
     let arguments = callframe.arguments();
-    let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
-    let port = arguments[1].coerce::<i32>(global_object)?;
-
-    let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-    let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-    let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
-    let ssl_mode: SSLMode = match arguments[5].to_int32() {
-        0 => SSLMode::Disable,
-        1 => SSLMode::Prefer,
-        2 => SSLMode::Require,
-        3 => SSLMode::VerifyCa,
-        4 => SSLMode::VerifyFull,
-        _ => SSLMode::Disable,
+    let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
+    else {
+        return Ok(JSValue::ZERO);
     };
-
-    let tls_object = arguments[6];
-
-    let mut tls_config: jsc::api::ServerConfig::SSLConfig = Default::default();
-    let mut secure: Option<*mut uws::SslCtx> = None;
-    if ssl_mode != SSLMode::Disable {
-        tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-            Default::default()
-        } else if tls_object.is_object() {
-            match jsc::api::ServerConfig::SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                Ok(opt) => opt.unwrap_or_default(),
-                Err(_) => return Ok(JSValue::ZERO),
-            }
-        } else {
-            return Err(global_object
-                .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-        };
-
-        if global_object.has_exception() {
-            drop(tls_config);
-            return Ok(JSValue::ZERO);
-        }
-
-        // We always request the cert so we can verify it and also we manually
-        // abort the connection if the hostname doesn't match. Built here (not
-        // at STARTTLS time) so cert/CA errors throw synchronously. Goes
-        // through the per-VM weak `SSLContextCache` so every connection in the
-        // pool — and every reconnect — shares one `SSL_CTX*` per distinct
-        // config instead of building a fresh one per `PostgresSQLConnection`.
-        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
-        secure = vm
-            .ssl_ctx_cache()
-            .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
-        if secure.is_none() {
-            drop(tls_config);
-            return Err(
-                global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
-                    err,
-                    global_object,
-                )),
-            );
-        }
-    }
     // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
     // below. Ownership passes into `ptr.*` once allocated — `into_inner`
     // recovers them just before the Box is built so the connect-fail path's
     // `ptr.deinit()` is the sole cleanup.
-    // guard owns `(secure, tls_config)` by value. Do NOT
-    // `drop_in_place` a stack local that Rust would also auto-drop on unwind —
-    // that double-frees. The closure's `_tls_config` is dropped exactly once by
-    // normal scope-exit drop here.
-    let errdefer_guard = scopeguard::guard((secure, tls_config), |(secure, _tls_config)| {
-        if let Some(s) = secure {
-            // SAFETY: SSL_CTX_free is safe to call on a valid SSL_CTX*.
-            unsafe { BoringSSL::c::SSL_CTX_free(s) };
-        }
-    });
+    let errdefer_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
     // `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
@@ -1168,11 +1107,11 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();
-        b.cap += username_str.utf8_byte_length()
+        b.cap += args.username_str.utf8_byte_length()
             + 1
-            + password_str.utf8_byte_length()
+            + args.password_str.utf8_byte_length()
             + 1
-            + database_str.utf8_byte_length()
+            + args.database_str.utf8_byte_length()
             + 1
             + options_str.utf8_byte_length()
             + 1
@@ -1180,15 +1119,15 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             + 1;
 
         let _ = b.allocate();
-        let u = username_str.to_utf8_without_ref();
+        let u = args.username_str.to_utf8_without_ref();
         username = bun_ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
-        let p = password_str.to_utf8_without_ref();
+        let p = args.password_str.to_utf8_without_ref();
         password = bun_ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
-        let d = database_str.to_utf8_without_ref();
+        let d = args.database_str.to_utf8_without_ref();
         database = bun_ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
@@ -1269,12 +1208,12 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             authentication_state: JsCell::new(AuthenticationState::Pending),
             secure,
             tls_config,
-            tls_status: Cell::new(if ssl_mode != SSLMode::Disable {
+            tls_status: Cell::new(if args.ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
                 TLSStatus::None
             }),
-            ssl_mode,
+            ssl_mode: args.ssl_mode,
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
             connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
             flags: Cell::new(if use_unnamed_prepared_statements {
@@ -1298,7 +1237,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
     {
-        let hostname = hostname_str.to_utf8();
+        let hostname = args.hostname_str.to_utf8();
 
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
@@ -1320,7 +1259,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 uws::SocketKind::Postgres,
                 None,
                 hostname.slice(),
-                port,
+                args.port,
                 ptr,
                 false,
             )
@@ -3013,7 +2952,7 @@ impl PostgresSQLConnection {
             }
             MessageType::NoticeResponse => {
                 debug!("UNSUPPORTED NoticeResponse");
-                let _resp = protocol::NoticeResponse::decode_internal(reader.reborrow())?;
+                let _resp = protocol::NoticeResponse::decode_notice_internal(reader.reborrow())?;
                 // _resp dropped at scope end
             }
             MessageType::NotificationResponse => {

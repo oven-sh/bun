@@ -183,8 +183,6 @@ pub mod postgres {
         pub mod copy_out_response;
         #[path = "DataRow.rs"]
         pub mod data_row;
-        #[path = "DecoderWrap.rs"]
-        pub mod decoder_wrap;
         #[path = "Describe.rs"]
         pub mod describe;
         #[path = "ErrorResponse.rs"]
@@ -225,14 +223,10 @@ pub mod postgres {
         pub mod stack_reader;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
-        #[path = "WriteWrap.rs"]
-        pub mod write_wrap;
 
         // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
-        pub use decoder_wrap::DecoderWrap;
         pub use new_reader::{NewReader, NewReaderWrap, ProtocolInt, ReaderContext};
         pub use new_writer::{LengthWriter, NewWriter, WriterContext, new_writer};
-        pub use write_wrap::WriteWrap;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};

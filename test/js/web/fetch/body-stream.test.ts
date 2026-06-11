@@ -74,8 +74,8 @@ describe.each([
         },
         async url => {
           called = true;
-          // if we can flush it will be "hey" otherwise will be empty
-          expect(await fetch(url).then(res => res.text())).toBeOneOf(["hey", ""]);
+          // the response stays open until controller.end() is called
+          expect(await fetch(url).then(res => res.text())).toBe("hey");
         },
       );
 

@@ -258,6 +258,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
+    /// Raw-TCP write that also reports a fatal send error; non-Connected and
+    /// TLS-wrapped sockets fall back to the plain write (no fatal signal).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+        on_socket!(self.socket;
+            connected s => s.write_check_error(data),
+            duplex d => (d.encode_and_write(data), false),
+            pipe p => (p.encode_and_write(data), false),
+            else => (0, false),
+        )
+    }
+
     pub fn is_closed(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_closed(),
@@ -474,6 +485,40 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).set_keepalive(enabled, delay) == 0,
             _ => false,
+        }
+    }
+
+    /// Set the IP type-of-service. Returns 0 on success or a negative errno;
+    /// non-TCP sockets (pipes, duplexes, not-yet-connected) report -EBADF (-9)
+    /// the way Node's no-handle fallback does.
+    pub fn set_tos(&self, tos: i32) -> i32 {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).set_tos(tos),
+            _ => -9,
+        }
+    }
+
+    /// Get the IP type-of-service (>= 0) or a negative errno.
+    pub fn get_tos(&self) -> i32 {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).get_tos(),
+            _ => -9,
+        }
+    }
+
+    /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
+    /// reference is consumed (freed here when the socket is no longer a real
+    /// connected socket).
+    pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).sni_resolve(ctx, error),
+            _ => {
+                // The socket is gone; release the reference the caller handed us.
+                if !ctx.is_null() {
+                    // SAFETY: the caller passed an owned SSL_CTX reference.
+                    unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                }
+            }
         }
     }
 
@@ -710,7 +755,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         // layout — NOT `Option<*mut Owner>` (16 bytes, discriminant-first),
         // which would hand the trampoline `1` instead of the owner pointer.
         let ext_size = size_of::<Option<NonNull<Owner>>>() as c_int;
-        match g.connect(kind, ssl_ctx, host_z, port, opts, ext_size) {
+        match g.connect(kind, ssl_ctx, host_z, port, None, opts, ext_size) {
             ConnectResult::Failed => Err(ConnectError::FailedToOpenSocket),
             ConnectResult::Socket(s) => {
                 *sock(s).ext::<Option<NonNull<Owner>>>() = NonNull::new(owner);

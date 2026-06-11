@@ -1,5 +1,5 @@
 // Hardcoded module "node:perf_hooks"
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver } = require("internal/shared");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -12,7 +12,7 @@ var {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver,
+  PerformanceObserver: NodePerformanceObserver,
   PerformanceObserverEntryList,
 } = globalThis;
 
@@ -113,6 +113,91 @@ class PerformanceResourceTiming {
 }
 $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntry);
 
+const kNodeObserver = Symbol("kNodeObserver");
+const kObserverCallback = Symbol("kObserverCallback");
+
+/**
+ * The native (WebCore) observer only understands mark/measure/resource.
+ * Node-only entry types ('net', 'dns', ...) are routed to the JS-side
+ * registry in internal/shared; everything else is delegated to the native
+ * observer unchanged. (`NodePerformanceObserver` is the existing alias for
+ * the native class destructured from globalThis above.)
+ */
+class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
+  constructor(callback) {
+    super(callback);
+    this[kObserverCallback] = callback;
+  }
+
+  /** The native list plus the Node-only types routed through the JS registry. */
+  static get supportedEntryTypes() {
+    return [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
+  }
+
+  observe(options) {
+    let requested;
+    let isTypeMode = false;
+    if (options != null && typeof options === "object") {
+      if (options.entryTypes !== undefined && Array.isArray(options.entryTypes)) {
+        requested = options.entryTypes;
+      } else if (options.type !== undefined) {
+        requested = [options.type];
+        isTypeMode = true;
+      }
+    }
+    if (requested) {
+      const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
+      let registration = this[kNodeObserver];
+      if (nodeTypes.length > 0 && !registration) {
+        registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
+      }
+      if (registration) {
+        if (isTypeMode) {
+          // observe({type}) appends to the observed set per the spec.
+          registration.observe([...registration.types, ...nodeTypes]);
+        } else {
+          // observe({entryTypes}) replaces the observed set, including
+          // dropping a previously-observed node type when the new set has
+          // none.
+          registration.observe(nodeTypes);
+        }
+      }
+      if (nodeTypes.length > 0) {
+        const webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
+        if (webTypes.length === 0) {
+          // observe({entryTypes}) replaces the whole observed set: a
+          // previously-subscribed web type must stop firing when the new set
+          // is node-only. The native impl rejects an empty entryTypes array,
+          // so drop the subscription instead of re-observing with [].
+          if (!isTypeMode) {
+            try {
+              super.disconnect();
+            } catch {}
+          }
+          return;
+        }
+        // A non-empty webTypes set alongside a node type is only possible in
+        // entryTypes mode (observe({type}) requests exactly one type), so the
+        // forwarded subscription is always an entryTypes one.
+        return super.observe({ ...options, entryTypes: webTypes });
+      }
+    }
+    return super.observe(options);
+  }
+
+  disconnect() {
+    this[kNodeObserver]?.disconnect();
+    this[kNodeObserver] = undefined;
+    return super.disconnect();
+  }
+}
+// Not $toClass: that resets the prototype object and would drop the
+// observe/disconnect overrides above. Only the public name needs fixing.
+Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
+  value: "PerformanceObserver",
+  configurable: true,
+});
+
 export default {
   performance: {
     mark(_) {
@@ -169,7 +254,7 @@ export default {
   PerformanceEntry,
   PerformanceMark,
   PerformanceMeasure,
-  PerformanceObserver,
+  PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {

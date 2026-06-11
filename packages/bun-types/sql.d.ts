@@ -885,19 +885,24 @@ declare module "bun" {
      * @returns Promise resolving to `{ state, unlisten }`. `state.pid` is the
      * PostgreSQL backend process ID (useful with `pg_terminate_backend`),
      * `state.secret` is the cancellation secret. Call `unlisten()` to remove this
-     * specific listener (idempotent).
+     * specific listener (idempotent). The subscription is also an async
+     * disposable: `await using` removes the listener on scope exit.
      *
      * @example
      * const { state, unlisten } = await sql.listen('news', payload => console.log(payload));
      * console.log('listening on backend pid', state.pid);
      * // later:
      * await unlisten();
+     *
+     * @example
+     * // or scope the subscription with `await using`:
+     * await using sub = await sql.listen('news', payload => console.log(payload));
      */
     listen(
       channel: string,
       onnotify: (payload: string) => void,
       onlisten?: (state: { pid: number; secret: number }) => void,
-    ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> }>;
+    ): Promise<{ state: { pid: number; secret: number }; unlisten: () => Promise<void> } & AsyncDisposable>;
 
     /**
      * Unsubscribe from a PostgreSQL LISTEN channel.

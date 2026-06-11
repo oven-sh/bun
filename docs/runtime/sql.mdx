@@ -1324,6 +1324,15 @@ await sql.notify("user_events", JSON.stringify({ type: "signup", id: 42 }));
 await sub.unlisten();
 ```
 
+The subscription is an async disposable, so `await using` removes the listener automatically at the end of the scope:
+
+```ts
+{
+  await using sub = await sql.listen("user_events", payload => console.log(payload));
+  // ...
+} // scope exit runs the equivalent of `await sub.unlisten()`
+```
+
 ##### Connection lifecycle
 
 Each `Bun.SQL` instance opens at most one **dedicated** PostgreSQL connection for `LISTEN`. All channels share that single connection, separate from the regular query pool. The connection is created lazily on the first `sql.listen()` call and closed on `sql.close()`.

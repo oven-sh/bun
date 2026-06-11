@@ -12910,6 +12910,34 @@ CREATE TABLE ${table_name} (
         await sub.unlisten();
         await db.unlisten("test_unlisten_inflight");
       });
+
+      test("listen() subscription disposes with await using", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotInside, resolve: resolveInside } = Promise.withResolvers<string>();
+
+        {
+          await using sub = await db.listen("test_await_using", p => {
+            received.push(p);
+            resolveInside(p);
+          });
+          expect(typeof sub[Symbol.asyncDispose]).toBe("function");
+          await db.notify("test_await_using", "inside");
+          expect(await gotInside).toBe("inside");
+        }
+
+        // The subscription was removed on scope exit: further notifies are not
+        // delivered. The barrier channel shares the ordered listen connection,
+        // so once it fires any pending "after" would already have arrived.
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+        await db.listen("test_await_using_barrier", () => resolveBarrier());
+        await db.notify("test_await_using", "after");
+        await db.notify("test_await_using_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["inside"]);
+        await db.unlisten("test_await_using_barrier");
+      });
     });
   }); // Close "PostgreSQL tests" describe
 } // Close if (isDockerEnabled())
@@ -13290,14 +13318,13 @@ console.log("FIXTURE_DONE");
   expect(exitCode).toBe(0);
 }, 30_000);
 
-// LISTEN/NOTIFY delivery does not require a live PostgreSQL server: a mock
-// backend speaking the wire protocol exercises the whole path end to end
-// without docker. BackendKeyData ('K') populates state.pid/state.secret, the
-// LISTEN simple-query ack resolves listen() and fires onlisten, pushed
-// NotificationResponse ('A') messages reach the onnotify callback (and are
-// dropped for channels without listeners), and tearing down the subscription
-// sends UNLISTEN on the dedicated listen connection.
-test("sql.listen delivers NotificationResponse payloads from a mock server", async () => {
+// Minimal PostgreSQL wire-protocol backend for LISTEN/NOTIFY tests without
+// docker. The startup message gets AuthenticationOk + BackendKeyData(pid,
+// secret) + ReadyForQuery; every simple query is acked with CommandComplete +
+// ReadyForQuery, and LISTEN queries additionally push the configured
+// NotificationResponse ('A') messages. Received query texts are recorded in
+// `queries`.
+async function createMockListenServer(notifications: Array<{ channel: string; payload: string }>) {
   const pkt = (type: string, body: Buffer) => {
     const header = Buffer.alloc(5);
     header.write(type, 0);
@@ -13311,11 +13338,13 @@ test("sql.listen delivers NotificationResponse payloads from a mock server", asy
   };
   const cstr = (s: string) => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
 
+  const pid = 7777;
+  const secret = 424242;
   const authenticationOk = pkt("R", int32(0));
-  const backendKeyData = pkt("K", Buffer.concat([int32(7777), int32(424242)]));
+  const backendKeyData = pkt("K", Buffer.concat([int32(pid), int32(secret)]));
   const readyForQuery = pkt("Z", Buffer.from("I"));
   const commandComplete = (tag: string) => pkt("C", cstr(tag));
-  const notification = (pid: number, channel: string, payload: string) =>
+  const notification = (channel: string, payload: string) =>
     pkt("A", Buffer.concat([int32(pid), cstr(channel), cstr(payload)]));
 
   const queries: string[] = [];
@@ -13339,10 +13368,7 @@ test("sql.listen delivers NotificationResponse payloads from a mock server", asy
           Buffer.concat([
             commandComplete("LISTEN"),
             readyForQuery,
-            // No listener is registered for this channel: must be ignored.
-            notification(7777, "mock_other_channel", "ignore-me"),
-            notification(7777, "mock_channel", "first"),
-            notification(7777, "mock_channel", "sécond 🎉"),
+            ...notifications.map(n => notification(n.channel, n.payload)),
           ]),
         );
       } else {
@@ -13354,39 +13380,82 @@ test("sql.listen delivers NotificationResponse payloads from a mock server", asy
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const port = (server.address() as net.AddressInfo).port;
 
-  const db = postgres({
-    url: `postgres://u@127.0.0.1:${port}/db`,
+  return {
+    port,
+    pid,
+    secret,
+    queries,
+    [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
+}
+
+// LISTEN/NOTIFY delivery does not require a live PostgreSQL server: a mock
+// backend speaking the wire protocol exercises the whole path end to end
+// without docker. BackendKeyData ('K') populates state.pid/state.secret, the
+// LISTEN simple-query ack resolves listen() and fires onlisten, pushed
+// NotificationResponse ('A') messages reach the onnotify callback (and are
+// dropped for channels without listeners), and tearing down the subscription
+// sends UNLISTEN on the dedicated listen connection.
+test("sql.listen delivers NotificationResponse payloads from a mock server", async () => {
+  await using mock = await createMockListenServer([
+    // No listener is registered for this channel: must be ignored.
+    { channel: "mock_other_channel", payload: "ignore-me" },
+    { channel: "mock_channel", payload: "first" },
+    { channel: "mock_channel", payload: "sécond 🎉" },
+  ]);
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
     max: 1,
     idleTimeout: 5,
     connectionTimeout: 5,
   });
-  try {
-    const received: string[] = [];
-    const { promise: gotBoth, resolve } = Promise.withResolvers<void>();
-    let onlistenCount = 0;
-    const sub = await db.listen(
-      "mock_channel",
-      payload => {
-        received.push(payload);
-        if (received.length === 2) resolve();
-      },
-      () => {
-        onlistenCount++;
-      },
-    );
 
-    expect(onlistenCount).toBe(1);
-    // pid/secret come from the BackendKeyData message via the native
-    // processId/secretKey getters.
-    expect(sub.state).toEqual({ pid: 7777, secret: 424242 });
+  const received: string[] = [];
+  const { promise: gotBoth, resolve } = Promise.withResolvers<void>();
+  let onlistenCount = 0;
+  const sub = await db.listen(
+    "mock_channel",
+    payload => {
+      received.push(payload);
+      if (received.length === 2) resolve();
+    },
+    () => {
+      onlistenCount++;
+    },
+  );
 
-    await gotBoth;
-    expect(received).toEqual(["first", "sécond 🎉"]);
+  expect(onlistenCount).toBe(1);
+  // pid/secret come from the BackendKeyData message via the native
+  // processId/secretKey getters.
+  expect(sub.state).toEqual({ pid: mock.pid, secret: mock.secret });
 
-    await sub.unlisten();
-    expect(queries).toEqual(['LISTEN "mock_channel"', 'UNLISTEN "mock_channel"']);
-  } finally {
-    await db.close().catch(() => {});
-    await new Promise<void>(resolve => server.close(() => resolve()));
+  await gotBoth;
+  expect(received).toEqual(["first", "sécond 🎉"]);
+
+  await sub.unlisten();
+  expect(mock.queries).toEqual(['LISTEN "mock_channel"', 'UNLISTEN "mock_channel"']);
+});
+
+// The subscription returned by listen() is an async disposable: leaving an
+// `await using` scope removes the listener, sending UNLISTEN on the dedicated
+// listen connection.
+test("sql.listen subscription works with await using and unlistens on scope exit", async () => {
+  await using mock = await createMockListenServer([{ channel: "mock_using_channel", payload: "disposable" }]);
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+  {
+    await using sub = await db.listen("mock_using_channel", p => resolve(p));
+    expect(typeof sub[Symbol.asyncDispose]).toBe("function");
+    expect(await gotPayload).toBe("disposable");
+    expect(mock.queries).toEqual(['LISTEN "mock_using_channel"']);
   }
+  // unlisten() resolves only after the server acks UNLISTEN, so by the time
+  // the block exits the query log must contain it.
+  expect(mock.queries).toEqual(['LISTEN "mock_using_channel"', 'UNLISTEN "mock_using_channel"']);
 });

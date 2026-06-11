@@ -121,3 +121,14 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/bake/deinitialization.test.ts
+# A stopped Bun.serve server's NewServer box (plus the config, static routes,
+# and HTMLBundle routes it owns) is freed in NewServer::deinit, which only
+# runs after the JS Server wrapper finalizes. When the wrapper is still alive
+# or unswept at process exit, the only pointer to the box lives in the JS
+# heap, which LeakSanitizer does not scan, so the whole graph is reported as
+# unreachable. Whether LSan notices depends on incidental stale pointers in
+# parked worker-thread stacks (scanned as roots), so unrelated allocation
+# layout changes can unmask it. Scoped to allocations made while constructing
+# the server inside Bun.serve.
+leak:bun_runtime::api::bun_object::serve

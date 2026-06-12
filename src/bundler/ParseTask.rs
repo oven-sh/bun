@@ -2371,7 +2371,7 @@ pub mod parse_worker {
         };
 
         if (use_directive == UseDirective::Client
-        && task.known_target != options::Target::BakeServerComponentsSsr
+        && task.known_target != options::Target::ServerComponentsSsr
         && worker_ctx.framework.is_some()
         && worker_ctx
             .framework
@@ -2431,7 +2431,7 @@ pub mod parse_worker {
             None
         })
         .unwrap_or_else(|| {
-            if task.known_target == options::Target::BakeServerComponentsSsr
+            if task.known_target == options::Target::ServerComponentsSsr
                 && topts
                     .framework
                     .as_ref()
@@ -2441,7 +2441,7 @@ pub mod parse_worker {
                     .unwrap()
                     .separate_ssr_graph
             {
-                options::Target::BakeServerComponentsSsr
+                options::Target::ServerComponentsSsr
             } else {
                 topts.target
             }

@@ -295,6 +295,7 @@ pub use super::dev_server_body::init;
 // ──────────────────────────────────────────────────────────────────────────
 pub mod assets;
 pub mod incremental_graph;
+pub mod inspector_agent;
 mod lifecycle;
 pub mod packed_map;
 pub mod route_bundle;

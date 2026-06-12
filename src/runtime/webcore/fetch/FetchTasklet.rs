@@ -739,13 +739,16 @@ impl FetchTasklet {
                     bytes.on_data(StreamResult::Err(StreamError::JSValue(js_err)))?;
                 }
             }
-            if let Some(sink) = self.sink_mut() {
-                if js_err.is_empty() {
-                    js_err = err.to_js(&global_this);
-                    js_err.ensure_still_alive();
-                }
-                sink.cancel(js_err);
-                return Ok(());
+            // A failure result is terminal (`to_result` forces `has_more =
+            // false` once `fail` is set), so everything pending must settle
+            // here: a still-streaming request-body sink does not exempt the
+            // response body. Returning right after `sink.cancel()` used to
+            // leave a buffered `arrayBuffer()`/`text()` promise pending
+            // forever when a fetch with an in-flight streaming request body
+            // was aborted mid-response.
+            if self.sink_mut().is_some() && js_err.is_empty() {
+                js_err = err.to_js(&global_this);
+                js_err.ensure_still_alive();
             }
             // if we are buffering resolve the promise
             if let Some(response) = self.current_response_mut() {
@@ -756,6 +759,14 @@ impl FetchTasklet {
                 // now; narrow back to the real `JsTerminated` here.
                 body.to_error_instance(err, &global_this)
                     .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
+            }
+            // Cancel the request-body sink last: `ResumableSink::cancel`
+            // invokes the stream's JS cancel callback synchronously via
+            // `run_callback`, which can re-enter the tasklet.
+            if !js_err.is_empty() {
+                if let Some(sink) = self.sink_mut() {
+                    sink.cancel(js_err);
+                }
             }
             return Ok(());
         }

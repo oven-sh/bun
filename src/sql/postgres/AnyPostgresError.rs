@@ -10,6 +10,7 @@
 pub enum AnyPostgresError {
     ConnectionClosed,
     ConnectionFailed,
+    ConnectionRefused,
     ExpectedRequest,
     ExpectedStatement,
     InvalidBackendKeyData,

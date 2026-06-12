@@ -1648,15 +1648,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
-            // Shut idle keep-alive sockets so a late request can't dispatch
-            // after the JS wrapper drops its strong root. `JsRef::Weak` holds
-            // a raw JSValue (not a JSC::Weak), so `try_get` can hand back a
-            // dead-but-unswept cell and the Finalized→503 guard alone leaves a
-            // window. In-flight requests aren't idle and drain normally.
-            if let Some(app) = self.app {
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close_idle_connections();
-            }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
@@ -2973,18 +2964,11 @@ mod route_list_cached {
     }
 }
 
-macro_rules! cached_value_dispatch {
-    ($get_fn:ident, $set_fn:ident, $get_cached:ident, $set_cached:ident) => {
-        #[allow(dead_code)]
-        pub fn $get_fn(server_js: JSValue) -> Option<JSValue> {
-            match (SSL, DEBUG) {
-                (false, false) => route_list_cached::http::$get_cached(server_js),
-                (true, false) => route_list_cached::https::$get_cached(server_js),
-                (false, true) => route_list_cached::debug_http::$get_cached(server_js),
-                (true, true) => route_list_cached::debug_https::$get_cached(server_js),
-            }
-        }
-        #[allow(dead_code)]
+// Dispatch reads from the shadow JSValue fields, not the wrapper slots, so
+// only the slot setter is generated. The slot is the GC-traced root; the
+// shadow is the hot-path read.
+macro_rules! cached_value_set_dispatch {
+    ($set_fn:ident, $set_cached:ident) => {
         pub fn $set_fn(server_js: JSValue, global: &JSGlobalObject, v: JSValue) {
             match (SSL, DEBUG) {
                 (false, false) => route_list_cached::http::$set_cached(server_js, global, v),
@@ -2997,72 +2981,17 @@ macro_rules! cached_value_dispatch {
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    cached_value_dispatch!(
-        js_gc_on_request_get,
-        js_gc_on_request_set,
-        on_request_get_cached,
-        on_request_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_on_error_get,
-        js_gc_on_error_set,
-        on_error_get_cached,
-        on_error_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_on_node_http_request_get,
-        js_gc_on_node_http_request_set,
-        on_node_h_t_t_p_request_get_cached,
-        on_node_h_t_t_p_request_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_on_client_error_get,
-        js_gc_on_client_error_set,
-        on_client_error_get_cached,
-        on_client_error_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_open_get,
-        js_gc_ws_on_open_set,
-        ws_on_open_get_cached,
-        ws_on_open_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_message_get,
-        js_gc_ws_on_message_set,
-        ws_on_message_get_cached,
-        ws_on_message_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_close_get,
-        js_gc_ws_on_close_set,
-        ws_on_close_get_cached,
-        ws_on_close_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_drain_get,
-        js_gc_ws_on_drain_set,
-        ws_on_drain_get_cached,
-        ws_on_drain_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_error_get,
-        js_gc_ws_on_error_set,
-        ws_on_error_get_cached,
-        ws_on_error_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_ping_get,
-        js_gc_ws_on_ping_set,
-        ws_on_ping_get_cached,
-        ws_on_ping_set_cached
-    );
-    cached_value_dispatch!(
-        js_gc_ws_on_pong_get,
-        js_gc_ws_on_pong_set,
-        ws_on_pong_get_cached,
-        ws_on_pong_set_cached
-    );
+    cached_value_set_dispatch!(js_gc_on_request_set, on_request_set_cached);
+    cached_value_set_dispatch!(js_gc_on_error_set, on_error_set_cached);
+    cached_value_set_dispatch!(js_gc_on_node_http_request_set, on_node_h_t_t_p_request_set_cached);
+    cached_value_set_dispatch!(js_gc_on_client_error_set, on_client_error_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_open_set, ws_on_open_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_message_set, ws_on_message_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_close_set, ws_on_close_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_drain_set, ws_on_drain_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_error_set, ws_on_error_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
+    cached_value_set_dispatch!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
     /// WriteBarrier slots, applying the async-context wrap (deferred from

@@ -94,3 +94,26 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+test("timer methods sanitize `this` on bare calls", () => {
+  try {
+    // normal method calls keep returning the jest object for chaining
+    expect(jest.setSystemTime(0)).toBe(jest);
+    expect(jest.useFakeTimers()).toBe(jest);
+    expect(jest.useRealTimers()).toBe(jest);
+
+    // a bare call through a captured variable makes JSC pass the activation
+    // object as the raw `this`; it must not be returned to user code
+    const setSystemTime = jest.setSystemTime;
+    const useFakeTimers = jest.useFakeTimers;
+    const useRealTimers = jest.useRealTimers;
+    function capture() {
+      return [setSystemTime, useFakeTimers, useRealTimers];
+    }
+    expect(setSystemTime(0)).toBeUndefined();
+    expect(useFakeTimers()).toBeUndefined();
+    expect(useRealTimers()).toBeUndefined();
+  } finally {
+    jest.useRealTimers();
+  }
+});

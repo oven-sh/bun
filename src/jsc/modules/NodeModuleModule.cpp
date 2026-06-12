@@ -20,6 +20,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "NodeValidator.h"
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
@@ -879,6 +880,87 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetCompileCacheDir,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC::EncodedJSValue NodeModuleModule__stripTypeScriptTypes(JSGlobalObject*,
+    BunString code, bool transformMode, bool sourceMap, BunString sourceUrl);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStripTypeScriptTypes,
+    (JSGlobalObject * globalObject,
+        JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue codeValue = callFrame->argument(0);
+    Bun::V::validateString(scope, globalObject, codeValue, "code"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool transformMode = false;
+    bool sourceMapEnabled = false;
+    String sourceUrl = emptyString();
+
+    JSValue optionsValue = callFrame->argument(1);
+    if (!optionsValue.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, optionsValue, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSObject* options = asObject(optionsValue);
+        // Property read order matches Node's destructuring: sourceMap,
+        // sourceUrl, then mode.
+        JSValue sourceMapValue = options->get(globalObject, Identifier::fromString(vm, "sourceMap"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue sourceUrlValue = options->get(globalObject, Identifier::fromString(vm, "sourceUrl"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue modeValue = options->get(globalObject, Identifier::fromString(vm, "mode"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // validateOneOf(mode, 'options.mode', ['strip', 'transform'])
+        if (!modeValue.isUndefined()) {
+            bool isTransform = false;
+            bool isValid = false;
+            if (modeValue.isString()) {
+                auto modeView = asString(modeValue)->view(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (modeView == "strip"_s) {
+                    isValid = true;
+                } else if (modeView == "transform"_s) {
+                    isValid = true;
+                    isTransform = true;
+                }
+            }
+            if (!isValid) {
+                return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.mode"_s, modeValue, "must be one of: 'strip', 'transform'"_s);
+            }
+            transformMode = isTransform;
+        }
+
+        if (!sourceMapValue.isUndefined()) {
+            Bun::V::validateBoolean(scope, globalObject, sourceMapValue, "options.sourceMap"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            sourceMapEnabled = sourceMapValue.asBoolean();
+        }
+
+        if (!sourceUrlValue.isUndefined()) {
+            Bun::V::validateString(scope, globalObject, sourceUrlValue, "options.sourceUrl"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            sourceUrl = asString(sourceUrlValue)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        // Source maps are only valid in transform mode; strip mode preserves
+        // no positions so Node rejects sourceMap: true there.
+        if (!transformMode && sourceMapEnabled) {
+            return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.sourceMap"_s, sourceMapValue, "must be one of: false, undefined"_s);
+        }
+    }
+
+    String code = asString(codeValue)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    BunString codeBun = Bun::toString(code);
+    BunString sourceUrlBun = Bun::toString(sourceUrl);
+
+    return NodeModuleModule__stripTypeScriptTypes(globalObject, codeBun, transformMode, sourceMapEnabled, sourceUrlBun);
+}
+
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)
 {
     return moduleObject;
@@ -910,6 +992,7 @@ prototype               getModulePrototypeObject          PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
 SourceMap               getSourceMapFunction              PropertyCallback
+stripTypeScriptTypes    jsFunctionStripTypeScriptTypes    Function 1
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
 wrapper                 nodeModuleWrapper                 CustomAccessor

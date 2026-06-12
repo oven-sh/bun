@@ -687,9 +687,13 @@ impl ErrorCode {
     pub const POSTGRES_CONNECTION_REFUSED: ErrorCode = ErrorCode(314);
     /// `ERR_MYSQL_CONNECTION_REFUSED` (instanceof Error)
     pub const MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode(315);
+    /// `ERR_INVALID_TYPESCRIPT_SYNTAX` (instanceof SyntaxError)
+    pub const INVALID_TYPESCRIPT_SYNTAX: ErrorCode = ErrorCode(316);
+    /// `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` (instanceof SyntaxError)
+    pub const UNSUPPORTED_TYPESCRIPT_SYNTAX: ErrorCode = ErrorCode(317);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 316;
+    pub const COUNT: u16 = 318;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -935,6 +939,9 @@ impl ErrorCode {
     pub const ERR_MYSQL_CONNECTION_CLOSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_CLOSED;
     pub const ERR_MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode::MYSQL_CONNECTION_FAILED;
     pub const ERR_MYSQL_CONNECTION_REFUSED: ErrorCode = ErrorCode::MYSQL_CONNECTION_REFUSED;
+    pub const ERR_INVALID_TYPESCRIPT_SYNTAX: ErrorCode = ErrorCode::INVALID_TYPESCRIPT_SYNTAX;
+    pub const ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: ErrorCode =
+        ErrorCode::UNSUPPORTED_TYPESCRIPT_SYNTAX;
     pub const ERR_MYSQL_CONNECTION_TIMEOUT: ErrorCode = ErrorCode::MYSQL_CONNECTION_TIMEOUT;
     pub const ERR_MYSQL_IDLE_TIMEOUT: ErrorCode = ErrorCode::MYSQL_IDLE_TIMEOUT;
     pub const ERR_MYSQL_LIFETIME_TIMEOUT: ErrorCode = ErrorCode::MYSQL_LIFETIME_TIMEOUT;
@@ -1381,6 +1388,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_MYSQL_CONNECTION_FAILED",
     "ERR_POSTGRES_CONNECTION_REFUSED",
     "ERR_MYSQL_CONNECTION_REFUSED",
+    "ERR_INVALID_TYPESCRIPT_SYNTAX",
+    "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

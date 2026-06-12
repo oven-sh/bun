@@ -1342,6 +1342,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     let value = p.parse_expr(Level::Lowest)?;
                     p.lexer.expect_or_insert_semicolon()?;
+                    if !opts.is_typescript_declare {
+                        p.record_ts_runtime_syntax(js_ast::TsRuntimeSyntax::ExportAssignment);
+                    }
                     return Ok(p.s(S::ExportEquals { value }, loc));
                 }
                 p.lexer.unexpected()?;
@@ -1760,6 +1763,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (p.lexer.token == T::TIdentifier
                         || (p.lexer.token == T::TStringLiteral && opts.is_typescript_declare))
                 {
+                    if matches!(ts_stmt, js_lexer::TypescriptStmtKeyword::TsStmtModule)
+                        && p.lexer.token == T::TIdentifier
+                    {
+                        p.uses_ts_module_keyword = true;
+                    }
                     return Ok(Some(p.parse_type_script_namespace_stmt(loc, opts)?));
                 }
             }

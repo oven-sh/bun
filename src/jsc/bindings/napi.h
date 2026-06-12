@@ -213,8 +213,15 @@ public:
         // at process exit. Under BUN_DESTRUCT_VM_ON_EXIT the final exit
         // collection runs the remaining finalizers immediately instead (see
         // Zig__GlobalObject__destructOnExit).
-        if (napi_internal_cleanup_is_hooks_only())
+        if (napi_internal_cleanup_is_hooks_only()) {
+            // The napi_set_instance_data() finalizer is part of env teardown
+            // in Node and is still safe here: nothing on this path has been
+            // freed, so it cannot observe the dangling state the skipped
+            // wrap-finalizer pass avoids.
+            instanceDataFinalizer.call(this, instanceData, true);
+            instanceDataFinalizer.clear();
             return;
+        }
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.

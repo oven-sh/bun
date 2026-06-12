@@ -1481,7 +1481,16 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
+        self.run_cleanup_hooks();
+    }
 
+    /// Drain `RareData::cleanup_hooks` and set `has_run_cleanup_hooks`.
+    /// Every `NapiEnv` registers its at-exit cleanup on this list (env
+    /// cleanup hooks + pending `napi_wrap` finalizers), so it must run while
+    /// JSC and the global are still fully alive. Idempotent: the drained
+    /// list stays empty and the flag makes later `NapiFinalizerTask`s drop
+    /// instead of re-registering.
+    fn run_cleanup_hooks(&mut self) {
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
         // Note: each iteration re-fetches `rare_data` so the FFI hook
@@ -1505,6 +1514,15 @@ impl VirtualMachine {
 
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
+        // Exit paths that never go through `on_exit()` (the test runner and
+        // its --parallel workers jump straight here) must still drain the
+        // cleanup hooks. Skipping the drain means napi env cleanup hooks and
+        // at-exit `napi_wrap` finalizers never run, and it leaves
+        // `has_run_cleanup_hooks` false, so `NapiFinalizerTask::schedule()`
+        // parks every finalizer deferred by `destructOnExit`'s final
+        // collection on a list that is never walked again (an LSAN-visible
+        // leak of the task boxes). No-op when `on_exit()` already ran.
+        self.run_cleanup_hooks();
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();

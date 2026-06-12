@@ -61,9 +61,9 @@ pub struct StatWatcherScheduler {
     is_shutdown: AtomicBool,
     task: WorkPoolTask,
     main_thread: ThreadId,
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
-    // safe `&VirtualMachine` projection (Deref) at every read site;
-    // `event_loop_shared()` / `enqueue_task_concurrent` take `&self`.
+    // JS-thread reads only (`timer_callback` via `vm()`), where the VM
+    // driving the timer is necessarily live. The pool-thread completion
+    // enqueue does not touch this field; it goes through `vm_handle` below.
     vm: BackRef<VirtualMachine>,
     /// Schedule-time handle for `vm`, for the pool-thread completion enqueue
     /// (the one access that must tolerate the VM being gone).

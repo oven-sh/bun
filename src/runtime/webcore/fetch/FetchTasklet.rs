@@ -23,19 +23,6 @@ use bun_jsc::{
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;
-
-/// `FetchTasklet` boxes whose owning worker VM was freed (terminated) while
-/// the HTTP thread held the last reference. They can never be fully
-/// reclaimed: `deinit()` drops JSC `Strong`/`Weak` handles into the dead
-/// VM's freed HandleSet, on any thread, at any time — including the
-/// `global_exit` drain that `dealloc_for_shutdown` parks into.
-/// [`FetchTasklet::free_native_data_for_dead_vm`] reclaims the plain-heap
-/// buffers first, so what parks here is the struct itself plus the handles
-/// only the (gone) JS thread could release. Kept reachable so LSan-enabled
-/// CI lanes don't report them as leaks; growth is bounded by in-flight
-/// requests that lose a terminate race.
-static DEAD_VM_TASKLETS: bun_threading::Guarded<Vec<usize>> =
-    bun_threading::Guarded::new(Vec::new());
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
@@ -55,6 +42,19 @@ use bun_jsc::JsTerminatedResult;
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
+
+/// `FetchTasklet` boxes whose owning worker VM was freed (terminated) while
+/// the HTTP thread held the last reference. They can never be fully
+/// reclaimed: `deinit()` drops JSC `Strong`/`Weak` handles into the dead
+/// VM's freed HandleSet, on any thread, at any time, including the
+/// `global_exit` drain that `dealloc_for_shutdown` parks into.
+/// [`FetchTasklet::free_native_data_for_dead_vm`] reclaims the plain-heap
+/// buffers first, so what parks here is the struct itself plus the handles
+/// only the (gone) JS thread could release. Kept reachable so LSan-enabled
+/// CI lanes don't report them as leaks; growth is bounded by in-flight
+/// requests that lose a terminate race.
+static DEAD_VM_TASKLETS: bun_threading::Guarded<Vec<usize>> =
+    bun_threading::Guarded::new(Vec::new());
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).

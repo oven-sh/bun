@@ -98,8 +98,10 @@ impl FSWatcher {
     }
 
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
-    /// the caller releases ownership of; the concurrent queue takes ownership
-    /// and frees it on the JS thread after dispatch.
+    /// the caller releases ownership of. On `true` the concurrent queue takes
+    /// ownership and frees it on the JS thread after dispatch; on `false`
+    /// (VM already gone) the node was never linked and the payload never
+    /// runs, so the caller reclaims it (see `FSWatchTaskPosix::enqueue`).
     #[must_use]
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bool {
         // Called from watcher threads: `ctx` may point at a worker VM freed

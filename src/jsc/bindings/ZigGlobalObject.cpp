@@ -66,6 +66,7 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
+#include "BunSamplingProfilerReporter.h"
 #include "BunSecureContextCache.h"
 #include "ProcessIdentifier.h"
 #include "BunWorkerGlobalScope.h"
@@ -3938,6 +3939,10 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    // Write any pending sampling profiler report and release the refs that
+    // would otherwise keep this VM alive past the derefs below (mirrors
+    // WebWorker__teardownJSCVM).
+    Bun::reportSamplingProfilerBeforeVMTeardown(vm);
     if (vm.entryScope) {
         vm.entryScope = nullptr;
     }

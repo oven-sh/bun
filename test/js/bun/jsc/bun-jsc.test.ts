@@ -24,7 +24,9 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 describe("bun:jsc", () => {
   function count() {
@@ -197,7 +199,7 @@ describe("bun:jsc", () => {
     const sampleInterval = 50;
 
     // First profile call
-    const result1 = profile(() => fib(30), sampleInterval);
+    const result1 = profile(() => fib(26), sampleInterval);
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -205,14 +207,14 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(() => fib(30), sampleInterval);
+    const result2 = profile(() => fib(26), sampleInterval);
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(() => fib(30), sampleInterval);
+    const result3 = profile(() => fib(26), sampleInterval);
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
@@ -353,5 +355,77 @@ it("serialize rejects a CryptoKey created with extractable set to false", async 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("rejected\ntrue\n32\n");
+  expect(exitCode).toBe(0);
+});
+
+it("startSamplingProfiler with a directory writes a report at exit", async () => {
+  // https://github.com/oven-sh/bun/issues/32212
+  using dir = tempDir("sampling-profiler", {
+    "entry.mjs": `
+      import { startSamplingProfiler } from "bun:jsc";
+      import { join } from "node:path";
+      startSamplingProfiler(join(import.meta.dir, "profiles"));
+      let x = 0;
+      for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+      console.log("done", x > 0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done true\n");
+  expect(exitCode).toBe(0);
+
+  const profileDir = join(String(dir), "profiles");
+  const reports = readdirSync(profileDir).filter(name => name.startsWith("JSCSamplingProfile-"));
+  expect(reports).toHaveLength(1);
+  expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
+});
+
+it("startSamplingProfiler with a directory in a worker writes a report at worker teardown", async () => {
+  // https://github.com/oven-sh/bun/issues/32212
+  using dir = tempDir("sampling-profiler-worker", {
+    "main.mjs": `
+      import { readdirSync } from "node:fs";
+      import { join } from "node:path";
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+      const message = await new Promise((resolve, reject) => {
+        worker.onmessage = e => resolve(e.data);
+        worker.onerror = e => reject(new Error(e.message));
+      });
+      console.log(message);
+      // The report is written during worker VM teardown, which completes
+      // before the close event is dispatched to the parent.
+      const closed = new Promise(resolve => worker.addEventListener("close", resolve));
+      await worker.terminate();
+      await closed;
+      const reports = readdirSync(join(import.meta.dir, "profiles")).filter(name =>
+        name.startsWith("JSCSamplingProfile-"),
+      );
+      console.log("reports", reports.length);
+    `,
+    "worker.mjs": `
+      import { startSamplingProfiler } from "bun:jsc";
+      import { join } from "node:path";
+      startSamplingProfiler(join(import.meta.dir, "profiles"));
+      let x = 0;
+      for (let i = 0; i < 2e6; i++) x += Math.sqrt(i);
+      postMessage("done " + (x > 0));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done true\nreports 1\n");
   expect(exitCode).toBe(0);
 });

@@ -38,6 +38,7 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
+#include "BunSamplingProfilerReporter.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
@@ -447,7 +448,6 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     if (directoryValue.isString()) {
         auto path = directoryValue.toWTFString(globalObject);
         if (!path.isEmpty()) {
-            StringPrintStream pathOut;
             auto pathCString = toCString(String(path));
             if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
@@ -456,8 +456,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
-            samplingProfiler.registerForReportAtExit();
+            Bun::registerSamplingProfilerReportAtExit(vm, samplingProfiler, WTF::move(pathCString));
         }
     }
     if (sampleValue.isNumber()) {

@@ -85,9 +85,6 @@ pub mod types {
 pub mod protocol {
     #[path = "error_response_jsc.rs"]
     pub mod error_response_jsc;
-
-    #[path = "notice_response_jsc.rs"]
-    pub mod notice_response_jsc;
 }
 
 // Re-exports of base-crate protocol/types modules.

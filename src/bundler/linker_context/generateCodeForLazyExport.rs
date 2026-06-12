@@ -36,7 +36,18 @@ pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
-    let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    // The dev server's module format represents lazy-export modules (JSON,
+    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
+    // runtime, so always generate the `module.exports = ...` form below.
+    // The ESM form would synthesize `export` parts that
+    // `print_dev_server_module` cannot represent.
+    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
+        && exports_kind != bun_ast::ExportsKind::Cjs
+    {
+        exports_kind = bun_ast::ExportsKind::Cjs;
+        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
+    }
     // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();

@@ -13415,8 +13415,8 @@ async function createMockListenServer(
 
   const queries: string[] = [];
   const queryWaiters: Array<{ matches: (queries: string[]) => boolean; resolve: () => void }> = [];
-  // Channels whose LISTEN ack is withheld until releaseHeldAcks() (lets tests
-  // freeze the adapter mid-LISTEN to exercise interleavings).
+  // Channels whose LISTEN/UNLISTEN ack is withheld until releaseHeldAcks()
+  // (lets tests freeze the adapter mid-round-trip to exercise interleavings).
   let holdAckChannels: string[] = [];
   const heldAcks: Array<() => void> = [];
   const recordQuery = (query: string) => {
@@ -13473,7 +13473,12 @@ async function createMockListenServer(
       } else {
         // Echo the command word as the tag (UNLISTEN, BEGIN, COMMIT, ...).
         const tag = query.split(" ", 1)[0].toUpperCase();
-        socket.write(Buffer.concat([commandComplete(tag), readyForQuery]));
+        const ack = Buffer.concat([commandComplete(tag), readyForQuery]);
+        if (query.startsWith('UNLISTEN "') && holdAckChannels.includes(query.slice('UNLISTEN "'.length, -1))) {
+          heldAcks.push(() => socket.write(ack));
+          return;
+        }
+        socket.write(ack);
       }
     });
     socket.on("close", () => {
@@ -13510,8 +13515,8 @@ async function createMockListenServer(
     destroyConnections: () => {
       for (const socket of liveSockets) socket.destroy();
     },
-    // Withhold LISTEN acks for the given channels from now on; released acks
-    // are written in arrival order.
+    // Withhold LISTEN/UNLISTEN acks for the given channels from now on;
+    // released acks are written in arrival order.
     holdAcksFor: (channels: string[]) => {
       holdAckChannels = channels;
     },
@@ -14062,4 +14067,46 @@ test("a mid-sweep connection drop is not booked as per-channel LISTEN failures",
   } finally {
     console.warn = originalWarn;
   }
+});
+
+// When other channels remain subscribed, unlisten() sends a wire UNLISTEN.
+// If the connection dies during that round-trip the removal is already final
+// (local bookkeeping is updated and the sweep will not re-LISTEN the
+// channel), so unlisten() must not reject; via Symbol.asyncDispose that
+// rejection would make an await-using scope throw for a teardown that
+// already took effect.
+test("unlisten() resolves even when the connection drops during the UNLISTEN round-trip", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  let onlistenB = 0;
+  const { promise: recoveredB, resolve: resolveRecoveredB } = Promise.withResolvers<void>();
+  await db.listen("u_a", () => {});
+  await db.listen(
+    "u_b",
+    () => {},
+    () => {
+      // Initial LISTEN plus the sweep's re-registration after the drop.
+      if (++onlistenB === 2) resolveRecoveredB();
+    },
+  );
+
+  // Freeze the UNLISTEN ack, then kill the connection mid-round-trip.
+  mock.holdAcksFor(["u_a"]);
+  const pendingUnlisten = db.unlisten("u_a");
+  await mock.waitForQuery(qs => qs.includes('UNLISTEN "u_a"'));
+  mock.holdAcksFor([]);
+  mock.destroyConnections();
+
+  // The removal already took effect; the wire failure must be swallowed.
+  await pendingUnlisten;
+
+  // The remaining subscription recovers on the replacement connection.
+  await recoveredB;
+  await db.unlisten("u_b");
 });

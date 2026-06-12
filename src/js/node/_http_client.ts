@@ -52,7 +52,9 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
+  noBodySymbol,
 } = require("internal/http");
+const { Duplex } = require("internal/stream");
 
 const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
@@ -62,6 +64,8 @@ const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
+const kEmptyBuffer = Buffer.alloc(0);
+const nop = () => {};
 
 const { URL } = globalThis;
 
@@ -75,6 +79,146 @@ function emitErrorEventNT(self, err) {
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
+}
+
+// The socket handed to 'upgrade' listeners after a 101 Switching Protocols
+// response. The readable side drains the fetch response body, which carries
+// the raw post-upgrade bytes (the native client stops HTTP-parsing once the
+// upgrade completes; see HTTPUpgradeState in src/http/lib.rs). The writable
+// side feeds the request's streaming body generator, whose bytes
+// FetchTasklet writes to the connection unframed after the 101 (see
+// skip_chunked_framing in src/runtime/webcore/fetch/FetchTasklet.rs).
+// Socket-shaped the same way FakeSocket is.
+class UpgradeSocket extends Duplex {
+  #reader;
+  #channel;
+  #pulling = false;
+  #ended = false;
+  #timer;
+  #timeoutMs = 0;
+
+  constructor(reader, channel) {
+    // allowHalfOpen: false matches net.Socket's default: when the peer
+    // closes its half, the writable side is ended automatically.
+    super({ allowHalfOpen: false });
+    this.#reader = reader;
+    this.#channel = channel;
+  }
+
+  // Idle timer, re-armed on read/write activity like net.Socket's.
+  #armTimeout() {
+    const timer = this.#timer;
+    if (timer) {
+      clearTimeout(timer);
+      this.#timer = undefined;
+    }
+    const msecs = this.#timeoutMs;
+    if (msecs > 0 && !this.destroyed) {
+      this.#timer = setTimeout(emitTimeoutNT, msecs, this);
+      this.#timer.unref();
+    }
+  }
+
+  setTimeout(msecs, callback) {
+    msecs = getTimerDuration(msecs, "msecs");
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      if (msecs === 0) {
+        this.removeListener("timeout", callback);
+      } else {
+        this.once("timeout", callback);
+      }
+    }
+    this.#timeoutMs = msecs;
+    this.#armTimeout();
+    return this;
+  }
+
+  async #pull() {
+    const reader = this.#reader;
+    if (!reader) {
+      this.#ended = true;
+      this.push(null);
+      return;
+    }
+    this.#pulling = true;
+    try {
+      while (!this.destroyed) {
+        let result = reader.readMany();
+        if ($isPromise(result)) {
+          result = await result;
+        }
+        if (this.destroyed || this.#ended) return;
+        const { done, value } = result;
+        let wantMore = true;
+        for (const chunk of value) {
+          if (this.#timeoutMs > 0) this.#armTimeout();
+          wantMore = this.push(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+        }
+        if (done) {
+          this.#ended = true;
+          this.push(null);
+          return;
+        }
+        if (!wantMore) return;
+      }
+    } catch (err) {
+      if (!this.destroyed) this.destroy(err);
+    } finally {
+      this.#pulling = false;
+    }
+  }
+
+  _read(_size) {
+    if (!this.#pulling && !this.#ended) {
+      this.#pull();
+    }
+  }
+
+  _write(chunk, _encoding, callback) {
+    if (this.#timeoutMs > 0) this.#armTimeout();
+    this.#channel.write(chunk, callback);
+  }
+
+  _final(callback) {
+    this.#channel.end();
+    callback();
+  }
+
+  _destroy(err, callback) {
+    const timer = this.#timer;
+    if (timer) {
+      clearTimeout(timer);
+      this.#timer = undefined;
+    }
+    this.#channel.destroy(err);
+    const reader = this.#reader;
+    this.#reader = undefined;
+    reader?.cancel?.().catch(nop);
+    callback(err);
+  }
+
+  ref() {
+    return this;
+  }
+
+  unref() {
+    return this;
+  }
+
+  setNoDelay(_noDelay = true) {
+    return this;
+  }
+
+  setKeepAlive(_enable = false, _initialDelay = 0) {
+    return this;
+  }
+}
+
+Object.defineProperty(UpgradeSocket, "name", { value: "Socket" });
+
+function emitTimeoutNT(socket) {
+  socket.emit("timeout");
 }
 
 function ClientRequest(input, options, cb) {
@@ -100,6 +244,68 @@ function ClientRequest(input, options, cb) {
 
   let writeCount = 0;
   let resolveNextChunk: ((end: boolean) => void) | undefined = _end => {};
+
+  // Channel between the upgrade socket's writable side and the request body
+  // generator: after a 101 the generator is the only way to push raw bytes
+  // into the native connection. Writable calls _write one chunk at a time,
+  // so a single pending slot suffices; the generator invokes the callback
+  // only once the sink pulled the next chunk, which propagates the native
+  // socket's backpressure into the upgrade socket.
+  let upgradeWriteChunk;
+  let upgradeWriteCallback;
+  let upgradeWake;
+  let upgradeAccepted = false;
+  let upgradeBodyEnded = false;
+
+  const wakeUpgradeBody = () => {
+    const wake = upgradeWake;
+    upgradeWake = undefined;
+    wake?.();
+  };
+
+  const endUpgradeBody = () => {
+    if (upgradeBodyEnded) return;
+    upgradeBodyEnded = true;
+    wakeUpgradeBody();
+    // The generator may still be parked in the pre-upgrade loop when the
+    // server rejects the upgrade on a request that was never end()ed.
+    resolveNextChunk?.(true);
+  };
+
+  const createUpgradeSocket = response => {
+    const socket = new UpgradeSocket(response.body?.getReader?.(), {
+      write: (chunk, callback) => {
+        if (upgradeBodyEnded) {
+          callback($ERR_STREAM_DESTROYED("write"));
+          return;
+        }
+        upgradeWriteChunk = chunk;
+        upgradeWriteCallback = callback;
+        wakeUpgradeBody();
+      },
+      end: endUpgradeBody,
+      destroy: err => {
+        endUpgradeBody();
+        const callback = upgradeWriteCallback;
+        upgradeWriteChunk = upgradeWriteCallback = undefined;
+        callback?.(err);
+      },
+    });
+    if (response.url.startsWith("https:")) {
+      socket.encrypted = true;
+    }
+    // req.abort()/req.destroy()/timeouts/options.signal abort the underlying
+    // fetch; tear the hijacked socket down with it.
+    const signal = this[kAbortController]?.signal;
+    if (signal) {
+      if (signal.aborted) {
+        socket.destroy();
+      } else {
+        signal.addEventListener("abort", () => socket.destroy(), { once: true });
+      }
+    }
+    return socket;
+  };
 
   // Node sends headers + first chunk immediately on the first write(). We
   // defer by a tick so that `write(chunk); end();` in the same tick still
@@ -277,6 +483,7 @@ function ClientRequest(input, options, cb) {
   };
 
   let fetching = false;
+  let isUpgrade = false;
 
   const startFetch = (customBody?) => {
     if (fetching) {
@@ -284,6 +491,14 @@ function ClientRequest(input, options, cb) {
     }
 
     fetching = true;
+
+    // An Upgrade header other than h2/h2c makes the native client treat the
+    // request as an upgrade handshake and accept a 101 response (see
+    // upgraded_connection in src/runtime/webcore/fetch.rs and
+    // HTTPUpgradeState in src/http/lib.rs); mirror that check here so the JS
+    // side agrees on which requests can get hijacked.
+    const upgradeHeader = this.getHeader("upgrade");
+    isUpgrade = upgradeHeader !== undefined && !/^h2c?$/i.test(upgradeHeader);
 
     // Every entry point that dispatches the request (send(), flushHeaders(),
     // and the write() → pushChunk paths) must have an AbortController wired
@@ -345,8 +560,17 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       let keepOpen = false;
+      if (isUpgrade && customBody !== undefined) {
+        // Upgrade requests always stream the body through the generator so
+        // the connection keeps a writable channel for the post-101 socket.
+        // send() leaves the chunks in kBodyChunks, so the generator still
+        // delivers them (the native client holds request body bytes back
+        // until the 101; see write_to_stream in src/http/lib.rs).
+        customBody = undefined;
+      }
+
       // no body and not finished
-      const isDuplex = customBody === undefined && !this.finished;
+      const isDuplex = customBody === undefined && (!this.finished || isUpgrade);
 
       if (isDuplex) {
         fetchOptions.duplex = "half";
@@ -359,8 +583,10 @@ function ClientRequest(input, options, cb) {
         fetchOptions.body = customBody;
       } else if (
         isDuplex &&
-        // Normal case: non-GET/HEAD/OPTIONS can use streaming
-        ((method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
+        // Upgrade requests always stream so the post-101 socket can write
+        (isUpgrade ||
+          // Normal case: non-GET/HEAD/OPTIONS can use streaming
+          (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") ||
           // Special case: GET/HEAD/OPTIONS with already-queued chunks should also stream
           this[kBodyChunks]?.length > 0)
       ) {
@@ -374,7 +600,7 @@ function ClientRequest(input, options, cb) {
             self.emit("drain");
           }
 
-          while (!self.finished) {
+          while (!self.finished && !upgradeAccepted && !upgradeBodyEnded) {
             yield await new Promise(resolve => {
               resolveNextChunk = end => {
                 resolveNextChunk = undefined;
@@ -388,6 +614,30 @@ function ClientRequest(input, options, cb) {
 
             if (self[kBodyChunks]?.length === 0) {
               self.emit("drain");
+            }
+          }
+
+          if (isUpgrade) {
+            // Keep the upload half of the connection open past req.end():
+            // bytes written to the upgrade socket flow through here and are
+            // written to the connection unframed once the server answered
+            // with a 101.
+            while (true) {
+              if (upgradeWriteCallback) {
+                const chunk = upgradeWriteChunk;
+                const callback = upgradeWriteCallback;
+                upgradeWriteChunk = upgradeWriteCallback = undefined;
+                yield chunk;
+                // Resumed on the sink's next pull, i.e. after it consumed
+                // the chunk; ack the socket write only now so native
+                // backpressure reaches the Writable side.
+                callback();
+                continue;
+              }
+              if (upgradeBodyEnded) break;
+              await new Promise(resolve => {
+                upgradeWake = resolve;
+              });
             }
           }
 
@@ -420,6 +670,23 @@ function ClientRequest(input, options, cb) {
           return;
         }
 
+        const isUpgradeResponse = isUpgrade && response.status === 101;
+        if (isUpgrade) {
+          if (isUpgradeResponse) {
+            // The upgrade socket owns the upload half now; move the
+            // generator out of the pre-upgrade loop (where it parks when
+            // the request was started by flushHeaders()/write() without
+            // end()) into the upgrade channel loop.
+            upgradeAccepted = true;
+            resolveNextChunk?.(true);
+          } else {
+            // The server rejected the upgrade; release the body generator
+            // so the request side of the connection can finish (it would
+            // otherwise stay open forever waiting for post-upgrade writes).
+            endUpgradeBody();
+          }
+        }
+
         handleResponse = () => {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
@@ -434,6 +701,44 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+
+          if (isUpgradeResponse) {
+            // A 101 response emits 'upgrade' instead of 'response', handing
+            // the connection over to the listener; with no listener the
+            // connection is destroyed, matching
+            // https://github.com/nodejs/node/blob/v24.3.0/lib/_http_client.js#L617-L657
+            // The IncomingMessage carries only the status line and headers;
+            // post-upgrade bytes flow through the hijacked socket.
+            res[noBodySymbol] = true;
+            res.complete = true;
+            process.nextTick(
+              (self, res) => {
+                if (self.aborted || self.listenerCount("upgrade") === 0) {
+                  endUpgradeBody();
+                  response.body?.cancel?.().catch(nop);
+                  self.destroyed = true;
+                  maybeEmitClose();
+                  return;
+                }
+                self[kUpgradeOrConnect] = true;
+                const socket = createUpgradeSocket(response);
+                self.socket = socket;
+                res.socket = socket;
+                // Node passes any bytes that followed the 101 in the same
+                // packet as `head`; here they are always delivered through
+                // the socket instead, so `head` is always empty. Upgrade
+                // consumers unshift `head` back onto the socket before
+                // reading, so both shapes behave the same.
+                self.emit("upgrade", res, socket, kEmptyBuffer);
+                self.destroyed = true;
+                maybeEmitClose();
+              },
+              this,
+              res,
+            );
+            return;
+          }
+
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they

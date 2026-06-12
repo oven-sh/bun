@@ -1251,7 +1251,11 @@ impl PathLikeExt for PathLike {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                // No GC root is taken here: the call frame keeps the argument
+                // alive for the duration of the host call, and the async path
+                // protects the value in `to_thread_safe` (released by
+                // `ThreadSafe`'s drop when the task completes).
+                arguments.eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 
@@ -1272,7 +1276,8 @@ impl PathLikeExt for PathLike {
                     return Err(err);
                 }
 
-                arguments.protect_eat();
+                // Same rooting contract as the typed-array arm above.
+                arguments.eat();
                 Ok(Some(Self::Buffer(buffer)))
             }
 

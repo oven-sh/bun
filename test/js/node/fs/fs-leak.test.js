@@ -3,6 +3,7 @@ const { expect, test } = require("bun:test");
 const fs = require("fs");
 const { tmpdir, devNull } = require("os");
 const { fsStreamInternals } = require("bun:internal-for-testing");
+const { bunExe, bunEnv, tempDir } = require("harness");
 
 function getMaxFd() {
   const dev_null = fs.openSync(devNull, "r");
@@ -125,4 +126,90 @@ test("createReadStream file handle does not leak file descriptors", async () => 
   // If this is larger than the start value, it means that the file descriptor was not closed
   expect(getMaxFd()).toBe(start);
   expect(n_bytes).toBe("hello world\n".repeat(1000).length);
+});
+
+// https://github.com/oven-sh/bun/issues/32191
+test("async fs ops with Buffer path arguments do not leak the path argument", async () => {
+  const N = 128;
+  const WARM = 32;
+  const script = `
+    const fs = require("node:fs");
+    const { heapStats } = require("bun:jsc");
+
+    const N = ${N};
+    const WARM = ${WARM};
+
+    function liveCount(type) {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts[type] ?? 0;
+    }
+
+    async function measure(type, op) {
+      for (let i = 0; i < WARM; i++) await op(N + i);
+      const before = liveCount(type);
+      for (let i = 0; i < N; i++) await op(i);
+      return liveCount(type) - before;
+    }
+
+    // Expect the exact error so a parse-time rejection cannot silently skip
+    // the async path and make a segment vacuous.
+    const expectEnoent = e => {
+      if (e.code !== "ENOENT") throw e;
+    };
+    const expectAborted = e => {
+      if (e.name !== "AbortError") throw e;
+    };
+
+    const deltas = {};
+    deltas.accessBufferPath = await measure("Uint8Array", i =>
+      fs.promises.access(Buffer.from("missing-" + i)).catch(expectEnoent),
+    );
+    deltas.accessArrayBufferPath = await measure("ArrayBuffer", i => {
+      const bytes = Buffer.from("missing-" + i);
+      const path = new ArrayBuffer(bytes.length);
+      new Uint8Array(path).set(bytes);
+      return fs.promises.access(path).catch(expectEnoent);
+    });
+    deltas.writeFileBufferPath = await measure("Uint8Array", i =>
+      fs.promises.writeFile(Buffer.from("out-" + (i % 2) + ".txt"), "x"),
+    );
+    deltas.abortedWriteFileBufferPath = await measure("Uint8Array", i =>
+      fs.promises
+        .writeFile(Buffer.from("out-aborted.txt"), Buffer.from("data-" + i), { signal: AbortSignal.abort() })
+        .catch(expectAborted),
+    );
+    if (!fs.existsSync("out-0.txt") || !fs.existsSync("out-1.txt")) {
+      throw new Error("writeFile segment did not write its files");
+    }
+    console.log(JSON.stringify(deltas));
+  `;
+
+  using dir = tempDir("fs-buffer-path-leak", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  let deltas;
+  try {
+    deltas = JSON.parse(stdout.trim());
+  } catch {
+    throw new Error(`fixture did not produce JSON (exit ${exitCode}):\nstdout: ${stdout}\nstderr: ${stderr}`);
+  }
+
+  // Before the fix, every async call with a Buffer/ArrayBuffer path argument
+  // left the argument permanently gcProtect'ed, so each delta equaled N.
+  const verdict = Object.fromEntries(
+    Object.entries(deltas).map(([op, delta]) => [op, delta < N / 4 ? "ok" : `leaked ${delta} objects over ${N} calls`]),
+  );
+  expect(verdict).toEqual({
+    accessBufferPath: "ok",
+    accessArrayBufferPath: "ok",
+    writeFileBufferPath: "ok",
+    abortedWriteFileBufferPath: "ok",
+  });
+  expect(exitCode).toBe(0);
 });

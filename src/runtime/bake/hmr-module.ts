@@ -298,7 +298,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }
@@ -398,7 +398,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs = {
         id,
         exports: {},
-        require: mod.require.bind(this),
+        require: mod.require.bind(mod),
       };
       mod.exports = null;
     }

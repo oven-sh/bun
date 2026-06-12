@@ -14,7 +14,7 @@ bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
 
 You will see `.zig` siblings next to many `.rs` files — those are the original
 implementation kept as a porting reference for _behavior_; they are not
-compiled and are not where new code goes.
+compiled, not read by the build or codegen, and are not where new code goes.
 
 Conventions:
 

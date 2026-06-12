@@ -10,7 +10,7 @@ const {
 } = require("internal/validators");
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
-const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
+const nodeHttpClient = $newNativeFunction("fetch.rs", "nodeHttpClient", 2);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");

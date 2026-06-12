@@ -2,7 +2,7 @@
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
-const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
+const addServerName = $newNativeFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateString, validateFunction } = require("internal/validators");
@@ -400,7 +400,7 @@ function checkServerIdentity(hostname, cert) {
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $zig("SecureContext.zig", "js.getConstructor");
+const NativeSecureContext = $native("SecureContext.rs", "js.getConstructor");
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
@@ -954,7 +954,7 @@ function cacheBundledRootCertificates(): string[] {
   bundledRootCertificates ||= getBundledRootCertificates() as string[];
   return bundledRootCertificates;
 }
-const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
+const getUseSystemCA = $newNativeFunction("runtime/cli/Arguments.rs", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {

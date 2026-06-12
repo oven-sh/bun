@@ -2765,7 +2765,7 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 // ─── exports ────────────────────────────────────────────────────────────────
 
 /// `Bun__FFI__cc` — module-level re-export of `FFI::bun_ffi_cc`, so the
-/// `js2native` codegen can resolve it as `crate::ffi::ffi::bun__ffi__cc`.
+/// `js2native` codegen can resolve it as `crate::ffi::ffi_body::bun__ffi__cc`.
 #[allow(non_snake_case)]
 #[inline]
 pub fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {

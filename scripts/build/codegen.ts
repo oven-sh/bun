@@ -47,8 +47,8 @@ import { quote, quoteArgs } from "./shell.ts";
 
 /**
  * Codegen outputs that land in `src/` instead of `codegenDir`. The zig
- * compiler refuses to import files outside its source tree, so these two
- * generated `.zig` files live in `src/jsc/bindings/` (gitignored).
+ * compiler refuses to import files outside its source tree, so this
+ * generated `.zig` file lives in `src/jsc/bindings/` (gitignored).
  *
  * Consumers of `sources.zig` (the `src/**\/*.zig` glob) must filter these
  * out — they're OUTPUTS of codegen, not inputs.
@@ -56,10 +56,7 @@ import { quote, quoteArgs } from "./shell.ts";
  * Paths are relative to repo root. This list is the single source of truth;
  * `globAllSources()` does NOT hardcode these.
  */
-export const zigFilesGeneratedIntoSrc = [
-  "src/jsc/bindings/GeneratedBindings.zig",
-  "src/jsc/bindings/GeneratedJS2Native.zig",
-] as const;
+export const zigFilesGeneratedIntoSrc = ["src/jsc/bindings/GeneratedBindings.zig"] as const;
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -764,9 +761,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
   const extraInput = resolve(cfg.cwd, "src", "jsc", "bindings", "InternalModuleRegistry.cpp");
 
-  // Written into src/ (not codegenDir) — see zigFilesGeneratedIntoSrc at top.
-  const js2nativeZig = resolve(cfg.cwd, zigFilesGeneratedIntoSrc[1]);
-
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.h"),
@@ -777,7 +771,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "NativeModuleImpl.h"),
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
-    js2nativeZig,
     // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
     // a declared output so the cargo edge re-invokes when bundle-modules.ts /
     // generate-js2native.ts changes — the includer shim's mtime never moves.

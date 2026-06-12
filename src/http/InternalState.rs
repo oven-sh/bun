@@ -3,7 +3,9 @@ use core::ptr::NonNull;
 use bun_core::MutableString;
 use bun_core::{Error, Output};
 
-use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
+use crate::{
+    CertificateInfo, ConnectionInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
+};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
@@ -46,6 +48,10 @@ pub struct InternalState<'a> {
     pub request_stage: HTTPStage,
     pub response_stage: HTTPStage,
     pub certificate_info: Option<CertificateInfo>,
+    /// Endpoints of the current connection; captured in `HTTPClient::on_open`
+    /// for node:http client requests (`None` otherwise). Cleared by `reset()`
+    /// so each redirect hop reports its own connection.
+    pub connection_info: Option<ConnectionInfo>,
 }
 
 // Struct-of-bools so the
@@ -123,6 +129,7 @@ impl Default for InternalState<'_> {
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
+            connection_info: None,
         }
     }
 }

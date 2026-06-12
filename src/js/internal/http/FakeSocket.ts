@@ -1,6 +1,17 @@
-const { kInternalSocketData, serverSymbol } = require("internal/http");
+const { kInternalSocketData, kConnectionInfo, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
 const { Duplex } = require("internal/stream");
+
+// node:http client over fetch: the real endpoints of the connection the
+// response arrived on, captured in _http_client.ts once the fetch resolves.
+// Reached through either the ClientRequest (req.socket) or the client
+// IncomingMessage (res.socket, via res.req). undefined on the server side and
+// before the response arrives. A plain function (not a #private method)
+// because these getters can run with a non-FakeSocket receiver.
+function clientConnectionInfo(socket) {
+  const message = socket._httpMessage;
+  return message?.[kConnectionInfo] ?? message?.req?.[kConnectionInfo];
+}
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
@@ -44,15 +55,17 @@ var FakeSocket = class Socket extends Duplex {
   _final(_callback) {}
 
   get localAddress() {
+    const info = clientConnectionInfo(this);
+    if (info) return info.localAddress;
     return this.address() ? "127.0.0.1" : undefined;
   }
 
   get localFamily() {
-    return "IPv4";
+    return clientConnectionInfo(this)?.localFamily ?? "IPv4";
   }
 
   get localPort() {
-    return 80;
+    return clientConnectionInfo(this)?.localPort ?? 80;
   }
 
   get pending() {
@@ -75,7 +88,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   get remoteAddress() {
-    return this.address()?.address;
+    return this.address()?.address ?? clientConnectionInfo(this)?.remoteAddress;
   }
 
   set remoteAddress(val) {
@@ -84,7 +97,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   get remotePort() {
-    return this.address()?.port;
+    return this.address()?.port ?? clientConnectionInfo(this)?.remotePort;
   }
 
   set remotePort(val) {
@@ -93,7 +106,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   get remoteFamily() {
-    return this.address()?.family;
+    return this.address()?.family ?? clientConnectionInfo(this)?.remoteFamily;
   }
 
   set remoteFamily(val) {

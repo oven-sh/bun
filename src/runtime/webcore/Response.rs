@@ -196,6 +196,12 @@ pub struct Response {
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
+
+    /// Endpoints of the connection this response arrived on. Only set for
+    /// fetches issued by the node:http client (FetchTasklet::to_response);
+    /// read back through `getFetchResponseConnectionInfo` in fetch.rs.
+    /// Boxed so every other Response pays one null pointer, not ~72 bytes.
+    pub(crate) connection_info: Option<Box<bun_http::ConnectionInfo>>,
 }
 
 impl Default for Response {
@@ -209,6 +215,7 @@ impl Default for Response {
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
+            connection_info: None,
         }
     }
 }
@@ -836,6 +843,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            connection_info: self.connection_info.clone(),
             ..Default::default()
         })
     }
@@ -865,6 +873,9 @@ impl Response {
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));
             (*this).js_ref.set(JsRef::empty());
+            // `connection_info: Option<Box<_>>` — assignment drops the Box
+            // (the raw dealloc below runs no drop glue).
+            (*this).connection_info = None;
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns

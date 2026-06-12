@@ -409,6 +409,40 @@ pub enum BodySize {
     Unknown,
 }
 
+/// Local/peer endpoints of the TCP connection a response arrived on.
+/// Captured on the HTTP thread in [`HTTPClient::on_open`] for node:http
+/// client requests only, so `req.socket` can report real address data.
+/// `None` for unix sockets and whenever the endpoints are unavailable.
+#[derive(Copy, Clone, Debug)]
+pub struct ConnectionInfo {
+    pub local: std::net::SocketAddr,
+    pub remote: std::net::SocketAddr,
+}
+
+impl ConnectionInfo {
+    fn from_socket<const IS_SSL: bool>(socket: &HttpSocket<IS_SSL>) -> Option<Self> {
+        fn to_ip(bytes: &[u8]) -> Option<std::net::IpAddr> {
+            // `us_socket_{local,remote}_address` yield 4 (IPv4) or 16 (IPv6)
+            // binary bytes; anything else (0 on failure / AF_UNIX) means no
+            // endpoint info.
+            match bytes.len() {
+                4 => Some(std::net::Ipv4Addr::from(<[u8; 4]>::try_from(bytes).unwrap()).into()),
+                16 => Some(std::net::Ipv6Addr::from(<[u8; 16]>::try_from(bytes).unwrap()).into()),
+                _ => None,
+            }
+        }
+        let mut buf = [0u8; 64];
+        let local_ip = to_ip(socket.local_address(&mut buf)?)?;
+        let local_port = u16::try_from(socket.local_port()).ok()?;
+        let remote_ip = to_ip(socket.remote_address(&mut buf)?)?;
+        let remote_port = u16::try_from(socket.remote_port()).ok()?;
+        Some(Self {
+            local: std::net::SocketAddr::new(local_ip, local_port),
+            remote: std::net::SocketAddr::new(remote_ip, remote_port),
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct HTTPClientResult<'a> {
     pub body: Option<&'a mut MutableString>,
@@ -430,6 +464,7 @@ pub struct HTTPClientResult<'a> {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     pub body_size: BodySize,
     pub certificate_info: Option<CertificateInfo>,
+    pub connection_info: Option<ConnectionInfo>,
 }
 
 impl<'a> HTTPClientResult<'a> {
@@ -480,6 +515,7 @@ impl<'a> HTTPClientResult<'a> {
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
+            connection_info: self.connection_info,
         }
     }
 }
@@ -1588,6 +1624,14 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::Aborted) {
             self.close_and_abort::<IS_SSL>(socket);
             return Err(err!(ClientAborted));
+        }
+
+        // Only node:http exposes the connection endpoints (via `req.socket`),
+        // so skip the getsockname/getpeername syscalls for plain fetch().
+        // Runs for fresh connects and adopted pooled sockets alike; a redirect
+        // resets the state and re-enters here with the follow-up socket.
+        if self.flags.is_node_http_client {
+            self.state.connection_info = ConnectionInfo::from_socket(&socket);
         }
 
         if self.state.request_stage == RequestStage::Pending {
@@ -3654,6 +3698,7 @@ impl<'a> HTTPClient<'a> {
             metadata,
             body_size,
             certificate_info,
+            connection_info,
         ) = {
             let r = self.to_result();
             (
@@ -3665,6 +3710,7 @@ impl<'a> HTTPClient<'a> {
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
+                r.connection_info,
             )
         }; // r (and its &mut borrow of self) dropped here
         let is_done = !has_more;
@@ -3789,6 +3835,7 @@ impl<'a> HTTPClient<'a> {
             metadata,
             body_size,
             certificate_info,
+            connection_info,
         };
         callback.run(async_http, result);
 
@@ -3828,6 +3875,7 @@ impl<'a> HTTPClient<'a> {
             metadata,
             body_size,
             certificate_info,
+            connection_info,
         ) = {
             let r = self.to_result();
             (
@@ -3839,6 +3887,7 @@ impl<'a> HTTPClient<'a> {
                 r.metadata,
                 r.body_size,
                 r.certificate_info,
+                r.connection_info,
             )
         }; // r (and its &mut borrow of self) dropped here
         let is_done = !has_more;
@@ -3866,6 +3915,7 @@ impl<'a> HTTPClient<'a> {
             metadata,
             body_size,
             certificate_info,
+            connection_info,
         };
         callback.run(async_http, result);
     }
@@ -4032,6 +4082,7 @@ impl<'a> HTTPClient<'a> {
                     || (self.state.fail.is_none() && !self.state.is_done()),
                 body_size,
                 certificate_info: None,
+                connection_info: self.state.connection_info,
                 can_stream: (self.state.request_stage == RequestStage::Body
                     || self.state.request_stage == RequestStage::ProxyBody)
                     && self.flags.is_streaming_request_body,
@@ -4048,6 +4099,7 @@ impl<'a> HTTPClient<'a> {
                 || (self.state.fail.is_none() && !self.state.is_done()),
             body_size,
             certificate_info,
+            connection_info: self.state.connection_info,
             // we can stream the request_body at this stage
             can_stream: (self.state.request_stage == RequestStage::Body
                 || self.state.request_stage == RequestStage::ProxyBody)

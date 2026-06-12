@@ -57,6 +57,9 @@ const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
 const kClearTimeout = Symbol("kClearTimeout");
+// Real local/peer endpoints of the connection a ClientRequest's response
+// arrived on; set in _http_client.ts, read by FakeSocket's address getters.
+const kConnectionInfo = Symbol("connectionInfo");
 
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
@@ -514,6 +517,7 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
+  kConnectionInfo,
   kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,

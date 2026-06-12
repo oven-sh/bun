@@ -361,6 +361,66 @@ pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> J
     fetch_impl::<true>(ctx, callframe)
 }
 
+/// Internal binding for the Node.js HTTP client: local/peer endpoints of the
+/// connection a fetch `Response` arrived on, so `req.socket` can report real
+/// address data. Returns `undefined` when unknown (non-fetch Response, unix
+/// socket, connection info unavailable).
+pub(crate) fn get_fetch_response_connection_info(
+    ctx: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_old::<1>();
+    let response_value = arguments.ptr[0];
+    if response_value.is_empty_or_undefined_or_null() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let Some(response) = response_value.as_class_ref::<Response>() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let Some(info) = response.connection_info.as_deref().copied() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+
+    let object = JSValue::create_empty_object(ctx, 6);
+    let mut text_buf = [0u8; 64];
+    for (address_key, port_key, family_key, addr) in [
+        (
+            &b"localAddress"[..],
+            &b"localPort"[..],
+            &b"localFamily"[..],
+            info.local,
+        ),
+        (
+            &b"remoteAddress"[..],
+            &b"remotePort"[..],
+            &b"remoteFamily"[..],
+            info.remote,
+        ),
+    ] {
+        // `format_ip` strips the `:port` suffix and IPv6 brackets from the
+        // `SocketAddr` Display form, matching Node's address strings. 64 bytes
+        // always fit the Display form, so NoSpaceLeft is unreachable.
+        let text = bun_core::fmt::format_ip(&addr, &mut text_buf).expect("unreachable");
+        let address_js = bun_jsc::bun_string_jsc::create_utf8_for_js(ctx, text)?;
+        object.put(ctx, address_key, address_js);
+        object.put(
+            ctx,
+            port_key,
+            JSValue::js_number_from_int32(i32::from(addr.port())),
+        );
+        object.put(
+            ctx,
+            family_key,
+            if addr.is_ipv6() {
+                ctx.common_strings().ipv6()
+            } else {
+                ctx.common_strings().ipv4()
+            },
+        );
+    }
+    Ok(object)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // URLType
 // ──────────────────────────────────────────────────────────────────────────

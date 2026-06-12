@@ -3565,6 +3565,13 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
+    /// The server's JS wrapper object, or `UNDEFINED` if the `JsRef` has been
+    /// downgraded and the wrapper collected (post-`stop()` with no user refs).
+    #[inline]
+    pub fn js_value(&self) -> JSValue {
+        any_server_dispatch!(self, |s| s.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
+    }
+
     pub fn h3_alt_svc(&self) -> Option<&[u8]> {
         match self.tag {
             AnyServerTag::HTTPSServer => self.as_https().h3_alt_svc(),

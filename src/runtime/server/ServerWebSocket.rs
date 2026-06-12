@@ -147,9 +147,9 @@ impl Flags {
 // (`generate-classes.ts` → `${T}__data{Get,Set}Cached`).
 #[allow(non_snake_case)]
 pub mod js {
-    // Emits `data_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
+    // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
-    ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data);
+    ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
 }
 
 /// Maps a uWS `SendStatus` to the JS-visible number contract shared by every
@@ -361,6 +361,12 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
+        if let Some(server) = handler.server {
+            let server_js = server.js_value();
+            if !server_js.is_undefined() {
+                js::server_set_cached(this_value, global_object, server_js);
+            }
+        }
         this
     }
 

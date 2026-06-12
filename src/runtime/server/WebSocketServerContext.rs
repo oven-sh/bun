@@ -29,6 +29,11 @@ pub struct Handler {
     pub on_pong: JSValue,
 
     pub app: Option<*mut c_void>,
+    /// Backref to the owning server. Set in `set_routes()` alongside `app`.
+    /// Used by `ServerWebSocket::init` to write the server JS wrapper into the
+    /// per-socket `m_server` traced slot, so the wrapper (and the `m_ws*`
+    /// handler slots it carries) stays reachable while any socket is connected.
+    pub server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
@@ -105,6 +110,7 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
             server: None,

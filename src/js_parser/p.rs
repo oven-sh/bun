@@ -3389,8 +3389,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let original_member_ref = value.ref_;
 
                     if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
-                        // Block-level function declarations behave like "let" in strict mode
-                        if scope_strict_mode != js_ast::StrictModeKind::SloppyMode {
+                        // Block-level function declarations behave like "let" in strict mode.
+                        // `ImplicitStrictModeModuleType` keeps the sloppy-mode
+                        // behavior: hoisting runs before `exports_kind` is
+                        // classified, and a forced-ESM file may still execute
+                        // as CommonJS (sloppy) via Bun's interop, so this
+                        // structural decision cannot assume strictness.
+                        if scope_strict_mode != js_ast::StrictModeKind::SloppyMode
+                            && scope_strict_mode
+                                != js_ast::StrictModeKind::ImplicitStrictModeModuleType
+                        {
                             continue;
                         }
 

@@ -310,6 +310,32 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("block-level functions in CommonJS-style .mjs files keep sloppy hoisting when bundled", async () => {
+    // Symbol hoisting runs before exports_kind classification, so the
+    // forced-ESM marking must not disable the sloppy-mode Annex B handling
+    // for files that execute as CommonJS via the interop.
+    using dir = tempDir("forced-esm-bundle-annex-b", {
+      "f.mjs": "exports.x = 1;\n{ function g() { return 1; } }\nconsole.log(g());\n",
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "f.mjs", "--format=esm", "--outfile=out.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildStdout, buildStderr }).toMatchObject({ buildStderr: "" });
+    expect(buildExit).toBe(0);
+    const { stdout, stderr, exitCode } = await run(dir, "out.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "1\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("strict mode reserved word in a bare .mjs file is a transpiler error", async () => {
     using dir = tempDir("forced-esm-strict-reserved", {
       "reserved.mjs": "var package = { name: 1 };\nconsole.log(package.name);\n",

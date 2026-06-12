@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -892,8 +892,10 @@ describe.concurrent("exit is leak-clean under LeakSanitizer", () => {
     ["--parallel=2", ["--parallel=2"]],
   ];
   for (const [label, args] of cases) {
-    // LeakSanitizer only exists in ASAN builds.
-    test.skipIf(!isASAN)(label, async () => {
+    // LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
+    // startup error on platforms without LSan (macOS arm64); the CI lane
+    // that leak-checks is linux x64-asan.
+    test.skipIf(!isASAN || !isLinux)(label, async () => {
       using dir = tempDir(`test-exit-lsan-${args.length ? args[0].replace(/[^a-z0-9]/g, "") : "serial"}`, files);
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", ...args, "."],

@@ -1276,8 +1276,9 @@ mod _async_tasks {
         /// Deref the raw `global_object` pointer.
         ///
         /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
-        /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
-        /// Safe to call from the work-pool thread for `bun_vm_concurrently()`.
+        /// null. JS-thread only: the work-pool completion goes through the
+        /// captured `vm` handle instead, because the owning worker VM (and its
+        /// global) may be freed by terminate() while the task is in flight.
         #[inline]
         pub fn global_object(&self) -> &JSGlobalObject {
             self.global_object.get()
@@ -2308,19 +2309,6 @@ mod _async_tasks {
     impl AsyncReaddirRecursiveTask {
         pub fn new(init: Self) -> Box<Self> {
             Box::new(init)
-        }
-
-        /// Borrow the owning `JSGlobalObject`.
-        ///
-        /// SAFETY: `global_object` is set from a live `&JSGlobalObject` in
-        /// `create()` (never null) and the JSC_BORROW invariant (LIFETIMES.tsv)
-        /// guarantees the global outlives every task it spawns. The pointee is a
-        /// pinned JSC heap object; `bun_vm_concurrently()` is the only method we
-        /// call off-thread and it reads init-immutable state, so a shared borrow
-        /// is sound from both the JS thread and the work pool.
-        #[inline]
-        pub fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
         }
 
         /// Free `root_path` — paired with the NUL-terminated duplication in

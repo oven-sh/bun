@@ -19,8 +19,8 @@ pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
+    /// Schedule-time handle of the owning VM. `None` only in the inert
+    /// `Default` placeholder (overwritten before the task escapes).
     pub vm: Option<bun_jsc::virtual_machine::VmHandle>,
     pub sign_result: SignResult,
     pub headers: Headers,

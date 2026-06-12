@@ -2702,13 +2702,15 @@ where
         if !self.has_listener() && self.pending_requests == 0 {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
-        if !self.all_closed_promise.is_empty() {
-            return self.all_closed_promise;
+        if self.all_closed_promise.has_value() {
+            return self.all_closed_promise.value();
         }
-        let prom = JSPromise::create(global).to_js();
-        self.all_closed_promise = prom;
+        self.all_closed_promise = jsc::JSPromiseStrong::init(global);
+        let prom = self.all_closed_promise.value();
         // Only reachable via `server.stop()` (a JS-called method) — wrapper is
-        // alive. The slot is the GC root; the field above is the dispatch shadow.
+        // alive. Mirror into the slot as a traced edge so the cycle through
+        // user `.then(cb)` is collectable; the Strong field above is the
+        // authoritative root that survives wrapper collection.
         Self::js_gc_all_closed_promise_set(self.js_value_assert_alive(), global, prom);
         prom
     }

@@ -275,11 +275,13 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
     /// conditional field so the struct stays uniform across monomorphizations.
     pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
-    /// Raw shadow of the wrapper's `m_allClosedPromise` WriteBarrier slot.
-    /// `JSValue::ZERO` until `server.stop()` lazily creates the promise. The
-    /// shadow lets `deinit_if_we_can` resolve it after the wrapper is gone
-    /// (the user's `await` keeps the promise itself alive in that window).
-    pub all_closed_promise: JSValue,
+    /// Authoritative GC root for the `server.stop()` promise. Lazily filled by
+    /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
+    /// after the wrapper is collected, so the wrapper's `m_allClosedPromise`
+    /// slot alone is not sufficient — this Strong is what keeps the cell live
+    /// across that window). The slot is still written as a traced edge so the
+    /// cycle through user `.then(cb)` is collectable.
+    pub all_closed_promise: jsc::JSPromiseStrong,
 
     pub listen_callback: jsc::AnyTask::AnyTask,
     // allocator field dropped — global mimalloc per §Allocators
@@ -316,7 +318,7 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
-        // user_routes) drop automatically.
+        // user_routes, all_closed_promise) drop automatically.
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
@@ -1664,10 +1666,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             self.flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
-            if self.all_closed_promise.is_empty() {
-                "no"
-            } else {
+            if self.all_closed_promise.has_value() {
                 "has"
+            } else {
+                "no"
             },
             matches!(self.js_value, jsc::JsRef::Finalized),
         );
@@ -1678,7 +1680,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self
                 .flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
-            && !self.all_closed_promise.is_empty()
+            && self.all_closed_promise.has_value()
             // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
             // (without resolving the promise) when the VM is shutting down —
             // see the `if !vm.is_shutting_down()` gate there. Skip the
@@ -1698,9 +1700,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
-                    // Task-local Strong: short-lived (one event-loop hop), and
-                    // the only root once the wrapper's slot is gone.
-                    promise: jsc::JSPromiseStrong::from_value(self.all_closed_promise, global),
+                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
+                    promise: jsc::JSPromiseStrong::from_value(
+                        self.all_closed_promise.value(),
+                        global,
+                    ),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                 },
                 vm_ref,
@@ -1898,9 +1902,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        // owned-field cleanup (user_routes / config / h3_alt_svc / dev_server /
-        // plugins) is handled by the heap::take drop below — see `impl Drop for
-        // NewServer`.
+        // owned-field cleanup (all_closed_promise / user_routes / config /
+        // h3_alt_svc / dev_server / plugins) is handled by the heap::take drop
+        // below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
                 // SAFETY: live H3::App handle owned by this server.
@@ -1957,7 +1961,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // the H3-listen path (`listen()` below) so HTTPS servers that
             // don't enable `config.http3` don't pay either.
             h3_request_pool: core::ptr::null_mut(),
-            all_closed_promise: JSValue::ZERO,
+            all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
                 ctx: None,
                 callback: |_| Ok(()),

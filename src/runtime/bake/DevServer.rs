@@ -5239,13 +5239,13 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) {
         return;
     }
 
-    if dev
+    if !dev
         .server
         .as_ref()
         .expect("infallible: server bound")
         .config()
         .on_request
-        .is_some()
+        .is_empty()
     {
         dev.server
             .as_mut()

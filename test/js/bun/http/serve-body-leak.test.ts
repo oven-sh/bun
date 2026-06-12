@@ -180,7 +180,9 @@ for (const test_info of [
         // under ASAN, so the cap needs ~2x headroom there (see #32179).
         expect(report.end_memory).toBeLessThanOrEqual((isASAN ? 1024 : 512) * 1024 * 1024);
       } catch (e) {
-        if (!isCI && process.platform !== "win32") {
+        // `process` here is the local subprocess from getURL(), which shadows the
+        // global, so use the harness helper for the platform check.
+        if (!isCI && !isWindows) {
           try {
             await fetch(`${url.origin}/heap-snapshot`);
             await Bun.sleep(10);

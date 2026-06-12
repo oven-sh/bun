@@ -27,6 +27,30 @@ interface TransactionState {
   queries: Set<Query<any, any>>;
 }
 
+// closing the connection fires its close handlers; for a reservation,
+// onReservedConnectionClosed returns the pool slot
+function closeReservedConnection(state: TransactionState, pooledConnection) {
+  if (state.connectionState & ReservedConnectionState.closed) {
+    return;
+  }
+  state.connectionState |= ReservedConnectionState.closed;
+  for (const query of state.queries) {
+    query.cancel();
+  }
+  pooledConnection.close();
+}
+
+function reservedCloseTimeoutFired(state: TransactionState, pooledConnection, resolve: () => void) {
+  closeReservedConnection(state, pooledConnection);
+  resolve();
+}
+
+function reservedCloseDrained(timer: Timer, state: TransactionState, pooledConnection, resolve: () => void) {
+  clearTimeout(timer);
+  closeReservedConnection(state, pooledConnection);
+  resolve();
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
@@ -237,6 +261,16 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  function onReservedConnectionClosed(this: TransactionState, pooledConnection, err: Error) {
+    onTransactionDisconnected.$call(this, err);
+    // The reservation holds one pool slot (queryCount/totalQueries) that is
+    // normally returned by reserved_sql.release(). When the underlying
+    // connection closes first (reserved_sql.close() or an unexpected
+    // disconnect), release() can no longer run, so return the slot here;
+    // otherwise a graceful sql.close() waits on it forever.
+    pool.release(pooledConnection);
+  }
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -253,16 +287,7 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    const onTransactionClosed = onTransactionDisconnected.bind(state);
-    function onClose(err: Error) {
-      onTransactionClosed(err);
-      // The reservation holds one pool slot (queryCount/totalQueries) that is
-      // normally returned by reserved_sql.release(). When the underlying
-      // connection closes first (reserved_sql.close() or an unexpected
-      // disconnect), release() can no longer run, so return the slot here;
-      // otherwise a graceful sql.close() waits on it forever.
-      pool.release(pooledConnection);
-    }
+    const onClose = onReservedConnectionClosed.bind(state, pooledConnection);
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
@@ -388,7 +413,6 @@ const SQL: typeof Bun.SQL = function SQL(
       return pool.flush();
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
-      const reserveQueries = state.queries;
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -396,47 +420,27 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      // closing the connection fires onClose, which returns the reservation's
-      // pool slot via pool.release
-      function closeConnection() {
-        if (state.connectionState & ReservedConnectionState.closed) {
-          return;
-        }
-        state.connectionState |= ReservedConnectionState.closed;
-        for (const query of reserveQueries) {
-          (query as Query<any, any>).cancel();
-        }
-        pooledConnection.close();
-      }
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
+        if (timeout > 0 && (state.queries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
+          const pending_queries = Array.from(state.queries);
           const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            closeConnection();
-            resolve();
-          }, timeout * 1000);
+          const timer = setTimeout(reservedCloseTimeoutFired, timeout * 1000, state, pooledConnection, resolve);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)])
-            // this chain is internal bookkeeping; the queries' own consumers
-            // observe their rejections
-            .catch(() => {})
-            .finally(() => {
-              clearTimeout(timer);
-              closeConnection();
-              resolve();
-            });
+          // one handler for both outcomes: this chain is internal bookkeeping;
+          // the queries' own consumers observe their rejections
+          const drained = reservedCloseDrained.bind(null, timer, state, pooledConnection, resolve);
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).then(drained, drained);
           return promise;
         }
       }
-      closeConnection();
+      closeReservedConnection(state, pooledConnection);
 
       return Promise.$resolve(undefined);
     };

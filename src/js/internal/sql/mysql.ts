@@ -20,6 +20,8 @@ const {
   init: initMySQL,
 } = $zig("mysql.zig", "createBinding") as MySQLDotZig;
 
+const upsertSuffixRegExp = /\bON\s+DUPLICATE\s+KEY\s+UPDATE\s*$/i;
+
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
     return error;
@@ -280,10 +282,9 @@ class MySQLAdapter
   }
 
   isUpsertUpdate(query: string): boolean {
-    // SQL keywords are case-insensitive, so match any spelling of the
-    // suffix; only uppercase the tail, the query can be large
-    const UPSERT_SUFFIX = "ON DUPLICATE KEY UPDATE";
-    return query.trimEnd().slice(-UPSERT_SUFFIX.length).toUpperCase() === UPSERT_SUFFIX;
+    // SQL keywords are case-insensitive and separated by arbitrary whitespace,
+    // so accept any spelling of the clause
+    return upsertSuffixRegExp.test(query);
   }
 }
 

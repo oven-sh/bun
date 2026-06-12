@@ -1,7 +1,8 @@
 // The MySQL helper normalizer appends " SET " after an update helper unless the
 // query already ends with ON DUPLICATE KEY UPDATE. SQL keywords are
-// case-insensitive, so the suffix check must be too; a lowercase spelling used
-// to produce "... on duplicate key update SET `age` = ?", which is invalid.
+// case-insensitive and separated by arbitrary whitespace, so the suffix check
+// must accept any spelling; a lowercase one used to produce
+// "... on duplicate key update SET `age` = ?", which is invalid.
 // https://github.com/oven-sh/bun/issues/32035
 //
 // Uses a minimal mock MySQL server that captures the text of every
@@ -125,8 +126,9 @@ test("upsert helper omits SET for every spelling of ON DUPLICATE KEY UPDATE", as
     const row = { id: 1, age: 30 };
     const update = { age: 31 };
 
-    // Same upsert with three spellings of the keyword; each must reach the
-    // server (errno 1064 proves the round-trip happened).
+    // Same upsert with four spellings of the clause (case and whitespace are
+    // both flexible in SQL); each must reach the server (errno 1064 proves the
+    // round-trip happened).
     const errUpper = await sql`INSERT INTO users ${sql(row)} ON DUPLICATE KEY UPDATE ${sql(update)}`.catch(
       (e: any) => e,
     );
@@ -142,12 +144,18 @@ test("upsert helper omits SET for every spelling of ON DUPLICATE KEY UPDATE", as
     );
     expect(errMixed?.errno).toBe(1064);
 
+    const errWhitespace = await sql`INSERT INTO users ${sql(row)} on\n  Duplicate\tKEY   update ${sql(update)}`.catch(
+      (e: any) => e,
+    );
+    expect(errWhitespace?.errno).toBe(1064);
+
     // No "SET" after the keyword in any spelling; the update helper's columns
     // follow it directly.
     expect(prepared).toEqual([
       "INSERT INTO users (`id`, `age`) VALUES(?, ?)  ON DUPLICATE KEY UPDATE `age` = ? ",
       "INSERT INTO users (`id`, `age`) VALUES(?, ?)  on duplicate key update `age` = ? ",
       "INSERT INTO users (`id`, `age`) VALUES(?, ?)  On Duplicate Key Update `age` = ? ",
+      "INSERT INTO users (`id`, `age`) VALUES(?, ?)  on\n  Duplicate\tKEY   update `age` = ? ",
     ]);
   } finally {
     await new Promise<void>(r => server.close(() => r()));

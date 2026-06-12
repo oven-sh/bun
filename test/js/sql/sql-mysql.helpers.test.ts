@@ -260,6 +260,18 @@ describeWithContainer(
         const result = await sql`SELECT * FROM ${sql(random_name)}`;
         expect(result).toEqual([{ id: 1, foo: "hello3", email: "bunny3@bun.com" }]);
       }
+
+      // keyword whitespace is flexible too
+      {
+        const data = { foo: "hello4", email: "bunny4@bun.com" };
+        await sql`
+      INSERT INTO ${sql(random_name)} ${sql({ id: 1, ...data })}
+      on duplicate key
+      UPDATE ${sql(data)}
+    `;
+        const result = await sql`SELECT * FROM ${sql(random_name)}`;
+        expect(result).toEqual([{ id: 1, foo: "hello4", email: "bunny4@bun.com" }]);
+      }
     });
     test("update helper with IN and column name", async () => {
       await using sql = new SQL({ ...getOptions(), max: 1 });

@@ -1783,10 +1783,8 @@ function parseOptions(
         // Accept "false"/"0" (case-insensitive) to disable; anything else
         // (including "true"/"1" or empty) leaves the default enabled. Only
         // consumed by the MySQL adapter. `toJSON()` returns an array when a
-        // key appears more than once (`?foundRows=a&foundRows=b`) — `String()`
-        // coerces that to `"a,b"` so we never call `.toLowerCase` on a non-
-        // string. Matches the `sslmode` branch's coercion via
-        // `normalizeSSLMode`.
+        // key appears more than once (`?foundRows=a&foundRows=b`), so coerce
+        // through `String()` before calling `.toLowerCase`.
         const value = String(queryObject[key]).toLowerCase();
         foundRows = !(value === "false" || value === "0");
       } else {

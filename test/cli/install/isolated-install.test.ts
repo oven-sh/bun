@@ -848,17 +848,16 @@ test("optional ranged peer keeps its hoisted-tree binding across installs from b
   const bunDir = join(packageDir, "node_modules", ".bun");
   const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));
   expect(freshEntries).toHaveLength(1);
-  const freshVersion = (
-    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()
-  ).version;
+  const freshVersion = (await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json())
+    .version;
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"))).toEqual(freshEntries);
-  expect(
-    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: freshVersion });
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: freshVersion,
+  });
 });
 
 test("overridden peer dependency keeps the override across installs from bun.lock", async () => {
@@ -892,17 +891,17 @@ test("overridden peer dependency keeps the override across installs from bun.loc
   const bunDir = join(packageDir, "node_modules", ".bun");
   const entryName = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
   expect(await readdirSorted(bunDir)).toContain(entryName);
-  expect(
-    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.0.1" });
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
-  expect(
-    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.0.1" });
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
 });
 
 describe("existing node_modules, missing node_modules/.bun", () => {

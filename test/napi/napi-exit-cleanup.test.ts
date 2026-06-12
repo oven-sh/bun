@@ -89,13 +89,14 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The addon prints the accumulated LIFO order once the parent (id 0) is
     // finalized; stdout also carries the test runner's version banner, so
-    // assert the exact line rather than the whole stream.
+    // assert the exact line rather than the whole stream. No trailing
+    // newline in the needle: the addon's printf("\n") arrives as CRLF on
+    // Windows (text-mode CRT stdout).
     expect(stdout).toContain(
       "finalize order: " +
         Array.from({ length: 32 }, (_, i) => 32 - i)
           .concat(0)
-          .join(" ") +
-        "\n",
+          .join(" "),
     );
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);

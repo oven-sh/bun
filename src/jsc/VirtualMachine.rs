@@ -209,7 +209,8 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// Set once `run_cleanup_hooks()` (called from `on_exit()` and
+    /// `global_exit()`) has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
     /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would

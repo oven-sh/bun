@@ -1504,7 +1504,7 @@ impl VirtualMachine {
     }
 
     /// Final collection for `bun test`'s exit paths, which never run
-    /// `on_exit()`. ASAN lanes leak-check at exit (LSAN_OPTIONS
+    /// `on_exit()`. ASAN lanes leak-check at exit (ASAN_OPTIONS
     /// `detect_leaks=1` + `abort_on_error=1`), and without a collection
     /// between the last test and `exit()`, the final file's GC-finalizer-owned
     /// Rust boxes (bun:test `Expect` wrappers and the `RefData` pinning that

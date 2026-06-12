@@ -302,10 +302,11 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(
       'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
     );
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 

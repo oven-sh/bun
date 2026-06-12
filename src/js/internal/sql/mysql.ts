@@ -127,13 +127,14 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
     super.handleConnected(err);
   }
 
-  protected startConnection() {
-    createPooledConnectionHandle(
+  protected async startConnection() {
+    // store the handle right away (not only in handleConnected) so a forced
+    // pool close can tear down a connection whose handshake is in flight
+    this.connection = await createPooledConnectionHandle(
       createMySQLConnection,
       this.connectionInfo,
       this.handleConnected.bind(this),
       this.handleClose.bind(this),
-      true,
     );
   }
 

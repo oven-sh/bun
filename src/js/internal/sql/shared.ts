@@ -604,7 +604,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   }
 
   /** Starts (or restarts) the driver-specific native connection. */
-  protected abstract startConnection(): void;
+  protected abstract startConnection(): Promise<void>;
   /** Wraps a driver error options object into the driver's Error class. */
   protected abstract wrapError(error: any): Error;
   /** Whether the given error code is an authentication-style error that retrying cannot fix. */
@@ -616,13 +616,18 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
-  #beginConnecting() {
+  async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    this.startConnection();
+    await this.startConnection();
+    if (this.onFinish !== null) {
+      // the pool was force-closed while the native handle was being created;
+      // close it now so onClose fires and onFinish settles
+      this.connection?.close();
+    }
   }
 
   protected handleConnected(err: any) {
@@ -630,30 +635,35 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       err = this.wrapError(err);
     }
     const connectionInfo = this.connectionInfo;
-    if (connectionInfo?.onconnect) {
-      connectionInfo.onconnect(err);
-    }
-    this.storedError = err;
-    if (!err) {
-      this.connectStartedAt = 0;
-      this.flags |= PooledConnectionFlags.canBeConnected;
-    }
-    this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
-    const onFinish = this.onFinish;
-    if (onFinish) {
-      this.queryCount = 0;
-      this.flags &= ~PooledConnectionFlags.reserved;
-      this.flags &= ~PooledConnectionFlags.preReserved;
-
-      // pool is closed, lets finish the connection
-      if (err) {
-        onFinish(err);
-      } else {
-        this.connection?.close();
+    try {
+      // user code; a throw must not abort the pool bookkeeping below
+      // (the exception keeps propagating after the finally block runs)
+      if (connectionInfo?.onconnect) {
+        connectionInfo.onconnect(err);
       }
-      return;
+    } finally {
+      this.storedError = err;
+      if (!err) {
+        this.connectStartedAt = 0;
+        this.flags |= PooledConnectionFlags.canBeConnected;
+      }
+      this.state = err ? PooledConnectionState.closed : PooledConnectionState.connected;
+      const onFinish = this.onFinish;
+      if (onFinish) {
+        this.queryCount = 0;
+        this.flags &= ~PooledConnectionFlags.reserved;
+        this.flags &= ~PooledConnectionFlags.preReserved;
+
+        // pool is closed, lets finish the connection
+        if (err) {
+          onFinish(err);
+        } else {
+          this.connection?.close();
+        }
+      } else {
+        this.adapter.release(this, true);
+      }
     }
-    this.adapter.release(this, true);
   }
 
   protected handleClose(err: any) {
@@ -727,29 +737,34 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   #finishClose(err: any) {
     const connectionInfo = this.connectionInfo;
-    if (connectionInfo?.onclose) {
-      connectionInfo.onclose(err);
-    }
-    this.state = PooledConnectionState.closed;
-    this.storedError = err;
+    try {
+      // user code; a throw must not abort the pool bookkeeping below
+      // (the exception keeps propagating after the finally block runs)
+      if (connectionInfo?.onclose) {
+        connectionInfo.onclose(err);
+      }
+    } finally {
+      this.state = PooledConnectionState.closed;
+      this.storedError = err;
 
-    // remove from ready connections if its there
-    this.adapter.readyConnections.delete(this);
-    const queries = new Set(this.queries);
-    this.queries?.clear?.();
-    this.queryCount = 0;
-    this.flags &= ~PooledConnectionFlags.reserved;
+      // remove from ready connections if its there
+      this.adapter.readyConnections.delete(this);
+      const queries = new Set(this.queries);
+      this.queries?.clear?.();
+      this.queryCount = 0;
+      this.flags &= ~PooledConnectionFlags.reserved;
 
-    // notify all queries that the connection is closed
-    for (const onClose of queries) {
-      onClose(err);
-    }
-    const onFinish = this.onFinish;
-    if (onFinish) {
-      onFinish(err);
-    }
+      // notify all queries that the connection is closed
+      for (const onClose of queries) {
+        onClose(err);
+      }
+      const onFinish = this.onFinish;
+      if (onFinish) {
+        onFinish(err);
+      }
 
-    this.adapter.release(this, true);
+      this.adapter.release(this, true);
+    }
   }
 
   onClose(onClose: (err: Error) => void) {
@@ -819,9 +834,6 @@ async function createPooledConnectionHandle<ConnectionHandle>(
   options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
   onConnected: (err: Error | null, connection: ConnectionHandle) => void,
   onClose: (err: Error | null) => void,
-  // MySQL defers synchronous creation failures to the next tick; Postgres
-  // reports them synchronously. Each driver keeps its pre-existing timing.
-  deferSyncCloseError: boolean,
 ): Promise<ConnectionHandle | null> {
   const {
     hostname,
@@ -873,11 +885,9 @@ async function createPooledConnectionHandle<ConnectionHandle>(
       !!allowPublicKeyRetrieval,
     );
   } catch (e) {
-    if (deferSyncCloseError) {
-      process.nextTick(closeNT, onClose, e);
-    } else {
-      onClose(e as Error);
-    }
+    // defer so the callback never runs while the adapter is still filling
+    // this.connections (it scans that array)
+    process.nextTick(closeNT, onClose, e);
     return null;
   }
 }

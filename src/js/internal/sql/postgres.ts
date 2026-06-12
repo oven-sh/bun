@@ -354,7 +354,6 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
       this.connectionInfo,
       this.handleConnected.bind(this),
       this.handleClose.bind(this),
-      false,
     );
   }
 

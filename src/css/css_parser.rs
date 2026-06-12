@@ -1313,7 +1313,7 @@ mod rule_parsers {
             name: &[u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // phf-style dispatch on at-rule name (case-insensitive).
+            // Case-insensitive dispatch on at-rule name.
             crate::match_ignore_ascii_case! { name, {
                 b"import" => {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
@@ -3674,6 +3674,17 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
+    /// See `ParserInput::token_list_parse_failures`.
+    #[inline]
+    pub fn token_list_parse_failures(&self) -> u64 {
+        self.input.token_list_parse_failures
+    }
+
+    #[inline]
+    pub fn note_token_list_parse_failure(&mut self) {
+        self.input.token_list_parse_failures += 1;
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -4218,6 +4229,15 @@ pub struct ParserInput<'a> {
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
     math_fn_parse_failures: u64,
+    /// Monotonic count of raw token-list parse failures
+    /// (`TokenList::parse_into`). A token-list parse is context-free: it
+    /// fails or succeeds the same way every time it runs over the same
+    /// tokens at the same block-nesting depth. Backtracking callers sample
+    /// this before an alternative that buffers token lists internally; if it
+    /// grew, re-parsing the same range through another token-list-based
+    /// alternative is guaranteed to fail again, so they propagate the error
+    /// instead of retrying (which is exponential in the nesting depth).
+    token_list_parse_failures: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4245,6 +4265,7 @@ impl<'a> ParserInput<'a> {
             nesting_depth: 0,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
+            token_list_parse_failures: 0,
         }
     }
 }
@@ -6018,7 +6039,8 @@ pub mod color {
 
     pub type RGB = (u8, u8, u8);
 
-    pub static NAMED_COLORS: phf::Map<&'static [u8], RGB> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+    pub static NAMED_COLORS: RGB = {
         b"aliceblue" => (240, 248, 255),
         b"antiquewhite" => (250, 235, 215),
         b"aqua" => (0, 255, 255),
@@ -6168,6 +6190,7 @@ pub mod color {
         b"yellow" => (255, 255, 0),
         b"yellowgreen" => (154, 205, 50),
     };
+    }
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>

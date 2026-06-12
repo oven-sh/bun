@@ -16,7 +16,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
 };
 use bun_paths::resolve_path::{self as Path, platform};
@@ -53,8 +53,10 @@ pub struct FSWatcher {
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
     poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
-    // TODO: bare JSValue heap field — self-wrapper; consider JsRef.
-    pub(super) js_this: Cell<JSValue>,
+    /// JS wrapper object, held weak: the wrapper is rooted by
+    /// `has_pending_activity()` while the watcher is open; a strong ref here
+    /// would self-pin it forever. Cleared by `detach()`.
+    js_this: JsCell<JsRef>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
 
@@ -708,9 +710,10 @@ impl AbortListener for FSWatcher {
 
 impl FSWatcher {
     /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`.
+    /// Returns `UNDEFINED` if the wrapper reference has been cleared.
     #[inline]
     pub fn js_this(&self) -> JSValue {
-        self.js_this.get()
+        self.js_this.get_or_undefined()
     }
 
     /// `FSWatcher.initJS`. Takes `*mut Self` so the
@@ -734,7 +737,7 @@ impl FSWatcher {
         // `heap::take(this)`.
         let js_this = unsafe { Self::to_js_ptr(this, &this_ref.global_this) };
         js_this.ensure_still_alive();
-        this_ref.js_this.set(js_this);
+        this_ref.js_this.set(JsRef::init_weak(js_this));
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
         if let Some(s) = this_ref.signal.get() {
@@ -780,8 +783,8 @@ impl FSWatcher {
         // so both calls are inlined at the end of this function.
 
         err.ensure_still_alive();
-        let js_this = self.js_this.get();
-        if !js_this.is_empty() {
+        let js_this = self.js_this.try_get();
+        if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
@@ -812,8 +815,8 @@ impl FSWatcher {
         }
         // Reshaped for borrowck — `defer this.close()` moved to fn end.
 
-        let js_this = self.js_this.get();
-        if !js_this.is_empty() {
+        let js_this = self.js_this.try_get();
+        if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
                 listener.ensure_still_alive();
@@ -830,10 +833,9 @@ impl FSWatcher {
     }
 
     pub fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
-        let js_this = self.js_this.get();
-        if js_this.is_empty() {
+        let Some(js_this) = self.js_this.try_get() else {
             return;
-        }
+        };
         let Some(listener) = js::listener_get_cached(js_this) else {
             return;
         };
@@ -842,10 +844,9 @@ impl FSWatcher {
 
     pub fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) {
         debug_assert!(EVENT_TYPE != EventType::Error);
-        let js_this = self.js_this.get();
-        if js_this.is_empty() {
+        let Some(js_this) = self.js_this.try_get() else {
             return;
-        }
+        };
         let Some(listener) = js::listener_get_cached(js_this) else {
             return;
         };
@@ -944,11 +945,13 @@ impl FSWatcher {
         self.mutex.lock();
         if !self.closed.get() {
             self.closed.set(true);
-            let js_this = self.js_this.get();
+            // Read before `detach()` clears the ref; pending activity still
+            // roots the wrapper for the close-event emit below.
+            let js_this = self.js_this.try_get();
             self.mutex.unlock();
             self.detach();
 
-            if !js_this.is_empty() {
+            if let Some(js_this) = js_this {
                 if let Some(listener) = js::listener_get_cached(js_this) {
                     // `closed` is already true so `refTask()` would return false without
                     // incrementing; bump the counter directly so the `unrefTask()` below is
@@ -1023,7 +1026,8 @@ impl FSWatcher {
             signal.clean_native_bindings(ctx_ptr);
         }
 
-        self.js_this.set(JSValue::ZERO);
+        // Idempotent: `detach()` can run more than once (close + finalize).
+        self.js_this.set(JsRef::empty());
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1083,7 +1087,7 @@ impl FSWatcher {
             persistent: Cell::new(args.persistent),
             path_watcher: Cell::new(None),
             global_this: GlobalRef::from(args.global_this),
-            js_this: Cell::new(JSValue::ZERO),
+            js_this: JsCell::new(JsRef::empty()),
             encoding: args.encoding,
             closed: Cell::new(false),
             verbose: args.verbose,

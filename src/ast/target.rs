@@ -4,7 +4,6 @@
 //! `bun_options_types::TargetExt` (would back-edge into the schema crate).
 
 use enum_map::Enum;
-use phf;
 
 /// Defaults to `Browser`; keep `Default` so resolver can field-default it.
 #[repr(u8)]
@@ -15,18 +14,24 @@ pub enum Target {
     Bun,
     BunMacro,
     Node,
-    /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
-    BakeServerComponentsSsr,
+    /// The separate SSR graph when server-components bundling is configured
+    /// with `ServerComponents.separate_ssr_graph`. Resolves like [`Target::Bun`].
+    ServerComponentsSsr,
 }
 
-impl Target {
-    pub const MAP: phf::Map<&'static [u8], Target> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static TARGET_MAP: Target = {
         b"browser" => Target::Browser,
         b"bun" => Target::Bun,
         b"bun_macro" => Target::BunMacro,
         b"macro" => Target::BunMacro,
         b"node" => Target::Node,
     };
+}
+
+impl Target {
+    /// Same lookup table as [`TARGET_MAP`] (the type is a ZST).
+    pub const MAP: __ComptimeStringMap_TARGET_MAP = __ComptimeStringMap_TARGET_MAP(());
 
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
     // `to_api`/`from(api)` live in `bun_options_types::TargetExt`.
@@ -35,7 +40,7 @@ impl Target {
     pub fn is_server_side(self) -> bool {
         matches!(
             self,
-            Target::BunMacro | Target::Node | Target::Bun | Target::BakeServerComponentsSsr
+            Target::BunMacro | Target::Node | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -43,7 +48,7 @@ impl Target {
     pub fn is_bun(self) -> bool {
         matches!(
             self,
-            Target::BunMacro | Target::Bun | Target::BakeServerComponentsSsr
+            Target::BunMacro | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -88,7 +93,7 @@ impl Target {
         match self {
             Target::Node => NODE,
             Target::Browser => BROWSER,
-            Target::Bun | Target::BunMacro | Target::BakeServerComponentsSsr => BUN,
+            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => BUN,
         }
     }
 
@@ -99,7 +104,7 @@ impl Target {
             Target::Node => &[b"node"],
             Target::Browser => &[b"browser", b"module"],
             Target::Bun => &[b"bun", b"node"],
-            Target::BakeServerComponentsSsr => &[b"bun", b"node"],
+            Target::ServerComponentsSsr => &[b"bun", b"node"],
             Target::BunMacro => &[b"macro", b"bun", b"node"],
         }
     }

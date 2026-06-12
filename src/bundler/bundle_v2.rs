@@ -266,7 +266,7 @@ impl<'a> BundleV2<'a> {
         unsafe {
             match target {
                 Target::Browser => self.client_transpiler.unwrap().assume_mut(),
-                Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
+                Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
         }
@@ -2460,9 +2460,9 @@ pub mod bv2_impl {
                         .unwrap()
                         .separate_ssr_graph;
                     let (ta, tb) = match target {
-                        Target::Browser => (main_target, Target::BakeServerComponentsSsr),
-                        Target::BakeServerComponentsSsr => (main_target, Target::Browser),
-                        _ => (Target::Browser, Target::BakeServerComponentsSsr),
+                        Target::Browser => (main_target, Target::ServerComponentsSsr),
+                        Target::ServerComponentsSsr => (main_target, Target::Browser),
+                        _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
                         .put(&key_text, idx)
@@ -3025,7 +3025,7 @@ pub mod bv2_impl {
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
-                        target: Target::BakeServerComponentsSsr,
+                        target: Target::ServerComponentsSsr,
                     },
                 ];
 
@@ -3095,11 +3095,8 @@ pub mod bv2_impl {
                     )?;
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &mut resolved,
-                        true,
-                        Target::BakeServerComponentsSsr,
-                    )?;
+                    let _ =
+                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
                 }
             }
             Ok(())
@@ -3549,7 +3546,7 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::BakeServerComponentsSsr
+            let jsx = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
                     .as_ref()
@@ -5730,9 +5727,13 @@ pub mod bv2_impl {
                 // `graph.ast.items(.import_records)[importer_source_index]` when
                 // they complete. Without this, the graph entry stays at
                 // JSAst.empty and the deferred plugin callback index-out-of-
-                // bounds crashes in BundleV2.onResolve / runResolver. The linker
-                // never runs because `transpiler.log.errors > 0` aborts the
-                // build before link time, so saving the AST is safe.
+                // bounds crashes in BundleV2.onResolve / runResolver. In a
+                // non-dev build the linker never runs after this error
+                // (`transpiler.log.errors > 0` aborts before link time). The
+                // dev server does link with failed files, but it filters them
+                // out by their empty `parts` list and never reads a failed
+                // file's import_records, so saving them is safe — unlike the
+                // `css` slot below.
                 let result_heap = *result.ast.import_records.allocator();
                 this.graph.ast.items_import_records_mut()[source_index.0 as usize] =
                     core::mem::replace(
@@ -5740,9 +5741,19 @@ pub mod bv2_impl {
                         bun_alloc::ArenaVec::new_in(result_heap),
                     );
 
-                // Move the CSS stylesheet onto the graph row so teardown can find
-                // and drop it — the `Success` arm that would normally do this is skipped.
-                this.graph.ast.items_css_mut()[source_index.0 as usize] = result.ast.css.take();
+                // Drop the parsed stylesheet now — the `Success` arm that would
+                // normally move it onto the graph row is skipped. It must not be
+                // parked on the graph row either: the dev server proceeds with
+                // failed files and treats a populated `css` slot as a
+                // successfully parsed CSS file (CSS entry point discovery and
+                // import ordering in `finish_from_bake_dev_server`), so a parked
+                // stylesheet would produce a CSS chunk for a failed file while
+                // `graph.css_file_count` stays 0.
+                if let Some(css_ref) = result.ast.css.take() {
+                    // SAFETY: live arena pointer, uniquely owned here (the graph
+                    // row for this file stays `None`); dropped exactly once.
+                    unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
+                }
 
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
@@ -5975,7 +5986,7 @@ pub mod bv2_impl {
                     (
                         self.ssr_transpiler,
                         bake::Graph::Ssr,
-                        Target::BakeServerComponentsSsr,
+                        Target::ServerComponentsSsr,
                     )
                 } else {
                     (
@@ -7086,7 +7097,7 @@ pub mod bv2_impl {
                                 &this
                                     .path_with_pretty_initialized(
                                         &ssr_source.path,
-                                        Target::BakeServerComponentsSsr,
+                                        Target::ServerComponentsSsr,
                                     )
                                     .expect("oom"),
                             );
@@ -7094,7 +7105,7 @@ pub mod bv2_impl {
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
                                     source_loader,
-                                    Target::BakeServerComponentsSsr,
+                                    Target::ServerComponentsSsr,
                                 )
                                 .expect("oom");
 
@@ -7501,7 +7512,7 @@ pub mod bv2_impl {
                 false,
             >(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
                 let _ = fbs.write_all(b"ssr:");
                 let _ = fbs.write_all(rel);
@@ -7514,7 +7525,7 @@ pub mod bv2_impl {
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let _ = fbs.write_all(b"ssr:");
             }
             let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);

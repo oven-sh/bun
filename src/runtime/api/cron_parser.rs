@@ -15,7 +15,6 @@
 
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JsResult};
-use phf::phf_map;
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {
@@ -245,24 +244,28 @@ fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
     None
 }
 
-static WEEKDAY_MAP: phf::Map<&'static [u8], u8> = phf_map! {
-    b"sun" => 0,       b"mon" => 1,        b"tue" => 2,
-    b"wed" => 3,       b"thu" => 4,        b"fri" => 5,
-    b"sat" => 6,       b"sunday" => 0,     b"monday" => 1,
-    b"tuesday" => 2,   b"wednesday" => 3,  b"thursday" => 4,
-    b"friday" => 5,    b"saturday" => 6,
-};
+bun_core::comptime_string_map! {
+    static WEEKDAY_MAP: u8 = {
+        b"sun" => 0,       b"mon" => 1,        b"tue" => 2,
+        b"wed" => 3,       b"thu" => 4,        b"fri" => 5,
+        b"sat" => 6,       b"sunday" => 0,     b"monday" => 1,
+        b"tuesday" => 2,   b"wednesday" => 3,  b"thursday" => 4,
+        b"friday" => 5,    b"saturday" => 6,
+    };
+}
 
-static MONTH_MAP: phf::Map<&'static [u8], u8> = phf_map! {
-    b"jan" => 1,        b"feb" => 2,        b"mar" => 3,
-    b"apr" => 4,        b"may" => 5,        b"jun" => 6,
-    b"jul" => 7,        b"aug" => 8,        b"sep" => 9,
-    b"oct" => 10,       b"nov" => 11,       b"dec" => 12,
-    b"january" => 1,    b"february" => 2,   b"march" => 3,
-    b"april" => 4,      b"june" => 6,       b"july" => 7,
-    b"august" => 8,     b"september" => 9,  b"october" => 10,
-    b"november" => 11,  b"december" => 12,
-};
+bun_core::comptime_string_map! {
+    static MONTH_MAP: u8 = {
+        b"jan" => 1,        b"feb" => 2,        b"mar" => 3,
+        b"apr" => 4,        b"may" => 5,        b"jun" => 6,
+        b"jul" => 7,        b"aug" => 8,        b"sep" => 9,
+        b"oct" => 10,       b"nov" => 11,       b"dec" => 12,
+        b"january" => 1,    b"february" => 2,   b"march" => 3,
+        b"april" => 4,      b"june" => 6,       b"july" => 7,
+        b"august" => 8,     b"september" => 9,  b"october" => 10,
+        b"november" => 11,  b"december" => 12,
+    };
+}
 
 // ============================================================================
 // Field parsing

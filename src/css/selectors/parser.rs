@@ -1253,8 +1253,11 @@ impl<'a> SelectorParser<'a> {
         // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
-        // versus phf's hash + 2 table loads + slice compare. Only len==19 has
-        // two candidates, disambiguated by one full slice compare each.
+        // versus a hash lookup's hash + table load + slice compare. Only
+        // len==19 has two candidates, disambiguated by one full slice compare
+        // each. Stays a hand-rolled `match` (not `comptime_string_map!`)
+        // because each arm parses `input` differently rather than yielding a
+        // constant.
         match name.len() {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
@@ -4228,7 +4231,7 @@ impl AttributeFlags {
             }
             AttributeFlags::CaseSensitivityDependsOnName => {
                 // <https://html.spec.whatwg.org/multipage/#selectors>
-                if !have_namespace && is_html_case_insensitive_attribute(local_name) {
+                if !have_namespace && HTML_CASE_INSENSITIVE_ATTRIBUTES.contains(local_name) {
                     return attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument;
                 }
                 attrs::ParsedCaseSensitivity::CaseSensitive
@@ -4237,85 +4240,64 @@ impl AttributeFlags {
     }
 }
 
-/// HTML attributes whose value is matched ASCII-case-insensitively when no
-/// explicit `s`/`i` flag is given on the attribute selector.
-/// <https://html.spec.whatwg.org/multipage/#selectors>
-///
-/// PERF: an earlier `phf::Set` implementation paid, on every
-/// `[attr=val]` selector, a 32-bit FNV-ish hash over the name plus a
-/// bounds check, indirect load, and full key compare — measurable in CSS
-/// bundling profiles where the dominant inputs (`class`, `href`, `data-*`,
-/// `aria-*`) are *misses*. A 2-level open-coded dispatch (length →
-/// first-byte → exact bytes) rejects those misses in ≤2 scalar compares and
-/// resolves hits in ≤3 short slice compares; the 46-entry table is small
-/// enough that LLVM unrolls each leaf into a single word/SIMD compare.
-#[inline]
-fn is_html_case_insensitive_attribute(name: &[u8]) -> bool {
-    // 46 entries, lengths 3..=14. Buckets at len 5/7/8 are dense (11/7/8
-    // entries) so a flat `matches!` per length would degrade to a linear
-    // scan there; the inner first-byte gate keeps every leaf at ≤3 candidates.
-    match name.len() {
-        3 => match name[0] {
-            b'd' => name == b"dir",
-            b'r' => matches!(name, b"rel" | b"rev"),
-            _ => false,
-        },
-        4 => match name[0] {
-            b'a' => name == b"axis",
-            b'f' => name == b"face",
-            b'l' => matches!(name, b"lang" | b"link"),
-            b't' => matches!(name, b"text" | b"type"),
-            _ => false,
-        },
-        5 => match name[0] {
-            b'a' => matches!(name, b"align" | b"alink"),
-            b'c' => matches!(name, b"clear" | b"color"),
-            b'd' => name == b"defer",
-            b'f' => name == b"frame",
-            b'm' => name == b"media",
-            b'r' => name == b"rules",
-            b's' => matches!(name, b"scope" | b"shape"),
-            b'v' => name == b"vlink",
-            _ => false,
-        },
-        6 => match name[0] {
-            b'a' => name == b"accept",
-            b'm' => name == b"method",
-            b'n' => matches!(name, b"nohref" | b"nowrap"),
-            b't' => name == b"target",
-            b'v' => name == b"valign",
-            _ => false,
-        },
-        7 => match name[0] {
-            b'b' => name == b"bgcolor",
-            b'c' => matches!(name, b"charset" | b"checked" | b"compact"),
-            b'd' => name == b"declare",
-            b'e' => name == b"enctype",
-            b'n' => name == b"noshade",
-            _ => false,
-        },
-        8 => match name[0] {
-            // All 8 entries have distinct first bytes — single compare each.
-            b'c' => name == b"codetype",
-            b'd' => name == b"disabled",
-            b'h' => name == b"hreflang",
-            b'l' => name == b"language",
-            b'm' => name == b"multiple",
-            b'n' => name == b"noresize",
-            b'r' => name == b"readonly",
-            b's' => name == b"selected",
-            _ => false,
-        },
-        9 => match name[0] {
-            b'd' => name == b"direction",
-            b's' => name == b"scrolling",
-            b'v' => name == b"valuetype",
-            _ => false,
-        },
-        10 => name == b"http_equiv",
-        14 => name == b"accept_charset",
-        _ => false,
-    }
+bun_core::comptime_string_set! {
+    /// HTML attributes whose value is matched ASCII-case-insensitively when no
+    /// explicit `s`/`i` flag is given on the attribute selector.
+    /// <https://html.spec.whatwg.org/multipage/#selectors>
+    ///
+    /// PERF: probed on every `[attr=val]` selector, where the dominant inputs
+    /// (`class`, `href`, `data-*`, `aria-*`) are *misses*. The generated
+    /// length dispatch plus constant-length compare trees rejects those
+    /// without hashing; LLVM lowers each leaf to word loads compared against
+    /// immediates.
+    static HTML_CASE_INSENSITIVE_ATTRIBUTES = {
+        b"dir",
+        b"rel",
+        b"rev",
+        b"axis",
+        b"face",
+        b"lang",
+        b"link",
+        b"text",
+        b"type",
+        b"align",
+        b"alink",
+        b"clear",
+        b"color",
+        b"defer",
+        b"frame",
+        b"media",
+        b"rules",
+        b"scope",
+        b"shape",
+        b"vlink",
+        b"accept",
+        b"method",
+        b"nohref",
+        b"nowrap",
+        b"target",
+        b"valign",
+        b"bgcolor",
+        b"charset",
+        b"checked",
+        b"compact",
+        b"declare",
+        b"enctype",
+        b"noshade",
+        b"codetype",
+        b"disabled",
+        b"hreflang",
+        b"language",
+        b"multiple",
+        b"noresize",
+        b"readonly",
+        b"selected",
+        b"direction",
+        b"scrolling",
+        b"valuetype",
+        b"http_equiv",
+        b"accept_charset",
+    };
 }
 
 /// A [view transition part name](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#typedef-pt-name-selector).

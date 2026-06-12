@@ -211,43 +211,47 @@ impl WebSocketServerContext {
     }
 }
 
-static COMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
-    b"disable" => 0,
-    b"shared" => uws::SHARED_COMPRESSOR,
-    b"dedicated" => uws::DEDICATED_COMPRESSOR,
-    b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
-    b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
-    b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
-    b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
-    b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
-    b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
-    b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
-    b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
-};
+bun_core::comptime_string_map! {
+    static COMPRESS_TABLE: i32 = {
+        b"disable" => 0,
+        b"shared" => uws::SHARED_COMPRESSOR,
+        b"dedicated" => uws::DEDICATED_COMPRESSOR,
+        b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
+        b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
+        b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
+        b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
+        b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
+        b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
+        b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
+        b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
+    };
+}
 
-static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
-    b"disable" => 0,
-    b"shared" => uws::SHARED_DECOMPRESSOR,
-    b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-    b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
-    b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
-    b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
-    b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
-    b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
-    b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
-    b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
-    b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
-};
+bun_core::comptime_string_map! {
+    static DECOMPRESS_TABLE: i32 = {
+        b"disable" => 0,
+        b"shared" => uws::SHARED_DECOMPRESSOR,
+        b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
+        b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
+        b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
+        b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
+        b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
+        b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
+        b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
+        b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
+        b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
+    };
+}
 
 // The key may be a possibly-UTF-16 ZigString. Derive a UTF-8 view
 // first (`to_slice_fast` allocates only for 16-bit-backed strings) so
 // UTF-16-backed option strings like `compression: "16KB"` still match.
-fn lookup_zig_string(
-    table: &phf::Map<&'static [u8], i32>,
+fn lookup_zig_string<M: bun_core::comptime_string_map::ComptimeStringMap<Value = i32>>(
+    table: &M,
     key: &bun_core::ZigString,
 ) -> Option<i32> {
     let utf8 = key.to_slice_fast();
-    table.get(utf8.slice()).copied()
+    table.lookup(utf8.slice()).copied()
 }
 
 pub(crate) fn on_create(

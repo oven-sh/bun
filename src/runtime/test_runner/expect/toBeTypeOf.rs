@@ -2,16 +2,18 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
-    b"function" => b"function",
-    b"object" => b"object",
-    b"bigint" => b"bigint",
-    b"boolean" => b"boolean",
-    b"number" => b"number",
-    b"string" => b"string",
-    b"symbol" => b"symbol",
-    b"undefined" => b"undefined",
-};
+bun_core::comptime_string_map! {
+    static JS_TYPE_OF_MAP: &'static [u8] = {
+        b"function" => b"function",
+        b"object" => b"object",
+        b"bigint" => b"bigint",
+        b"boolean" => b"boolean",
+        b"number" => b"number",
+        b"string" => b"string",
+        b"symbol" => b"symbol",
+        b"undefined" => b"undefined",
+    };
+}
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.

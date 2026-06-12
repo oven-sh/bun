@@ -99,10 +99,8 @@ pub enum Protocol {
     StandaloneTlsUnix,
 }
 
-impl Protocol {
-    // Note: `static` items are not allowed in `impl` blocks; phf maps are
-    // const-constructible, so this is an associated const (still `Protocol::MAP`).
-    pub const MAP: phf::Map<&'static [u8], Protocol> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static PROTOCOL_MAP: Protocol = {
         b"valkey" => Protocol::Standalone,
         b"valkeys" => Protocol::StandaloneTls,
         b"valkey+tls" => Protocol::StandaloneTls,
@@ -114,6 +112,12 @@ impl Protocol {
         b"redis+unix" => Protocol::StandaloneUnix,
         b"redis+tls+unix" => Protocol::StandaloneTlsUnix,
     };
+}
+
+impl Protocol {
+    // `static` items are not allowed in `impl` blocks, so the map lives at
+    // module level; this keeps the `Protocol::MAP` path for call sites.
+    pub const MAP: &'static __ComptimeStringMap_PROTOCOL_MAP = &PROTOCOL_MAP;
 
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)

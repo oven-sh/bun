@@ -450,7 +450,7 @@ pub(crate) unsafe extern "C" fn Bun__fetchBuiltinModule(
 }
 
 /// Linear scan over the `BUN_ALIASES` const tables (PERF: could replace with
-/// phf).
+/// a `comptime_string_map!`).
 #[inline]
 fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {

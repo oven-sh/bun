@@ -9,7 +9,6 @@
 use crate::schema::api;
 use bun_ast::{Loader, LoaderOptional, Target};
 use bun_collections;
-use phf;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -54,7 +53,18 @@ impl Format {
         self == Format::Esm
     }
 
-    pub const MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
+    pub const MAP: __ComptimeStringMap_FORMAT_MAP = __ComptimeStringMap_FORMAT_MAP(());
+
+    // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.
+
+    pub fn from_string(slice: &[u8]) -> Option<Format> {
+        Self::MAP.get(slice).copied()
+    }
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static FORMAT_MAP: Format = {
         b"esm" => Format::Esm,
         b"cjs" => Format::Cjs,
         b"iife" => Format::Iife,
@@ -62,13 +72,6 @@ impl Format {
         // TODO: Disable this outside of debug builds
         b"internal_bake_dev" => Format::InternalBakeDev,
     };
-
-    // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.
-
-    pub fn from_string(slice: &[u8]) -> Option<Format> {
-        // Exact byte equality, which is phf's default lookup.
-        Self::MAP.get(slice).copied()
-    }
 }
 
 #[derive(Default)]
@@ -116,7 +119,12 @@ pub enum ModuleType {
 }
 
 impl ModuleType {
-    pub const LIST: phf::Map<&'static [u8], ModuleType> = phf::phf_map! {
+    pub const LIST: __ComptimeStringMap_MODULE_TYPE_LIST = __ComptimeStringMap_MODULE_TYPE_LIST(());
+}
+
+bun_core::comptime_string_map! {
+    #[doc(hidden)]
+    pub static MODULE_TYPE_LIST: ModuleType = {
         b"commonjs" => ModuleType::Cjs,
         b"module" => ModuleType::Esm,
     };
@@ -144,7 +152,7 @@ impl TargetExt for Target {
         match self {
             Target::Node => api::Target::node,
             Target::Browser => api::Target::browser,
-            Target::Bun | Target::BakeServerComponentsSsr => api::Target::bun,
+            Target::Bun | Target::ServerComponentsSsr => api::Target::bun,
             Target::BunMacro => api::Target::bun_macro,
         }
     }
@@ -162,7 +170,8 @@ impl TargetExt for Target {
 
 // ─── Loader: schema-coupled extension methods ─────────────────────────────
 
-pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map! {
+bun_core::comptime_string_map! {
+pub static LOADER_API_NAMES: api::Loader = {
     b"js" => api::Loader::js,
     b"mjs" => api::Loader::js,
     b"cjs" => api::Loader::js,
@@ -190,6 +199,7 @@ pub const LOADER_API_NAMES: phf::Map<&'static [u8], api::Loader> = phf::phf_map!
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
 };
+}
 
 /// `schema::api`-coupled methods on [`bun_ast::Loader`].
 pub trait LoaderExt: sealed::Sealed {

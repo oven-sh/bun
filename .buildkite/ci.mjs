@@ -306,7 +306,17 @@ function getRetry() {
     manual: {
       permit_on_passed: true,
     },
-    automatic: false,
+    // Self-heal infra deaths once instead of leaving the build failed until a
+    // human notices and clicks retry:
+    //   -1  = agent lost / process killed (box died, agent restarted)
+    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
+    // User-canceled jobs are state=canceled, which never triggers automatic
+    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
+    // caps the cost when a suite genuinely crashes with these statuses.
+    automatic: [
+      { exit_status: -1, limit: 1 },
+      { exit_status: 255, limit: 1 },
+    ],
   };
 }
 
@@ -702,13 +712,13 @@ function needsBaselineVerification(platform) {
  */
 function getEmulatorBinary(platform) {
   const { os, arch } = platform;
-  if (os === "windows") return "sde-external/sde.exe";
+  // Intel SDE is baked into the Windows image by scripts/bootstrap.ps1
+  // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
+  // that blocks non-browser clients, so it cannot be downloaded at job time.
+  if (os === "windows") return "C:\\intel-sde\\sde.exe";
   if (arch === "aarch64") return "qemu-aarch64-static";
   return "qemu-x86_64-static";
 }
-
-const SDE_VERSION = "9.58.0-2025-06-16";
-const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERSION}-win.tar.xz`;
 
 /**
  * @param {Platform} platform
@@ -742,16 +752,13 @@ function getVerifyBaselineStep(platform, options) {
   const setupCommands =
     os === "windows"
       ? [
+          // cmd.exe batch does not stop on error: without `|| exit /b 1` a
+          // failed line is ignored and only the last command's exit code
+          // becomes the step result.
           `echo Downloading build artifacts...`,
-          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun`,
+          `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
           `echo Extracting ${profileDir}.zip...`,
-          `tar -xf ${profileDir}.zip`,
-          `echo Downloading Intel SDE...`,
-          `curl.exe -fsSL -o sde.tar.xz "${SDE_URL}"`,
-          `echo Extracting Intel SDE...`,
-          `7z x -y sde.tar.xz`,
-          `7z x -y sde.tar`,
-          `ren sde-external-${SDE_VERSION}-win sde-external`,
+          `tar -xf ${profileDir}.zip || exit /b 1`,
         ]
       : [
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
@@ -779,7 +786,7 @@ function getVerifyBaselineStep(platform, options) {
     timeout_in_minutes: hasWebKitChanges(options) ? 30 : 10,
     command: [
       ...setupCommands,
-      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml`,
+      `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
       `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
     ],
   };
@@ -827,9 +834,22 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : os === "darwin" ? 40 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      // Platform smoke check: runner.node.mjs asserts the agent matches what
+      // this step targets before running any test (see assertExpectedPlatform).
+      // `release` is only asserted where the lane pins an exact version:
+      // darwin aarch64 "previous" and darwin x64 intentionally float across
+      // macOS versions, and the windows "2019" label doesn't match the
+      // kernel-style version the agent reports.
+      EXPECTED_PLATFORM_OS: platform.os,
+      EXPECTED_PLATFORM_ARCH: platform.arch,
+      ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
+      ...(platform.os === "linux" && platform.distro ? { EXPECTED_PLATFORM_DISTRO: platform.distro } : {}),
+      ...(platform.os === "linux" || (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
+        ? { EXPECTED_PLATFORM_RELEASE: platform.release }
+        : {}),
     },
     command:
       os === "windows"

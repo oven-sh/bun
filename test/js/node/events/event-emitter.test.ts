@@ -962,6 +962,14 @@ describe("constructor 'prototype' property descriptor", () => {
       enumerable: false,
       configurable: false,
     });
+
+    // "name" has the spec's descriptor too (non-writable, unlike "prototype").
+    const { value: _value, ...nameAttributes } = Object.getOwnPropertyDescriptor(ctor, "name")!;
+    expect(nameAttributes).toEqual({
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
   });
 
   // $toClass also fills in prototype.constructor the way a class declaration

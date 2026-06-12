@@ -318,6 +318,7 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     });
     const { stdout, stderr, exitCode } = await run(dir, "strict.js");
     expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain('because of the "use strict" directive');
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
@@ -329,6 +330,16 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
       "interop.mjs": "exports.v = 010;\nconsole.log(exports.v);\n",
     });
     const { stdout, stderr, exitCode } = await run(dir, "interop.mjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "8\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test('file using exports still runs as sloppy CommonJS under "type": "module"', async () => {
+    using dir = tempDir("type-module-cjs-interop-exports", {
+      "package.json": '{ "type": "module" }',
+      "interop.js": "exports.v = 010;\nconsole.log(exports.v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "interop.js");
     expect({ stdout, stderr }).toEqual({ stdout: "8\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
@@ -366,6 +377,22 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", 'console.log("a"); return;'],
       env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("SyntaxError");
+    expect(exitCode).toBe(1);
+  });
+
+  test("top-level return stays a SyntaxError for piped stdin too", async () => {
+    // Same carve-out as [eval]: the [stdin] entry point has no CommonJS
+    // function wrapper either.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "-"],
+      env: bunEnv,
+      stdin: new Blob(['console.log("a"); return;']),
       stdout: "pipe",
       stderr: "pipe",
     });

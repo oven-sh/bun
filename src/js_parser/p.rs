@@ -4805,6 +4805,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     b"This file is implicitly in strict mode because the enclosing package.json sets \"type\" to \"module\", making it an ECMAScript module"
                 };
             }
+            js_ast::StrictModeKind::ExplicitStrictMode => {
+                if self.module_scope_directive_loc.start >= 0 {
+                    why = b"This file is in strict mode because of the \"use strict\" directive here";
+                    where_ = self.source.range_of_string(self.module_scope_directive_loc);
+                } else {
+                    // The directive is inside an enclosing function whose
+                    // location is not tracked; note without a location.
+                    why = b"This code is in strict mode because of a \"use strict\" directive";
+                }
+            }
             _ => {}
         }
         if why.is_empty() {
@@ -4817,15 +4827,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes();
         }
         // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-        let notes: Box<[bun_ast::Data]> =
-            if strict_mode == js_ast::StrictModeKind::ImplicitStrictModeModuleType {
-                Box::new([bun_ast::Data {
-                    text: why.to_vec().into(),
-                    ..Default::default()
-                }])
-            } else {
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
-            };
+        let notes: Box<[bun_ast::Data]> = if where_ == bun_ast::Range::NONE {
+            // No source range to point at (forced-ESM module type, or a
+            // "use strict" directive in an untracked nested scope).
+            Box::new([bun_ast::Data {
+                text: why.to_vec().into(),
+                ..Default::default()
+            }])
+        } else {
+            Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
+        };
         self.log().add_range_error_fmt_with_notes(
             Some(self.source),
             r,

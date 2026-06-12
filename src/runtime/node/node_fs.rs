@@ -5666,18 +5666,12 @@ impl NodeFS {
     }
 
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
-        #[cfg(windows)]
-        {
-            let _ = args;
-            return Maybe::<ret::Lchown>::todo();
-        }
-        #[cfg(not(windows))]
-        {
-            let path = args.path.slice_z(&mut self.sync_error_buf);
-            match Syscall::lchown(path, args.uid, args.gid) {
-                Err(err) => Err(err.with_path(args.path.slice())),
-                Ok(_) => Ok(()),
-            }
+        // On Windows `Syscall::lchown` routes through uv_fs_lchown, which is
+        // a no-op success, matching Node.
+        let path = args.path.slice_z(&mut self.sync_error_buf);
+        match Syscall::lchown(path, args.uid, args.gid) {
+            Err(err) => Err(err.with_path(args.path.slice())),
+            Ok(_) => Ok(()),
         }
     }
 

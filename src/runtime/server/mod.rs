@@ -265,6 +265,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
     pub pending_requests: usize,
+    /// Live `ServerWebSocket` count. Lives on the server (not the websocket
+    /// context) so a reload's context swap cannot reset it, and sits in a
+    /// `Cell` because the open/close accounting arrives through shared
+    /// `AnyServer` handles on the JS thread.
+    pub active_websocket_count: core::cell::Cell<u32>,
     pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
@@ -1462,10 +1467,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn active_sockets_count(&self) -> u32 {
-        self.config
-            .websocket
-            .as_ref()
-            .map_or(0, |ws| ws.handler.active_connections.get() as u32)
+        self.active_websocket_count.get()
+    }
+
+    pub(crate) fn note_websocket_opened(&self) {
+        self.active_websocket_count
+            .set(self.active_websocket_count.get().saturating_add(1));
+    }
+
+    /// Returns true when this close drained the last live websocket.
+    pub(crate) fn note_websocket_closed(&self) -> bool {
+        let remaining = self.active_websocket_count.get().saturating_sub(1);
+        self.active_websocket_count.set(remaining);
+        remaining == 0
     }
 
     pub fn has_active_web_sockets(&self) -> bool {
@@ -1905,6 +1919,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
+            active_websocket_count: core::cell::Cell::new(0),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Plain HTTP servers never allocate the ~816 KB H3 pool; defer to
             // the H3-listen path (`listen()` below) so HTTPS servers that
@@ -2047,6 +2062,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             websocket.global_object =
                 bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.server = Some(any_server);
             websocket
                 .handler
                 .flags
@@ -3451,6 +3467,29 @@ impl AnyServer {
 
     pub fn inspector_server_id(&self) -> jsc::DebuggerId {
         any_server_dispatch!(self, |s| s.inspector_server_id)
+    }
+
+    pub(crate) fn on_websocket_opened(&self) {
+        any_server_dispatch!(self, |s| s.note_websocket_opened());
+    }
+
+    /// Decrement the live-socket count and, when the last socket drained on
+    /// an already-stopped server, run the idle pass so the `JsRef` downgrade
+    /// (and deferred deinit) that was held back by the open sockets fires.
+    ///
+    /// Skipped while still listening (the idle pass would no-op) and while
+    /// TERMINATED: the abrupt-stop path drains every socket synchronously
+    /// from inside `stop_listening` (which holds `&mut self`), and `stop()`
+    /// runs `deinit_if_we_can` itself right after.
+    pub(crate) fn on_websocket_closed(&self) {
+        let drained = any_server_dispatch!(self, |s| {
+            s.note_websocket_closed()
+                && !s.has_listener()
+                && !s.flags.contains(ServerFlags::TERMINATED)
+        });
+        if drained {
+            any_server_dispatch_mut!(self, |s| s.deinit_if_we_can());
+        }
     }
 
     pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {

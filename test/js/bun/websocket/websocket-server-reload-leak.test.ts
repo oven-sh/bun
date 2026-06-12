@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 // Each test runs its scenario in a child process (gcProtect bookkeeping is
 // process-global) and reports measurements as one JSON line on stdout.
@@ -134,8 +134,15 @@ test("a stopped server's reload does not leave newly installed websocket handler
 // connection makes the released server transiently non-idle. A reload() in
 // that window must still be skipped: the release already ran, so nothing
 // the reload installs could ever be unprotected again.
-test("reload() during a late static-route response on a released server does not leave handler protections behind", async () => {
-  const script = /* js */ `
+//
+// Skipped on Windows: the late request there never reaches the router (the
+// precondition check below trips with "late static request never became
+// pending"), so the pending window this race needs cannot open. The
+// short-circuit under test is platform-independent.
+test.skipIf(isWindows)(
+  "reload() during a late static-route response on a released server does not leave handler protections behind",
+  async () => {
+    const script = /* js */ `
     ${protectedAsyncFnsPrelude}
     const net = require("node:net");
     const base = protectedAsyncFns();
@@ -199,14 +206,15 @@ test("reload() during a late static-route response on a released server does not
     console.log(JSON.stringify({ base, afterServe, afterStop, afterReload, final }));
   `;
 
-  const { base, afterServe, afterStop, afterReload, final } = await runProbe(script);
-  expect({ afterServe, afterStop, afterReload, final }).toEqual({
-    afterServe: base + 2,
-    afterStop: base,
-    afterReload: base,
-    final: base,
-  });
-});
+    const { base, afterServe, afterStop, afterReload, final } = await runProbe(script);
+    expect({ afterServe, afterStop, afterReload, final }).toEqual({
+      afterServe: base + 2,
+      afterStop: base,
+      afterReload: base,
+      final: base,
+    });
+  },
+);
 
 // gcProtect is counted per value. When two servers share the same handler
 // functions, each onCreate protects them once. The idle release of a stopped

@@ -243,6 +243,36 @@ test("require.resolve throws MODULE_NOT_FOUND for relative options.paths entries
   expect(error.code).toBe("MODULE_NOT_FOUND");
 });
 
+test("Module._resolveFilename resolves relative options.paths entries against the current working directory", () => {
+  const { path: dir, cleanup } = createTempDir("resolve-filename-relative-entry", {
+    "node_modules/relative-paths-entry-pkg/package.json": JSON.stringify({
+      name: "relative-paths-entry-pkg",
+      main: "index.js",
+    }),
+    "node_modules/relative-paths-entry-pkg/index.js": "module.exports = 'ok';",
+  });
+
+  try {
+    const relativeDir = relative(process.cwd(), dir);
+    const resolved = Module._resolveFilename("relative-paths-entry-pkg", null, false, { paths: [relativeDir] });
+    expect(resolved).toBe(resolve(dir, "node_modules/relative-paths-entry-pkg/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("Module._resolveFilename throws MODULE_NOT_FOUND for relative options.paths entries that do not resolve", () => {
+  let error;
+  try {
+    Module._resolveFilename("package-that-does-not-exist-paths-entry", null, false, {
+      paths: ["directory-that-does-not-exist"],
+    });
+  } catch (e) {
+    error = e;
+  }
+  expect(error.code).toBe("MODULE_NOT_FOUND");
+});
+
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
   // Test with string (which is iterable but not an array)
   expect(() => {

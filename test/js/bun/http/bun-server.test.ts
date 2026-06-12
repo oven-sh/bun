@@ -871,6 +871,25 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
           return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
         };
 
+        async function drain(target) {
+          for (let i = 0; i < 30 && serverCount() > target; i++) {
+            Bun.gc(true);
+            fullGC();
+            await new Promise(r => setImmediate(r));
+            await Bun.sleep(10);
+          }
+        }
+
+        // objectTypeCounts includes the (lazily created) prototype object(s)
+        // once the first server is constructed — and on libuv platforms both
+        // Debug and non-Debug prototypes may end up materialized. Create+stop
+        // a trivial server first so the baseline captures whatever prototype
+        // floor this build settles at; assertions are then relative to it.
+        await (async () => {
+          const s = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
         const baseline = serverCount();
 
         const ws = await (async () => {
@@ -898,9 +917,10 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         // The only \`server\` binding is now out of scope; only the live
         // websocket keeps the native side around.
 
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 30; i++) {
           Bun.gc(true);
           fullGC();
+          await new Promise(r => setImmediate(r));
           await Bun.sleep(10);
         }
         const afterStopGC = serverCount();
@@ -910,11 +930,7 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         ws.close();
         await closed.promise;
 
-        for (let i = 0; i < 10; i++) {
-          Bun.gc(true);
-          fullGC();
-          await Bun.sleep(10);
-        }
+        await drain(baseline);
         const afterCloseGC = serverCount();
 
         console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
@@ -930,12 +946,12 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   expect(stderr).toBe("");
   const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim());
   // js_value stays Strong while a websocket is connected → GC must not
-  // collect the wrapper. objectTypeCounts includes the prototype (1) once the
-  // first server has been created, so the live instance shows as baseline+2.
-  expect(afterStopGC).toBeGreaterThan(baseline + 1);
+  // collect the wrapper. baseline already includes the prototype(s), so the
+  // live instance shows as baseline+1.
+  expect(afterStopGC).toBeGreaterThan(baseline);
   // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
   // becomes collectable again (no leak).
-  expect(afterCloseGC).toBeLessThanOrEqual(baseline + 1);
+  expect(afterCloseGC).toBe(baseline);
   expect(exitCode).toBe(0);
 });
 
@@ -1943,9 +1959,28 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         "-e",
         /* js */ `
         const { heapStats, fullGC } = require("bun:jsc");
-        const live = () => heapStats().objectTypeCounts.DebugHTTPServer ?? 0;
+        const live = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+        async function drain(target) {
+          for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(true);
+            fullGC();
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
 
-        const before = live();
+        // Materialize prototype(s) first so baseline = whatever floor this
+        // build settles at (libuv platforms may surface 2, not 1).
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
+        const baseline = live();
+
         await (async () => {
           const server = Bun.serve({
             port: 0,
@@ -1959,12 +1994,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
           server.stop(true);
         })();
         // No live reference to server or its handlers from here.
-        for (let i = 0; i < 20 && live() > before; i++) {
-          Bun.gc(true);
-          fullGC();
-          await new Promise(r => setTimeout(r, 50));
-        }
-        console.log(JSON.stringify({ before, after: live() }));
+        await drain(baseline);
+        console.log(JSON.stringify({ baseline, after: live() }));
       `,
       ],
       env: bunEnv,
@@ -1975,11 +2006,11 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    const { before, after } = JSON.parse(stdout.trim());
-    // objectTypeCounts includes the prototype once the first server is created
-    // (1), so the post-stop count is before+1 when the instance was collected.
-    // On main this fails: the cycle keeps the instance alive (after = before+2).
-    expect(after).toBe(before + 1);
+    const { baseline, after } = JSON.parse(stdout.trim());
+    // baseline already includes the prototype(s); a collected instance returns
+    // to it exactly. On main this fails: the cycle keeps the instance alive
+    // (after = baseline+1).
+    expect(after).toBe(baseline);
     expect(exitCode).toBe(0);
   });
 
@@ -1992,8 +2023,24 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         "-e",
         /* js */ `
         const { heapStats, fullGC } = require("bun:jsc");
-        const live = () => heapStats().objectTypeCounts.DebugHTTPServer ?? 0;
-        const before = live();
+        const live = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+        async function drain(target) {
+          for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(true); fullGC();
+            await new Promise(r => setImmediate(r));
+            await new Promise(r => setTimeout(r, 50));
+          }
+        }
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await drain(0);
+        const baseline = live();
+
         await (async () => {
           const server = Bun.serve({
             port: 0, development: true,
@@ -2002,11 +2049,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
           await fetch(server.url, { keepalive: false });
           server.stop(true);
         })();
-        for (let i = 0; i < 20 && live() > before + 1; i++) {
-          Bun.gc(true); fullGC();
-          await new Promise(r => setTimeout(r, 50));
-        }
-        console.log(JSON.stringify({ before, after: live() }));
+        await drain(baseline);
+        console.log(JSON.stringify({ baseline, after: live() }));
       `,
       ],
       env: bunEnv,
@@ -2015,8 +2059,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { before, after } = JSON.parse(stdout.trim());
-    expect(after).toBe(before + 1);
+    const { baseline, after } = JSON.parse(stdout.trim());
+    expect(after).toBe(baseline);
     expect(exitCode).toBe(0);
   });
 
@@ -2030,19 +2074,30 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         "-e",
         /* js */ `
         const { heapStats, fullGC } = require("bun:jsc");
-        const liveServer = () => heapStats().objectTypeCounts.DebugHTTPServer ?? 0;
+        const liveServer = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
 
         async function gcUntilCountAtMost(max) {
-          for (let i = 0; i < 50; i++) {
+          for (let i = 0; i < 30; i++) {
             Bun.gc(true);
             fullGC();
             if (liveServer() <= max) return liveServer();
+            await new Promise(r => setImmediate(r));
             await Bun.sleep(10);
           }
           return liveServer();
         }
 
-        const before = liveServer();
+        // Materialize prototype(s) first; baseline = the floor count.
+        await (async () => {
+          const s = Bun.serve({ port: 0, development: true, fetch: () => new Response("ok") });
+          s.stop(true);
+        })();
+        await gcUntilCountAtMost(0);
+        const baseline = liveServer();
+
         const opened = Promise.withResolvers();
         const clientOpen = Promise.withResolvers();
         const echoed = Promise.withResolvers();
@@ -2093,9 +2148,9 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         // event-loop ref. The WeakRef adds no root — if tracing failed above,
         // deref() would already be undefined.
         serverWeak.deref()?.stop(true);
-        const afterClose = await gcUntilCountAtMost(before + 1);
+        const afterClose = await gcUntilCountAtMost(baseline);
 
-        console.log(JSON.stringify({ before, whileConnected, echo, afterClose }));
+        console.log(JSON.stringify({ baseline, whileConnected, echo, afterClose }));
       `,
       ],
       env: bunEnv,
@@ -2106,12 +2161,12 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    const { before, whileConnected, echo, afterClose } = JSON.parse(stdout.trim());
-    // objectTypeCounts includes the prototype (+1); the instance must also be
-    // present to prove the ws traced root kept it alive across GC.
-    expect(whileConnected).toBeGreaterThan(before + 1);
+    const { baseline, whileConnected, echo, afterClose } = JSON.parse(stdout.trim());
+    // baseline already includes the prototype(s); the instance on top of it
+    // proves the ws traced root kept it alive across GC.
+    expect(whileConnected).toBeGreaterThan(baseline);
     expect(echo).toMatch(/^\d+:hi$/); // handler dispatched (server.port captured)
-    expect(afterClose).toBeLessThanOrEqual(before + 1); // instance collected, prototype may remain
+    expect(afterClose).toBe(baseline); // instance collected, back to prototype floor
     expect(exitCode).toBe(0);
   });
 
@@ -2136,9 +2191,10 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         });
         const beforeReload = liveAsync();
         server.reload({ fetch: () => new Response("new") });
-        for (let i = 0; i < 20 && liveAsync() > baseline; i++) {
+        for (let i = 0; i < 30 && liveAsync() > baseline; i++) {
           Bun.gc(true);
           fullGC();
+          await new Promise(r => setImmediate(r));
           await new Promise(r => setTimeout(r, 50));
         }
         console.log(JSON.stringify({ baseline, beforeReload, afterReload: liveAsync() }));
@@ -2190,9 +2246,10 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
           fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
           websocket: { message(ws, m) { ws.send(m); } },
         });
-        for (let i = 0; i < 20 && liveAsync() > baseline; i++) {
+        for (let i = 0; i < 30 && liveAsync() > baseline; i++) {
           Bun.gc(true);
           fullGC();
+          await new Promise(r => setImmediate(r));
           await Bun.sleep(10);
         }
         const afterReload = liveAsync();

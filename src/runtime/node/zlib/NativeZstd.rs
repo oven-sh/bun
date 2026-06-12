@@ -154,14 +154,17 @@ mod _impl {
                 )?);
             }
 
+            // Validate before `s.init()` allocates the ZSTD context so a type
+            // error cannot leave a half-initialized handle behind.
+            let mut params_ =
+                validate_uint32_array(global, init_params_array_value, "initParamsArray")?;
+
             let err = self.stream.with_mut(|s| s.init(pledged_src_size));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global, this_value, err);
                 return Ok(JSValue::FALSE);
             }
 
-            let mut params_ =
-                validate_uint32_array(global, init_params_array_value, "initParamsArray")?;
             for (i, &x) in params_.as_u32().iter().enumerate() {
                 if x == u32::MAX {
                     continue;

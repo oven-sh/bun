@@ -284,7 +284,7 @@ describe("zlib native handle lifecycle", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "survived", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "survived", stderr: "", exitCode: 0 });
   });
 });
 

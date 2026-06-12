@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -26,6 +26,10 @@ function setup() {
       BUN_TMPDIR: current_tmpdir,
       TMPDIR: current_tmpdir,
       BUN_INSTALL_CACHE_DIR: install_cache_dir,
+      // bunx consults the `bun add -g` global install tree under $BUN_INSTALL;
+      // point it at an empty dir so globally installed packages on the machine
+      // running the tests can't leak into resolution.
+      BUN_INSTALL: tmpdirSync(),
     } as Record<string, string>,
   };
 }
@@ -1103,6 +1107,161 @@ describe("scoped packages should not match unrelated system binaries", () => {
       expect(out).toContain("CORRECT: ran the cached package's bin");
       expect(exited).toBe(0);
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32147: `bunx @scope/pkg` ignored
+// packages installed with `bun add -g` and downloaded a fresh copy into the
+// bunx cache. Like npx, bunx must check the global install tree — keyed on
+// the full package name inside $BUN_INSTALL — before installing, because the
+// scoped guess for the bin name is (deliberately) never searched in the
+// system $PATH.
+describe("bunx uses globally installed packages", () => {
+  let port: number;
+
+  beforeAll(() => {
+    dummyBeforeAll();
+    port = getPort()!;
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  beforeEach(async () => {
+    await dummyBeforeEach();
+  });
+
+  // Builds a tarball fixture, serves it from the dummy registry, installs it
+  // globally into an isolated $BUN_INSTALL, then rewrites the globally
+  // installed bin script so output identifies whether the global copy or a
+  // freshly downloaded copy ran.
+  async function installGlobally(pkgName: string, binName: string): Promise<{ bunInstall: string; urls: string[] }> {
+    const unscoped = pkgName.split("/").pop()!;
+    const pkgRoot = tmpdirSync();
+    const packageDir = join(pkgRoot, "package");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: pkgName, version: "1.0.0", bin: { [binName]: "cli.js" } }),
+    );
+    await writeFile(join(packageDir, "cli.js"), `#!/usr/bin/env node\nconsole.log("FROM_REGISTRY");\n`);
+    const tgzDir = tmpdirSync();
+    // The dummy registry serves tarballs by the basename of the request URL,
+    // which for `@scope/name` + version 1.0.0 is `name-1.0.0.tgz`.
+    await Bun.$`tar -czf ${join(tgzDir, `${unscoped}-1.0.0.tgz`)} -C ${pkgRoot} package`;
+
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls, { "1.0.0": { bin: { [binName]: "cli.js" }, as: "1.0.0" } }, 0, tgzDir));
+
+    const bunInstall = tmpdirSync();
+    const addProc = spawn({
+      cmd: [bunExe(), "add", "-g", `${pkgName}@1.0.0`],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_INSTALL: bunInstall,
+        npm_config_registry: `http://localhost:${port}/`,
+      },
+    });
+    const [addErr, addOut, addExited] = await Promise.all([
+      addProc.stderr.text(),
+      addProc.stdout.text(),
+      addProc.exited,
+    ]);
+    expect(addErr).not.toContain("error:");
+    expect(addOut).toContain("installed");
+    expect(addExited).toBe(0);
+
+    // The global bin shim must exist (it resolves through the global tree).
+    expect(await Bun.file(join(bunInstall, "bin", isWindows ? `${binName}.exe` : binName)).exists()).toBeTrue();
+
+    // Rewrite the globally installed script; a run of the global copy now
+    // prints FROM_GLOBAL_INSTALL while a freshly downloaded copy prints
+    // FROM_REGISTRY. Unlink first: the installer hardlinks files from the
+    // install cache, and writing through the hardlink would poison the cache
+    // entry that a fresh download is served from.
+    const globalCli = join(bunInstall, "install", "global", "node_modules", pkgName, "cli.js");
+    const mode = statSync(globalCli).mode;
+    await rm(globalCli);
+    await writeFile(globalCli, `#!/usr/bin/env node\nconsole.log("FROM_GLOBAL_INSTALL");\n`, { mode });
+
+    return { bunInstall, urls };
+  }
+
+  function runBunx(spec: string, bunInstall: string) {
+    const subprocess = spawn({
+      // The global bin dir is intentionally NOT added to $PATH: the global
+      // install must be found through the global node_modules tree.
+      cmd: [bunExe(), "x", spec],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_INSTALL: bunInstall,
+        npm_config_registry: `http://localhost:${port}/`,
+      },
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+  }
+
+  it("`bunx @scope/pkg` runs the `bun add -g` installed copy without downloading", async () => {
+    const { bunInstall, urls } = await installGlobally("@globally-installed/gtool", "gtool");
+    const requestsAfterInstall = urls.length;
+
+    const [err, out, exited] = await runBunx("@globally-installed/gtool", bunInstall);
+
+    expect(out).toContain("FROM_GLOBAL_INSTALL");
+    expect(out).not.toContain("FROM_REGISTRY");
+    expect(err).not.toContain("error:");
+    // No registry traffic: the globally installed copy was reused.
+    expect(urls.length).toBe(requestsAfterInstall);
+    expect(exited).toBe(0);
+  });
+
+  it("`bunx @scope/pkg` whose bin name differs from the unscoped name finds the global install", async () => {
+    const { bunInstall, urls } = await installGlobally("@globally-installed/cli", "totally-different-bin");
+    const requestsAfterInstall = urls.length;
+
+    const [err, out, exited] = await runBunx("@globally-installed/cli", bunInstall);
+
+    expect(out).toContain("FROM_GLOBAL_INSTALL");
+    expect(out).not.toContain("FROM_REGISTRY");
+    expect(err).not.toContain("error:");
+    expect(urls.length).toBe(requestsAfterInstall);
+    expect(exited).toBe(0);
+  });
+
+  it("`bunx pkg` (unscoped) runs the global install even when the global bin dir is not on $PATH", async () => {
+    const { bunInstall, urls } = await installGlobally("plain-global-pkg", "plain-global-pkg");
+    const requestsAfterInstall = urls.length;
+
+    const [err, out, exited] = await runBunx("plain-global-pkg", bunInstall);
+
+    expect(out).toContain("FROM_GLOBAL_INSTALL");
+    expect(out).not.toContain("FROM_REGISTRY");
+    expect(err).not.toContain("error:");
+    expect(urls.length).toBe(requestsAfterInstall);
+    expect(exited).toBe(0);
+  });
+
+  it("`bunx @scope/pkg@latest` still re-resolves from the registry", async () => {
+    const { bunInstall, urls } = await installGlobally("@globally-installed/retag", "retag");
+    const requestsAfterInstall = urls.length;
+
+    const [err, out, exited] = await runBunx("@globally-installed/retag@latest", bunInstall);
+
+    // An explicit dist-tag must bypass the global install and re-resolve.
+    expect(out).toContain("FROM_REGISTRY");
+    expect(out).not.toContain("FROM_GLOBAL_INSTALL");
+    expect(err).not.toContain("error:");
+    expect(urls.length).toBeGreaterThan(requestsAfterInstall);
+    expect(exited).toBe(0);
   });
 });
 

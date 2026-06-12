@@ -280,93 +280,106 @@ pub struct Update {
     pub peer: bool,
 }
 
-// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
+/// Resolve the path to the global install directory (where `bun add -g`
+/// installs packages) without creating or opening it. `buf` backs the joined
+/// path for the `$BUN_INSTALL` / `$HOME` fallbacks.
+pub fn global_dir_path<'a>(
+    explicit_global_dir: &'a [u8],
+    buf: &'a mut PathBuffer,
+) -> Result<&'a [u8], bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
-    use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Dir::cwd()
-            .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(home_dir);
     }
 
     if !explicit_global_dir.is_empty() {
-        return Dir::cwd()
-            .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(explicit_global_dir);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
     Err(bun_core::err!("No global directory found"))
 }
 
-pub(crate) fn open_global_bin_dir(
-    opts_: Option<&Api::BunInstall>,
-) -> Result<bun_sys::Fd, bun_core::Error> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_sys::{Dir, OpenDirOptions};
 
+    let mut buf = PathBuffer::uninit();
+    let path = global_dir_path(explicit_global_dir, &mut buf)?;
+    Dir::cwd()
+        .make_open_path(path, OpenDirOptions::default())
+        .map(|d| d.into_raw())
+}
+
+/// Resolve the path to the global bin directory (where `bun add -g` links bin
+/// shims) without creating or opening it. `buf` backs the joined path for the
+/// `$BUN_INSTALL` / `$HOME` fallbacks.
+pub fn global_bin_dir_path<'a>(
+    explicit_global_bin_dir: &'a [u8],
+    buf: &'a mut PathBuffer,
+) -> Result<&'a [u8], bun_core::Error> {
+    use bun_paths::{platform, resolve_path::join_abs_string_buf};
+
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
-        return Dir::cwd()
-            .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(home_dir);
     }
 
-    if let Some(opts) = opts_ {
-        if let Some(home_dir) = &opts.global_bin_dir {
-            if !home_dir.is_empty() {
-                return Dir::cwd()
-                    .make_open_path(home_dir, OpenDirOptions::default())
-                    .map(|d| d.into_raw());
-            }
-        }
+    if !explicit_global_bin_dir.is_empty() {
+        return Ok(explicit_global_bin_dir);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 1] = [b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b".bun", b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw());
+        return Ok(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
     Err(bun_core::err!(
         "Missing global bin directory: try setting $BUN_INSTALL"
     ))
+}
+
+pub(crate) fn open_global_bin_dir(
+    opts_: Option<&Api::BunInstall>,
+) -> Result<bun_sys::Fd, bun_core::Error> {
+    use bun_sys::{Dir, OpenDirOptions};
+
+    let explicit_global_bin_dir: &[u8] = opts_
+        .and_then(|opts| opts.global_bin_dir.as_deref())
+        .unwrap_or(b"");
+    let mut buf = PathBuffer::uninit();
+    let path = global_bin_dir_path(explicit_global_bin_dir, &mut buf)?;
+    Dir::cwd()
+        .make_open_path(path, OpenDirOptions::default())
+        .map(|d| d.into_raw())
 }
 
 // `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`

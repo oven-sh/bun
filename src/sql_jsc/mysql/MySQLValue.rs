@@ -481,6 +481,22 @@ impl Value {
     }
 }
 
+/// Rejects a non-finite millisecond timestamp (`NaN`/±Inf) before it reaches
+/// the float->int casts that would silently turn it into 0. An Invalid Date
+/// (`new Date(NaN)`) is still a `Date`, so it would otherwise be bound as a
+/// plausible-looking `1970-01-01 00:00:00` instead of surfacing the error.
+fn check_finite_ms(
+    total_ms: f64,
+    global_object: &JSGlobalObject,
+) -> Result<(), any_mysql_error::Error> {
+    if !total_ms.is_finite() {
+        return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+            format_args!("Invalid Date cannot be bound as a MySQL DATE/DATETIME/TIME value"),
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
     pub year: u16,
@@ -657,7 +673,11 @@ impl DateTime {
         )
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
+    pub fn from_unix_timestamp(
+        timestamp: i64,
+        microseconds: u32,
+        global_object: &JSGlobalObject,
+    ) -> Result<DateTime, any_mysql_error::Error> {
         let mut ts = timestamp;
         let days = ts.div_euclid(86400);
         ts = ts.rem_euclid(86400);
@@ -668,16 +688,31 @@ impl DateTime {
         let minute = ts.div_euclid(60);
         let second = ts.rem_euclid(60);
 
-        let date = gregorian_date(i32::try_from(days).expect("int cast"));
-        DateTime {
-            year: date.year,
+        // A numeric timestamp (the `is_number()` path in `from_js`) can carry a
+        // day count past `i32::MAX` without saturating `i64`. Route that cast
+        // through the same out-of-range error instead of panicking — the year
+        // check below rejects every in-`i32` value that still overflows `u16`.
+        let days = i32::try_from(days).map_err(|_| {
+            js_error_to_mysql(global_object.throw_invalid_arguments(format_args!(
+                "Date is out of range for a MySQL DATETIME",
+            )))
+        })?;
+        let date = gregorian_date(days);
+        let year = u16::try_from(date.year).map_err(|_| {
+            js_error_to_mysql(global_object.throw_invalid_arguments(format_args!(
+                "Date year {} is out of range for a MySQL DATETIME (0..=65535)",
+                date.year,
+            )))
+        })?;
+        Ok(DateTime {
+            year,
             month: date.month,
             day: date.day,
             hour: u8::try_from(hour).expect("int cast"),
             minute: u8::try_from(minute).expect("int cast"),
             second: u8::try_from(second).expect("int cast"),
             microsecond: microseconds,
-        }
+        })
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
@@ -687,22 +722,6 @@ impl DateTime {
         )
     }
 
-    /// `from_unix_timestamp`/`gregorian_date` can only represent
-    /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
-    /// maximum). Anything outside that window panics on an integer cast, so
-    /// reject it with a catchable error instead.
-    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
-        const MAX_DATETIME_UNIX_TIMESTAMP: i64 = 253_402_300_799;
-        if !(0..=MAX_DATETIME_UNIX_TIMESTAMP).contains(&ts) {
-            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
-                format_args!(
-                    "MySQL DATE/DATETIME value must be between 1970-01-01T00:00:00Z and 9999-12-31T23:59:59Z"
-                ),
-            )));
-        }
-        Ok(())
-    }
-
     pub fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
@@ -710,18 +729,25 @@ impl DateTime {
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
+            // An Invalid Date (`new Date(NaN)`) carries NaN; the float->int
+            // casts below would silently launder it into 0 (1970-01-01 on the
+            // wire). Reject it instead of storing a bogus timestamp.
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
-            Self::check_range(ts, global_object)?;
-            return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
+            // `ms` is the sub-second millisecond residual, so it is always in
+            // `[0, 1000)`. Clamp it so a float-saturated `ts` can't push the
+            // cast to a huge value and overflow `ms * 1000` (a debug abort)
+            // before `from_unix_timestamp`'s own range check rejects `ts`.
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
+            return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
         if value.is_number() {
             let total_ms = value.as_number();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
-            Self::check_range(ts, global_object)?;
-            return Ok(DateTime::from_unix_timestamp(ts, ms * 1000));
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
+            return DateTime::from_unix_timestamp(ts, ms * 1000, global_object);
         }
 
         Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -760,14 +786,18 @@ impl Time {
     ) -> Result<Time, any_mysql_error::Error> {
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            // Clamp the sub-second residual to its valid `[0, 1000)` range so
+            // `ms * 1000` can't overflow on a float-saturated `ts`.
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else if value.is_number() {
             let total_ms = value.as_number();
+            check_finite_ms(total_ms, global_object)?;
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
-            let ms: u32 = (total_ms - (ts as f64 * 1000.0)) as u32;
+            let ms: u32 = ((total_ms - (ts as f64 * 1000.0)) as u32).min(999);
             Self::check_range(ts, global_object)?;
             Ok(Time::from_unix_timestamp(ts, ms * 1000))
         } else {
@@ -909,7 +939,10 @@ impl Decimal {
     // }
 }
 
-// Helper functions for date calculations
+// Calendar validation helpers for *decoded* wire values (`DateTime::from_text`
+// and `to_js_timestamp` reject out-of-calendar dates a permissive server can
+// send). The encode path doesn't need them — `gregorian_date` below computes
+// civil dates directly from the day count.
 fn is_leap_year(year: u16) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
@@ -923,31 +956,33 @@ fn days_in_month(year: u16, month: u8) -> u8 {
 }
 
 struct Date {
-    year: u16,
+    year: i64,
     month: u8,
     day: u8,
 }
 
+/// Civil year/month/day from a signed days-since-1970-01-01 count.
+///
+/// Uses Howard Hinnant's `civil_from_days` (400-year-era arithmetic) so
+/// negative day counts — i.e. any pre-1970 `Date` parameter — yield the
+/// correct calendar date instead of falling through loops that only walk
+/// forwards from 1970. The proleptic year is returned unclamped; the caller
+/// is responsible for rejecting years that don't fit the MySQL wire `u16`.
 fn gregorian_date(days: i32) -> Date {
-    // Convert days since 1970-01-01 to year/month/day
-    let mut d = days;
-    let mut y: u16 = 1970;
-
-    while d >= 365 + is_leap_year(y) as i32 {
-        d -= 365 + is_leap_year(y) as i32;
-        y += 1;
-    }
-
-    let mut m: u8 = 1;
-    while d >= days_in_month(y, m) as i32 {
-        d -= days_in_month(y, m) as i32;
-        m += 1;
-    }
+    let z = i64::from(days) + 719468;
+    let era = z.div_euclid(146097);
+    let doe = (z - era * 146097) as u32; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = i64::from(yoe) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
 
     Date {
-        year: y,
-        month: m,
-        day: u8::try_from(d + 1).expect("int cast"),
+        year: y + i64::from(m <= 2),
+        month: m as u8,
+        day: d as u8,
     }
 }
 

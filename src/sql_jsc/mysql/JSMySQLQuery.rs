@@ -410,9 +410,21 @@ impl JSMySQLQuery {
         // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
         // success path below.
+        //
+        // The guard only rolls back the `this_value` upgrade; it must NOT mark
+        // the query failed. Both callers already settle the promise on a run()
+        // error: `do_run` rethrows synchronously (the JS `.run()` frame rejects
+        // the promise), and the request-queue `advance()` loop calls
+        // `on_error`, which rejects via `reject_with_js_value`. Since that
+        // reject path itself transitions the query to `Fail` through
+        // `MySQLQuery::fail`, flipping the status here first would make
+        // `reject_with_js_value`'s `if !q.fail() { return }` guard bail out and
+        // silently drop the rejection — so a bind-time error on the
+        // prepare-then-execute path (e.g. a DATETIME whose year doesn't fit the
+        // wire `u16`, bound to a not-yet-prepared statement) would hang the
+        // promise forever instead of rejecting.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

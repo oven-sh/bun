@@ -196,3 +196,71 @@ process.exit(0);
   expect(stdout).toBe("reentry ok\nreentry ok\nquery rejected: password error\n");
   expect(exitCode).toBe(0);
 });
+
+// The forced-close path (#32095) and the throwing-callback path (#32037) meet
+// in the pool connection's close handler: the user's onclose runs first and
+// may throw, and the bookkeeping that follows it must still settle the
+// promise returned by close(). A server that accepts the TCP connection but
+// never answers keeps the connection mid-handshake, and connectionTimeout: 0
+// disables the connect timer, so close() is the only teardown path; if the
+// throw skipped the bookkeeping these fixtures would never print "closed".
+const neverAnsweringServer = /* ts */ `
+const net = require("net");
+function neverAnsweringServer() {
+  return new Promise(resolveListening => {
+    const first = Promise.withResolvers();
+    const server = net.createServer(socket => {
+      socket.unref();
+      first.resolve();
+    });
+    server.unref();
+    server.listen(0, "127.0.0.1", () => {
+      resolveListening({ port: server.address().port, accepted: first.promise });
+    });
+  });
+}
+`;
+
+function forcedCloseFixture(adapter: "postgres" | "mysql") {
+  const url = adapter === "postgres" ? "postgres://postgres@127.0.0.1:" : "mysql://root@127.0.0.1:";
+  const db = adapter === "postgres" ? "/postgres" : "/db";
+  return (
+    neverAnsweringServer +
+    /* ts */ `
+import { SQL } from "bun";
+process.on("uncaughtException", err => console.log("uncaught:", err.message));
+const { port, accepted } = await neverAnsweringServer();
+const sql = new SQL({
+  url: "${url}" + port + "${db}",
+  max: 1,
+  connectionTimeout: 0,
+  onclose(err) {
+    console.log("onclose:", err?.code ?? err);
+    throw new Error("boom from onclose");
+  },
+});
+const queryError = sql.unsafe("SELECT 1").catch(err => err);
+await accepted;
+await sql.close({ timeout: "0" });
+console.log("closed");
+console.log("query rejected:", (await queryError).code);
+process.exit(0);
+`
+  );
+}
+
+for (const [adapter, closedCode] of [
+  ["postgres", "ERR_POSTGRES_CONNECTION_CLOSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_CLOSED"],
+] as const) {
+  test.concurrent(
+    `${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`,
+    async () => {
+      const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
+      expect(stdout).toBe(
+        `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+}

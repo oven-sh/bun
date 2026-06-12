@@ -5613,7 +5613,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
+            // A file is an ES module if it has ESM syntax, or if ".mjs"/".mts"
+            // or package.json "type": "module" forces it (module_type == Esm)
+            // even without import/export syntax.
+            if (self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm)
+                && self.commonjs_named_exports.count() == 0
+            {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.

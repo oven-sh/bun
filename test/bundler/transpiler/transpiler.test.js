@@ -4789,6 +4789,11 @@ describe("top-level this substitution", () => {
     expect(transpiler.transformSync("console.log(this);")).toBe("console.log(exports);\n");
   });
 
+  it("wraps the substituted undefined when it is a delete operand", () => {
+    // bare `delete undefined` is a SyntaxError in strict mode code
+    expect(transpiler.transformSync("export {};\ndelete this;")).toBe("export {};\ndelete (0, undefined);\n");
+  });
+
   it("does not substitute this nested inside a function", () => {
     expect(transpiler.transformSync("export {};\nfunction f() {\n  return this;\n}")).toBe(
       "export {};\nfunction f() {\n  return this;\n}\n",

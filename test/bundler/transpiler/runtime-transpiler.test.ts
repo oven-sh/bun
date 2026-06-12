@@ -213,6 +213,7 @@ test("math.pow", () => {
 // https://github.com/oven-sh/bun/issues/32167
 describe("top-level this in ES modules", () => {
   test("is undefined, including when captured by a top-level arrow", async () => {
+    const logThis = `console.log(typeof this, this === undefined);\n`;
     using dir = tempDir("esm-top-level-this", {
       "import-only.js": `import { EventEmitter } from "node:events";
 const emitter = new EventEmitter();
@@ -221,12 +222,14 @@ emitter.on("event", () => {
 });
 emitter.emit("event");
 `,
-      "export-only.mjs": `export {};
-console.log(typeof this, this === undefined);
-`,
+      "export-only.mjs": `export {};\n` + logThis,
+      // .mjs and "type": "module" force ESM even with no import/export syntax
+      "bare.mjs": logThis,
+      "type-module/package.json": `{ "type": "module" }`,
+      "type-module/bare.js": logThis,
     });
 
-    for (const file of ["import-only.js", "export-only.mjs"]) {
+    for (const file of ["import-only.js", "export-only.mjs", "bare.mjs", "type-module/bare.js"]) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), file],
         env: bunEnv,
@@ -234,7 +237,7 @@ console.log(typeof this, this === undefined);
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ file, stdout }).toEqual({ file, stdout: "undefined true\n" });
+      expect({ file, stdout, stderr }).toEqual({ file, stdout: "undefined true\n", stderr: "" });
       expect(exitCode).toBe(0);
     }
   });
@@ -251,7 +254,7 @@ console.log(typeof this, this === undefined);
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("true {}\n");
+    expect({ stdout, stderr }).toEqual({ stdout: "true {}\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

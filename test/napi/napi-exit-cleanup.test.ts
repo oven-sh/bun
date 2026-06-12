@@ -29,6 +29,18 @@ const napiAppDir = join(import.meta.dir, "napi-app");
 const hookAddon = join(napiAppDir, "build", "Debug", "test_cleanup_hook_order.node");
 const wrapAddon = join(napiAppDir, "build", "Debug", "test_wrap_cleanup_order.node");
 
+// CI's ASAN lane sets BUN_JSC_validateExceptionChecks=1, which leaks into the
+// spawned bun processes via bunEnv. The napi addon init path has a known
+// unchecked ThrowScope (see the "3rd party napi" section in
+// test/no-validate-exceptions.txt), so the child aborts while loading the
+// addon, before the fixture runs. Strip the validator from the child env
+// only, same as test/regression/issue/30205.test.ts.
+const childEnv = {
+  ...bunEnv,
+  BUN_JSC_validateExceptionChecks: undefined,
+  BUN_JSC_dumpSimulatedThrows: undefined,
+};
+
 describe.concurrent("napi cleanup at bun test exit", () => {
   beforeAll(() => {
     if (existsSync(hookAddon) && existsSync(wrapAddon)) return;
@@ -55,7 +67,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     });
     await using proc = spawn({
       cmd: [bunExe(), "test", "hooks.test.js"],
-      env: bunEnv,
+      env: childEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -81,7 +93,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     });
     await using proc = spawn({
       cmd: [bunExe(), "test", "wrap.test.js"],
-      env: bunEnv,
+      env: childEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

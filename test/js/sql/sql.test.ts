@@ -13415,6 +13415,12 @@ async function createMockListenServer(
 
   const queries: string[] = [];
   const queryWaiters: Array<{ matches: (queries: string[]) => boolean; resolve: () => void }> = [];
+  const recordQuery = (query: string) => {
+    queries.push(query);
+    for (let i = queryWaiters.length - 1; i >= 0; i--) {
+      if (queryWaiters[i].matches(queries)) queryWaiters.splice(i, 1)[0].resolve();
+    }
+  };
   let closedConnections = 0;
   const closeWaiters: Array<() => void> = [];
   const liveSockets = new Set<net.Socket>();
@@ -13427,16 +13433,22 @@ async function createMockListenServer(
         socket.write(Buffer.concat([authenticationOk, backendKeyData, readyForQuery]));
         return;
       }
+      if (data[0] === 0x50 /* 'P' (Parse, extended protocol) */) {
+        // Parse carries <cstr statement name><cstr query text>; record the
+        // query so tests can observe extended-protocol traffic arriving. The
+        // mock never acks it.
+        const nameEnd = data.indexOf(0, 5);
+        const queryEnd = data.indexOf(0, nameEnd + 1);
+        recordQuery(data.toString("utf8", nameEnd + 1, queryEnd));
+        return;
+      }
       if (data[0] !== 0x51 /* 'Q' */) return;
       // The Q message may be followed by Flush/Sync in the same segment; the
       // int32 after the type byte covers itself plus the body, so the query
       // text (sans trailing NUL) ends at offset `length`.
       const length = data.readInt32BE(1);
       const query = data.toString("utf8", 5, length);
-      queries.push(query);
-      for (let i = queryWaiters.length - 1; i >= 0; i--) {
-        if (queryWaiters[i].matches(queries)) queryWaiters.splice(i, 1)[0].resolve();
-      }
+      recordQuery(query);
       if (query.startsWith("LISTEN")) {
         const listened = query.slice('LISTEN "'.length, -1);
         if (options.errorOnListen?.includes(listened)) {
@@ -13828,4 +13840,98 @@ test("reserved and transaction handles expose listen/unlisten/notify", async () 
   expect(mock.queries).toContain('LISTEN "reserved_chan"');
   expect(mock.queries.some(q => q.startsWith("BEGIN"))).toBe(true);
   expect(mock.queries.some(q => q.startsWith("COMMIT"))).toBe(true);
+});
+
+// Bun.SQL queries are lazy (they run on await/.then/.execute), so notify()
+// must start its query eagerly or a fire-and-forget sql.notify() would
+// silently never reach the server.
+test("sql.notify executes without being awaited", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const gotNotify = mock.waitForQuery(qs => qs.some(q => q.includes("pg_notify")));
+  // Deliberately NOT awaited: the query must still be sent.
+  const pending = db.notify("lazy_chan", "payload");
+  await gotNotify;
+  // The mock never acks extended-protocol queries. Swallow the rejection the
+  // teardown produces, then drop the connection so close() does not wait on
+  // the stuck query.
+  (pending as Promise<unknown>).catch(() => {});
+  mock.destroyConnections();
+});
+
+// A listen() that lands while the reconnect backoff timer is armed creates
+// the replacement connection itself. The armed timer must be fast-forwarded
+// so previously-tracked channels are re-LISTENed on the new connection
+// immediately (not after the stale backoff, up to ~32s), and the sweep must
+// skip channels the in-flight listen() already registered so their onlisten
+// does not re-fire for a connection that never dropped.
+test("listen during the reconnect backoff window re-subscribes old channels without double-registering the new one", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  const received: string[] = [];
+  let onlistenA = 0;
+  const { promise: relistenedA, resolve: resolveRelistenA } = Promise.withResolvers<void>();
+  const { promise: gotA, resolve: resolveGotA } = Promise.withResolvers<void>();
+  await db.listen(
+    "chan_a",
+    p => {
+      received.push(p);
+      resolveGotA();
+    },
+    () => {
+      // Initial LISTEN plus the sweep's re-registration on the replacement
+      // connection.
+      if (++onlistenA === 2) resolveRelistenA();
+    },
+  );
+
+  mock.destroyConnections();
+
+  // The drop becomes visible to the adapter only when its close event runs;
+  // a listen() issued before that rejects against the dead connection. Retry
+  // until one lands on the replacement connection (created by this listen()
+  // itself while the reconnect timer is still armed).
+  let onlistenB = 0;
+  let subB: { unlisten: () => Promise<void> } | undefined;
+  for (let i = 0; i < 50 && !subB; i++) {
+    try {
+      subB = await db.listen(
+        "chan_b",
+        () => {},
+        () => {
+          onlistenB++;
+        },
+      );
+    } catch {}
+  }
+  expect(subB).toBeDefined();
+
+  // The fast-forwarded sweep re-LISTENs chan_a on the new connection without
+  // waiting out the stale backoff, and delivery resumes.
+  await relistenedA;
+  mock.notify("chan_a", "after-reconnect");
+  await gotA;
+
+  // Barrier: anything the sweep wrote on this connection precedes this
+  // UNLISTEN, so once it is acked the sweep's full output has reached the
+  // mock and the counts below are final.
+  await db.unlisten("chan_a");
+
+  expect(mock.queries.filter(q => q === 'LISTEN "chan_b"')).toHaveLength(1);
+  expect(onlistenB).toBe(1);
+  expect(received).toEqual(["after-reconnect"]);
+
+  await subB!.unlisten();
 });

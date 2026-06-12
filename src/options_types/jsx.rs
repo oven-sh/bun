@@ -218,6 +218,11 @@ impl Pragma {
         hasher.update(&self.import_source.production);
         hasher.update(&self.classic_import_source);
         hasher.update(&self.package_name);
+        // `runtime` selects classic (`React.createElement`) vs automatic
+        // (`jsx`) emission; `development` selects `jsx` vs `jsxDEV` and the
+        // dev vs prod import source. Both change transpiled output for
+        // identical source, so both must participate in the cache key.
+        hasher.update(&[self.runtime as u8, self.development as u8]);
     }
 
     pub fn import_source(&self) -> &[u8] {

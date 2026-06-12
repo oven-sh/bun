@@ -223,6 +223,84 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
+  test("NODE_ENV change invalidates cached JSX transpiles", () => {
+    // https://github.com/oven-sh/bun/issues/32151
+    // Development mode emits `jsxDEV` from react/jsx-dev-runtime, production
+    // emits `jsx` from react/jsx-runtime. The JSX development flag must be
+    // part of the features hash or a dev-cached artifact is reused verbatim
+    // in production, where `jsxDEV` does not exist.
+    const react_dir = join(temp_dir, "node_modules", "react");
+    mkdirSync(react_dir, { recursive: true });
+    writeFileSync(join(react_dir, "package.json"), `{ "name": "react", "version": "1.0.0" }`);
+    writeFileSync(
+      join(react_dir, "jsx-runtime.js"),
+      `exports.jsx = () => "prod";\nexports.jsxs = exports.jsx;\nexports.Fragment = Symbol.for("react.fragment");\n`,
+    );
+    writeFileSync(
+      join(react_dir, "jsx-dev-runtime.js"),
+      `exports.jsxDEV = () => "dev";\nexports.Fragment = Symbol.for("react.fragment");\n`,
+    );
+
+    const filler = "// " + Buffer.alloc(8 * 1024, "x").toString() + "\n";
+    writeFileSync(join(temp_dir, "big.tsx"), `export const probe: unknown = <div />;\n${filler}`);
+    writeFileSync(join(temp_dir, "main.ts"), `import { probe } from "./big.tsx";\nconsole.log(String(probe));`);
+
+    // development (NODE_ENV unset): transpiles with jsxDEV, writes a cache entry
+    expect(bunRun(join(temp_dir, "main.ts"), env).stdout).toBe("dev");
+    expect(newCacheCount()).toBe(1);
+
+    // same mode: cache hit
+    expect(bunRun(join(temp_dir, "main.ts"), env).stdout).toBe("dev");
+    expect(newCacheCount()).toBe(0);
+
+    // production: must not reuse the jsxDEV artifact (old entry deleted, new one written)
+    expect(bunRun(join(temp_dir, "main.ts"), { ...env, NODE_ENV: "production" }).stdout).toBe("prod");
+    expect(newCacheCount()).toBe(0);
+
+    // back to development: must not reuse the production artifact either
+    expect(bunRun(join(temp_dir, "main.ts"), env).stdout).toBe("dev");
+    expect(newCacheCount()).toBe(0);
+  });
+  test("tsconfig jsx runtime change invalidates cached JSX transpiles", () => {
+    // The cache is content addressed, so the same file contents under two
+    // directories whose tsconfigs select different JSX runtimes (automatic vs
+    // classic) share an input hash. The runtime must be part of the features
+    // hash or the classic-mode run reuses the automatic-mode artifact.
+    const big_tsx =
+      `import * as React from "react";\nexport const probe: unknown = <div />;\n// ` +
+      Buffer.alloc(8 * 1024, "x").toString() +
+      "\n";
+    const main_ts = `import { probe } from "./big.tsx";\nconsole.log(String(probe));`;
+
+    for (const mode of ["automatic", "classic"]) {
+      const react_dir = join(temp_dir, mode, "node_modules", "react");
+      mkdirSync(react_dir, { recursive: true });
+      writeFileSync(join(react_dir, "package.json"), `{ "name": "react", "version": "1.0.0" }`);
+      writeFileSync(
+        join(react_dir, "index.js"),
+        `exports.createElement = () => "classic";\nexports.Fragment = Symbol.for("react.fragment");\n`,
+      );
+      writeFileSync(
+        join(react_dir, "jsx-dev-runtime.js"),
+        `exports.jsxDEV = () => "dev";\nexports.Fragment = Symbol.for("react.fragment");\n`,
+      );
+      writeFileSync(
+        join(react_dir, "jsx-runtime.js"),
+        `exports.jsx = () => "prod";\nexports.jsxs = exports.jsx;\nexports.Fragment = Symbol.for("react.fragment");\n`,
+      );
+      writeFileSync(join(temp_dir, mode, "big.tsx"), big_tsx);
+      writeFileSync(join(temp_dir, mode, "main.ts"), main_ts);
+    }
+    writeFileSync(join(temp_dir, "classic", "tsconfig.json"), `{ "compilerOptions": { "jsx": "react" } }`);
+
+    // automatic runtime (no tsconfig): jsxDEV artifact cached
+    expect(bunRun(join(temp_dir, "automatic", "main.ts"), env).stdout).toBe("dev");
+    expect(newCacheCount()).toBe(1);
+
+    // classic runtime: must re-transpile to React.createElement
+    expect(bunRun(join(temp_dir, "classic", "main.ts"), env).stdout).toBe("classic");
+    expect(newCacheCount()).toBe(0);
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

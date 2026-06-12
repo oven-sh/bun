@@ -410,6 +410,14 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 # under test (see the childEnv comment in the file).
 test/napi/napi-exit-cleanup.test.ts
 
+# The inner `bun test --isolate/--parallel` processes inherit destruct-vm and
+# detect_leaks via bunEnv. Their last file's napi wraps are deliberately not
+# finalized at exit (NapiEnv::cleanup runs hooks only on the test-runner exit
+# path), so the addon's own 4-byte wrap payloads are reclaimed by the OS, not
+# freed, and LSAN reports them. The NapiFinalizerTask boxes from issue 32144
+# no longer leak: schedule() drops them once the cleanup hooks have run.
+test/regression/issue/30205.test.ts
+
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts

@@ -210,17 +210,19 @@ public:
         // have deleted (e.g. duckdb's Task destructor Unref()s the
         // Connection it captured). Run only the explicit env cleanup hooks
         // above, matching Node, which does not guarantee wrap finalizers run
-        // at process exit. Under BUN_DESTRUCT_VM_ON_EXIT the final exit
-        // collection runs the remaining finalizers immediately instead (see
-        // Zig__GlobalObject__destructOnExit).
+        // at process exit. Wraps swept by a later collection (the exit GC
+        // under BUN_DESTRUCT_VM_ON_EXIT) still defer their finalizers, and
+        // NapiFinalizerTask::schedule() drops those tasks because the VM
+        // cleanup hooks already ran, so only the addon's own allocations are
+        // left for the OS to reclaim.
         if (napi_internal_cleanup_is_hooks_only()) {
             // The napi_set_instance_data() finalizer is part of env teardown
             // in Node and is still safe here: nothing on this path has been
             // freed, so it cannot observe the dangling state the skipped
-            // wrap-finalizer pass avoids. Null the pointer so finalizers that
-            // run later (the exit collection under BUN_DESTRUCT_VM_ON_EXIT
-            // runs swept wraps' finalizers immediately) see null from
-            // napi_get_instance_data instead of freed memory.
+            // wrap-finalizer pass avoids. Null the pointer so any finalizer
+            // that still runs later (lastChanceToFinalize calls them
+            // immediately) sees null from napi_get_instance_data instead of
+            // freed memory.
             instanceDataFinalizer.call(this, instanceData, true);
             instanceDataFinalizer.clear();
             instanceData = nullptr;

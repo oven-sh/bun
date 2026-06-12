@@ -570,13 +570,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper, or None if it has been finalized (server fully
-    /// stopped and the JS reference dropped). Dispatch trampolines should
-    /// answer 503+close on None.
+    /// Returns the wrapper while it is strongly rooted, or None once the
+    /// server has gone idle and downgraded. Dispatch trampolines should
+    /// answer 503+close on None. Checking strong (not just Finalized) closes
+    /// the dead-but-unswept window where `JsRef::Weak` holds a stale address.
     pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
         match &self.js_value {
-            jsc::JsRef::Finalized => None,
-            _ => self.js_value.try_get(),
+            jsc::JsRef::Strong(_) => self.js_value.try_get(),
+            _ => None,
         }
     }
 

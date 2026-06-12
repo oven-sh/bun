@@ -3,21 +3,23 @@
 // Every `bun test` exit site (and the --parallel worker exit in
 // test/parallel/runner.rs) jumped straight to VirtualMachine::global_exit()
 // without draining RareData::cleanup_hooks, the list on which each NapiEnv
-// registers its at-exit cleanup (NapiEnv::cleanup: env cleanup hooks +
-// pending napi_wrap finalizers). Consequences:
+// registers its at-exit cleanup. Consequences:
 //   - napi_add_env_cleanup_hook hooks silently never ran under `bun test`
 //     (Node runs them whenever the environment tears down);
-//   - napi_wrap at-exit finalizers never ran, so with
-//     BUN_DESTRUCT_VM_ON_EXIT=1 the final GC deferred them as
-//     NapiFinalizerTasks parked on that same never-walked list, which
-//     LeakSanitizer reports at exit (the intermittent exit-134 failures of
-//     test/regression/issue/30205.test.ts on the asan CI lane).
+//   - with BUN_DESTRUCT_VM_ON_EXIT=1 the final GC deferred the swept wraps'
+//     finalizers as NapiFinalizerTasks parked on that same never-walked
+//     list, which LeakSanitizer reports at exit (the intermittent exit-134
+//     failures of test/regression/issue/30205.test.ts on the asan CI lane).
 //
-// These two tests are the deterministic, build-independent half: they fail
-// on an unfixed build on every platform because the hook/finalizer output
-// never appears. They live in their own file (rather than napi.test.ts)
-// only because that 100-test concurrent suite is too heavy to run as a
-// whole alongside these.
+// The fix drains the cleanup hooks in global_exit(). Pending napi_wrap
+// finalizers are deliberately NOT run on this path: unlike `bun run`, the
+// test runner exits without draining the event loop, so addons may still
+// have queued async work whose teardown references wraps the finalizer pass
+// would have deleted (duckdb's Task destructor Unref()s its Connection).
+// Node does not guarantee wrap finalizers run at process exit either.
+//
+// This file lives apart from napi.test.ts only because that 100-test
+// concurrent suite is too heavy to run as a whole alongside these.
 
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
@@ -82,7 +84,14 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("napi_wrap finalizers run during env teardown when exiting from bun test", async () => {
+  test("pending napi_wrap finalizers are skipped at bun test exit", async () => {
+    // Negative contract for the hooks-only drain: wraps still rooted when
+    // `bun test` exits must NOT have their finalizers run (the event loop
+    // was never drained, so running them can touch wraps that abandoned
+    // async work still references), and the process must exit cleanly. The
+    // equivalent `bun run` exit does run them; that behavior is covered by
+    // "napi_wrap finalizers run in LIFO order during env teardown" in
+    // napi.test.ts.
     using dir = tempDir("napi-wrap-teardown-bun-test", {
       "wrap.test.js": `
         import { test, expect } from "bun:test";
@@ -99,17 +108,8 @@ describe.concurrent("napi cleanup at bun test exit", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The addon prints the accumulated LIFO order once the parent (id 0) is
-    // finalized; stdout also carries the test runner's version banner, so
-    // assert the exact line rather than the whole stream. No trailing
-    // newline in the needle: the addon's printf("\n") arrives as CRLF on
-    // Windows (text-mode CRT stdout).
-    expect(stdout).toContain(
-      "finalize order: " +
-        Array.from({ length: 32 }, (_, i) => 32 - i)
-          .concat(0)
-          .join(" "),
-    );
+    // The addon prints "finalize order: ..." if any wrap finalizer runs.
+    expect(stdout).not.toContain("finalize order:");
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });

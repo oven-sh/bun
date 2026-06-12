@@ -1201,7 +1201,7 @@ pub mod waiter_thread_posix {
                         remove = true;
 
                         match T::event_loop(process_ref) {
-                            EventLoopHandle::Js { owner } => {
+                            EventLoopHandle::Js { owner, generation } => {
                                 let ct = ConcurrentTask::create(Task::new(
                                     T::TASK_TAG,
                                     ResultTask::<T>::new(ResultTask {
@@ -1211,7 +1211,11 @@ pub mod waiter_thread_posix {
                                     })
                                     .cast(),
                                 ));
-                                owner.enqueue_task_concurrent(ct);
+                                // Checked dispatch: the waiter thread outlives
+                                // worker VMs; `(owner, generation)` — captured
+                                // at spawn time — is validated against the
+                                // live-VM registry before any dereference.
+                                owner.enqueue_task_concurrent(ct, generation);
                             }
                             EventLoopHandle::Mini(mut mini) => {
                                 let out = ResultTaskMini::<T>::new(ResultTaskMini {

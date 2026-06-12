@@ -278,20 +278,6 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
-        let vm = self
-            .global_this
-            .bun_vm_concurrently()
-            .cast_const()
-            .cast_mut();
-        let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // Checked: callable from waiter/pool threads, which can outlive a
-        // terminated worker's VM.
-        let _ =
-            bun_jsc::virtual_machine::VirtualMachine::try_enqueue_task_concurrent(vm, concurrent);
-    }
-
-    #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
         bun_resolver::fs::FileSystem::get().top_level_dir
     }

@@ -49,12 +49,12 @@ mod _impl {
         pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
-        /// Owning VM, captured at construction. Read on the work-pool thread
-        /// by `async_job_run` (happens-before via `WorkPool::schedule`, same
-        /// contract as `task`) so completion never reads through
-        /// `global_this` off-thread — the VM may be a worker freed by
-        /// terminate() while the job was in flight.
-        pub vm: JsCell<*mut bun_jsc::virtual_machine::VirtualMachine>,
+        /// Owning VM's schedule-time handle, captured at construction. Read
+        /// on the work-pool thread by `async_job_run` (happens-before via
+        /// `WorkPool::schedule`, same contract as `task`) so completion never
+        /// reads through `global_this` off-thread — the VM may be a worker
+        /// freed by terminate() while the job was in flight.
+        pub vm: JsCell<bun_jsc::virtual_machine::VmHandle>,
         /// External-allocation footprint reported to the GC, fixed at
         /// construction. `mode` never changes after this (only `close()` sets
         /// it to `NONE`, on the JS thread), so the external state size is
@@ -112,7 +112,7 @@ mod _impl {
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
                 global_this: bun_ptr::BackRef::new(global),
-                vm: JsCell::new(global.bun_vm_ptr()),
+                vm: JsCell::new(global.bun_vm().concurrent_handle()),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),

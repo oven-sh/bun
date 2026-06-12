@@ -10,7 +10,7 @@ use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::StringJsc;
-use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
+use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop, LoopHandle};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
@@ -1767,8 +1767,10 @@ pub(super) enum AsyncWorkStatus {
 pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
-    // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    pub event_loop: bun_ptr::BackRef<EventLoop>,
+    /// Schedule-time handle — the owning worker VM may be freed by
+    /// terminate() while this work sits in the pool, so the pool-thread
+    /// completion goes through the registry-checked enqueue.
+    pub event_loop: LoopHandle,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
     pub execute: napi_async_execute_callback,
@@ -1800,10 +1802,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: bun_vm() never null for a Bun-owned global.
-            // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            event_loop: global.bun_vm().event_loop_shared().concurrent_handle(),
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1850,7 +1849,7 @@ impl napi_async_work {
                 // owning VM may be a worker freed by terminate() while this
                 // work sat in the pool.
                 let _ = EventLoop::try_enqueue_task_concurrent(
-                    self.event_loop.as_ptr(),
+                    self.event_loop,
                     core::ptr::NonNull::from(
                         self.concurrent_task
                             .from(self_ptr, AutoDeinit::ManualDeinit),
@@ -1867,7 +1866,7 @@ impl napi_async_work {
         // queue takes ownership of its `next` link. Checked: the owning VM
         // may be a worker freed by terminate() while the work ran.
         let _ = EventLoop::try_enqueue_task_concurrent(
-            self.event_loop.as_ptr(),
+            self.event_loop,
             core::ptr::NonNull::from(
                 self.concurrent_task
                     .from(self_ptr, AutoDeinit::ManualDeinit),
@@ -2429,6 +2428,9 @@ pub struct ThreadSafeFunction {
     // Note: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
     // EventLoop`; reborrowed at use sites (single JS thread).
     pub event_loop: bun_ptr::BackRef<EventLoop>,
+    /// Schedule-time handle for `event_loop`, for the addon-thread dispatch
+    /// (the one access that must tolerate the loop being gone).
+    pub loop_handle: LoopHandle,
     pub tracker: Debugger::AsyncTaskTracker,
 
     pub env: NapiEnvRef,
@@ -2718,7 +2720,7 @@ impl ThreadSafeFunction {
                 // Checked: threadsafe functions are called from arbitrary
                 // addon threads, which can outlive a terminated worker's loop.
                 let _ = EventLoop::try_enqueue_task_concurrent(
-                    self.event_loop.as_ptr(),
+                    self.loop_handle,
                     ConcurrentTask::create_from(self_ptr),
                 );
             }
@@ -2856,8 +2858,9 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
 
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: `event_loop()` is the live JS-thread loop (non-null, stable
-        // address) and outlives every threadsafe function.
+        // address); JS-thread-only derefs.
         event_loop: unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) },
+        loop_handle: vm.event_loop_shared().concurrent_handle(),
         // SAFETY: env is a live C++-owned napi_env.
         env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
         callback,
@@ -4271,8 +4274,10 @@ impl NapiFinalizerTask {
             // Checked: scheduled from non-JS threads (addon threads, GC
             // helpers) that can outlive a terminated worker's VM. When the VM
             // is gone the finalizer box leaks, matching a task left undrained
-            // in the dead worker's queue.
-            let _ = VirtualMachine::try_enqueue_task_concurrent(
+            // in the dead worker's queue. Address-only: the VM identity comes
+            // from the napi env, which carries no schedule-time generation
+            // (napi env teardown is a tracked follow-up).
+            let _ = VirtualMachine::try_enqueue_task_concurrent_addr_only(
                 core::ptr::from_ref(vm).cast_mut(),
                 ConcurrentTask::create(Task::init(this)),
             );

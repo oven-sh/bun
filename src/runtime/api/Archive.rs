@@ -665,7 +665,9 @@ pub trait TaskContext: Send {
 pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
-    vm: *mut VirtualMachine,
+    /// Schedule-time handle — the owning worker VM may be freed by
+    /// terminate() while the pool task is in flight.
+    vm: bun_jsc::virtual_machine::VmHandle,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
@@ -677,11 +679,7 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
-        let vm: *mut VirtualMachine = global.bun_vm_ptr();
+        let vm = global.bun_vm().concurrent_handle();
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
@@ -729,7 +727,7 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // `vm` was captured on the JS thread at `create` and may point at a
+        // `vm` was captured on the JS thread at `create` and may denote a
         // worker VM freed by terminate() while the pool task ran — checked
         // enqueue only.
         // SAFETY: `this` is the live pool-owned allocation; `concurrent_task`

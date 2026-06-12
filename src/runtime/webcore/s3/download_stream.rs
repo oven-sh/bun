@@ -21,7 +21,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    pub vm: Option<bun_jsc::virtual_machine::VmHandle>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
@@ -341,13 +341,13 @@ impl S3HttpDownloadStreamingTask {
             let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // `vm` was captured at task creation and may point at a worker VM
+            // `vm` was captured at task creation and may denote a worker VM
             // freed by terminate() while this request was in flight — checked
             // enqueue only. `task` is the inline `concurrent_task` field of
             // this heap request; the queue takes ownership of its `next` link
             // (and leaves it untouched when the VM is gone).
             let _ = VirtualMachine::try_enqueue_task_concurrent(
-                self_.vm.expect("vm set at task creation").as_ptr(),
+                self_.vm.expect("vm set at task creation"),
                 task,
             );
         }

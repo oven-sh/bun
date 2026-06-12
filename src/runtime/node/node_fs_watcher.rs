@@ -45,6 +45,9 @@ use super::win_watcher as path_watcher;
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     ctx: *mut VirtualMachine,
+    /// Schedule-time handle for `ctx`, for the watcher-thread completion
+    /// enqueue (the one access that must tolerate the VM being gone).
+    vm_handle: bun_jsc::virtual_machine::VmHandle,
     verbose: bool,
 
     mutex: Mutex,
@@ -101,7 +104,7 @@ impl FSWatcher {
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bool {
         // Called from watcher threads: `ctx` may point at a worker VM freed
         // by terminate() while an event was in flight — checked enqueue only.
-        VirtualMachine::try_enqueue_task_concurrent(self.ctx, task)
+        VirtualMachine::try_enqueue_task_concurrent(self.vm_handle, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -1083,6 +1086,7 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
+            vm_handle: vm_ref.concurrent_handle(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

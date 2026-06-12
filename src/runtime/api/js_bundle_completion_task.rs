@@ -59,9 +59,11 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub jsc_event_loop: BackRef<EventLoop>,
+    /// Schedule-time handle of the JS-thread `EventLoop` — the Bun.build
+    /// caller's VM may be a worker freed by terminate() while the bundle
+    /// runs, so the bundle-thread completion goes through the
+    /// registry-checked enqueue.
+    pub jsc_event_loop: jsc::event_loop::LoopHandle,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -123,9 +125,9 @@ pub(crate) fn create_and_schedule_completion_task(
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        // SAFETY: `event_loop` is the live JS-thread loop (caller derives it
+        // from `vm.event_loop()`); never null once `Bun.build` is reachable.
+        jsc_event_loop: unsafe { (*event_loop).concurrent_handle() },
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -789,7 +791,7 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
         // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
         // passed through from the bundler vtable; the queue takes ownership.
         let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
-            from_completion_handle(c).jsc_event_loop.as_ptr(),
+            from_completion_handle(c).jsc_event_loop,
             // SAFETY: non-null per the vtable contract above.
             unsafe { core::ptr::NonNull::new_unchecked(task) },
         );
@@ -995,7 +997,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `ConcurrentTask::create` heap-allocates a fresh task; the queue
         // takes ownership of it (or frees it when the VM is gone).
         let _ = jsc::event_loop::EventLoop::try_enqueue_task_concurrent(
-            self.jsc_event_loop.as_ptr(),
+            self.jsc_event_loop,
             jsc::ConcurrentTask::create(self.task.task()),
         );
     }

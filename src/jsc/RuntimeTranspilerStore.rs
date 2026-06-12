@@ -350,6 +350,8 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
+                // JS thread; `global_object`'s VM is this thread's live VM.
+                vm_handle: global_object.bun_vm().concurrent_handle(),
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -406,6 +408,9 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub vm: *mut VirtualMachine,
+    /// Schedule-time handle for `vm`, for the one access that must tolerate
+    /// the VM being gone: the pool-thread `dispatch_to_main_thread`.
+    pub vm_handle: crate::virtual_machine::VmHandle,
     pub global_this: BackRef<JSGlobalObject>,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
@@ -514,7 +519,7 @@ impl TranspilerJob {
     }
 
     pub(crate) fn dispatch_to_main_thread(&mut self) {
-        let vm = self.vm;
+        let vm = self.vm_handle;
         let job = NonNull::from(&mut *self);
         // Both the store's queue and the event loop live inside the VM
         // allocation, which may be a worker VM freed by terminate() while

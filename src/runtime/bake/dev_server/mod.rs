@@ -960,9 +960,9 @@ impl WatcherAtomics {
                 // a worker freed by terminate() (nothing structurally pins the
                 // dev server to the main VM).
                 // SAFETY: `owner` BACKREF is valid (DevServer-owned field reads only).
-                let vm_ptr = unsafe { (*ev_ref.owner).vm.as_ptr() };
+                let vm_handle = unsafe { (*ev_ref.owner).vm_handle };
                 let _ = bun_jsc::virtual_machine::VirtualMachine::try_enqueue_task_concurrent(
-                    vm_ptr,
+                    vm_handle,
                     core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
                 );
             }

@@ -286,6 +286,11 @@ pub struct VirtualMachine {
     /// cross-thread enqueue helpers ([`Self::with_live_vm`] closures) read it
     /// from producer threads while a swap may be in progress.
     pub event_loop: core::sync::atomic::AtomicPtr<EventLoop>,
+    /// Registration generation from [`live_vm_registry`], stamped once in
+    /// `register_vm` (0 = not yet registered). Atomic only because the
+    /// lock-free main-VM fast paths read it from producer threads; a stale
+    /// read there falls through to the locked registry check.
+    pub(crate) live_generation: core::sync::atomic::AtomicU64,
 
     pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
@@ -499,15 +504,19 @@ impl VMHolder {
 /// static-rooted and never freed), which enables the lock-free fast path in
 /// the checked entry points below.
 ///
-/// Known residual (pre-existing, strictly narrower than the bug this fixes):
-/// liveness is keyed by address only, so if a new VM is allocated at a dead
-/// VM's address, a stale producer that captured the old pointer passes the
-/// check and its task is delivered to the new VM instead of being dropped.
-/// That mis-delivery was already possible before this registry existed (the
-/// stale push landed at the same reused address, plus every freed-memory
-/// interleaving that is now closed). Eliminating it requires producers to
-/// carry a schedule-time generation token alongside the pointer — a
-/// follow-up that touches every producer struct.
+/// Each registration is stamped with a process-unique generation
+/// ([`mint_generation`]) that producers capture at schedule time inside a
+/// [`VmHandle`](super::VmHandle) / [`LoopHandle`](crate::event_loop::LoopHandle)
+/// and bring back to the liveness check. The generation is what makes the
+/// check immune to address reuse: if a new VM is allocated at a dead VM's
+/// address, a stale producer's handle still carries the dead registration's
+/// generation, fails the `(addr, generation)` match, and the task is dropped instead
+/// of being delivered to the wrong VM.
+///
+/// Residual: entry points whose pointer is captured by C++ and cannot carry a
+/// generation yet (`JSVMClientData::bunVM` via JSCScheduler,
+/// `EventLoopTaskNoContext` via CppTask) still check by address alone — see
+/// the `*_addr_only` variants below.
 ///
 /// Lock ordering: this lock is a leaf. The critical sections only touch the
 /// target's MPSC queue (wait-free push) and `wakeup()` (a syscall); they take
@@ -516,22 +525,43 @@ pub(crate) mod live_vm_registry {
     use super::VirtualMachine;
     use crate::event_loop::EventLoop;
     use bun_threading::Guarded;
+    use core::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Copy, Clone, Eq, PartialEq)]
     pub(crate) struct Entry {
         pub(crate) vm: usize,
         pub(crate) loop_: usize,
+        /// Generation stamped at registration; never reused process-wide.
+        pub(crate) generation: u64,
     }
 
     pub(crate) static REGISTRY: Guarded<Vec<Entry>> = Guarded::new(Vec::new());
 
-    /// Register `vm` and both of its embedded event loops. Called once as
-    /// the final step of `VirtualMachine::init()`, after every fallible
+    /// Process-unique generation source. Starts at 1 so generation 0 can
+    /// serve as the "never matches anything" value of a zeroed/placeholder
+    /// handle (zero-initialised VM allocations carry it until `register_vm`).
+    static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+    fn mint_generation() -> u64 {
+        // Relaxed: uniqueness is all that's needed; the value is published to
+        // producers via the same synchronisation that hands them the handle.
+        NEXT_GENERATION.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Register `vm` and both of its embedded event loops under one freshly
+    /// minted generation, and stamp that generation into
+    /// `vm.live_generation` / both loops' `live_generation` so
+    /// `concurrent_handle()` can build handles without the lock. Called once
+    /// as the final step of `VirtualMachine::init()`, after every fallible
     /// init step has succeeded.
     pub(crate) fn register_vm(vm: *mut VirtualMachine) {
-        // SAFETY: `vm` is the freshly initialised allocation; `addr_of!` only
-        // projects field addresses, no reads.
+        let generation = mint_generation();
+        // SAFETY: `vm` is the freshly initialised allocation with no other
+        // live borrows; `init()` has exclusive access at this point.
         let (regular, macro_) = unsafe {
+            (*vm).live_generation.store(generation, Ordering::Relaxed);
+            (*vm).regular_event_loop.live_generation = generation;
+            (*vm).macro_event_loop.live_generation = generation;
             (
                 core::ptr::addr_of!((*vm).regular_event_loop),
                 core::ptr::addr_of!((*vm).macro_event_loop),
@@ -541,10 +571,12 @@ pub(crate) mod live_vm_registry {
         reg.push(Entry {
             vm: vm as usize,
             loop_: regular as usize,
+            generation,
         });
         reg.push(Entry {
             vm: vm as usize,
             loop_: macro_ as usize,
+            generation,
         });
     }
 
@@ -557,12 +589,20 @@ pub(crate) mod live_vm_registry {
     }
 
     /// Register a loop that lives outside the VM allocation (the boxed
-    /// spawnSync event loop). Removed with `unregister_loop` when the box is
-    /// freed.
+    /// spawnSync event loop) under its own generation, stamped into
+    /// `loop_.live_generation`. Removed with `unregister_loop` when the box
+    /// is freed.
     pub(crate) fn register_extra_loop(vm: *mut VirtualMachine, loop_: *mut EventLoop) {
+        let generation = mint_generation();
+        // SAFETY: `loop_` is the freshly boxed allocation; the caller has
+        // exclusive access until it hands the pointer out.
+        unsafe {
+            (*loop_).live_generation = generation;
+        }
         REGISTRY.lock().push(Entry {
             vm: vm as usize,
             loop_: loop_ as usize,
+            generation,
         });
     }
 
@@ -570,22 +610,91 @@ pub(crate) mod live_vm_registry {
         REGISTRY.lock().retain(|e| e.loop_ != loop_ as usize);
     }
 
-    /// `true` iff `loop_` is one of the immortal main-thread VM's embedded
-    /// loops. Address arithmetic only; the main VM allocation is never freed.
-    pub(crate) fn is_main_vm_loop(loop_: *mut EventLoop) -> bool {
+    /// `true` iff `handle` denotes one of the immortal main-thread VM's
+    /// embedded loops, in its current (only) generation. Lock-free: the main
+    /// VM allocation is never freed, so the address + generation comparison
+    /// proves liveness without the registry. A stale (pre-`register_vm`)
+    /// generation read only causes a spurious `false`, and the caller then
+    /// gets the precise answer from the locked registry.
+    pub(crate) fn is_main_vm_loop(handle: crate::event_loop::LoopHandle) -> bool {
         let main = super::MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if main.is_null() {
             return false;
         }
         // SAFETY: `main` is the live, never-freed main-thread VM; `addr_of!`
-        // only projects field addresses, no reads.
-        let (regular, macro_) = unsafe {
+        // only projects field addresses, and `live_generation` is atomic.
+        let (regular, macro_, generation) = unsafe {
             (
-                core::ptr::addr_of!((*main).regular_event_loop),
-                core::ptr::addr_of!((*main).macro_event_loop),
+                core::ptr::addr_of!((*main).regular_event_loop) as usize,
+                core::ptr::addr_of!((*main).macro_event_loop) as usize,
+                (*main).live_generation.load(Ordering::Relaxed),
             )
         };
-        core::ptr::eq(loop_, regular.cast_mut()) || core::ptr::eq(loop_, macro_.cast_mut())
+        handle.generation() == generation && (handle.addr() == regular || handle.addr() == macro_)
+    }
+}
+
+/// Schedule-time identity of a [`VirtualMachine`] for cross-thread producers.
+///
+/// Producers that capture a VM on the JS thread and deliver a completion from
+/// another thread (HTTP client thread, work pool, watcher threads, napi addon
+/// threads) store this instead of `*mut VirtualMachine` / `&VirtualMachine`.
+/// The address alone cannot distinguish a live VM from a new VM reusing a
+/// dead worker's allocation; the generation (minted per registration in
+/// [`live_vm_registry`], never reused) can. The checked entry points
+/// ([`VirtualMachine::try_enqueue_task_concurrent`] and friends) verify
+/// `(addr, generation)` against the registry under its lock before touching the VM.
+///
+/// Plain data (`Copy`, `Send`, `Sync`): holding one neither keeps the VM
+/// alive nor permits dereferencing it. The loop-pointer analogue is
+/// [`crate::event_loop::LoopHandle`].
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct VmHandle {
+    addr: usize,
+    generation: u64,
+}
+
+impl VmHandle {
+    /// Handle that matches no VM, for struct fields initialised before the
+    /// owning VM is known. Checked entry points treat it as "VM gone".
+    pub const fn dangling() -> Self {
+        VmHandle {
+            addr: 0,
+            generation: 0,
+        }
+    }
+
+    /// Reassemble a handle whose parts were carried separately (e.g. the
+    /// package-manager `WakeHandler`, whose context pointer and generation
+    /// travel as distinct fields because the low-tier crate cannot name this
+    /// type). No liveness is implied.
+    pub(crate) fn from_raw_parts(addr: usize, generation: u64) -> Self {
+        VmHandle { addr, generation }
+    }
+
+    /// The registration generation, for producers that must carry the
+    /// handle's parts through an API that cannot name this type (reassembled
+    /// with `from_raw_parts`).
+    pub fn generation(self) -> u64 {
+        self.generation
+    }
+
+    /// Borrow the VM on its own thread, where liveness is structural (the
+    /// thread exists only while its VM does). Panics if called anywhere else,
+    /// including on a thread whose current VM reuses a dead VM's address —
+    /// the generation comparison catches that.
+    #[track_caller]
+    pub fn vm_on_owning_thread(self) -> &'static VirtualMachine {
+        let vm = VirtualMachine::get();
+        assert!(
+            core::ptr::from_ref(vm) as usize == self.addr
+                && vm
+                    .live_generation
+                    .load(core::sync::atomic::Ordering::Relaxed)
+                    == self.generation,
+            "VmHandle used on a thread that does not own its VirtualMachine"
+        );
+        vm
     }
 }
 
@@ -1273,6 +1382,12 @@ impl VirtualMachine {
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
+            // `EventLoop::default()` zeroed the registration generation that
+            // `register_vm` stamped; restore it (same address, same
+            // registration — the registry entry is untouched).
+            self.macro_event_loop.live_generation = self
+                .live_generation
+                .load(core::sync::atomic::Ordering::Relaxed);
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
@@ -3727,9 +3842,65 @@ impl VirtualMachine {
         self.event_loop_mut().enqueue_task_concurrent(task);
     }
 
-    /// Run `f` against `vm` only if it is still alive, tolerating `vm` having
-    /// been freed (terminated worker). Returns `None` without touching `*vm`
-    /// when it is gone.
+    /// Schedule-time [`VmHandle`] for this VM, for producers that deliver a
+    /// completion from another thread through the checked entry points below.
+    /// Call on the JS thread (or anywhere `self` is provably live).
+    #[inline]
+    pub fn concurrent_handle(&self) -> VmHandle {
+        VmHandle {
+            addr: core::ptr::from_ref(self) as usize,
+            generation: self
+                .live_generation
+                .load(core::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Shared body of [`Self::with_live_vm`] / [`Self::with_live_vm_addr_only`]:
+    /// run `f` against the VM at `addr` only while the registry proves it
+    /// live. `generation` is `None` for the address-only residual (C++-captured
+    /// pointers that cannot carry a generation yet).
+    fn with_live_vm_impl<R>(
+        addr: usize,
+        generation: Option<u64>,
+        f: impl FnOnce(&VirtualMachine) -> R,
+    ) -> Option<R> {
+        if addr == 0 {
+            return None;
+        }
+        // Fast path: the main-thread VM is allocated once and never freed, so
+        // an address (+ generation) match proves liveness without the lock. A
+        // stale (pre-`register_vm`) generation read only causes a spurious
+        // miss into the locked path below.
+        let main = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        if main as usize == addr {
+            // SAFETY: main-thread VM, never freed; `live_generation` is atomic.
+            let main = unsafe { &*main };
+            if generation.is_none_or(|g| {
+                g == main
+                    .live_generation
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            }) {
+                return Some(f(main));
+            }
+        }
+        let reg = live_vm_registry::REGISTRY.lock();
+        if !reg
+            .iter()
+            .any(|e| e.vm == addr && generation.is_none_or(|g| e.generation == g))
+        {
+            return None;
+        }
+        // SAFETY: the VM at `addr` is registered-live, and `unregister_vm`
+        // (which happens-before any free of the VM) takes the same lock we
+        // hold, so the VM cannot be freed while `f` runs.
+        Some(f(unsafe { &*(addr as *const VirtualMachine) }))
+    }
+
+    /// Run `f` against the VM identified by `handle` only if that exact
+    /// registration is still alive, tolerating the VM having been freed
+    /// (terminated worker) — and, unlike an address check, tolerating a new
+    /// VM reusing the dead VM's allocation. Returns `None` without touching
+    /// the VM when it is gone.
     ///
     /// For the immortal main-thread VM this is lock-free; for every other VM,
     /// `f` runs under the [`live_vm_registry`] lock, which `unregister_vm`
@@ -3739,41 +3910,35 @@ impl VirtualMachine {
     /// `f` may be on a non-JS thread — `f` must restrict itself to the
     /// documented thread-safe subset (the same contract as the `Sync` impl),
     /// which is why this helper is crate-private rather than `pub`.
+    pub(crate) fn with_live_vm<R>(
+        handle: VmHandle,
+        f: impl FnOnce(&VirtualMachine) -> R,
+    ) -> Option<R> {
+        Self::with_live_vm_impl(handle.addr, Some(handle.generation), f)
+    }
+
+    /// Address-only variant of [`Self::with_live_vm`] for producers whose VM
+    /// pointer was captured by C++ and cannot carry a generation yet
+    /// (`JSVMClientData::bunVM`, `EventLoopTaskNoContext`). Residual: a new
+    /// VM allocated at a dead VM's address passes this check — see
+    /// [`live_vm_registry`].
     // Deliberately takes `*mut` and is NOT `unsafe`: accepting a possibly
     // dangling pointer is the function's contract, and no deref happens until
     // the registry proves the pointee live (and holds off its free).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn with_live_vm<R>(
+    pub(crate) fn with_live_vm_addr_only<R>(
         vm: *mut VirtualMachine,
         f: impl FnOnce(&VirtualMachine) -> R,
     ) -> Option<R> {
-        if vm.is_null() {
-            return None;
-        }
-        // Fast path: the main-thread VM is allocated once and never freed, so
-        // an address match proves liveness without the lock.
-        if core::ptr::eq(
-            vm,
-            MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire),
-        ) {
-            // SAFETY: main-thread VM, never freed.
-            return Some(f(unsafe { &*vm }));
-        }
-        let reg = live_vm_registry::REGISTRY.lock();
-        if !reg.iter().any(|e| e.vm == vm as usize) {
-            return None;
-        }
-        // SAFETY: `vm` is registered-live, and `unregister_vm` (which
-        // happens-before any free of the VM) takes the same lock we hold, so
-        // the VM cannot be freed while `f` runs.
-        Some(f(unsafe { &*vm }))
+        Self::with_live_vm_impl(vm as usize, None, f)
     }
 
-    /// Cross-thread enqueue that tolerates `vm` having been freed (terminated
-    /// worker). Producers that captured `vm` at schedule time and deliver a
-    /// completion from another thread (HTTP client thread, work pool, watcher
-    /// threads, napi addon threads) must use this instead of dereferencing
-    /// `vm` directly — see [`live_vm_registry`].
+    /// Cross-thread enqueue that tolerates the handle's VM having been freed
+    /// (terminated worker). Producers that captured the handle at schedule
+    /// time ([`Self::concurrent_handle`]) and deliver a completion from
+    /// another thread (HTTP client thread, work pool, watcher threads, napi
+    /// addon threads) must use this instead of dereferencing a stored VM
+    /// pointer — see [`live_vm_registry`].
     ///
     /// Returns `false` when the VM is gone: the task was not queued, and
     /// `task`'s node was freed if it was `auto_delete` (the payload is
@@ -3781,10 +3946,10 @@ impl VirtualMachine {
     /// terminated worker's queue, which is the pre-existing behavior for
     /// tasks that lost this race by a few milliseconds).
     pub fn try_enqueue_task_concurrent(
-        vm: *mut VirtualMachine,
+        handle: VmHandle,
         task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
     ) -> bool {
-        match Self::with_live_vm(vm, |vm| {
+        match Self::with_live_vm(handle, |vm| {
             vm.event_loop_shared().enqueue_task_concurrent(task);
         }) {
             Some(()) => true,
@@ -3795,34 +3960,54 @@ impl VirtualMachine {
         }
     }
 
-    /// Like [`VirtualMachine::is_shutting_down`], but callable with a pointer
-    /// that may already be freed (terminated worker): a freed VM reports
-    /// `true`. For HTTP-thread / work-pool completion paths that branch on
-    /// shutdown before touching VM-owned state.
-    pub fn is_shutting_down_or_freed(vm: *mut VirtualMachine) -> bool {
-        Self::live_shutting_down_state(vm).unwrap_or(true)
+    /// Address-only variant of [`Self::try_enqueue_task_concurrent`] — same
+    /// residual as [`Self::with_live_vm_addr_only`].
+    pub fn try_enqueue_task_concurrent_addr_only(
+        vm: *mut VirtualMachine,
+        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
+    ) -> bool {
+        match Self::with_live_vm_addr_only(vm, |vm| {
+            vm.event_loop_shared().enqueue_task_concurrent(task);
+        }) {
+            Some(()) => true,
+            None => {
+                crate::event_loop::discard_unqueued_concurrent_task(task);
+                false
+            }
+        }
+    }
+
+    /// Like [`VirtualMachine::is_shutting_down`], but keyed by a schedule-time
+    /// handle whose VM may already be freed (terminated worker): a freed VM —
+    /// or a new VM reusing its address — reports `true`. For HTTP-thread /
+    /// work-pool completion paths that branch on shutdown before touching
+    /// VM-owned state.
+    pub fn is_shutting_down_or_freed(handle: VmHandle) -> bool {
+        Self::live_shutting_down_state(handle).unwrap_or(true)
     }
 
     /// Tri-state variant of [`Self::is_shutting_down_or_freed`] for callers
     /// that must distinguish a freed VM from a live-but-exiting one: `None`
-    /// when `vm` is gone (terminated worker), otherwise
-    /// `Some(is_shutting_down)`. Because `WebWorker::shutdown()` unregisters
-    /// the VM *before* setting `is_shutting_down`, `Some(true)` can only be
-    /// observed for VMs that are never freed (the main VM during
-    /// `global_exit`).
-    pub fn live_shutting_down_state(vm: *mut VirtualMachine) -> Option<bool> {
-        Self::with_live_vm(vm, |vm| vm.is_shutting_down())
+    /// when the handle's registration is gone (terminated worker, or a new VM
+    /// reusing the freed address), otherwise `Some(is_shutting_down)`.
+    /// Because `WebWorker::shutdown()` unregisters the VM *before* setting
+    /// `is_shutting_down`, `Some(true)` can only be observed for VMs that are
+    /// never freed (the main VM during `global_exit`).
+    pub fn live_shutting_down_state(handle: VmHandle) -> Option<bool> {
+        Self::with_live_vm(handle, |vm| vm.is_shutting_down())
     }
 
     /// `ref_concurrently`/`unref_concurrently` variants of
-    /// [`Self::try_enqueue_task_concurrent`]: no-ops when the VM is gone (a
-    /// freed loop has no liveness counter left to balance).
-    pub fn try_ref_concurrently(vm: *mut VirtualMachine) {
-        let _ = Self::with_live_vm(vm, |vm| vm.event_loop_shared().ref_concurrently());
+    /// [`Self::try_enqueue_task_concurrent`] for pointers captured by C++ —
+    /// no-ops when the VM is gone (a freed loop has no liveness counter left
+    /// to balance), with the same address-only residual as
+    /// [`Self::with_live_vm_addr_only`].
+    pub fn try_ref_concurrently_addr_only(vm: *mut VirtualMachine) {
+        let _ = Self::with_live_vm_addr_only(vm, |vm| vm.event_loop_shared().ref_concurrently());
     }
 
-    pub fn try_unref_concurrently(vm: *mut VirtualMachine) {
-        let _ = Self::with_live_vm(vm, |vm| vm.event_loop_shared().unref_concurrently());
+    pub fn try_unref_concurrently_addr_only(vm: *mut VirtualMachine) {
+        let _ = Self::with_live_vm_addr_only(vm, |vm| vm.event_loop_shared().unref_concurrently());
     }
 
     /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant

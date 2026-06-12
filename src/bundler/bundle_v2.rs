@@ -1565,8 +1565,8 @@ pub mod bv2_impl {
             // the plugins.
             // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             match &*self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
-                    owner.enqueue_task_concurrent(task);
+                bun_event_loop::AnyEventLoop::Js { owner, generation } => {
+                    owner.enqueue_task_concurrent(task, *generation);
                 }
                 bun_event_loop::AnyEventLoop::Mini(_) => {
                     panic!("No JavaScript event loop for transpiler plugins to run on");
@@ -4194,12 +4194,13 @@ pub mod bv2_impl {
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
+                bun_event_loop::AnyEventLoop::Js { owner, generation } => {
                     owner.enqueue_task_concurrent(
                         bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(load),
                             on_load_from_js_loop_raw,
                         ),
+                        *generation,
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
@@ -4219,12 +4220,13 @@ pub mod bv2_impl {
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
+                bun_event_loop::AnyEventLoop::Js { owner, generation } => {
                     owner.enqueue_task_concurrent(
                         bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(resolve),
                             on_resolve_from_js_loop_raw,
                         ),
+                        *generation,
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {

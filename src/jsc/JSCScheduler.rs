@@ -44,10 +44,12 @@ pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
     crate::mark_binding!();
     // Checked: called from JSC helper threads, which can outlive a
     // terminated worker's VM (the counter of a freed loop needs no balancing).
+    // Address-only: the pointer was captured by C++ (`JSVMClientData::bunVM`)
+    // and carries no generation.
     if delta > 0 {
-        VirtualMachine::try_ref_concurrently(jsc_vm);
+        VirtualMachine::try_ref_concurrently_addr_only(jsc_vm);
     } else {
-        VirtualMachine::try_unref_concurrently(jsc_vm);
+        VirtualMachine::try_unref_concurrently_addr_only(jsc_vm);
     }
 }
 
@@ -60,7 +62,12 @@ pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     // Checked: called from JSC concurrent threads, which can outlive a
     // terminated worker's VM. `create_from` heap-allocates with the
     // auto-delete bit set (freed by the checked enqueue when the VM is gone).
-    let _ = VirtualMachine::try_enqueue_task_concurrent(jsc_vm, ConcurrentTask::create_from(task));
+    // Address-only: the pointer was captured by C++ (`JSVMClientData::bunVM`)
+    // and carries no generation.
+    let _ = VirtualMachine::try_enqueue_task_concurrent_addr_only(
+        jsc_vm,
+        ConcurrentTask::create_from(task),
+    );
 }
 
 /// # Safety

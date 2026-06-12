@@ -1332,16 +1332,21 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
           if (connection.state === PooledConnectionState.closed) {
             if (connection.retry()) {
               // lets wait for connection to be released
-              if (!retry_in_progress) {
-                // avoid adding to the queue twice, we wanna to retry every available pool connection
-                retry_in_progress = true;
-                if (reserved) {
-                  // we are not sure what connection will be available so we dont pre reserve
-                  this.reservedQueue.push(onConnected);
-                } else {
-                  this.waitingQueue.push(onConnected);
-                }
+              retry_in_progress = true;
+              if (reserved) {
+                // we are not sure what connection will be available so we dont pre reserve
+                this.reservedQueue.push(onConnected);
+              } else {
+                this.waitingQueue.push(onConnected);
               }
+              // One revived slot is enough to serve this caller. Reviving
+              // every closed slot here would redial the whole pool when a
+              // single query arrives after all slots idled out — the
+              // #30632 burst, shifted from cold start to post-idle.
+              // Additional slots are revived on demand as more queries
+              // arrive (each enters this scan) or via
+              // flushConcurrentQueries() once a connection is ready.
+              break;
             } else {
               // we have some error, lets grab it and fail if unable to start a connection
               storedError = connection.storedError;
@@ -1379,23 +1384,20 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
             } else {
               this.waitingQueue.push(onConnected);
             }
-            // Reuse an existing closed slot via `forceRetry()` before
+            // Reuse an existing closed slot via `forceRetry()` instead of
             // growing. A slot that failed auth with `canBeConnected` unset
             // can never be revived by `retry()`, so growing here would
             // strand it: it counts against `maxPoolSize` forever while a
-            // fresh slot takes its place. Retry-first costs the same one
-            // handshake and keeps the pool dense with live slots once the
-            // credential rotates.
-            let retried = false;
+            // fresh slot takes its place. Reaching this branch means every
+            // slot is closed (`all_closed`) and the pool is non-empty
+            // (`poolStarted` implies at least one slot), so the first
+            // iteration always finds a slot to revive.
             for (let i = 0; i < pollSize; i++) {
               const c = this.connections[i];
-              if (c.state === PooledConnectionState.closed && c.forceRetry()) {
-                retried = true;
+              if (c.state === PooledConnectionState.closed) {
+                c.forceRetry();
                 break;
               }
-            }
-            if (!retried) {
-              this.#tryGrowPool();
             }
           } else {
             // impossible to connect or retry

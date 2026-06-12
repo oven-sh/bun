@@ -462,7 +462,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub delete_target: js_ast::ExprData,
     pub loop_body: js_ast::StmtData,
     pub module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
@@ -3624,6 +3623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parent != scope` (fresh alloc) so the two `&mut` do not alias.
         VecExt::append(&mut parent.children, scope);
         scope.strict_mode = parent.strict_mode;
+        scope.use_strict_loc = parent.use_strict_loc;
 
         self.current_scope = scope;
 
@@ -4733,7 +4733,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
                 }
-                _ => {}
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by the \"use strict\" directive here";
+                    where_ = self.source.range_of_string(scope.use_strict_loc);
+                }
+                js_ast::StrictModeKind::SloppyMode => {}
             }
             if why.is_empty() {
                 why = bun_alloc::arena_format!(
@@ -4764,6 +4768,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
         Ok(())
+    }
+
+    /// Forbid declaring a symbol with a strict-mode reserved word or with the
+    /// name "eval" or "arguments". Must run during the visit pass: implicit
+    /// strict mode (ESM keywords, class bodies) is not yet applied to scopes
+    /// while parsing.
+    pub fn validate_declared_symbol_name(
+        &mut self,
+        loc: bun_ast::Loc,
+        name: &[u8],
+    ) -> Result<(), bun_core::Error> {
+        if bun_ast::lexer_tables::is_strict_mode_reserved_word(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )
+        } else if is_eval_or_arguments(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::EvalOrArguments,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )
+        } else {
+            Ok(())
+        }
     }
 
     #[inline]
@@ -4871,19 +4901,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: &'a [u8],
     ) -> Result<Ref, bun_core::Error> {
         // p.checkForNonBMPCodePoint(loc, name)
-        if !IS_GENERATED {
-            // Forbid declaring a symbol with a reserved word in strict mode
-            if self.is_strict_mode()
-                && name.as_ptr() != arguments_str.as_ptr()
-                && bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
-            {
-                self.mark_strict_mode_feature(
-                    StrictModeFeature::ReservedWord,
-                    js_lexer::range_of_identifier(self.source, loc),
-                    name,
-                )?;
-            }
-        }
+
+        // Reserved-word and "eval"/"arguments" name checks happen in the visit
+        // pass (`validate_declared_symbol_name`), not here: implicit strict
+        // mode (ESM keywords, class bodies) is only applied to scopes after
+        // parsing, in `prepare_for_visit_pass` and `visit_class`.
 
         // Allocate a new symbol
         let mut ref_ = self.new_symbol(kind, name)?;
@@ -8615,7 +8637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Directive {
                             value: b"use strict".into(),
                         },
-                        self.module_scope_directive_loc,
+                        self.module_scope().use_strict_loc,
                     );
                     remaining_stmts = &mut remaining_stmts[1..];
                 }
@@ -9211,7 +9233,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_import_item: Default::default(),
             import_namespace_cc_map: Default::default(),
             scope_order_to_visit: &[],
-            module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,

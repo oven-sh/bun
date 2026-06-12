@@ -333,7 +333,6 @@ test("postgres: transaction.close({ timeout }) rolls back when pending queries d
   expect(queryAfterClose).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
   expect(pg.commands).toContain("ROLLBACK");
   expect(pg.commands).not.toContain("COMMIT");
-  await sql.close();
 });
 
 test("postgres: transaction.close({ timeout }) does not leak an unhandledRejection when a pending query fails", async () => {
@@ -369,6 +368,9 @@ test("postgres: transaction.close({ timeout }) does not leak an unhandledRejecti
     expect(handledAs).toBe("handled");
     expect(pg.commands).toContain("ROLLBACK");
     expect(pg.commands).not.toContain("COMMIT");
+    // tear the pool down now, while the unhandledRejection listener is still
+    // attached (the await using dispose after the finally would be too late);
+    // close is idempotent so the second dispose at scope exit is a no-op
     await sql.close();
 
     // the query rejection was handled by the user; close()'s internal
@@ -410,7 +412,6 @@ test("postgres: transaction.close({ timeout }) waits for pending savepoints and 
   expect(pg.commands).toContain("RELEASE SAVEPOINT s0");
   expect(pg.commands).toContain("ROLLBACK");
   expect(pg.commands).not.toContain("COMMIT");
-  await sql.close();
 });
 
 test("postgres: transaction.close({ timeout }) still rolls back when the timeout fires first", async () => {
@@ -442,7 +443,6 @@ test("postgres: transaction.close({ timeout }) still rolls back when the timeout
   await expect(begin).rejects.toMatchObject({ code: "ERR_POSTGRES_CONNECTION_CLOSED" });
   expect(pg.commands).toContain("ROLLBACK");
   expect(pg.commands).not.toContain("COMMIT");
-  await sql.close();
 });
 
 test("mysql: transaction.close({ timeout }) rolls back when pending queries drain before the timeout", async () => {
@@ -469,5 +469,4 @@ test("mysql: transaction.close({ timeout }) rolls back when pending queries drai
   expect(pendingResult).toEqual([{ x: "hold" }]);
   expect(my.commands).toContain("ROLLBACK");
   expect(my.commands).not.toContain("COMMIT");
-  await sql.close();
 });

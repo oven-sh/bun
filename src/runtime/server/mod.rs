@@ -3032,22 +3032,36 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     );
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
-    /// WriteBarrier slots. Writes all slots unconditionally — `JSValue::ZERO`
-    /// clears, so a reload that omits a callback drops the previous root (G6).
-    /// Called after `ptr_to_js` in `serve()` and after the websocket-context
-    /// swap in `on_reload_from_zig`; dispatch keeps reading the shadow.
-    pub fn write_ws_handler_slots(&self, server_js: JSValue, global: &JSGlobalObject) {
-        let Some(ws) = self.config.websocket.as_ref() else {
+    /// WriteBarrier slots, applying the async-context wrap (deferred from
+    /// `Handler::from_js` so the wrapped fn is rooted the moment it exists).
+    /// Writes all slots unconditionally — `JSValue::ZERO` clears, so a reload
+    /// that omits a callback drops the previous root (G6). Called after
+    /// `ptr_to_js` in `serve()` and after the websocket-context swap in
+    /// `on_reload_from_zig`; dispatch keeps reading the shadow.
+    pub fn write_ws_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
+        let Some(ws) = self.config.websocket.as_mut() else {
             return;
         };
-        let h = &ws.handler;
-        Self::js_gc_ws_on_open_set(server_js, global, h.on_open);
-        Self::js_gc_ws_on_message_set(server_js, global, h.on_message);
-        Self::js_gc_ws_on_close_set(server_js, global, h.on_close);
-        Self::js_gc_ws_on_drain_set(server_js, global, h.on_drain);
-        Self::js_gc_ws_on_error_set(server_js, global, h.on_error);
-        Self::js_gc_ws_on_ping_set(server_js, global, h.on_ping);
-        Self::js_gc_ws_on_pong_set(server_js, global, h.on_pong);
+        let h = &mut ws.handler;
+        macro_rules! wrap_slot {
+            ($field:ident, $set:ident) => {{
+                let raw = h.$field;
+                if raw.is_empty() {
+                    Self::$set(server_js, global, JSValue::ZERO);
+                } else {
+                    let wrapped = raw.with_async_context_if_needed(global);
+                    Self::$set(server_js, global, wrapped);
+                    h.$field = wrapped;
+                }
+            }};
+        }
+        wrap_slot!(on_open, js_gc_ws_on_open_set);
+        wrap_slot!(on_message, js_gc_ws_on_message_set);
+        wrap_slot!(on_close, js_gc_ws_on_close_set);
+        wrap_slot!(on_drain, js_gc_ws_on_drain_set);
+        wrap_slot!(on_error, js_gc_ws_on_error_set);
+        wrap_slot!(on_ping, js_gc_ws_on_ping_set);
+        wrap_slot!(on_pong, js_gc_ws_on_pong_set);
     }
 }
 

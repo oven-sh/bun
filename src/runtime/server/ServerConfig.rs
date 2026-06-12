@@ -1273,7 +1273,10 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("Expected error to be a function"))
                 );
             }
-            args.on_error = on_error.with_async_context_if_needed(global);
+            // Raw value — async-context wrapping is deferred to the slot-write
+            // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
+            // rooted by the wrapper's WriteBarrier slot the moment it exists.
+            args.on_error = on_error;
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1285,7 +1288,7 @@ impl ServerConfig {
                     "Expected onNodeHTTPRequest to be a function",
                 )));
             }
-            args.on_node_http_request = on_request_.with_async_context_if_needed(global);
+            args.on_node_http_request = on_request_;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1293,7 +1296,7 @@ impl ServerConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
-            args.on_request = on_request_.with_async_context_if_needed(global);
+            args.on_request = on_request_;
         } else if args.bake.is_none()
             && args.on_node_http_request.is_empty()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0

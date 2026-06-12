@@ -1651,14 +1651,24 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // Mirror the handler callbacks into the wrapper's WriteBarrier
             // slots — the wrapper is the sole GC root for these; `ServerConfig`
             // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
+            // The async-context wrap is applied here (not in `from_js`) so the
+            // freshly-allocated wrapper fn is rooted by the slot immediately;
+            // the unwrapped fn is held live by the user's options object on the
+            // `serve()` stack across `init`/`listen` until this point.
             if !server_ref.config.on_request.is_empty() {
-                <$ServerType>::js_gc_on_request_set(obj, global_object, server_ref.config.on_request);
+                let wrapped = server_ref.config.on_request.with_async_context_if_needed(global_object);
+                <$ServerType>::js_gc_on_request_set(obj, global_object, wrapped);
+                server_ref.config.on_request = wrapped;
             }
             if !server_ref.config.on_error.is_empty() {
-                <$ServerType>::js_gc_on_error_set(obj, global_object, server_ref.config.on_error);
+                let wrapped = server_ref.config.on_error.with_async_context_if_needed(global_object);
+                <$ServerType>::js_gc_on_error_set(obj, global_object, wrapped);
+                server_ref.config.on_error = wrapped;
             }
             if !server_ref.config.on_node_http_request.is_empty() {
-                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, server_ref.config.on_node_http_request);
+                let wrapped = server_ref.config.on_node_http_request.with_async_context_if_needed(global_object);
+                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, wrapped);
+                server_ref.config.on_node_http_request = wrapped;
             }
             server_ref.write_ws_handler_slots(obj, global_object);
             server_ref.js_value.set_strong(obj, global_object);

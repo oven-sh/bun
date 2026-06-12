@@ -2161,32 +2161,37 @@ where
 
         // Only reload `on_request` / `on_error` when the new config actually
         // specifies one. The shadow `JSValue` is updated alongside the
-        // wrapper's WriteBarrier slot (the GC root); both must agree.
+        // wrapper's WriteBarrier slot (the GC root); both must agree. The
+        // async-context wrap is applied here (deferred from `from_js`) so the
+        // wrapped fn is rooted by the slot the moment it exists.
         let server_js = self.js_value.try_get().filter(|v| !v.is_empty());
         if !new_config.on_request.is_empty_or_undefined_or_null() {
-            self.config.on_request = new_config.on_request;
+            let wrapped = new_config.on_request.with_async_context_if_needed(global);
             if let Some(server_js) = server_js {
-                Self::js_gc_on_request_set(server_js, global, new_config.on_request);
+                Self::js_gc_on_request_set(server_js, global, wrapped);
             }
+            self.config.on_request = wrapped;
         }
         // Swap on any change, *including* clearing to `.zero` when the reload
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
         // `set_routes` stop routing through the node:http path.
         if self.config.on_node_http_request != new_config.on_node_http_request {
-            self.config.on_node_http_request = new_config.on_node_http_request;
+            let wrapped = if new_config.on_node_http_request.is_empty() {
+                JSValue::ZERO
+            } else {
+                new_config.on_node_http_request.with_async_context_if_needed(global)
+            };
             if let Some(server_js) = server_js {
-                Self::js_gc_on_node_http_request_set(
-                    server_js,
-                    global,
-                    new_config.on_node_http_request,
-                );
+                Self::js_gc_on_node_http_request_set(server_js, global, wrapped);
             }
+            self.config.on_node_http_request = wrapped;
         }
         if !new_config.on_error.is_empty_or_undefined_or_null() {
-            self.config.on_error = new_config.on_error;
+            let wrapped = new_config.on_error.with_async_context_if_needed(global);
             if let Some(server_js) = server_js {
-                Self::js_gc_on_error_set(server_js, global, new_config.on_error);
+                Self::js_gc_on_error_set(server_js, global, wrapped);
             }
+            self.config.on_error = wrapped;
         }
 
         if let Some(mut ws) = new_config.websocket.take() {

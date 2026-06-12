@@ -137,9 +137,10 @@ impl Handler {
                         key
                     )));
                 }
-                let cb = value.with_async_context_if_needed(global_object);
-                *field = cb;
-                cb.ensure_still_alive();
+                // Raw value — async-context wrapping is deferred to
+                // `NewServer::write_ws_handler_slots` so the wrapped fn is
+                // rooted by the wrapper's WriteBarrier slot immediately.
+                *field = value;
                 if i > 0 {
                     // anything other than "error" is considered valid.
                     valid = true;

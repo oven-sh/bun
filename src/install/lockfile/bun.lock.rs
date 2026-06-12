@@ -3072,6 +3072,19 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// install that wrote the lockfile and every install that loads it, which
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
+///
+/// `catalog:` peer ranges are left on the path walk: the version scan
+/// cannot satisfy them (no catalog branch below), so they resolve exactly
+/// as before this helper existed. Closing that residual would mean
+/// replicating the catalog rewrite chain here.
+///
+/// Peers whose name matches a workspace package need no special casing
+/// even though the fresh resolver binds them to the workspace before any
+/// deferral (`'resolve_from_workspace`): the version scan below picks an
+/// npm candidate for such an edge, but workspaces are root dependencies,
+/// so the isolated store's ancestor walk and the hoisted tree's dedupe
+/// both resolve the name through the root's workspace entry before the
+/// edge value is ever consulted.
 fn resolve_peer_dep_version_based(
     dep: &Dependency,
     package_index: &PackageIndexMap,

@@ -910,6 +910,51 @@ test("overridden peer dependency keeps the override across installs from bun.loc
   });
 });
 
+test("peer satisfied by a workspace package keeps the workspace across installs from bun.lock", async () => {
+  // The fresh resolver binds an npm-range peer to a same-named workspace
+  // package before any deferral when linkWorkspacePackages is on and the
+  // workspace version satisfies the range. The graph also contains npm
+  // no-deps@1.0.1 (normal-dep-and-dev-dep's exact pin, which the workspace's
+  // 1.0.0 cannot satisfy), and that version satisfies the peer's ^1.0.0 too;
+  // loading bun.lock must not rebind the peer from the workspace to the npm
+  // package through the version scan.
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "workspace-peer-root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "normal-dep-and-dev-dep": "1.0.0",
+        },
+      }),
+      "packages/no-deps/package.json": JSON.stringify({
+        name: "no-deps",
+        version: "1.0.0",
+        workspaceMarker: true,
+      }),
+    },
+  });
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"));
+  expect(freshEntries).toHaveLength(1);
+  expect(
+    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.0", workspaceMarker: true });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual(freshEntries);
+  expect(
+    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.0", workspaceMarker: true });
+});
+
 describe("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({

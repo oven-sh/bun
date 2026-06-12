@@ -30,6 +30,7 @@ const {
   validateNumber,
   validateBoolean,
   validateFunction,
+  validateString,
 } = require("internal/validators");
 
 const types = require("node:util/types");
@@ -38,6 +39,7 @@ let inspect: typeof import("node:util").inspect | undefined;
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
@@ -750,7 +752,31 @@ function _getMaxListeners(emitter) {
   return emitter?._maxListeners ?? defaultMaxListeners;
 }
 
-let AsyncResource = null;
+// Initialized lazily because node:async_hooks is not available this early in bootstrap.
+let EventEmitterReferencingAsyncResource;
+function lazyEventEmitterReferencingAsyncResource() {
+  if (EventEmitterReferencingAsyncResource === undefined) {
+    const { AsyncResource } = require("node:async_hooks");
+    EventEmitterReferencingAsyncResource = class EventEmitterReferencingAsyncResource extends AsyncResource {
+      #eventEmitter;
+
+      constructor(ee, type, options) {
+        super(type, options);
+        this.#eventEmitter = ee;
+      }
+
+      get eventEmitter() {
+        return this.#eventEmitter;
+      }
+    };
+    // The bundler renames the class binding to avoid colliding with the outer variable.
+    Object.defineProperty(EventEmitterReferencingAsyncResource, "name", {
+      value: "EventEmitterReferencingAsyncResource",
+      configurable: true,
+    });
+  }
+  return EventEmitterReferencingAsyncResource;
+}
 
 function getMaxListeners(emitterOrTarget) {
   if (typeof emitterOrTarget?.getMaxListeners === "function") {
@@ -792,25 +818,56 @@ function addAbortListener(signal, listener) {
 }
 
 class EventEmitterAsyncResource extends EventEmitter {
-  triggerAsyncId;
-  asyncResource;
+  #asyncResource;
 
-  constructor(options) {
-    if (!AsyncResource) {
-      AsyncResource = require("node:async_hooks").AsyncResource;
+  constructor(options = undefined) {
+    let name;
+    if (typeof options === "string") {
+      name = options;
+      options = undefined;
+    } else {
+      if (new.target === EventEmitterAsyncResource) {
+        validateString(options?.name, "options.name");
+      }
+      name = options?.name || new.target.name;
     }
-    var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
-    super({ captureRejections });
-    this.triggerAsyncId = triggerAsyncId ?? 0;
-    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+    super(options);
+
+    // EventEmitter's constructor installs an own `emit` when captureRejections is
+    // enabled, which would shadow the prototype `emit` below and skip the async
+    // scope. Remove it; the prototype `emit` dispatches on this[kCapture] instead.
+    if (this.emit === emitWithRejectionCapture) {
+      delete this.emit;
+    }
+
+    this.#asyncResource = new (lazyEventEmitterReferencingAsyncResource())(this, name, options);
   }
 
-  emit(...args) {
-    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+  emit(event, ...args) {
+    const asyncResource = this.#asyncResource;
+    ArrayPrototypeUnshift.$call(
+      args,
+      this[kCapture] ? emitWithRejectionCapture : emitWithoutRejectionCapture,
+      this,
+      event,
+    );
+    return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 
   emitDestroy() {
-    this.asyncResource.emitDestroy();
+    this.#asyncResource.emitDestroy();
+  }
+
+  get asyncId() {
+    return this.#asyncResource.asyncId();
+  }
+
+  get triggerAsyncId() {
+    return this.#asyncResource.triggerAsyncId();
+  }
+
+  get asyncResource() {
+    return this.#asyncResource;
   }
 }
 

@@ -253,9 +253,23 @@ if (IS_BUN_DEVELOPMENT) {
   };
 }
 
+// Bun does not assign ids to every async operation (promises, timers, I/O, ...);
+// createHook is not implemented, so nothing would observe them. AsyncResource ids
+// are real, though: each resource gets a unique id, and runInAsyncScope updates the
+// "current" ids so that executionAsyncId()/triggerAsyncId() are consistent with
+// resource.asyncId()/resource.triggerAsyncId() inside the scope. Node reserves id 0
+// for untracked contexts and id 1 for the root context, so user ids start at 2.
+let lastAsyncId = 1;
+// The ids of the innermost runInAsyncScope call. 0 means "untracked context",
+// which is everything outside of an AsyncResource scope.
+let currentExecutionAsyncId = 0;
+let currentTriggerAsyncId = 0;
+
 class AsyncResource {
   type;
   #snapshot;
+  #asyncId;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
@@ -263,11 +277,13 @@ class AsyncResource {
     let triggerAsyncId = opts;
     if (opts != null) {
       if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
+        triggerAsyncId = opts.triggerAsyncId === undefined ? currentExecutionAsyncId : opts.triggerAsyncId;
       }
       if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
         throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
+    } else {
+      triggerAsyncId = currentExecutionAsyncId;
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -276,6 +292,8 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#asyncId = ++lastAsyncId;
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -287,11 +305,11 @@ class AsyncResource {
   }
 
   asyncId() {
-    return 0;
+    return this.#asyncId;
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {
@@ -299,12 +317,18 @@ class AsyncResource {
   }
 
   runInAsyncScope(fn, thisArg, ...args) {
+    const prevExecutionAsyncId = currentExecutionAsyncId;
+    const prevTriggerAsyncId = currentTriggerAsyncId;
+    currentExecutionAsyncId = this.#asyncId;
+    currentTriggerAsyncId = this.#triggerAsyncId;
     var prev = get();
     set(this.#snapshot);
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
+      currentExecutionAsyncId = prevExecutionAsyncId;
+      currentTriggerAsyncId = prevTriggerAsyncId;
     }
   }
 
@@ -389,15 +413,15 @@ function createHook(hook) {
 }
 
 const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
+  "async_hooks.executionAsyncId/triggerAsyncId are only implemented for AsyncResource scopes in Bun. Other async operations (promises, timers, I/O) are not assigned ids and report 0.",
 );
 function executionAsyncId() {
   executionAsyncIdNotImpl();
-  return 0;
+  return currentExecutionAsyncId;
 }
 
 function triggerAsyncId() {
-  return 0;
+  return currentTriggerAsyncId;
 }
 
 const executionAsyncResourceWarning = createWarning(

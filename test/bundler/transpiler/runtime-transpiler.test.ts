@@ -377,7 +377,8 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
 
   test("strict-clean CommonJS code in a .mjs file keeps working", async () => {
     using dir = tempDir("forced-esm-cjs-interop-clean", {
-      "clean.mjs": 'exports.foo = 42;\nconsole.log("ran as", typeof module === "undefined" ? "esm" : "cjs", exports.foo);\n',
+      "clean.mjs":
+        'exports.foo = 42;\nconsole.log("ran as", typeof module === "undefined" ? "esm" : "cjs", exports.foo);\n',
     });
     const { stdout, stderr, exitCode } = await run(dir, "clean.mjs");
     expect({ stdout, stderr }).toEqual({ stdout: "ran as cjs 42\n", stderr: "" });

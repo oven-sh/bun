@@ -328,9 +328,8 @@ impl ReqLike for uws_sys::h3::Request {
     }
 }
 
-/// Refuse a request that arrived after the idle pass released the server's
-/// handlers (a surviving keep-alive connection can deliver one more request
-/// after a graceful `stop()`): 503 and close the connection.
+/// 503-and-close for requests that arrive after the idle pass released the
+/// server's handlers.
 pub(crate) fn reject_stopped(resp: &mut impl RespLike) {
     resp.write_status(b"503 Service Unavailable");
     resp.end_without_body(true);
@@ -2158,14 +2157,11 @@ where
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
         httplog!("onReload");
 
-        // A fully idle stopped server can never dispatch anything this reload
-        // would install, and the new handlers would only reinstate the
-        // native↔JS cycle the idle release breaks. Skip the route swap
-        // entirely; the caller frees whatever `new_config` still owns, except
-        // the websocket protections taken in `on_create`, which have no Drop
-        // and are released here.
+        // An idle stopped server can never dispatch anything this reload
+        // would install; release the unadopted websocket protections (no
+        // Drop) and skip the route swap.
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
-            if let Some(ws) = new_config.websocket.as_ref() {
+            if let Some(ws) = new_config.websocket.as_mut() {
                 ws.unprotect();
             }
             return;
@@ -2211,7 +2207,7 @@ where
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
-                if let Some(old_ws) = self.config.websocket.as_ref() {
+                if let Some(old_ws) = self.config.websocket.as_mut() {
                     old_ws.unprotect();
                 }
                 ws.global_object = bun_ptr::BackRef::new(global);
@@ -2322,9 +2318,6 @@ where
         jsc::mark_binding!();
 
         if self.config.on_request.is_none() {
-            // `deinit_if_we_can` clears `on_request` once a stopped server
-            // goes idle; tell that state apart from a server that never had a
-            // fetch handler.
             let message: &[u8] = if self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
                 b"fetch() cannot be used after the server has been stopped"
             } else {
@@ -2834,7 +2827,7 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        // Same late-503 path as `on_request` (see the comment there).
+        // Same late-503 path as `on_request`.
         if server.flags.contains(ServerFlags::HANDLERS_RELEASED) {
             reject_stopped(resp);
             return;
@@ -3223,7 +3216,7 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        // Same late-503 path as `on_request` (see the comment there).
+        // Same late-503 path as `on_request`.
         if server_ref.flags.contains(ServerFlags::HANDLERS_RELEASED) {
             reject_stopped(resp);
             return;

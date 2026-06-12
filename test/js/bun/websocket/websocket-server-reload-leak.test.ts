@@ -349,3 +349,65 @@ test("stop(true) from inside a websocket close handler still releases the handle
   const { base, afterStop } = await runProbe(script);
   expect(afterStop).toBe(base);
 });
+
+// ws.close() from inside a message handler can drain the last socket of a
+// stopped server, running the release while the dispatch is still on the
+// stack. The released slots are zeroed, so the dispatch tail (the error
+// callback for a throw after close) sees empty values instead of unrooted
+// cells.
+test("release during an in-flight dispatch does not call released handlers", async () => {
+  const script = /* js */ `
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("ok");
+      },
+      websocket: {
+        open(ws) {},
+        message(ws, m) {
+          ws.close();
+          throw new Error("boom");
+        },
+        error(e) {
+          console.log("error-handler-ran");
+        },
+      },
+    });
+
+    const opened = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    const client = new WebSocket(server.url.href.replace("http", "ws"));
+    client.onopen = () => opened.resolve();
+    client.onclose = () => closed.resolve();
+    client.onerror = () => {
+      opened.resolve();
+      closed.resolve();
+    };
+    await opened.promise;
+
+    // Graceful: the connected socket is the only thing keeping the server
+    // from the idle release.
+    server.stop();
+
+    client.send("hi");
+    await closed.promise;
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The throw after close() surfaces through the default uncaught reporter
+  // (stderr plus a nonzero exit, the same as a server that never had an
+  // error handler); the released error handler must not run.
+  expect(stdout).toBe("done\n");
+  expect(stderr).toContain("boom");
+  expect(exitCode).toBe(1);
+});

@@ -164,9 +164,6 @@ impl RouteBundle {
     }
 }
 
-// Zig `RouteBundle.deinit` equivalent, split across two mechanisms:
-//   - Drop: `Framework` StrongOptional fields (= .deinit()) and
-//     `Html.bundled_html_text` Box<[u8]> (= allocator.free()).
-//   - `DevServer`'s `Drop` (explicit): `client_bundle`, `Html.cached_response`
-//     (BackRef, no Drop) and `Html.html_bundle` (raw ptr, no Drop) each hold
-//     an intrusive ref that is deref'd there.
+// Drop covers the `Framework` Strongs and `bundled_html_text`;
+// `client_bundle`, `cached_response`, and `html_bundle` hold intrusive refs
+// released in `DevServer`'s `Drop`.

@@ -1247,9 +1247,7 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
-                // SAFETY: paired with the `ref_` taken in
-                // `get_or_put_route_bundle` when this bundle was created; the
-                // raw `html_bundle` field has no Drop, so release it here.
+                // SAFETY: paired with the `ref_` in `get_or_put_route_bundle`.
                 unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
             }
         }

@@ -388,8 +388,6 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        // Live-socket accounting lives on the server (`Cell`), reached
-        // through the type-erased backref so the shared `&Handler` suffices.
         let server = handler.server;
         if let Some(server) = server {
             server.on_websocket_opened();
@@ -436,8 +434,6 @@ impl ServerWebSocket {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
-                // (`close()` re-enters `on_close`, which skips its own
-                // accounting because the closed flag is already set.)
                 self.websocket().close();
                 closed_here = true;
                 this_value.unprotect();
@@ -445,8 +441,9 @@ impl ServerWebSocket {
 
             handler.run_error_callback(vm, global_object, err_value);
             if closed_here {
+                // The re-entrant `on_close` above skipped its accounting
+                // because the closed flag was already set.
                 if let Some(server) = server {
-                    // May run the idle pass; no `&Handler` borrow is live here.
                     server.on_websocket_closed();
                 }
             }
@@ -646,10 +643,8 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
-        // Copy the erased server handle out now: the guard below runs after
-        // every `handler` borrow has expired, and `on_websocket_closed` may
-        // form `&mut NewServer` (which owns the handler storage) to run the
-        // idle pass when this was the last live socket.
+        // Copied out: the deferred call may form `&mut NewServer`, which owns
+        // the handler storage.
         let server = handler.server;
         let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
@@ -1371,9 +1366,8 @@ impl ServerWebSocket {
 
         let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
-        // `end()` re-enters `on_close`, which skips its own accounting
-        // because the closed flag is already set; balance it here.
         self.websocket().end(code, message_value.slice());
+        // The re-entrant `on_close` skipped its accounting (closed was set).
         if let Some(server) = server {
             server.on_websocket_closed();
         }
@@ -1396,9 +1390,8 @@ impl ServerWebSocket {
 
         let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
-        // `close()` re-enters `on_close`, which skips its own accounting
-        // because the closed flag is already set; balance it here.
         self.websocket().close();
+        // The re-entrant `on_close` skipped its accounting (closed was set).
         if let Some(server) = server {
             server.on_websocket_closed();
         }

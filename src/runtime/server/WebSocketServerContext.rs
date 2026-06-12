@@ -34,10 +34,7 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Type-erased backref to the owning `NewServer`, set alongside `app`
-    /// in `set_routes` (so it is in place before any socket can upgrade and
-    /// refreshed whenever a reload installs a new context). `ServerWebSocket`
-    /// open/close events route the live-socket accounting through it.
+    /// Backref to the owning `NewServer`; set in `set_routes` alongside `app`.
     pub server: Option<super::AnyServer>,
 
     /// used by publish()
@@ -160,18 +157,26 @@ impl Handler {
         self.on_pong.protect();
     }
 
-    pub fn unprotect(&self) {
+    pub fn unprotect(&mut self) {
         if self.vm.is_shutting_down() {
             return;
         }
 
-        self.on_open.unprotect();
-        self.on_message.unprotect();
-        self.on_close.unprotect();
-        self.on_drain.unprotect();
-        self.on_error.unprotect();
-        self.on_ping.unprotect();
-        self.on_pong.unprotect();
+        // Zero the slots so in-flight dispatches (e.g. a `message` handler
+        // that closed the last socket of a stopped server) see empty values
+        // instead of unrooted cells.
+        for field in [
+            &mut self.on_open,
+            &mut self.on_message,
+            &mut self.on_close,
+            &mut self.on_drain,
+            &mut self.on_error,
+            &mut self.on_ping,
+            &mut self.on_pong,
+        ] {
+            field.unprotect();
+            *field = JSValue::ZERO;
+        }
     }
 }
 
@@ -194,7 +199,7 @@ impl WebSocketServerContext {
         self.handler.protect();
     }
 
-    pub fn unprotect(&self) {
+    pub fn unprotect(&mut self) {
         self.handler.unprotect();
     }
 }

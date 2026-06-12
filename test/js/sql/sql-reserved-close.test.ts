@@ -75,6 +75,21 @@ const selectXResponse = Buffer.concat([
   readyForQuery,
 ]);
 
+function errorResponse(message: string): Buffer {
+  return pkt(
+    "E",
+    Buffer.concat([
+      Buffer.from("S"),
+      cstr("ERROR"),
+      Buffer.from("C"),
+      cstr("XX000"),
+      Buffer.from("M"),
+      cstr(message),
+      Buffer.from([0]),
+    ]),
+  );
+}
+
 async function startPostgresServer(onQuery: (socket: net.Socket) => void = socket => socket.write(selectXResponse)) {
   const sockets = new Set<net.Socket>();
   const server = net.createServer(socket => {
@@ -82,16 +97,29 @@ async function startPostgresServer(onQuery: (socket: net.Socket) => void = socke
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
     let startup = true;
+    let buffered = Buffer.alloc(0);
     socket.on("data", data => {
+      buffered = Buffer.concat([buffered, data]);
       if (startup) {
+        // the startup message has no type byte: int32 length + payload
+        if (buffered.length < 4) return;
+        const len = buffered.readInt32BE(0);
+        if (buffered.length < len) return;
+        buffered = buffered.subarray(len);
         startup = false;
         socket.write(Buffer.concat([authenticationOk, readyForQuery]));
-        return;
       }
-      if (data[0] === 0x51 /* 'Q' simple query */) {
-        onQuery(socket);
+      // regular messages: type byte + int32 length (which includes itself)
+      while (buffered.length >= 5) {
+        const len = buffered.readInt32BE(1);
+        if (buffered.length < 1 + len) break;
+        const type = buffered[0];
+        buffered = buffered.subarray(1 + len);
+        if (type === 0x51 /* 'Q' simple query */) {
+          onQuery(socket);
+        }
+        // anything else ('X' Terminate, ...) needs no reply
       }
-      // anything else ('X' Terminate, ...) needs no reply
     });
   });
   server.listen(0, "127.0.0.1");
@@ -303,6 +331,42 @@ test("postgres: reserved.close({ timeout }) closes the connection once pending q
   await closed;
 
   // before the fix this branch resolved without ever closing the connection
+  await socketClosed;
+  await sql.close();
+});
+
+test("postgres: reserved.close({ timeout }) keeps waiting for remaining queries when one fails", async () => {
+  let queries = 0;
+  const firstQueryReceived = Promise.withResolvers<net.Socket>();
+  const respondToSecondQuery = Promise.withResolvers<void>();
+  await using pg = await startPostgresServer(socket => {
+    queries++;
+    if (queries === 1) {
+      firstQueryReceived.resolve(socket);
+    } else {
+      // held until the first query has failed
+      respondToSecondQuery.promise.then(() => socket.write(selectXResponse));
+    }
+  });
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+
+  const reserved = await sql.reserve();
+  const failing = reserved`select 1 as x`.simple().execute();
+  const pending = reserved`select 1 as x`.simple().execute();
+  const socket = await firstQueryReceived.promise;
+  const socketClosed = once(socket, "close");
+
+  const closed = reserved.close({ timeout: 5 });
+
+  // fail the first query; the grace period must keep waiting for the second
+  // instead of closing the connection at the first rejection
+  socket.write(Buffer.concat([errorResponse("boom"), readyForQuery]));
+  await expect(failing).rejects.toMatchObject({ message: "boom" });
+
+  respondToSecondQuery.resolve();
+  expect(await pending).toEqual([{ x: "1" }]);
+
+  await closed;
   await socketClosed;
   await sql.close();
 });

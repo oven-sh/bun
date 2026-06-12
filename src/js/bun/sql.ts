@@ -433,10 +433,11 @@ const SQL: typeof Bun.SQL = function SQL(
           const pending_transactions = Array.from(reservedTransaction);
           const timer = setTimeout(reservedCloseTimeoutFired, timeout * 1000, state, pooledConnection, resolve);
           timer.unref(); // dont block the event loop
-          // one handler for both outcomes: this chain is internal bookkeeping;
-          // the queries' own consumers observe their rejections
+          // wait for every tracked operation to settle: one failing query must
+          // not cut the grace period short for the rest, and the queries' own
+          // consumers observe their rejections
           const drained = reservedCloseDrained.bind(null, timer, state, pooledConnection, resolve);
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).then(drained, drained);
+          Promise.allSettled([...pending_queries, ...pending_transactions]).then(drained, drained);
           return promise;
         }
       }

@@ -970,7 +970,16 @@ class PostgresAdapter
       this.#closeListenConnectionIfIdle();
     } else if (this.#listenConnection && !this.#listenChannels.has(channel)) {
       this.#listenRegisteredChannels.delete(channel);
-      await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
+      try {
+        await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
+      } catch {
+        // The local bookkeeping above is already final and the reconnect
+        // sweep will not re-LISTEN this channel, so a wire failure here
+        // (connection drop mid-round-trip) changes nothing; surfacing it
+        // would make await-using disposal throw for a removal that already
+        // took effect. Mirrors the last-subscription branch, which closes
+        // the connection without throwing.
+      }
     }
   }
 

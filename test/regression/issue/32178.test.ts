@@ -26,8 +26,9 @@ test.concurrent("top-level await resumes while an AsyncLocalStorage context is a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // The async context must also survive across the top-level awaits, like Node.
-  expect({ stdout, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: 'after microtask await: {"v":42}\nafter macrotask await: {"v":42}\n',
+    stderr: "",
     exitCode: 0,
   });
 });
@@ -58,8 +59,9 @@ test.concurrent("imported top-level-await module entering an AsyncLocalStorage c
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, exitCode }).toEqual({
+  expect({ stdout, stderr, exitCode }).toEqual({
     stdout: 'imported: {"id":7}\n',
+    stderr: "",
     exitCode: 0,
   });
 });

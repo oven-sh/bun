@@ -848,15 +848,17 @@ test("optional ranged peer keeps its hoisted-tree binding across installs from b
   const bunDir = join(packageDir, "node_modules", ".bun");
   const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));
   expect(freshEntries).toHaveLength(1);
-  const freshVersion = (await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json())
-    .version;
+  // the hoisted candidate, not the highest satisfying (1.1.0)
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"))).toEqual(freshEntries);
   expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
-    version: freshVersion,
+    version: "1.0.1",
   });
 });
 
@@ -890,6 +892,9 @@ test("overridden peer dependency keeps the override across installs from bun.loc
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   const entryName = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
+  // the override-exempt alias keeps the competing 1.1.0 candidate in the graph
+  const aliasManifest = join(packageDir, "node_modules", "nd11", "package.json");
+  expect(await file(aliasManifest).json()).toMatchObject({ name: "no-deps", version: "1.1.0" });
   expect(await readdirSorted(bunDir)).toContain(entryName);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     version: "1.0.1",
@@ -898,6 +903,7 @@ test("overridden peer dependency keeps the override across installs from bun.loc
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
+  expect(await file(aliasManifest).json()).toMatchObject({ name: "no-deps", version: "1.1.0" });
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     version: "1.0.1",

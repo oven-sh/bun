@@ -1,9 +1,4 @@
 // https://github.com/oven-sh/bun/issues/32178
-// Regression in 1.3.14: a top-level-await module that awaits while an
-// AsyncLocalStorage context is active crashed with a segfault. The resume
-// microtask's context is wrapped in an InternalFieldTuple when an async
-// context is active, and asyncModuleExecutionResume failed to unwrap it,
-// downcasting the tuple as a JSModuleRecord (type confusion).
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 

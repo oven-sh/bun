@@ -734,6 +734,52 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   });
 }
 
+test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
+  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
+  // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
+  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
+  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
+  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
+  // That silently changed the runtime dependency tree on the second install
+  // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
+  // warm install.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-ranged-peers",
+      dependencies: {
+        "peer-deps-fixed": "1.0.0",
+        "normal-dep-and-dev-dep": "1.0.0",
+        "two-range-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const entryName = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-fixed@"))!;
+  // highest satisfying ^1.0.0 in the graph
+  expect(entryName).toBe("peer-deps-fixed@1.0.0+7ff199101204a65d");
+  expect(
+    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
+
+  // reinstall from bun.lock: same peer variant, same resolved version
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
+  expect(
+    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
+});
+
 describe("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({

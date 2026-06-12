@@ -42,8 +42,8 @@ use bun_install_types::DependencyVersionTag;
 use super::PackageIDSlice;
 use super::package::{Meta, PackageColumns as _};
 use super::{
-    DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PatchedDep,
-    TrustedDependenciesSet, VersionHashMap, tree,
+    DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PackageIndexEntry,
+    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -2792,6 +2792,11 @@ pub fn parse_into_binary_lockfile(
         let pkg_names = pkgs.items_name();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
 
+        // Populated by `append_package_dedupe` while the packages object was
+        // parsed above; used to bind peer edges by version rather than by
+        // tree path (see `resolve_peer_dep_version_based`).
+        let package_index = &lockfile.package_index;
+
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
         // `string_bytes` view.
@@ -2806,7 +2811,14 @@ pub fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
-                let Some(&res_id) = pkg_map.get(dep.name.slice(string_buf)) else {
+                let peer_res_id = if is_deferred_peer(dep) {
+                    resolve_peer_dep_version_based(dep, package_index, pkg_resolutions, string_buf)
+                } else {
+                    None
+                };
+                let Some(res_id) =
+                    peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
+                else {
                     if dep.behavior.contains(Behavior::OPTIONAL) {
                         continue;
                     }
@@ -2878,10 +2890,22 @@ pub fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let Some(&res_id) = pkg_map
-                        .get(workspace_node_modules)
-                        .or_else(|| pkg_map.get(dep_name))
-                    else {
+                    let peer_res_id = if is_deferred_peer(dep) {
+                        resolve_peer_dep_version_based(
+                            dep,
+                            package_index,
+                            pkg_resolutions,
+                            string_buf,
+                        )
+                    } else {
+                        None
+                    };
+                    let Some(res_id) = peer_res_id.or_else(|| {
+                        pkg_map
+                            .get(workspace_node_modules)
+                            .or_else(|| pkg_map.get(dep_name))
+                            .copied()
+                    }) else {
                         if dep.behavior.contains(Behavior::OPTIONAL) {
                             continue;
                         }
@@ -2944,28 +2968,38 @@ pub fn parse_into_binary_lockfile(
                 let dep_id: DependencyID = _dep_id;
                 let dep = &mut dependencies[dep_id as usize];
 
-                let res_id =
-                    match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..]) {
-                        Ok(&id) => id,
-                        Err(ResolveError::InvalidPackageKey) => {
-                            log.add_error(Some(source), key.loc, b"Invalid package path");
-                            return Err(ParseError::InvalidPackageKey);
-                        }
-                        Err(ResolveError::Unresolvable) => {
-                            if dep.behavior.contains(Behavior::OPTIONAL) {
-                                continue 'deps;
+                let peer_res_id = if is_deferred_peer(dep) {
+                    resolve_peer_dep_version_based(dep, package_index, pkg_resolutions, string_buf)
+                } else {
+                    None
+                };
+                let res_id = match peer_res_id {
+                    Some(id) => id,
+                    None => {
+                        match pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
+                        {
+                            Ok(&id) => id,
+                            Err(ResolveError::InvalidPackageKey) => {
+                                log.add_error(Some(source), key.loc, b"Invalid package path");
+                                return Err(ParseError::InvalidPackageKey);
                             }
-                            dependency_resolution_failure(
-                                dep,
-                                Some(pkg_path),
-                                string_buf,
-                                source,
-                                log,
-                                key.loc,
-                            )?;
-                            return Err(ParseError::InvalidPackageInfo);
+                            Err(ResolveError::Unresolvable) => {
+                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                    continue 'deps;
+                                }
+                                dependency_resolution_failure(
+                                    dep,
+                                    Some(pkg_path),
+                                    string_buf,
+                                    source,
+                                    log,
+                                    key.loc,
+                                )?;
+                                return Err(ParseError::InvalidPackageInfo);
+                            }
                         }
-                    };
+                    }
+                };
 
                 map_dep_to_pkg(
                     dep,
@@ -2987,6 +3021,72 @@ pub fn parse_into_binary_lockfile(
     }
 
     Ok(())
+}
+
+/// True for peer edges the fresh resolver defers to its second phase
+/// (`install_peer`) and binds by version there. `*` peers are exempt:
+/// they express no version preference and bind to whatever sibling pin
+/// existed first, which the printed tree's path walk reproduces.
+fn is_deferred_peer(dep: &Dependency) -> bool {
+    dep.behavior.is_peer()
+        && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().version.is_star())
+}
+
+/// Resolve a peer dependency edge the way the fresh resolver's
+/// deferred-peer phase does (`get_or_put_resolved_package` with
+/// `install_peer`): scan the package ids recorded for the dependency's
+/// name — `package_index` lists are kept ordered by descending
+/// `Resolution::order` — and take the first whose resolution satisfies
+/// the range, falling back to the highest same-kind resolution (the
+/// "incorrect peer dependency" case). Returns `None` when no package
+/// with the name exists or no same-kind candidate is available; the
+/// caller then falls back to the path walk.
+///
+/// Peer edges cannot be resolved from the printed tree the way regular
+/// edges are: a peer never materializes its own `node_modules` path when
+/// the version hoisted at an enclosing path satisfies its range, so the
+/// path walk rebinds the edge to the hoisted version rather than the one
+/// the fresh resolve chose. That flips `buffers.resolutions` between the
+/// install that wrote the lockfile and every install that loads it, which
+/// re-keys isolated-linker store entries (and global-store entry hashes)
+/// on warm installs.
+fn resolve_peer_dep_version_based(
+    dep: &Dependency,
+    package_index: &PackageIndexMap,
+    pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+) -> Option<PackageID> {
+    let entry = package_index.get(&dep.name_hash)?;
+    let candidates: &[PackageID] = match entry {
+        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+        PackageIndexEntry::Ids(ids) => ids.as_slice(),
+    };
+
+    for &id in candidates {
+        if (id as usize) < pkg_resolutions.len()
+            && pkg_resolutions[id as usize].satisfies_dependency_version(
+                &dep.version,
+                string_buf,
+                string_buf,
+            )
+        {
+            return Some(id);
+        }
+    }
+
+    let &first = candidates.first()?;
+    if (first as usize) < pkg_resolutions.len() {
+        let res_tag = pkg_resolutions[first as usize].tag;
+        let ver_tag = dep.version.tag;
+        if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
+            || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
+            || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)
+        {
+            return Some(first);
+        }
+    }
+
+    None
 }
 
 // Taking `&mut BinaryLockfile` plus a `&mut Dependency` that

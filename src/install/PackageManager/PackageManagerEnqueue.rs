@@ -2751,23 +2751,7 @@ fn resolution_satisfies_dependency(
     dependency: &dependency::Version,
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
-    if resolution.tag == ResolutionTag::Npm && dependency.tag == dependency::version::Tag::Npm {
-        return dependency
-            .npm()
-            .version
-            .satisfies(resolution.npm().version, buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Git && dependency.tag == dependency::version::Tag::Git {
-        return resolution.git().eql(dependency.git(), buf, buf);
-    }
-
-    if resolution.tag == ResolutionTag::Github && dependency.tag == dependency::version::Tag::Github
-    {
-        return resolution.github().eql(dependency.github(), buf, buf);
-    }
-
-    false
+    resolution.satisfies_dependency_version(dependency, buf, buf)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

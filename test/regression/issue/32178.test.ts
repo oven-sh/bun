@@ -10,7 +10,7 @@ test.concurrent("top-level await resumes while an AsyncLocalStorage context is a
       als.enterWith({ v: 42 });
       await Promise.resolve(1);
       console.log("after microtask await:", JSON.stringify(als.getStore()));
-      await new Promise(r => setTimeout(r, 1));
+      await new Promise(r => setImmediate(r));
       console.log("after macrotask await:", JSON.stringify(als.getStore()));
     `,
   });

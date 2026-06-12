@@ -1010,6 +1010,26 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// An async fs task snapshots the buffer's `ptr`/`len` on the JS thread and
+/// reads them later on a work-pool thread. The pin taken by
+/// [`Buffer::from_js_pinned`] blocks `transfer()`/detach but not
+/// `ArrayBuffer.prototype.resize`: shrinking a resizable ArrayBuffer decommits
+/// its tail pages (`JSC::ArrayBuffer::resize` → `OSAllocator::protect`), so the
+/// pool thread's read of the stale snapshot faults. Copy the path bytes instead
+/// (Node also copies buffer paths at call time). Growable SharedArrayBuffers
+/// never shrink and keep a stable data pointer, so they stay zero-copy.
+fn snapshot_resizable_path_buffer(buffer: &mut Buffer, will_be_async: bool) {
+    if !(will_be_async && buffer.buffer.resizable && !buffer.buffer.shared) {
+        return;
+    }
+    let copy = bun_core::handle_oom(Buffer::from_string(buffer.slice()));
+    if buffer.pinned {
+        buffer.pinned = false;
+        buffer.buffer.unpin();
+    }
+    *buffer = copy;
+}
+
 impl PathLikeExt for PathLike {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
@@ -1250,6 +1270,7 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer, arguments.will_be_async);
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))
@@ -1271,6 +1292,7 @@ impl PathLikeExt for PathLike {
                     }
                     return Err(err);
                 }
+                snapshot_resizable_path_buffer(&mut buffer, arguments.will_be_async);
 
                 arguments.protect_eat();
                 Ok(Some(Self::Buffer(buffer)))

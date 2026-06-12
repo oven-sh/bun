@@ -4372,3 +4372,75 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
   expect(detachedDuringOptions).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
+
+it("async fs ops snapshot path buffers backed by resizable ArrayBuffers before a shrink can decommit them", async () => {
+  // Pinning the backing ArrayBuffer blocks transfer()/detach but not
+  // ArrayBuffer.prototype.resize: shrinking decommits the tail pages, so a
+  // work-pool thread reading the path bytes after the shrink would fault.
+  // The path bytes must instead be copied at call time (as Node does).
+  using dir = tempDir("fs-rab-path", {
+    "rab-path-fixture.js": String.raw`
+      import fs from "node:fs";
+      import path from "node:path";
+
+      const dir = process.cwd();
+
+      // A resizable-backed path arg is snapshotted at call time: shrinking
+      // right after the call must not affect the rename.
+      {
+        const src = path.join(dir, "real-src.txt");
+        fs.writeFileSync(src, "hi");
+        const srcBytes = Buffer.from(src);
+        const rab = new ArrayBuffer(64 * 1024, { maxByteLength: 64 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new Uint8Array(rab, 0, srcBytes.length);
+        const renamed = fs.promises.rename(view, path.join(dir, "real-dest.txt"));
+        rab.resize(0);
+        await renamed;
+        if (!fs.existsSync(path.join(dir, "real-dest.txt"))) throw new Error("rename did not happen");
+      }
+
+      // Uint8Array view over a resizable ArrayBuffer, shrunk while hundreds
+      // of renames are still queued on the work pool.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-view"));
+        const rab = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new Uint8Array(rab, 0, srcBytes.length);
+        const dest = path.join(dir, "dest-view");
+        const all = [];
+        for (let i = 0; i < 256; i++) all.push(fs.promises.rename(view, dest).catch(err => err.code));
+        rab.resize(0);
+        const codes = await Promise.all(all);
+        const bad = codes.find(c => c !== "ENOENT");
+        if (bad !== undefined) throw new Error("expected ENOENT, got: " + bad);
+      }
+
+      // Resizable ArrayBuffer passed directly as the path.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-direct"));
+        const rab = new ArrayBuffer(srcBytes.length, { maxByteLength: srcBytes.length });
+        new Uint8Array(rab).set(srcBytes);
+        const dest = path.join(dir, "dest-direct");
+        const all = [];
+        for (let i = 0; i < 256; i++) all.push(fs.promises.rename(rab, dest).catch(err => err.code));
+        rab.resize(0);
+        const codes = await Promise.all(all);
+        const bad = codes.find(c => c !== "ENOENT");
+        if (bad !== undefined) throw new Error("expected ENOENT, got: " + bad);
+      }
+
+      console.log("done");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "rab-path-fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+});

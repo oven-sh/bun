@@ -266,7 +266,7 @@ impl<'a> BundleV2<'a> {
         unsafe {
             match target {
                 Target::Browser => self.client_transpiler.unwrap().assume_mut(),
-                Target::BakeServerComponentsSsr => &mut *self.ssr_transpiler,
+                Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
         }
@@ -2481,9 +2481,9 @@ pub mod bv2_impl {
                         .unwrap()
                         .separate_ssr_graph;
                     let (ta, tb) = match target {
-                        Target::Browser => (main_target, Target::BakeServerComponentsSsr),
-                        Target::BakeServerComponentsSsr => (main_target, Target::Browser),
-                        _ => (Target::Browser, Target::BakeServerComponentsSsr),
+                        Target::Browser => (main_target, Target::ServerComponentsSsr),
+                        Target::ServerComponentsSsr => (main_target, Target::Browser),
+                        _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
                         .put(&key_text, idx)
@@ -3282,7 +3282,7 @@ pub mod bv2_impl {
                     },
                     TargetCheck {
                         should_dispatch: flags.ssr(),
-                        target: Target::BakeServerComponentsSsr,
+                        target: Target::ServerComponentsSsr,
                     },
                 ];
 
@@ -3352,11 +3352,8 @@ pub mod bv2_impl {
                     )?;
                 }
                 if flags.ssr() {
-                    let _ = self.enqueue_entry_item(
-                        &mut resolved,
-                        true,
-                        Target::BakeServerComponentsSsr,
-                    )?;
+                    let _ =
+                        self.enqueue_entry_item(&mut resolved, true, Target::ServerComponentsSsr)?;
                 }
             }
             Ok(())
@@ -3806,7 +3803,7 @@ pub mod bv2_impl {
             let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
             // Compute borrow-heavy fields up front so the `&self` borrow taken by
             // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::BakeServerComponentsSsr
+            let jsx = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
                     .as_ref()
@@ -6985,7 +6982,7 @@ pub mod bv2_impl {
                     (
                         self.ssr_transpiler,
                         bake::Graph::Ssr,
-                        Target::BakeServerComponentsSsr,
+                        Target::ServerComponentsSsr,
                     )
                 } else {
                     (
@@ -8619,7 +8616,7 @@ pub mod bv2_impl {
                                 &this
                                     .path_with_pretty_initialized(
                                         &ssr_source.path,
-                                        Target::BakeServerComponentsSsr,
+                                        Target::ServerComponentsSsr,
                                     )
                                     .expect("oom"),
                             );
@@ -8627,7 +8624,7 @@ pub mod bv2_impl {
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
                                     source_loader,
-                                    Target::BakeServerComponentsSsr,
+                                    Target::ServerComponentsSsr,
                                 )
                                 .expect("oom");
 
@@ -9034,7 +9031,7 @@ pub mod bv2_impl {
                 false,
             >(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
                 let _ = fbs.write_all(b"ssr:");
                 let _ = fbs.write_all(rel);
@@ -9047,7 +9044,7 @@ pub mod bv2_impl {
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::BakeServerComponentsSsr {
+            if target == options::Target::ServerComponentsSsr {
                 let _ = fbs.write_all(b"ssr:");
             }
             let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);

@@ -152,7 +152,7 @@ impl TargetExt for Target {
         match self {
             Target::Node => api::Target::node,
             Target::Browser => api::Target::browser,
-            Target::Bun | Target::BakeServerComponentsSsr => api::Target::bun,
+            Target::Bun | Target::ServerComponentsSsr => api::Target::bun,
             Target::BunMacro => api::Target::bun_macro,
         }
     }

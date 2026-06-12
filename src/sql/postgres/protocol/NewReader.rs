@@ -36,8 +36,7 @@ macro_rules! impl_protocol_int {
 }
 impl_protocol_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
-// Blanket impl so `NewReaderWrap<&mut C>` works — the inner `Context` is
-// non-`Copy` (holds `&mut usize`), so callers reborrow instead.
+// Blanket impl so `NewReaderWrap<&mut C>` works for callers that reborrow.
 impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
     #[inline]
     fn mark_message_start(&mut self) {

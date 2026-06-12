@@ -622,13 +622,20 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
-test("late keep-alive request to a route after stop()+GC does not crash", async () => {
+test("late keep-alive request to a route after stop()+GC answers 503", async () => {
   // Per-route handlers live in ServerRouteList, which is reachable from JS only
   // through the Server wrapper. After a graceful stop() the user may drop the
   // wrapper, and a subsequent GC may finalize it before an idle keep-alive
   // connection sends one more request. Run in a subprocess so the previous
   // js_value_assert_alive() panic on that path surfaces as a non-zero exit
   // instead of taking down the test runner.
+  //
+  // Graceful stop() calls close_idle_connections(), which would normally close
+  // our keep-alive socket before the late request can reach the 503 guard. To
+  // exercise that guard we hold the FIRST request in-flight (so the socket is
+  // non-idle and survives close_idle) and pipeline the LATE request behind it.
+  // When the first completes, pending_requests → 0 → js_value downgrades, and
+  // uws then dispatches the pipelined request into a None wrapper → 503.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -663,17 +670,28 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
           })();
         };
 
-        const port = await (async () => {
+        const release = Promise.withResolvers();
+        const inflight = Promise.withResolvers();
+        let hits = 0;
+
+        await (async () => {
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
-            routes: { "/r": () => new Response("ok") },
+            routes: {
+              "/r": async () => {
+                if (++hits === 1) {
+                  inflight.resolve();
+                  await release.promise; // hold socket non-idle through stop()
+                }
+                return new Response("ok");
+              },
+            },
           });
-          const port = server.port;
 
           globalThis.sock = await Bun.connect({
             hostname: "127.0.0.1",
-            port,
+            port: server.port,
             socket: {
               data(socket, data) {
                 received += data.toString("latin1");
@@ -684,27 +702,35 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
             },
           });
 
+          // First request: handler parks on \`release\`, keeping the socket
+          // in-flight so close_idle_connections() skips it.
           sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
-          const first = await nextResponse();
-          if (!first.includes("200")) throw new Error("first request failed: " + first);
+          await inflight.promise;
 
-          // Graceful stop: existing connections stay open, listener closes.
+          // Pipeline the late request behind the held one. uws won't read it
+          // until the first response is sent, by which time js_value is Weak.
+          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+
+          // Graceful stop: listener closes, close_idle skips this socket.
           server.stop();
-          return port;
         })();
         // The only \`server\` binding is now out of scope.
 
+        // Let the first request complete: pending_requests → 0,
+        // deinit_if_we_can() downgrades js_value to Weak. uws then reads the
+        // pipelined request and on_user_route_request sees
+        // js_value_for_dispatch() == None → 503. Previously: panic.
+        release.resolve();
+        const first = await nextResponse();
+        if (!first.includes("200")) throw new Error("first request failed: " + first);
+        const second = await nextResponse();
+
+        // Wrapper is now Weak and unreferenced; GC must collect it cleanly.
         for (let i = 0; i < 10; i++) {
           Bun.gc(true);
           fullGC();
-          await Bun.sleep(10);
+          await Bun.sleep(0);
         }
-
-        // Reuse the same keep-alive socket. Previously this would dispatch into
-        // a finalized route list and panic; now it must answer (200 if the
-        // wrapper happened to survive, 503 if it was collected).
-        sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-        const second = await nextResponse();
         console.log(second);
 
         sock.end();
@@ -718,11 +744,109 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // The second request either dispatches (wrapper survived → 200), is refused
-  // (wrapper downgraded → 503), or never arrives because graceful stop closed
-  // the idle keep-alive socket (empty). Any of these is correct; the point is
-  // the process didn't crash.
-  expect(stdout.trim()).toMatch(/^(|HTTP\/1\.1 (200|503).*)$/s);
+  // Must actually reach the 503 guard — empty would mean the socket was closed
+  // before dispatch and the guard was never exercised.
+  expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
+  expect(exitCode).toBe(0);
+});
+
+test("late keep-alive request to a node:http server after close()+GC answers 503", async () => {
+  // Same shape as the route test above, but through node:http so the request
+  // dispatches via on_node_http_request_with_upgrade_ctx — the trampoline that
+  // was missing the 503 guard until the respond_stopped_503 helper sweep.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const { fullGC } = require("bun:jsc");
+
+        let received = "";
+        let sockClosed = false;
+        let waiter = Promise.withResolvers();
+        const nextResponse = async () => {
+          while (true) {
+            const headerEnd = received.indexOf("\\r\\n\\r\\n");
+            if (headerEnd !== -1) {
+              const head = received.slice(0, headerEnd);
+              const m = /content-length: (\\d+)/i.exec(head);
+              const bodyLen = m ? Number(m[1]) : 0;
+              const total = headerEnd + 4 + bodyLen;
+              if (received.length >= total) {
+                const status = head.split("\\r\\n")[0];
+                received = received.slice(total);
+                return status;
+              }
+            }
+            if (sockClosed) return "";
+            await waiter.promise;
+            waiter = Promise.withResolvers();
+          }
+        };
+
+        const release = Promise.withResolvers();
+        const inflight = Promise.withResolvers();
+        let hits = 0;
+
+        await (async () => {
+          const srv = http.createServer(async (req, res) => {
+            if (++hits === 1) {
+              inflight.resolve();
+              await release.promise; // hold socket non-idle through close()
+            }
+            res.writeHead(200, { "content-length": 2 });
+            res.end("ok");
+          });
+          await new Promise(r => srv.listen(0, "127.0.0.1", r));
+
+          globalThis.sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: srv.address().port,
+            socket: {
+              data(_s, d) { received += d.toString("latin1"); waiter.resolve(); },
+              close() { sockClosed = true; waiter.resolve(); },
+              error() { sockClosed = true; waiter.resolve(); },
+            },
+          });
+
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          await inflight.promise;
+          // Pipeline the late request while the first is still in-flight.
+          sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+
+          // close() → closeIdleConnections() (skips this socket) → stop().
+          // Also drops node:http's own reference to the Bun server.
+          srv.close();
+        })();
+
+        // First request completes → pending_requests → 0 → js_value downgrades.
+        // The pipelined request then hits on_node_http_request with the
+        // wrapper gone → 503.
+        release.resolve();
+        const first = await nextResponse();
+        if (!first.includes("200")) throw new Error("first request failed: " + first);
+        const second = await nextResponse();
+
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(0);
+        }
+        console.log(second);
+
+        sock.end();
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toMatch(/^HTTP\/1\.1 503\b/);
   expect(exitCode).toBe(0);
 });
 
@@ -2035,6 +2159,76 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // reload({websocket}) that omits a previously-set per-event handler must
+  // CLEAR that wrapper slot, not leave the old handler pinned.
+  test("reload() that drops a websocket handler clears its slot", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { heapStats, fullGC } = require("bun:jsc");
+        const liveAsync = () => heapStats().objectTypeCounts.AsyncFunction ?? 0;
+
+        let oldPingFired = 0;
+
+        const baseline = liveAsync();
+        const server = Bun.serve({
+          port: 0,
+          fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
+          websocket: {
+            message(ws, m) { ws.send(m); },
+            // async so it shows up in objectTypeCounts.AsyncFunction.
+            ping: async () => { oldPingFired++; },
+          },
+        });
+        const withPing = liveAsync();
+
+        // Reload with a websocket config that omits ping. The wsOnPing slot
+        // must be cleared (not left holding the old async closure).
+        server.reload({
+          fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok"),
+          websocket: { message(ws, m) { ws.send(m); } },
+        });
+        for (let i = 0; i < 20 && liveAsync() > baseline; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(10);
+        }
+        const afterReload = liveAsync();
+
+        // Behavioral check: a client ping must not reach the dropped handler.
+        const opened = Promise.withResolvers();
+        const echoed = Promise.withResolvers();
+        const ws = new WebSocket(server.url.href.replace("http", "ws"));
+        ws.onopen = () => opened.resolve();
+        ws.onerror = e => { opened.reject(e); echoed.reject(e); };
+        ws.onmessage = e => echoed.resolve(e.data);
+        await opened.promise;
+        ws.ping("p");
+        ws.send("hi"); // round-trip after the ping so any ping dispatch has happened
+        await echoed.promise;
+        ws.close();
+        server.stop(true);
+
+        console.log(JSON.stringify({ baseline, withPing, afterReload, oldPingFired }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { baseline, withPing, afterReload, oldPingFired } = JSON.parse(stdout.trim());
+    expect(withPing).toBeGreaterThan(baseline); // sanity: async ping was counted
+    expect(afterReload).toBeLessThan(withPing); // dropped slot cleared → old ping collected
+    expect(oldPingFired).toBe(0); // and never dispatched after reload
+    expect(exitCode).toBe(0);
+  });
+
   // Stress test under aggressive GC — catches missing write barriers.
   test("serve+ws+reload survives BUN_JSC_collectContinuously=1", async () => {
     await using proc = Bun.spawn({
@@ -2049,11 +2243,18 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         });
         for (let i = 0; i < 10; i++) {
           const ws = new WebSocket(server.url.href.replace("http", "ws"));
-          await new Promise(r => { ws.onopen = r; });
+          // Reject (don't hang) if the connection drops mid-await — under
+          // collectContinuously a missing write barrier surfaces as an abrupt
+          // close/error, and a bare onopen-only resolver would just time out.
+          const fail = Promise.withResolvers();
+          ws.onerror = e => fail.reject(e.error ?? new Error("ws error on iter " + i));
+          ws.onclose = e => fail.reject(new Error("ws closed (" + e.code + ") on iter " + i));
+          await Promise.race([new Promise(r => { ws.onopen = r; }), fail.promise]);
           ws.send("hi");
-          await new Promise(r => { ws.onmessage = r; });
+          await Promise.race([new Promise(r => { ws.onmessage = r; }), fail.promise]);
+          const closed = new Promise(r => { ws.onclose = r; }); // before close(): event may fire synchronously
           ws.close();
-          await new Promise(r => { ws.onclose = r; });
+          await closed;
           server.reload({
             fetch: (req, s) => s.upgrade(req) ? undefined : new Response("ok " + i),
             websocket: { open() {}, message(ws, m) { ws.send(m + i); } },

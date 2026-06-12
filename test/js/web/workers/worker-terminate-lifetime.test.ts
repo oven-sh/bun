@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -130,33 +130,34 @@ test(
 test(
   "cross-thread completions are delivered to live worker VMs",
   async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const workerCode = \`
-          const results = {};
-          const server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
-          results.fetch = await (await fetch("http://127.0.0.1:" + server.port + "/")).text();
-          server.stop(true);
-          const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"] });
-          results.spawnExit = await child.exited;
-          results.statIsFile = (await require("fs").promises.stat(process.execPath)).isFile();
-          const zlib = require("zlib");
-          const gz = await new Promise((resolve, reject) =>
-            zlib.gzip(Buffer.from("hello"), (e, d) => (e ? reject(e) : resolve(d))),
-          );
-          results.gunzip = (await new Promise((resolve, reject) =>
-            zlib.gunzip(gz, (e, d) => (e ? reject(e) : resolve(d))),
-          )).toString();
-          const hash = await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
-          results.password = await Bun.password.verify("pw", hash);
-          postMessage(results);
-        \`;
-        const worker = new Worker(
-          "data:text/javascript," + encodeURIComponent("(async () => {" + workerCode + "})()"),
+    // The worker body lives in a real file: as a data: URL it exceeds
+    // macOS's 1024-byte path-resolution limit (NameTooLong).
+    using dir = tempDir("worker-live-delivery", {
+      "worker.ts": `
+        import { promises as fsPromises } from "node:fs";
+        import zlib from "node:zlib";
+
+        const results: Record<string, unknown> = {};
+        const server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
+        results.fetch = await (await fetch("http://127.0.0.1:" + server.port + "/")).text();
+        server.stop(true);
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"] });
+        results.spawnExit = await child.exited;
+        results.statIsFile = (await fsPromises.stat(process.execPath)).isFile();
+        const gz: Buffer = await new Promise((resolve, reject) =>
+          zlib.gzip(Buffer.from("hello"), (e, d) => (e ? reject(e) : resolve(d))),
         );
+        results.gunzip = (
+          await new Promise<Buffer>((resolve, reject) =>
+            zlib.gunzip(gz, (e, d) => (e ? reject(e) : resolve(d))),
+          )
+        ).toString();
+        const hash = await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+        results.password = await Bun.password.verify("pw", hash);
+        postMessage(results);
+      `,
+      "main.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
         const results = await new Promise((resolve, reject) => {
           worker.onmessage = e => resolve(e.data);
           worker.onerror = e => reject(new Error(e.message));
@@ -164,8 +165,12 @@ test(
         worker.terminate();
         console.log(JSON.stringify(results));
       `,
-      ],
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
       env: bunEnv,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

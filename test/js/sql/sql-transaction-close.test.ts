@@ -429,7 +429,10 @@ test("postgres: transaction.close({ timeout }) still rolls back when the timeout
   const begin = sql.begin(async tx => {
     const pending = tx`select 'hold' as x`.simple().execute();
     const socket = await slowQuery.promise;
-    const closed = tx.close({ timeout: 1 });
+    // fractional seconds are accepted by the timeout validation; a small
+    // value keeps the test fast, and nothing races the timer here: the held
+    // query is only answered after the timer's cancellation is observed
+    const closed = tx.close({ timeout: 0.1 });
     // the timer fired once close() cancelled the pending queries
     while (!pending.cancelled) {
       await Bun.sleep(5);

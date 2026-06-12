@@ -849,13 +849,12 @@ class PostgresAdapter
 
     if (!this.#listenChannels.has(channel)) this.#listenChannels.set(channel, new Set());
     this.#listenChannels.get(channel)!.add(onnotify);
-
-    if (onlisten) {
-      if (!this.#listenOnlistenCallbacks.has(channel)) this.#listenOnlistenCallbacks.set(channel, new Map());
-      const pairs = this.#listenOnlistenCallbacks.get(channel)!;
-      if (!pairs.has(onnotify)) pairs.set(onnotify, new Set());
-      pairs.get(onnotify)!.add(onlisten);
-    }
+    // The onlisten is deliberately NOT inserted into #listenOnlistenCallbacks
+    // yet: the reconnect sweep fires every onlisten in that map after a
+    // successful LISTEN, so inserting before our own ack would let a sweep
+    // that is mid-flight on this channel fire the new callback first and this
+    // call fire it again. It is inserted after the ack, below, right before
+    // its initial fire.
 
     try {
       // Always issue LISTEN (idempotent server-side) and share the in-flight
@@ -875,6 +874,7 @@ class PostgresAdapter
           }
           await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
           this.#listenRegisteredChannels.add(channel);
+          this.#listenChannelFailures.delete(channel);
         })().finally(() => {
           if (this.#listenInFlight.get(channel) === inFlight) this.#listenInFlight.delete(channel);
         });
@@ -882,16 +882,11 @@ class PostgresAdapter
       }
       await inFlight;
     } catch (err) {
-      // Roll back only the registrations this call made — siblings keep theirs.
+      // Roll back only the registration this call made — siblings keep theirs.
+      // (The onlisten needs no rollback: it is only inserted after a
+      // successful LISTEN.)
       const set = this.#listenChannels.get(channel);
       set?.delete(onnotify);
-      if (onlisten) {
-        const pairs = this.#listenOnlistenCallbacks.get(channel);
-        const onlistens = pairs?.get(onnotify);
-        onlistens?.delete(onlisten);
-        if (onlistens && onlistens.size === 0) pairs!.delete(onnotify);
-        if (pairs && pairs.size === 0) this.#listenOnlistenCallbacks.delete(channel);
-      }
       if (set && set.size === 0) {
         this.#listenChannels.delete(channel);
         this.#listenOnlistenCallbacks.delete(channel);
@@ -903,9 +898,15 @@ class PostgresAdapter
       throw err;
     }
 
-    // Skip the initial onlisten if this subscription was unlistened while the
-    // LISTEN ack was in flight — the registration is already gone.
+    // Skip the registration and initial onlisten if this subscription was
+    // unlistened while the LISTEN ack was in flight — it is already gone.
     if (this.#listenChannels.get(channel)?.has(onnotify)) {
+      if (onlisten) {
+        if (!this.#listenOnlistenCallbacks.has(channel)) this.#listenOnlistenCallbacks.set(channel, new Map());
+        const pairs = this.#listenOnlistenCallbacks.get(channel)!;
+        if (!pairs.has(onnotify)) pairs.set(onnotify, new Set());
+        pairs.get(onnotify)!.add(onlisten);
+      }
       try {
         onlisten?.(this.#listenState);
       } catch {}

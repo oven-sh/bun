@@ -13415,6 +13415,10 @@ async function createMockListenServer(
 
   const queries: string[] = [];
   const queryWaiters: Array<{ matches: (queries: string[]) => boolean; resolve: () => void }> = [];
+  // Channels whose LISTEN ack is withheld until releaseHeldAcks() (lets tests
+  // freeze the adapter mid-LISTEN to exercise interleavings).
+  let holdAckChannels: string[] = [];
+  const heldAcks: Array<() => void> = [];
   const recordQuery = (query: string) => {
     queries.push(query);
     for (let i = queryWaiters.length - 1; i >= 0; i--) {
@@ -13456,13 +13460,16 @@ async function createMockListenServer(
           return;
         }
         const toSend = notificationsOnListen[listened] ?? [];
-        socket.write(
-          Buffer.concat([
-            commandComplete("LISTEN"),
-            readyForQuery,
-            ...toSend.map(n => notification(n.channel, n.payload)),
-          ]),
-        );
+        const ack = Buffer.concat([
+          commandComplete("LISTEN"),
+          readyForQuery,
+          ...toSend.map(n => notification(n.channel, n.payload)),
+        ]);
+        if (holdAckChannels.includes(listened)) {
+          heldAcks.push(() => socket.write(ack));
+          return;
+        }
+        socket.write(ack);
       } else {
         // Echo the command word as the tag (UNLISTEN, BEGIN, COMMIT, ...).
         const tag = query.split(" ", 1)[0].toUpperCase();
@@ -13502,6 +13509,14 @@ async function createMockListenServer(
     // keeping the server around for reconnect attempts.
     destroyConnections: () => {
       for (const socket of liveSockets) socket.destroy();
+    },
+    // Withhold LISTEN acks for the given channels from now on; released acks
+    // are written in arrival order.
+    holdAcksFor: (channels: string[]) => {
+      holdAckChannels = channels;
+    },
+    releaseHeldAcks: () => {
+      for (const release of heldAcks.splice(0)) release();
     },
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
@@ -13934,4 +13949,60 @@ test("listen during the reconnect backoff window re-subscribes old channels with
   expect(received).toEqual(["after-reconnect"]);
 
   await subB!.unlisten();
+});
+
+// A listen() landing while the reconnect sweep is mid-await on the same
+// channel's LISTEN must not get its onlisten fired twice: the sweep fires
+// every onlisten registered for the channel when its own ack arrives, so the
+// new callback is only registered once listen()'s own ack succeeds.
+test("listen() during an in-flight sweep re-LISTEN fires its onlisten exactly once", async () => {
+  await using mock = await createMockListenServer({});
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  await db.listen("held_chan", () => {});
+
+  // Freeze the sweep mid-LISTEN on held_chan, then drop the connection so a
+  // sweep is owed.
+  mock.holdAcksFor(["held_chan"]);
+  mock.destroyConnections();
+
+  // Land a listen() on another channel to create the replacement connection
+  // (fast-forwarding the sweep); retry until the drop is visible.
+  let subOther: { unlisten: () => Promise<void> } | undefined;
+  for (let i = 0; i < 50 && !subOther; i++) {
+    try {
+      subOther = await db.listen("other_chan", () => {});
+    } catch {}
+  }
+  expect(subOther).toBeDefined();
+
+  // The sweep's re-LISTEN for held_chan reached the server and is now held
+  // (count 1 was the initial LISTEN on the first connection).
+  await mock.waitForQuery(qs => qs.filter(q => q === 'LISTEN "held_chan"').length >= 2);
+
+  // While the sweep is suspended on that ack, add a new subscription with an
+  // onlisten to the same channel.
+  let onlistenCount = 0;
+  const secondListen = db.listen(
+    "held_chan",
+    () => {},
+    () => {
+      onlistenCount++;
+    },
+  );
+
+  // Let the sweep's ack (and any held ack for the new LISTEN) through.
+  mock.holdAcksFor([]);
+  mock.releaseHeldAcks();
+
+  await secondListen;
+  expect(onlistenCount).toBe(1);
+
+  await db.unlisten("held_chan");
+  await subOther!.unlisten();
 });

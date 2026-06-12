@@ -925,6 +925,31 @@ booga"
       });
     });
 
+    // A prefix assignment of a var that is already in the environment must
+    // replace the inherited entry, not append a duplicate one: getenv
+    // returns the first match, so the child would see the stale value.
+    // Asserted through `env` (raw environ dump) because process.env dedups.
+    // https://github.com/oven-sh/bun/issues/32202
+    test.skipIf(isWindows)("cmd_local_var replaces inherited environ entry", async () => {
+      const { stdout } = await $`FOO=second env`.env({ ...bunEnv, FOO: "first" });
+      expect(
+        stdout
+          .toString()
+          .split("\n")
+          .filter(line => line.startsWith("FOO=")),
+      ).toEqual(["FOO=second"]);
+    });
+
+    test.skipIf(isWindows)("cmd_local_var replaces exported var environ entry", async () => {
+      const { stdout } = await $`export FOO=first; FOO=second env`;
+      expect(
+        stdout
+          .toString()
+          .split("\n")
+          .filter(line => line.startsWith("FOO=")),
+      ).toEqual(["FOO=second"]);
+    });
+
     test("expand shell var", async () => {
       const { stdout } = await $`FOO=bar BAR=baz; echo $FOO $BAR`;
       const str = stdout.toString();

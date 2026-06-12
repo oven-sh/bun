@@ -1556,9 +1556,14 @@ impl<'a> SpawnArgs<'a> {
 
     /// `object_iter` should be a some type with the following fields:
     /// - `next() bool`
+    ///
+    /// Entries whose key is present in `skip` are omitted. `env_array` must
+    /// end up with at most one line per key: `getenv` returns the first
+    /// match, so a duplicate key would hand the child the stale value.
     pub fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
+        skip: Option<&crate::shell::EnvMap>,
     ) {
         self.override_env = true;
         // Note: `bun_collections::array_hash_map::Iter` doesn't impl
@@ -1572,6 +1577,9 @@ impl<'a> SpawnArgs<'a> {
         }
 
         while let Some(entry) = env_iter.next() {
+            if skip.is_some_and(|skip| skip.contains(*entry.key_ptr)) {
+                continue;
+            }
             let key = entry.key_ptr.slice();
             let value = entry.value_ptr.slice();
 

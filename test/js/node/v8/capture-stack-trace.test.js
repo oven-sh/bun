@@ -908,11 +908,6 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
 });
 
 // https://github.com/oven-sh/bun/issues/13904
-// JSC implements ES2015 proper tail calls: `inst.parse = data => inner(data)` is
-// an implicit-return tail call in strict mode, so the `inst.parse` frame is
-// replaced by inner's frame and the function passed to captureStackTrace is not
-// findable on the stack. zod v4's .parse() passes exactly such a function. The
-// frames that do exist must survive instead of the whole trace being cleared.
 test("captureStackTrace keeps frames when the caller frame was elided by a tail call", () => {
   const inst = {};
   function innerParse(data, callee) {
@@ -925,7 +920,6 @@ test("captureStackTrace keeps frames when the caller frame was elided by a tail 
 
   function initPlugin() {
     const result = inst.parse({});
-    // Not a tail call, so initPlugin's frame stays on the stack.
     return [result];
   }
   noInline(initPlugin);
@@ -935,10 +929,6 @@ test("captureStackTrace keeps frames when the caller frame was elided by a tail 
   expect(err.stack).toContain("at initPlugin");
 });
 
-// The tail-call exception must not weaken V8 parity where the caller's frame
-// provably could not have been elided: host functions and sloppy-mode
-// functions never make tail calls, so "not on the stack" means "not called"
-// and the trace is cleared like in Node.js.
 test("captureStackTrace still clears frames for a host function not in the stack", () => {
   Math.max(1, 2);
   const e = new Error("test");
@@ -947,7 +937,6 @@ test("captureStackTrace still clears frames for a host function not in the stack
 });
 
 test("captureStackTrace still clears frames for a sloppy-mode function not in the stack", () => {
-  // Indirect eval runs in the global scope in sloppy mode.
   const sloppyFn = (0, eval)("(function sloppyNotOnStack() { return 1; })");
   sloppyFn();
   const e = new Error("test");
@@ -956,9 +945,6 @@ test("captureStackTrace still clears frames for a sloppy-mode function not in th
 });
 
 test("captureStackTrace keeps frames for a bound function not in the stack", () => {
-  // Node keeps the full trace when the second argument is a bound function
-  // that is not on the stack: V8 never matches bound functions against stack
-  // frames, so no filtering happens.
   function target() {
     return 1;
   }

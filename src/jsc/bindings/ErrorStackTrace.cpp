@@ -113,18 +113,8 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
-// Whether callerObject's call frame could have been elided by a proper tail
-// call, making it unfindable on the machine stack even while the function is
-// logically still executing. Mirrors the conditions under which the bytecode
-// generator emits tail calls (BytecodeGenerator's m_allowTailCallOptimization):
-// only strict-mode non-constructor JS code makes tail calls, and a function
-// that never generated code for a regular call never had a call frame to
-// elide (construct invocations are never tail calls).
 static bool callerCouldBeTailCallElided(JSC::JSObject* callerObject)
 {
-    // A bound function's frame is a native thunk the JITs can bypass while the
-    // bound target runs. V8 never matches bound functions against stack frames
-    // either: Node keeps the full trace for them instead of clearing it.
     if (dynamicDowncast<JSC::JSBoundFunction>(callerObject))
         return true;
     if (auto* function = dynamicDowncast<JSC::JSFunction>(callerObject)) {
@@ -135,12 +125,8 @@ static bool callerCouldBeTailCallElided(JSC::JSObject* callerObject)
             return false;
         return executable->isGeneratedForCall();
     }
-    // Native constructors (Function, Array, ...) execute no JS code, so their
-    // frames are never tail-elided.
     if (dynamicDowncast<JSC::InternalFunction>(callerObject))
         return false;
-    // Remaining callables (e.g. callable proxies) can forward tail calls, so
-    // their absence from the stack proves nothing.
     return true;
 }
 
@@ -186,7 +172,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
 
     // Match V8: remove all frames up to and including the caller. We match by
-    // cell identity first, then by name: name matching is needed because a
+    // cell identity first, then by name — name matching is needed because a
     // resumed async function's frame callee is the generator's `next` function
     // (a different cell) but Zig::functionName still reports the original
     // async function's name.
@@ -205,16 +191,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         }
     }
 
-    // V8 removes every frame when the caller is not found: without tail calls,
-    // "not on the stack" can only mean the function was never called, so every
-    // collected frame is machinery above it. JSC implements ES2015 proper tail
-    // calls, so a strict-mode function whose body ends in a tail call has its
-    // frame replaced by its callee's and is unfindable here even though it is
-    // logically on the stack. zod v4's .parse() passes exactly such a function
-    // (`inst.parse = (data, params) => parse.parse(inst, data, params, ...)`),
-    // and wiping gave every ZodError an empty stack (issue #13904). Only wipe
-    // when the caller's frame provably could not have been tail-elided; keep
-    // the whole trace otherwise, since extra frames beat an empty stack.
     if (!removeCount && !callerCouldBeTailCallElided(callerObject))
         removeCount = stackTrace.size();
 

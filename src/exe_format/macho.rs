@@ -760,17 +760,17 @@ impl MachoSigner {
 
         if end - off > 0 {
             let remaining_len = end - off;
-            let mut last_page = [0u8; PAGE_SIZE];
-            // SAFETY: range [off..end] is within the original len.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    self.data.as_ptr().add(off),
-                    last_page.as_mut_ptr(),
-                    remaining_len,
-                );
-            }
+            // The final partial page is hashed truncated to `codeLimit % pageSize`
+            // bytes: Apple's verifier never zero-pads it to a full page (see
+            // Security.framework's CodeDirectory::Builder and Go's
+            // cmd/internal/codesign, whose output this signer mirrors).
+            // Deliberate deviation from the .zig reference, which padded the
+            // last page and produced a signature `codesign -v` rejects.
             let mut digest = [0u8; HASH_SIZE];
-            sha256_hash(&last_page, &mut digest);
+            // SAFETY: range [off..end] is within the original len (sig_off).
+            let page =
+                unsafe { core::slice::from_raw_parts(self.data.as_ptr().add(off), remaining_len) };
+            sha256_hash(page, &mut digest);
             self.data.extend_from_slice(&digest);
         }
 

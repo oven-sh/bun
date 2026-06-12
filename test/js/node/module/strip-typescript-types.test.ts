@@ -60,6 +60,27 @@ test("does not inline process.env", () => {
   expect(stripTypeScriptTypes("console.log(process.env.NODE_ENV);")).toBe("console.log(process.env.NODE_ENV);\n");
 });
 
+test("preserves a leading hashbang", () => {
+  const src = "#!/usr/bin/env node\nconst x: number = 1;";
+  expect(stripTypeScriptTypes(src)).toBe("#!/usr/bin/env node\nconst x = 1;\n");
+  expect(stripTypeScriptTypes(src, { mode: "transform" })).toBe("#!/usr/bin/env node\nconst x = 1;\n");
+  const withUrl = stripTypeScriptTypes(src, { sourceUrl: "cli.ts" });
+  expect(withUrl).toBe("#!/usr/bin/env node\nconst x = 1;\n\n\n//# sourceURL=cli.ts");
+});
+
+test("source map accounts for the hashbang line", () => {
+  const out = stripTypeScriptTypes("#!/usr/bin/env node\nconst x: number = 1;", {
+    mode: "transform",
+    sourceMap: true,
+  });
+  expect(out).toStartWith("#!/usr/bin/env node\nconst x = 1;\n");
+  const base64 = out.split("base64,")[1];
+  const map = JSON.parse(Buffer.from(base64, "base64").toString());
+  // generated line 0 is the hashbang; mappings begin on line 1, matching
+  // Node's output for the same input
+  expect(map.mappings).toBe(";AACA,MAAM,IAAY");
+});
+
 test("validates code argument", () => {
   for (const bad of [42, null, undefined, {}, Symbol()] as const) {
     const err = errorFrom(() => stripTypeScriptTypes(bad as any));

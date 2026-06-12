@@ -186,17 +186,15 @@ fn strip_typescript_types(
     // `parse()` lazily allocates `macro_context`, whose `data` pointer is
     // only freed by an explicit `deinit()`; this one-shot transpiler must
     // reclaim it on every return path (mirrors `TransformTask::run`).
-    let _macro_ctx_guard = scopeguard::guard(
-        core::ptr::addr_of_mut!(transpiler.macro_context),
-        |slot| {
+    let _macro_ctx_guard =
+        scopeguard::guard(core::ptr::addr_of_mut!(transpiler.macro_context), |slot| {
             // SAFETY: `slot` points at the stack-owned `transpiler`, which is
             // still alive when this guard drops (declared after it), and the
             // parser's `&mut MacroContext` borrow ended with `parse()`.
             if let Some(ctx) = unsafe { (*slot).take() } {
                 ctx.deinit();
             }
-        },
-    );
+        });
     // `LoadAllWithoutInlining` skips the implicit `process.env.NODE_ENV` /
     // `process.env.BUN_ENV` / `process.browser` defines, so `process.env.*`
     // reads survive the transform verbatim.

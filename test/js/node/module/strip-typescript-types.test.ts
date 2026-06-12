@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/32196
 import { expect, test } from "bun:test";
-import { stripTypeScriptTypes } from "node:module";
 import { bunEnv, bunExe } from "harness";
+import { stripTypeScriptTypes } from "node:module";
 
 function errorFrom(fn: () => unknown): any {
   try {

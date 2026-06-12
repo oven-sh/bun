@@ -2697,12 +2697,15 @@ where
         if !self.has_listener() && self.pending_requests == 0 {
             return JSPromise::resolved_promise(global, JSValue::UNDEFINED).to_js();
         }
-        let prom = &mut self.all_closed_promise;
-        if prom.has_value() {
-            return prom.value();
+        if !self.all_closed_promise.is_empty() {
+            return self.all_closed_promise;
         }
-        *prom = jsc::JSPromiseStrong::init(global);
-        prom.value()
+        let prom = JSPromise::create(global).to_js();
+        self.all_closed_promise = prom;
+        // Only reachable via `server.stop()` (a JS-called method) — wrapper is
+        // alive. The slot is the GC root; the field above is the dispatch shadow.
+        Self::js_gc_all_closed_promise_set(self.js_value_assert_alive(), global, prom);
+        prom
     }
 
     // `notify_inspector_server_stopped` lives in the unbounded impl block

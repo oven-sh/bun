@@ -958,7 +958,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStripTypeScriptTypes,
     BunString codeBun = Bun::toString(code);
     BunString sourceUrlBun = Bun::toString(sourceUrl);
 
-    return NodeModuleModule__stripTypeScriptTypes(globalObject, codeBun, transformMode, sourceMapEnabled, sourceUrlBun);
+    RELEASE_AND_RETURN(scope, NodeModuleModule__stripTypeScriptTypes(globalObject, codeBun, transformMode, sourceMapEnabled, sourceUrlBun));
 }
 
 static JSValue getModuleObject(VM& vm, JSObject* moduleObject)

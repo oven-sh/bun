@@ -725,9 +725,7 @@ impl ServerWebSocket {
             };
 
             let call_args = [cached_this, JSValue::js_number(code as f64), message_js];
-            if let Err(e) =
-                on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args)
-            {
+            if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_exception(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 handler.run_error_callback(vm, global_object, err);

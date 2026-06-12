@@ -711,6 +711,94 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
   expect(exitCode).toBe(0);
 });
 
+test("server wrapper survives GC while a websocket is connected after stop()", async () => {
+  // The previous test exercises the one-tick HTTP keep-alive race; this one
+  // covers the steadier websocket case. After a graceful stop() with a live
+  // websocket, the user may drop their `server` binding. The native struct
+  // stays alive (active_websockets > 0), but stop() previously downgraded
+  // js_value immediately, so GC could finalize the JS wrapper — and with it
+  // m_routeList — while the connection was still in use. With the downgrade
+  // deferred into deinit_if_we_can's idle predicate, the wrapper must outlive
+  // the websocket and become collectable only after the last close.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { fullGC, heapStats } = require("bun:jsc");
+
+        const serverCount = () => {
+          const c = heapStats().objectTypeCounts;
+          return (c.DebugHTTPServer ?? 0) + (c.HTTPServer ?? 0);
+        };
+
+        const baseline = serverCount();
+
+        const ws = await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: { "/r": () => new Response("ok") },
+            fetch(req, server) {
+              if (server.upgrade(req)) return;
+              return new Response("nope", { status: 404 });
+            },
+            websocket: { open() {}, message() {}, close() {} },
+          });
+
+          const opened = Promise.withResolvers();
+          const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+          ws.onopen = () => opened.resolve();
+          ws.onerror = e => opened.reject(e);
+          await opened.promise;
+
+          // Graceful stop: listener closes, the live websocket stays open.
+          server.stop();
+          return ws;
+        })();
+        // The only \`server\` binding is now out of scope; only the live
+        // websocket keeps the native side around.
+
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(10);
+        }
+        const afterStopGC = serverCount();
+
+        const closed = Promise.withResolvers();
+        ws.onclose = () => closed.resolve();
+        ws.close();
+        await closed.promise;
+
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(10);
+        }
+        const afterCloseGC = serverCount();
+
+        console.log(JSON.stringify({ baseline, afterStopGC, afterCloseGC }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim());
+  // js_value stays Strong while a websocket is connected → GC must not
+  // collect the wrapper.
+  expect(afterStopGC).toBeGreaterThan(baseline);
+  // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
+  // becomes collectable again (no leak).
+  expect(afterCloseGC).toBeLessThanOrEqual(baseline);
+  expect(exitCode).toBe(0);
+});
+
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({

@@ -392,4 +392,65 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/32193
+  itBundled("cjs2esm/UnboundReservedWordErrorsWithEsmOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+        static = 2;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.cjs": [
+        '"package" is a reserved word and cannot be used with the ESM output format due to strict mode',
+        '"static" is a reserved word and cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/32193
+  itBundled("cjs2esm/BoundReservedWordRenamedWithEsmOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        var package = 5;
+        function f(interface) { return interface + 1; }
+        console.log(package, f(6));
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "5 7",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/32193
+  itBundled("cjs2esm/UnboundReservedWordAllowedWithCjsOutput", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(typeof package);
+      `,
+    },
+    format: "cjs",
+    run: {
+      stdout: "undefined",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/32193
+  itBundled("cjs2esm/UnboundReservedWordReplacedByDefine", {
+    files: {
+      "/entry.cjs": /* js */ `
+        exports.x = 1;
+        console.log(package);
+      `,
+    },
+    format: "esm",
+    define: {
+      package: "123",
+    },
+    run: {
+      stdout: "123",
+    },
+  });
 });

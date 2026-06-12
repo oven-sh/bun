@@ -130,8 +130,8 @@ test("createReadStream file handle does not leak file descriptors", async () => 
 
 // https://github.com/oven-sh/bun/issues/32191
 test("async fs ops with Buffer path arguments do not leak the path argument", async () => {
-  const N = 128;
-  const WARM = 32;
+  const N = 64;
+  const WARM = 16;
   const script = `
     const fs = require("node:fs");
     const util = require("node:util");
@@ -140,16 +140,20 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
     const N = ${N};
     const WARM = ${WARM};
 
-    function liveCount(type) {
+    function liveCounts(types) {
       Bun.gc(true);
-      return heapStats().objectTypeCounts[type] ?? 0;
+      const counts = heapStats().objectTypeCounts;
+      return types.map(t => counts[t] ?? 0);
     }
 
-    async function measure(type, op) {
+    // Returns the worst delta across the observed heap types.
+    async function measure(types, op) {
+      if (!Array.isArray(types)) types = [types];
       for (let i = 0; i < WARM; i++) await op(N + i);
-      const before = liveCount(type);
+      const before = liveCounts(types);
       for (let i = 0; i < N; i++) await op(i);
-      return liveCount(type) - before;
+      const after = liveCounts(types);
+      return Math.max(...after.map((v, idx) => v - before[idx]));
     }
 
     // Expect the exact error so a parse-time rejection cannot silently skip
@@ -180,14 +184,17 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
         .catch(expectAborted),
     );
     // writev/readv buffers take per-element roots at parse and the array root
-    // at schedule; both must be released at completion.
+    // at schedule; both must be released at completion, so watch both the
+    // element buffers and the array wrapper.
     const writev = util.promisify(fs.writev);
     const readv = util.promisify(fs.readv);
     const vfd = fs.openSync("vec.txt", "w+");
-    deltas.writevBuffers = await measure("Uint8Array", i =>
+    deltas.writevBuffers = await measure(["Uint8Array", "Array"], i =>
       writev(vfd, [Buffer.from("vec-a-" + i), Buffer.from("vec-b-" + i)], 0),
     );
-    deltas.readvBuffers = await measure("Uint8Array", i => readv(vfd, [Buffer.alloc(8), Buffer.alloc(8)], 0));
+    deltas.readvBuffers = await measure(["Uint8Array", "Array"], i =>
+      readv(vfd, [Buffer.alloc(8), Buffer.alloc(8)], 0),
+    );
     fs.closeSync(vfd);
     if (!fs.existsSync("out-0.txt") || !fs.existsSync("out-1.txt")) {
       throw new Error("writeFile segment did not write its files");

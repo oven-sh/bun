@@ -2920,22 +2920,22 @@ use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create}
 mod route_list_cached {
     pub(super) mod http {
         bun_jsc::codegen_cached_accessors!(
-            "HTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+            "HTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong, allClosedPromise
         );
     }
     pub(super) mod https {
         bun_jsc::codegen_cached_accessors!(
-            "HTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+            "HTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong, allClosedPromise
         );
     }
     pub(super) mod debug_http {
         bun_jsc::codegen_cached_accessors!(
-            "DebugHTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+            "DebugHTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong, allClosedPromise
         );
     }
     pub(super) mod debug_https {
         bun_jsc::codegen_cached_accessors!(
-            "DebugHTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+            "DebugHTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong, allClosedPromise
         );
     }
 }

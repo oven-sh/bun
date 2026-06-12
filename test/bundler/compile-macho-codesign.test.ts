@@ -1,10 +1,17 @@
 // `bun build --compile` for darwin-arm64 ad-hoc signs the output in-process
-// (MachoSigner in src/exe_format/macho.rs). Apple's verifier hashes the final
-// partial page of the code region truncated to `codeLimit % pageSize` bytes,
-// NOT zero-padded to a full page, so the signer must do the same. Padding the
-// last page produced a wrong hash in the last CodeDirectory slot: `codesign -v`
-// reported "invalid signature (code or signature have been modified)" and the
-// macOS 27 beta kills such binaries on launch.
+// (MachoSigner in src/exe_format/macho.rs). Two properties Apple's verifier
+// enforces and the signer must match:
+//
+//  1. The final partial page of the code region is hashed truncated to
+//     `codeLimit % pageSize` bytes, NOT zero-padded to a full page. Padding it
+//     produced a wrong hash in the last CodeDirectory slot: `codesign -v`
+//     reported "invalid signature (code or signature have been modified)" and
+//     the macOS 27 beta kills such binaries on launch.
+//  2. The signature blob must end exactly at EOF. Writing the (smaller)
+//     re-signed output over the template copy without truncating left a stale
+//     tail, which codesign rejects with "main executable failed strict
+//     validation".
+//
 // https://github.com/oven-sh/bun/issues/32159
 //
 // The cross-platform tests below build a minimal synthetic arm64 Mach-O
@@ -32,15 +39,23 @@ const PAGE_SIZE = 0x1000;
 // Where the template claims its existing code signature starts. Deliberately
 // NOT page-aligned (0x100 bytes into a page): `codeLimit` of the re-signed
 // output equals this offset (plus any section-growth shift, which is
-// page-aligned), so the final hashed page is a partial one — the case the bug
-// corrupts. Real bun templates are never page-aligned here either.
+// page-aligned), so the final hashed page is a partial one, the case the
+// hashing bug corrupted. Real bun templates are never page-aligned here either.
 const TEMPLATE_SIG_OFF = 0x8100;
+
+// The template's existing signature is made LARGER than the ~400-byte ad-hoc
+// one the signer writes, as with real templates (Apple-toolchain signatures
+// carry special slots, requirements, and a CMS blob). The re-signed output is
+// then shorter than the template, so any stale template tail left past the new
+// signature's end is caught by the signature-ends-at-EOF assertion below
+// (codesign strict validation rejects such files).
+const TEMPLATE_SIG_SIZE = 0x2000;
 
 // Minimal arm64 Mach-O "base executable": __TEXT, a __BUN segment with one
 // 16 KiB __bun section, and __LINKEDIT whose tail is an LC_CODE_SIGNATURE
 // region. That is everything MachoFile::write_section and MachoSigner need.
 function machoTemplate(): Buffer {
-  const fileSize = 0x8200;
+  const fileSize = TEMPLATE_SIG_OFF + TEMPLATE_SIG_SIZE;
   const segCmdSize = 72; // sizeof(segment_command_64)
   const sectSize = 80; // sizeof(section_64)
   const sigCmdSize = 16; // sizeof(linkedit_data_command)
@@ -98,16 +113,16 @@ function machoTemplate(): Buffer {
   buf.writeUInt32LE(0x4000, o + 48); // offset
   buf.writeUInt32LE(14, o + 52); // align = 2^14
 
-  // LC_SEGMENT_64 __LINKEDIT [0x8000, 0x8200); the last 0x100 bytes are the
-  // template's signature region (TEMPLATE_SIG_OFF..fileSize).
+  // LC_SEGMENT_64 __LINKEDIT [0x8000, fileSize); its tail
+  // [TEMPLATE_SIG_OFF, fileSize) is the template's signature region.
   o += sectSize;
   buf.writeUInt32LE(LC_SEGMENT_64, o);
   buf.writeUInt32LE(segCmdSize, o + 4);
   writeName(o + 8, "__LINKEDIT");
   buf.writeBigUInt64LE(0x1_0000_8000n, o + 24); // vmaddr
-  buf.writeBigUInt64LE(0x1000n, o + 32); // vmsize
+  buf.writeBigUInt64LE(0x3000n, o + 32); // vmsize
   buf.writeBigUInt64LE(0x8000n, o + 40); // fileoff
-  buf.writeBigUInt64LE(0x200n, o + 48); // filesize
+  buf.writeBigUInt64LE(BigInt(fileSize - 0x8000), o + 48); // filesize
   buf.writeInt32LE(1, o + 56); // maxprot r--
   buf.writeInt32LE(1, o + 60); // initprot
   buf.writeUInt32LE(0, o + 64); // nsects
@@ -117,7 +132,7 @@ function machoTemplate(): Buffer {
   buf.writeUInt32LE(LC_CODE_SIGNATURE, o);
   buf.writeUInt32LE(sigCmdSize, o + 4);
   buf.writeUInt32LE(TEMPLATE_SIG_OFF, o + 8); // dataoff
-  buf.writeUInt32LE(fileSize - TEMPLATE_SIG_OFF, o + 12); // datasize
+  buf.writeUInt32LE(TEMPLATE_SIG_SIZE, o + 12); // datasize
 
   return buf;
 }
@@ -254,7 +269,8 @@ test.each(Object.entries(bundles))(
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
-    const sig = parseAndVerifySignature(readFileSync(out));
+    const outBytes = readFileSync(out);
+    const sig = parseAndVerifySignature(outBytes);
     expect(sig.superBlobMagic).toBe(CSMAGIC_EMBEDDED_SIGNATURE);
     expect(sig.cdMagic).toBe(CSMAGIC_CODEDIRECTORY);
     expect(sig.hashType).toBe(2); // SHA-256
@@ -268,6 +284,12 @@ test.each(Object.entries(bundles))(
     // cannot catch last-page padding bugs.
     expect(sig.codeLimit % PAGE_SIZE).not.toBe(0);
 
+    // The signature must end exactly at EOF: codesign's strict validation
+    // fails a main executable with any bytes past the signature. A stale tail
+    // appears when the output isn't truncated after re-signing with a
+    // signature smaller than the template's (TEMPLATE_SIG_SIZE above).
+    expect(outBytes.length).toBe(sig.dataoff + sig.datasize);
+
     // Every stored slot hash matches the hash Apple's verifier computes.
     // Before the fix exactly the last slot mismatched: it was the SHA-256 of
     // the partial page zero-padded to 4096 bytes.
@@ -276,7 +298,7 @@ test.each(Object.entries(bundles))(
 );
 
 // On a darwin-arm64 host the running executable itself is the compile template
-// (no download), and codesign(1) is the authoritative verifier — this is the
+// (no download), and codesign(1) is the authoritative verifier; this is the
 // exact repro from the issue.
 test.skipIf(!isMacOS || !isArm64)("codesign verifies a natively compiled executable", async () => {
   using dir = tempDir("compile-macho-codesign-native", {
@@ -306,8 +328,10 @@ test.skipIf(!isMacOS || !isArm64)("codesign verifies a natively compiled executa
     codesign.stderr.text(),
     codesign.exited,
   ]);
-  // codesign --verify is silent on success; on the unfixed signer it printed
-  // "invalid signature (code or signature have been modified)" and exited 1.
+  // codesign --verify is silent on success; the unfixed signer made it exit 1
+  // with "invalid signature (code or signature have been modified)" (bad last
+  // page hash) or "main executable failed strict validation" (stale bytes
+  // past the signature).
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);

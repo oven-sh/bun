@@ -942,17 +942,19 @@ test("peer satisfied by a workspace package keeps the workspace across installs 
   const bunDir = join(packageDir, "node_modules", ".bun");
   const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"));
   expect(freshEntries).toHaveLength(1);
-  expect(
-    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.0.0", workspaceMarker: true });
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    workspaceMarker: true,
+  });
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual(freshEntries);
-  expect(
-    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.0.0", workspaceMarker: true });
+  expect(await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    workspaceMarker: true,
+  });
 });
 
 describe("existing node_modules, missing node_modules/.bun", () => {

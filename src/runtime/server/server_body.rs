@@ -2179,7 +2179,9 @@ where
             let wrapped = if new_config.on_node_http_request.is_empty() {
                 JSValue::ZERO
             } else {
-                new_config.on_node_http_request.with_async_context_if_needed(global)
+                new_config
+                    .on_node_http_request
+                    .with_async_context_if_needed(global)
             };
             if let Some(server_js) = server_js {
                 Self::js_gc_on_node_http_request_set(server_js, global, wrapped);
@@ -3361,14 +3363,15 @@ where
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match this.config.on_request.call(
-            &global,
-            this.js_value_assert_alive(),
-            &args,
-        ) {
-            Ok(v) => v,
-            Err(err) => global.take_exception(err),
-        };
+        let response_value =
+            match this
+                .config
+                .on_request
+                .call(&global, this.js_value_assert_alive(), &args)
+            {
+                Ok(v) => v,
+                Err(err) => global.take_exception(err),
+            };
         let request_object_ptr: *mut Request = request_object;
         scopeguard::defer! {
             // uWS request will not live longer than this function

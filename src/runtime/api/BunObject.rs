@@ -1656,17 +1656,26 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // the unwrapped fn is held live by the user's options object on the
             // `serve()` stack across `init`/`listen` until this point.
             if !server_ref.config.on_request.is_empty() {
-                let wrapped = server_ref.config.on_request.with_async_context_if_needed(global_object);
+                let wrapped = server_ref
+                    .config
+                    .on_request
+                    .with_async_context_if_needed(global_object);
                 <$ServerType>::js_gc_on_request_set(obj, global_object, wrapped);
                 server_ref.config.on_request = wrapped;
             }
             if !server_ref.config.on_error.is_empty() {
-                let wrapped = server_ref.config.on_error.with_async_context_if_needed(global_object);
+                let wrapped = server_ref
+                    .config
+                    .on_error
+                    .with_async_context_if_needed(global_object);
                 <$ServerType>::js_gc_on_error_set(obj, global_object, wrapped);
                 server_ref.config.on_error = wrapped;
             }
             if !server_ref.config.on_node_http_request.is_empty() {
-                let wrapped = server_ref.config.on_node_http_request.with_async_context_if_needed(global_object);
+                let wrapped = server_ref
+                    .config
+                    .on_node_http_request
+                    .with_async_context_if_needed(global_object);
                 <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, wrapped);
                 server_ref.config.on_node_http_request = wrapped;
             }

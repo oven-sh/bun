@@ -256,6 +256,11 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        // package.json "type" / the file extension (module_type) changes the
+        // transpiled output for byte-identical sources: the top-level `this`
+        // substitution, and exports_kind for files with no module syntax.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 

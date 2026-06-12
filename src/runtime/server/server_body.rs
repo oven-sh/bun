@@ -2176,7 +2176,7 @@ where
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
         // `set_routes` stop routing through the node:http path.
         if self.config.on_node_http_request != new_config.on_node_http_request {
-            let wrapped = if new_config.on_node_http_request.is_empty() {
+            let wrapped = if new_config.on_node_http_request.is_empty_or_undefined_or_null() {
                 JSValue::ZERO
             } else {
                 new_config

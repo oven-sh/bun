@@ -3044,6 +3044,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `on_reload_from_zig`; dispatch keeps reading the shadow.
     pub fn write_ws_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
         let Some(ws) = self.config.websocket.as_mut() else {
+            // No websocket config: clear all 7 slots so a config transition
+            // to "no websocket" drops the previous roots (G6). Current
+            // callers never reach this (initial-serve slots are already
+            // ZERO; `on_reload_from_zig` only calls us right after
+            // assigning `self.config.websocket = Some(_)`), but the doc'd
+            // contract is "writes all slots unconditionally" — honor it so
+            // future call sites can't leave stale roots behind.
+            Self::js_gc_ws_on_open_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_message_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_close_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_drain_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_error_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_ping_set(server_js, global, JSValue::ZERO);
+            Self::js_gc_ws_on_pong_set(server_js, global, JSValue::ZERO);
             return;
         };
         let h = &mut ws.handler;

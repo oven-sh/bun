@@ -3061,9 +3061,9 @@ fn resolve_peer_dep_version_based(
     string_buf: &[u8],
 ) -> Option<PackageID> {
     // `package_index` is keyed by *real* package names while `dep.name_hash`
-    // holds the alias, so an `npm:`-aliased peer must be looked up under the
-    // aliased name. Mirrors the realname hashing in
-    // `enqueue_dependency_with_main_and_success_fn`.
+    // may hold an alias, so an `npm:`-aliased peer must be looked up under
+    // the real package name (`dep.realname()`). Mirrors the realname hashing
+    // in `enqueue_dependency_with_main_and_success_fn`.
     let name_hash = match dep.version.tag {
         DependencyVersionTag::DistTag
         | DependencyVersionTag::Git

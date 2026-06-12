@@ -1823,7 +1823,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
                     let scope_index = p.scopes_in_order.len();
+                    // The body is ambient and dropped, so a `return` inside it
+                    // must not count as a module-level return.
+                    let old_is_outside_fn_or_arrow =
+                        p.fn_or_arrow_data_parse.is_outside_fn_or_arrow;
+                    p.fn_or_arrow_data_parse.is_outside_fn_or_arrow = false;
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
+                    p.fn_or_arrow_data_parse.is_outside_fn_or_arrow = old_is_outside_fn_or_arrow;
                     p.lexer.next()?;
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.

@@ -4876,15 +4876,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `mark_strict_mode_feature` performs for sloppy scopes.
             if self.is_strict_mode_output_format() {
                 for (feature, r, detail) in deferred {
-                    // Like `ForInVarInit`, legacy octal literals never survive
-                    // into the printed output: the printer formats `E::Number`
-                    // from its f64 value, so `010` is already `8` there. And
-                    // the only caller that queues them (`e_number`) is gated
-                    // on `is_strict_mode()`, so sloppy scopes never reached
-                    // the output-format fallback for them in the first place.
+                    // Like `ForInVarInit`, legacy octal literals and reserved
+                    // words are normalized before the output: the printer
+                    // formats `E::Number` from its f64 value (`010` is already
+                    // `8` there), and the renamer remaps bound reserved-word
+                    // symbols (`package` becomes `_package`). Their callers
+                    // are also gated on `is_strict_mode()`, so sloppy scopes
+                    // never reached the output-format fallback for them in the
+                    // first place. (An unbound reserved-word reference does
+                    // survive verbatim, but it did before this queue existed
+                    // too; boundness is not known when the feature is queued.)
                     if matches!(
                         feature,
-                        StrictModeFeature::ForInVarInit | StrictModeFeature::LegacyOctalLiteral
+                        StrictModeFeature::ForInVarInit
+                            | StrictModeFeature::LegacyOctalLiteral
+                            | StrictModeFeature::ReservedWord
                     ) {
                         continue;
                     }

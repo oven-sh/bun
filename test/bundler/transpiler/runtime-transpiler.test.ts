@@ -330,6 +330,49 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("reserved word declarations in CommonJS-classified .mjs files still bundle to ESM format", async () => {
+    // The renamer remaps bound reserved-word symbols (package -> _package),
+    // so the bundle is strict-valid and the build must not error.
+    using dir = tempDir("forced-esm-bundle-reserved", {
+      "utils.mjs": "exports.x = 1;\nvar package = 1;\nconsole.log(package);\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("reserved word");
+    expect(stdout).toContain("_package");
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level return inside a TypeScript namespace body does not opt out of strict mode", async () => {
+    // Namespace bodies compile to generated closures, so a return there is
+    // not a module-level return and must not classify the file as CommonJS.
+    using dir = tempDir("forced-esm-ns-return", {
+      "ns.mts": "namespace N {\n  if (globalThis.never) return;\n}\nvar v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "ns.mts");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("return inside declare global does not opt out of strict mode", async () => {
+    // The ambient body is parsed then dropped, so a return there is not a
+    // module-level return.
+    using dir = tempDir("forced-esm-declare-global-return", {
+      "dg.mts": "declare global {\n  return;\n}\nvar v = 010;\nconsole.log(v);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "dg.mts");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test("top-level return keeps the interop carve-out under non-ESM bundle formats", async () => {
     // Top-level return detection must not depend on the output format: the
     // same .mjs file classifies as CommonJS (sloppy) whether bundling to

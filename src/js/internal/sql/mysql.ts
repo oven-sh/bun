@@ -919,8 +919,12 @@ class MySQLAdapter
     let timeout = options?.timeout;
     if (timeout) {
       timeout = Number(timeout);
-      if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
-        throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
+      if (timeout < 0 || timeout !== timeout || timeout * 1000 > 2 ** 31) {
+        throw $ERR_INVALID_ARG_VALUE(
+          "options.timeout",
+          timeout,
+          "must be a non-negative integer less than 2^31 / 1000",
+        );
       }
 
       this.closed = true;

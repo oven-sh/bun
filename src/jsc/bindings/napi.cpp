@@ -1,5 +1,7 @@
 #include "BunProcess.h"
 #include "headers.h"
+
+#include <atomic>
 #include "node_api.h"
 #include "root.h"
 #include "JavaScriptCore/ConstructData.h"
@@ -3002,16 +3004,19 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
 // exiting) by VirtualMachine::global_exit() on exit paths that never drained
 // the event loop. Process-global rather than per-VM: only the main thread's
 // final exit takes this path, and worker teardown goes through on_exit().
-static bool s_napiCleanupHooksOnly = false;
+// Atomic because worker threads can be mid-teardown (their own on_exit() ->
+// NapiEnv::cleanup()) while the main thread stores the flag; relaxed is
+// enough since either value read is safe at exit.
+static std::atomic<bool> s_napiCleanupHooksOnly { false };
 
 extern "C" void napi_internal_set_cleanup_hooks_only()
 {
-    s_napiCleanupHooksOnly = true;
+    s_napiCleanupHooksOnly.store(true, std::memory_order_relaxed);
 }
 
 extern "C" bool napi_internal_cleanup_is_hooks_only()
 {
-    return s_napiCleanupHooksOnly;
+    return s_napiCleanupHooksOnly.load(std::memory_order_relaxed);
 }
 
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)

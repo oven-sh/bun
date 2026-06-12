@@ -405,6 +405,11 @@ test/v8/v8.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 
+# Spawns bun test children that pin the non-destruct exit path; destruct-vm
+# and detect_leaks would leak into them via bunEnv and change the behavior
+# under test (see the childEnv comment in the file).
+test/napi/napi-exit-cleanup.test.ts
+
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts

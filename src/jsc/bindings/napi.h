@@ -26,6 +26,11 @@
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
+// Set by VirtualMachine::global_exit() on exit paths that never drained the
+// event loop (the test runner and its --parallel workers); read by
+// NapiEnv::cleanup().
+extern "C" void napi_internal_set_cleanup_hooks_only();
+extern "C" bool napi_internal_cleanup_is_hooks_only();
 
 static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
 
@@ -197,6 +202,19 @@ public:
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+
+        // When the process exits without draining the event loop (the test
+        // runner jumps straight to global_exit()), pending napi_wrap
+        // finalizers are not safe to run: an addon may have queued async
+        // work whose teardown touches other wraps this loop would already
+        // have deleted (e.g. duckdb's Task destructor Unref()s the
+        // Connection it captured). Run only the explicit env cleanup hooks
+        // above, matching Node, which does not guarantee wrap finalizers run
+        // at process exit. Under BUN_DESTRUCT_VM_ON_EXIT the final exit
+        // collection runs the remaining finalizers immediately instead (see
+        // Zig__GlobalObject__destructOnExit).
+        if (napi_internal_cleanup_is_hooks_only())
+            return;
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.

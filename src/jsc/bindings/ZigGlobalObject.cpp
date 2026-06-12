@@ -3961,6 +3961,16 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         globalObject->requireMap()->clear(globalObject);
         scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }
+    // Nothing enters JS after this point. Request termination so
+    // NapiEnv::mustDeferFinalizers() turns false: finalizers for napi wraps
+    // swept by the collection below run immediately (a raw callback, same as
+    // during lastChanceToFinalize in ~VM) instead of being deferred to an
+    // event loop that will never tick again. Without this, every swept wrap
+    // leaks its NapiFinalizerTask box plus whatever the finalizer would have
+    // freed, and LeakSanitizer reports both on exit paths that skipped
+    // on_exit()'s full napi cleanup.
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);

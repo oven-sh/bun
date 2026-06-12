@@ -2997,6 +2997,23 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Whether NapiEnv::cleanup() should run only the explicit env cleanup hooks
+// and skip pending napi_wrap finalizers. Set (never cleared; the process is
+// exiting) by VirtualMachine::global_exit() on exit paths that never drained
+// the event loop. Process-global rather than per-VM: only the main thread's
+// final exit takes this path, and worker teardown goes through on_exit().
+static bool s_napiCleanupHooksOnly = false;
+
+extern "C" void napi_internal_set_cleanup_hooks_only()
+{
+    s_napiCleanupHooksOnly = true;
+}
+
+extern "C" bool napi_internal_cleanup_is_hooks_only()
+{
+    return s_napiCleanupHooksOnly;
+}
+
 extern "C" void napi_internal_cleanup_env_cpp(napi_env env)
 {
     env->cleanup();

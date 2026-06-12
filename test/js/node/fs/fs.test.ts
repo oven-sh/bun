@@ -4454,5 +4454,5 @@ it("async fs ops snapshot path buffers backed by resizable ArrayBuffers before a
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode }).toEqual({ stdout: "done\n", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
 });

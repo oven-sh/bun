@@ -12770,18 +12770,10 @@ CREATE TABLE ${table_name} (
 
       test("unlisten() returned from listen() removes only that listener", async () => {
         await using db = postgres(options);
-        const { promise: gotBoth, resolve: resolveBoth } = Promise.withResolvers<void>();
-        let count = 0;
         const received: string[] = [];
 
-        const fn1 = (payload: string) => {
-          received.push(`fn1:${payload}`);
-          if (++count === 2) resolveBoth();
-        };
-        const fn2 = (payload: string) => {
-          received.push(`fn2:${payload}`);
-          if (++count === 2) resolveBoth();
-        };
+        const fn1 = (payload: string) => received.push(`fn1:${payload}`);
+        const fn2 = (payload: string) => received.push(`fn2:${payload}`);
 
         const sub1 = await db.listen("test_partial_unlisten", fn1);
         await db.listen("test_partial_unlisten", fn2);

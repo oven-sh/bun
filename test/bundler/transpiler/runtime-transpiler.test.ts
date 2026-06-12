@@ -312,6 +312,30 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("legacy octal literal inside a class body is an error even in a CommonJS-classified .mjs file", async () => {
+    // Class bodies are unconditionally strict; the CommonJS interop
+    // classification (the file uses `exports`) must not swallow this.
+    using dir = tempDir("forced-esm-class-octal", {
+      "class.mjs": "exports.C = class { m() { return 010; } };\nconsole.log(new exports.C().m());\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "class.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stderr).toContain("All code inside a class is implicitly in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("reserved word inside a class body is an error even in a CommonJS-classified .mjs file", async () => {
+    using dir = tempDir("forced-esm-class-reserved", {
+      "class.mjs": "exports.C = class { m() { var package = 1; return package; } };\nconsole.log(new exports.C().m());\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "class.mjs");
+    expect(stderr).toContain('"package" is a reserved word and cannot be used in strict mode');
+    expect(stderr).toContain("All code inside a class is implicitly in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
   test('legacy octal literal under "use strict" is an error', async () => {
     using dir = tempDir("use-strict-octal", {
       "strict.js": '"use strict";\nconsole.log(010);\n',

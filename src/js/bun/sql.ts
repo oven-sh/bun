@@ -437,7 +437,7 @@ const SQL: typeof Bun.SQL = function SQL(
           // not cut the grace period short for the rest, and the queries' own
           // consumers observe their rejections
           const drained = reservedCloseDrained.bind(null, timer, state, pooledConnection, resolve);
-          Promise.allSettled([...pending_queries, ...pending_transactions]).then(drained, drained);
+          Promise.allSettled([...pending_queries, ...pending_transactions]).then(drained);
           return promise;
         }
       }

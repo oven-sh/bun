@@ -394,7 +394,9 @@ test("postgres: reserved.close({ timeout }) cancels in-flight queries when the t
     await sql.close();
 
     // the cancelled query must not surface as an unhandled rejection through
-    // reserved.close()'s internal bookkeeping
+    // reserved.close()'s internal bookkeeping (one macrotask turn so a report
+    // queued by the teardown above still lands while the listener is attached)
+    await Bun.sleep(0);
     expect(unhandled).toEqual([]);
   } finally {
     process.off("unhandledRejection", onUnhandled);
@@ -434,6 +436,20 @@ test("mysql: sql.close() resolves after reserved.close()", async () => {
   expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
 
   await reserved.close();
+
+  // hung forever before the fix
+  await sql.close();
+});
+
+test("mysql: sql.close() resolves after the server drops a reserved connection", async () => {
+  await using my = await startMysqlServer();
+  await using sql = new SQL({ url: `mysql://root@127.0.0.1:${my.port}/db`, max: 1, connectionTimeout: 5 });
+
+  const reserved = await sql.reserve();
+  expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
+
+  // server kills the reserved connection's socket
+  for (const socket of my.sockets) socket.destroy();
 
   // hung forever before the fix
   await sql.close();

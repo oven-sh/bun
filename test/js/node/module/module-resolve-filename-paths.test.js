@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
@@ -181,6 +181,66 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
   } finally {
     cleanup();
   }
+});
+
+// Non-string entries and relative entries in options.paths used to crash Bun
+// (panic: cannot resolve DirInfo for non-absolute path).
+test("require.resolve throws ERR_INVALID_ARG_TYPE for non-string entries in options.paths", () => {
+  for (const badEntry of [{}, null, 42]) {
+    let error;
+    try {
+      require.resolve("package-that-does-not-exist-paths-entry", { paths: [badEntry] });
+    } catch (e) {
+      error = e;
+    }
+    expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
+  }
+
+  let error;
+  try {
+    require.resolve("package-that-does-not-exist-paths-entry", { paths: [{}] });
+  } catch (e) {
+    error = e;
+  }
+  expect(error.message).toBe('The "paths[0]" argument must be of type string. Received an instance of Object');
+});
+
+test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE for non-string entries in options.paths", () => {
+  let error;
+  try {
+    Module._resolveFilename("package-that-does-not-exist-paths-entry", null, false, { paths: [{}] });
+  } catch (e) {
+    error = e;
+  }
+  expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
+});
+
+test("require.resolve resolves relative options.paths entries against the current working directory", () => {
+  const { path: dir, cleanup } = createTempDir("resolve-paths-relative-entry", {
+    "node_modules/relative-paths-entry-pkg/package.json": JSON.stringify({
+      name: "relative-paths-entry-pkg",
+      main: "index.js",
+    }),
+    "node_modules/relative-paths-entry-pkg/index.js": "module.exports = 'ok';",
+  });
+
+  try {
+    const relativeDir = relative(process.cwd(), dir);
+    const resolved = require.resolve("relative-paths-entry-pkg", { paths: [relativeDir] });
+    expect(resolved).toBe(resolve(dir, "node_modules/relative-paths-entry-pkg/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve throws MODULE_NOT_FOUND for relative options.paths entries that do not resolve", () => {
+  let error;
+  try {
+    require.resolve("package-that-does-not-exist-paths-entry", { paths: ["directory-that-does-not-exist"] });
+  } catch (e) {
+    error = e;
+  }
+  expect(error.code).toBe("MODULE_NOT_FOUND");
 });
 
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {

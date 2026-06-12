@@ -16,6 +16,7 @@
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
 
+#include "ImportMetaObject.h"
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -379,11 +380,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 if (scope.exception())
                     return;
 
-                WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
-                if (scope.exception())
-                    return;
-
-                paths.append(Bun::toStringRef(pathStr));
+                Bun::appendResolvePathsEntry(lexicalGlobalObject, scope, item, paths);
             });
 
             if (scope.exception()) {

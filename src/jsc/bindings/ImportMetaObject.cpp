@@ -53,6 +53,24 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
+namespace Bun {
+
+bool appendResolvePathsEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue entry, WTF::Vector<BunString>& paths)
+{
+    if (!entry.isString()) {
+        ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, entry);
+        return false;
+    }
+
+    WTF::String pathStr = entry.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    paths.append(toStringRef(pathResolveWTFString(globalObject, pathStr)));
+    return true;
+}
+
+}
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
@@ -372,10 +390,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
-                    WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
+                    if (!Bun::appendResolvePathsEntry(globalObject, scope, path, paths))
+                        goto cleanup;
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());

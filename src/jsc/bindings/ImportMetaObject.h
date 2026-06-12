@@ -16,6 +16,19 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* gl
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm, bool isUserRequireResolve);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
+namespace Bun {
+
+// Appends one entry of a `require.resolve` / `Module._resolveFilename`
+// `options.paths` array for Bun__resolveSyncWithPaths, resolved against the
+// current working directory (the module resolver requires absolute
+// directories). Node passes each entry through path.resolve() in
+// Module._nodeModulePaths(), which reports "paths[0]" for a non-string entry
+// regardless of its index. Returns false with an exception thrown when the
+// entry is not a string.
+bool appendResolvePathsEntry(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue entry, WTF::Vector<BunString>& paths);
+
+}
+
 namespace Zig {
 
 using namespace JSC;

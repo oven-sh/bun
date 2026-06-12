@@ -121,6 +121,24 @@ describe.concurrent("node-module-module", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  // require with a non-string entry in options.paths used to crash the process
+  // (panic: cannot resolve DirInfo for non-absolute path)
+  test("require with non-string entries in options.paths throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { require("package-that-does-not-exist-paths-entry", { paths: [{}] }) } catch (e) { console.log(e.code) }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ERR_INVALID_ARG_TYPE", exitCode: 0 });
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

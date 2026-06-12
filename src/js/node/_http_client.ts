@@ -13,7 +13,7 @@ const {
 const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { validateHeaderName } = require("node:_http_common");
+const { validateHeaderName, HTTPParser, prepareError, isLenient } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
 const { ConnResetException } = require("internal/shared");
 const {
@@ -52,6 +52,8 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
+  statusCodeSymbol,
+  statusMessageSymbol,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");
@@ -278,12 +280,258 @@ function ClientRequest(input, options, cb) {
 
   let fetching = false;
 
+  // Node treats any response to a CONNECT request as an upgrade: after the
+  // response headers, the connection becomes an opaque tunnel and the raw
+  // socket plus any already-buffered bytes are handed to the caller through
+  // the 'connect' event. That cannot be expressed through fetch, so CONNECT
+  // requests run on a dedicated socket. Mirrors socketOnData's upgrade path
+  // and parserOnIncomingClient in Node's lib/_http_client.js.
+  const startConnect = () => {
+    const protocol = this[kProtocol];
+    const host = this[kHost];
+    const port = this[kPort];
+    const socketPath = this[kSocketPath];
+    const setDefaultHeaders = options.setDefaultHeaders !== false;
+    const setHost = options.setHost !== undefined ? !!options.setHost : setDefaultHeaders;
+
+    if (setHost && !this.hasHeader("host")) {
+      // IPv6 addresses in the Host header must be enclosed in square
+      // brackets (RFC 3986 section 3.2.2).
+      let hostHeader = host;
+      const posColon = hostHeader.indexOf(":");
+      if (posColon !== -1 && hostHeader.includes(":", posColon + 1) && hostHeader.charCodeAt(0) !== 0x5b /* '[' */) {
+        hostHeader = `[${hostHeader}]`;
+      }
+      if (!this[kUseDefaultPort]) {
+        hostHeader += ":" + port;
+      }
+      this.setHeader("Host", hostHeader);
+    }
+    if (setDefaultHeaders && !this.hasHeader("connection")) {
+      const agent = this[kAgent];
+      const shouldKeepAlive = !!agent && (agent.keepAlive || Number.isFinite(agent.maxSockets));
+      this.setHeader("Connection", shouldKeepAlive ? "keep-alive" : "close");
+    }
+
+    // CONNECT uses the authority-form request-target (RFC 9112 section
+    // 3.2.3): the path is sent verbatim, never prefixed with a slash.
+    let requestHead = `CONNECT ${this[kPath]} HTTP/1.1\r\n`;
+    for (const name of this.getRawHeaderNames()) {
+      const value = this.getHeader(name);
+      if ($isJSArray(value)) {
+        for (const entry of value) {
+          requestHead += `${name}: ${entry}\r\n`;
+        }
+      } else {
+        requestHead += `${name}: ${value}\r\n`;
+      }
+    }
+    requestHead += "\r\n";
+
+    const connectOptions = {
+      host,
+      port,
+      path: socketPath,
+      localAddress: options.localAddress,
+      localPort: options.localPort,
+      family: options.family,
+      lookup: options.lookup,
+    };
+    let socket;
+    if (protocol === "https:") {
+      const tls = require("node:tls");
+      socket = tls.connect({ ...this[kTls], ...connectOptions });
+    } else {
+      const net = require("node:net");
+      socket = net.connect(connectOptions);
+    }
+    this.socket = socket;
+
+    let handedOff = false;
+    if (!this[kAbortController]) {
+      this[kAbortController] = new AbortController();
+      this[kAbortController].signal.addEventListener(
+        "abort",
+        () => {
+          this[kClearTimeout]?.();
+          if (!handedOff) {
+            socket.destroy();
+          }
+          if (!this[abortedSymbol] && !this?.res?.complete) {
+            this[abortedSymbol] = true;
+            process.nextTick(emitAbortNextTick, this);
+          }
+        },
+        { once: true },
+      );
+    }
+
+    const parser = new HTTPParser();
+    const lenient = this.insecureHTTPParser === undefined ? isLenient() : this.insecureHTTPParser;
+    parser.initialize(
+      HTTPParser.RESPONSE,
+      {},
+      this[kMaxHeaderSize] || 0,
+      lenient ? HTTPParser.kLenientAll : HTTPParser.kLenientNone,
+    );
+
+    // Header lines llhttp flushed before the header section completed (large
+    // or fragmented headers), same bookkeeping as parserOnHeaders in
+    // node:_http_common.
+    let flushedHeaders: string[] = [];
+    parser[HTTPParser.kOnHeaders] = function (rawHeaders, _url) {
+      flushedHeaders.push(...rawHeaders);
+    };
+
+    let connectRes = null;
+    parser[HTTPParser.kOnHeadersComplete] = (
+      versionMajor,
+      versionMinor,
+      rawHeaders,
+      _method,
+      _url,
+      statusCode,
+      statusMessage,
+      _upgrade,
+      _shouldKeepAlive,
+    ) => {
+      if (rawHeaders === undefined) {
+        rawHeaders = flushedHeaders;
+        flushedHeaders = [];
+      }
+
+      const res = new IncomingMessage(undefined);
+      res.httpVersion = `${versionMajor}.${versionMinor}`;
+      res[statusCodeSymbol] = statusCode;
+      res[statusMessageSymbol] = statusMessage;
+      res.rawHeaders = rawHeaders;
+      const headers = Object.create(null);
+      for (let i = 0, { length } = rawHeaders; i + 1 < length; i += 2) {
+        const name = rawHeaders[i].toLowerCase();
+        const value = rawHeaders[i + 1];
+        if (name === "set-cookie") {
+          (headers[name] ??= []).push(value);
+        } else if (headers[name] === undefined) {
+          // Unlike Node's _addHeaderLine we don't special-case the singular
+          // headers (first value wins there); duplicates of those in a
+          // CONNECT response are not a realistic input.
+          headers[name] = value;
+        } else {
+          headers[name] += ", " + value;
+        }
+      }
+      res.headers = headers;
+      res.upgrade = true;
+      res.socket = socket;
+      connectRes = res;
+
+      // 2 tells llhttp to skip the body and treat the rest of the connection
+      // as an upgrade, exactly like Node's parserOnIncomingClient does for
+      // responses to CONNECT.
+      return 2;
+    };
+
+    let sawError = false;
+
+    const finishReqClose = () => {
+      this.destroyed = true;
+      if (!this._closed) {
+        this._closed = true;
+        callCloseCallback(this);
+        this.emit("close");
+      }
+    };
+
+    const onError = err => {
+      sawError = true;
+      this[kClearTimeout]();
+      this.emit("error", err);
+      socket.destroy();
+    };
+
+    const onClose = () => {
+      this[kClearTimeout]();
+      parser.close();
+      if (!sawError && !this.res && !this.aborted) {
+        // Connection died before a complete response came back.
+        sawError = true;
+        this.emit("error", new ConnResetException("socket hang up"));
+      }
+      finishReqClose();
+    };
+
+    const onData = data => {
+      const ret = parser.execute(data);
+      if (ret instanceof Error) {
+        prepareError(ret, parser, data);
+        parser.close();
+        sawError = true;
+        socket.destroy();
+        this.emit("error", ret);
+        return;
+      }
+      if (connectRes === null) {
+        return;
+      }
+
+      const res = connectRes;
+      connectRes = null;
+      socket.removeListener("data", onData);
+      parser.finish();
+      parser.close();
+
+      // Everything that followed the response headers belongs to the tunnel.
+      const bodyHead = data.slice(ret, data.length);
+
+      res.complete = true;
+      res.push(null);
+
+      this.res = res;
+      this[kClearTimeout]();
+
+      if (this.listenerCount("connect") > 0) {
+        handedOff = true;
+        this[kUpgradeOrConnect] = true;
+
+        // Detach the socket: it belongs to the caller now.
+        socket.removeListener("error", onError);
+        socket.removeListener("close", onClose);
+        socket.readableFlowing = null;
+
+        this.emit("connect", res, socket, bodyHead);
+        finishReqClose();
+      } else {
+        // Requested CONNECT but have no handler; close the connection.
+        socket.destroy();
+      }
+    };
+
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+
+    socket.write(requestHead);
+    const flushBodyChunks = () => {
+      const chunks = this[kBodyChunks];
+      while (chunks?.length > 0) {
+        socket.write(chunks.shift());
+      }
+    };
+    flushBodyChunks();
+    resolveNextChunk = _end => flushBodyChunks();
+  };
+
   const startFetch = (customBody?) => {
     if (fetching) {
       return false;
     }
 
     fetching = true;
+
+    if (this[kMethod] === "CONNECT") {
+      startConnect();
+      return true;
+    }
 
     // Every entry point that dispatches the request (send(), flushHeaders(),
     // and the write() → pushChunk paths) must have an AbortController wired

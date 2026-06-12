@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as tlsCert } from "harness";
 import http from "http";
+import https from "node:https";
+import tls from "node:tls";
 
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -329,6 +331,266 @@ describe("HTTP server CONNECT", () => {
 });
 
 /**
+ * Client-side CONNECT: https://github.com/oven-sh/bun/issues/32171
+ * Node hands any response to a CONNECT request to the caller through the
+ * 'connect' event together with the raw socket and the bytes that followed
+ * the response headers. These tests assert Node's observable behavior.
+ */
+describe("HTTP client CONNECT", () => {
+  /** Raw TCP server that records the request head, replies with `response`, then echoes tunnel data. */
+  function rawConnectServer(response: string) {
+    const requestHead = Promise.withResolvers<string>();
+    const server = net.createServer(sock => {
+      let buffered = Buffer.alloc(0);
+      const onRequestData = (chunk: Buffer) => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (buffered.includes("\r\n\r\n")) {
+          sock.off("data", onRequestData);
+          requestHead.resolve(buffered.toString());
+          sock.write(response);
+          sock.on("data", tunneled => sock.write(tunneled));
+        }
+      };
+      sock.on("data", onRequestData);
+      sock.on("error", requestHead.reject);
+    });
+    return { server, requestHead: requestHead.promise };
+  }
+
+  /** Collects head + subsequent socket data until at least `length` bytes arrived (or the socket closed). */
+  function collectTunnelData(socket: net.Socket, head: Buffer, length: number): Promise<string> {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let collected = head.toString();
+    if (collected.length >= length) resolve(collected);
+    socket.on("data", chunk => {
+      collected += chunk.toString();
+      if (collected.length >= length) resolve(collected);
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(collected));
+    return promise;
+  }
+
+  function connectRequest(options: http.RequestOptions) {
+    const req = http.request(options);
+    const connected = Promise.withResolvers<{ res: http.IncomingMessage; socket: net.Socket; head: Buffer }>();
+    req.on("connect", (res, socket, head) => connected.resolve({ res, socket, head }));
+    req.on("response", () => connected.reject(new Error("unexpected 'response' event for CONNECT")));
+    req.on("error", connected.reject);
+    req.end();
+    return { req, connected: connected.promise };
+  }
+
+  test("sends an authority-form request-target and emits 'connect' on 2xx", async () => {
+    const { server, requestHead } = rawConnectServer(
+      "HTTP/1.1 200 Connection Established\r\nX-Tunnel: yes\r\n\r\nHEAD-BYTES",
+    );
+    await using _server = server;
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { req, connected } = connectRequest({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+    const closed = Promise.withResolvers<void>();
+    req.on("close", closed.resolve);
+
+    const rawRequest = await requestHead;
+    const requestLines = rawRequest.split("\r\n");
+    expect(requestLines[0]).toBe("CONNECT example.com:443 HTTP/1.1");
+    expect(requestLines).toContain(`Host: 127.0.0.1:${port}`);
+    expect(requestLines).toContain("Connection: keep-alive");
+    // CONNECT requests have no body; Node does not send a Content-Length.
+    expect(rawRequest.toLowerCase()).not.toContain("content-length");
+
+    const { res, socket, head } = await connected;
+    expect(socket).toBeInstanceOf(net.Socket);
+    expect({
+      statusCode: res.statusCode,
+      statusMessage: res.statusMessage,
+      httpVersion: res.httpVersion,
+      xTunnel: res.headers["x-tunnel"],
+      complete: res.complete,
+    }).toEqual({
+      statusCode: 200,
+      statusMessage: "Connection Established",
+      httpVersion: "1.1",
+      xTunnel: "yes",
+      complete: true,
+    });
+
+    // The tunnel is bidirectional: the server echoes what we send through the socket.
+    const echoed = collectTunnelData(socket, head, "HEAD-BYTESping!".length);
+    socket.write("ping!");
+    expect(await echoed).toBe("HEAD-BYTESping!");
+
+    await closed.promise;
+    expect(req.destroyed).toBe(true);
+    socket.end();
+  });
+
+  test("emits 'connect' (not 'response') for non-2xx responses", async () => {
+    const { server } = rawConnectServer(
+      'HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 6\r\nProxy-Authenticate: Basic realm="proxy"\r\n\r\ndenied',
+    );
+    await using _server = server;
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { connected } = connectRequest({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:80" });
+    const { res, socket, head } = await connected;
+    expect(res.statusCode).toBe(407);
+    expect(res.statusMessage).toBe("Proxy Authentication Required");
+    expect(res.headers["proxy-authenticate"]).toBe('Basic realm="proxy"');
+    // Bytes after the response headers are tunnel data, not a response body.
+    expect(await collectTunnelData(socket, head, 6)).toBe("denied");
+    socket.end();
+  });
+
+  test("connection refused reports a Node-shaped ECONNREFUSED error", async () => {
+    // Find a free port with nothing listening on it.
+    const probe = net.createServer();
+    await once(probe.listen(0, "127.0.0.1"), "listening");
+    const { port } = probe.address() as AddressInfo;
+    await new Promise(resolve => probe.close(resolve));
+
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "test:80" });
+    const errored = Promise.withResolvers<NodeJS.ErrnoException & { address?: string; port?: number }>();
+    req.on("connect", () => errored.reject(new Error("unexpected 'connect' event")));
+    req.on("error", errored.resolve);
+    req.end();
+
+    const err = await errored.promise;
+    expect({
+      message: err.message,
+      code: err.code,
+      syscall: err.syscall,
+      address: err.address,
+      port: err.port,
+    }).toEqual({
+      message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+      code: "ECONNREFUSED",
+      syscall: "connect",
+      address: "127.0.0.1",
+      port,
+    });
+  });
+
+  test("emits 'socket hang up' when the connection closes before a response", async () => {
+    await using server = net.createServer(sock => sock.destroy());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "test:80" });
+    const errored = Promise.withResolvers<NodeJS.ErrnoException>();
+    req.on("connect", () => errored.reject(new Error("unexpected 'connect' event")));
+    req.on("error", errored.resolve);
+    req.end();
+
+    const err = await errored.promise;
+    expect(err.message).toBe("socket hang up");
+    expect(err.code).toBe("ECONNRESET");
+  });
+
+  test("closes the connection when nobody listens for 'connect'", async () => {
+    const serverSawClose = Promise.withResolvers<void>();
+    await using server = net.createServer(sock => {
+      sock.once("data", () => sock.write("HTTP/1.1 200 Connection Established\r\n\r\n"));
+      sock.on("close", serverSawClose.resolve);
+      sock.on("error", () => {});
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "test:80" });
+    const closed = Promise.withResolvers<void>();
+    req.on("error", closed.reject);
+    req.on("close", closed.resolve);
+    req.end();
+
+    await serverSawClose.promise;
+    await closed.promise;
+  });
+
+  test("tunnels an HTTP request through a proxy built with node:http", async () => {
+    await using targetServer = http.createServer((req, res) => {
+      res.end("hello from target");
+    });
+    await once(targetServer.listen(0, "127.0.0.1"), "listening");
+    const targetAddress = targetServer.address() as AddressInfo;
+
+    await using proxyServer = http.createServer();
+    proxyServer.on("connect", (proxyReq, clientSocket, head) => {
+      const [host, port] = proxyReq.url!.split(":");
+      const serverSocket = net.connect(parseInt(port), host, () => {
+        clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) serverSocket.write(head);
+        serverSocket.pipe(clientSocket);
+        clientSocket.pipe(serverSocket);
+      });
+      serverSocket.on("error", () => clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"));
+      clientSocket.on("error", () => serverSocket.destroy());
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const proxyAddress = proxyServer.address() as AddressInfo;
+
+    const { connected } = connectRequest({
+      method: "CONNECT",
+      host: proxyAddress.address,
+      port: proxyAddress.port,
+      path: `${targetAddress.address}:${targetAddress.port}`,
+    });
+    const { res, socket } = await connected;
+    expect(res.statusCode).toBe(200);
+
+    const response = Promise.withResolvers<string>();
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("end", () => response.resolve(data));
+    socket.on("error", response.reject);
+    socket.write(`GET / HTTP/1.1\r\nHost: ${targetAddress.address}:${targetAddress.port}\r\nConnection: close\r\n\r\n`);
+
+    const rawResponse = await response.promise;
+    expect(rawResponse).toContain("HTTP/1.1 200 OK");
+    expect(rawResponse).toContain("hello from target");
+  });
+
+  test("establishes CONNECT over TLS through an https proxy", async () => {
+    const requestHead = Promise.withResolvers<string>();
+    await using server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, sock => {
+      let buffered = "";
+      sock.on("data", chunk => {
+        buffered += chunk;
+        if (buffered.includes("\r\n\r\n")) {
+          requestHead.resolve(buffered);
+          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        }
+      });
+      sock.on("error", requestHead.reject);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const req = https.request({
+      method: "CONNECT",
+      host: "127.0.0.1",
+      port,
+      path: "target:443",
+      ca: tlsCert.cert,
+      servername: "localhost",
+    });
+    const connected = Promise.withResolvers<{ res: http.IncomingMessage; socket: tls.TLSSocket }>();
+    req.on("connect", (res, socket) => connected.resolve({ res, socket: socket as tls.TLSSocket }));
+    req.on("error", connected.reject);
+    req.end();
+
+    expect((await requestHead.promise).split("\r\n")[0]).toBe("CONNECT target:443 HTTP/1.1");
+    const { res, socket } = await connected.promise;
+    expect(res.statusCode).toBe(200);
+    expect(socket.encrypted).toBe(true);
+    socket.end();
+  });
+});
+
+/**
  * Test variations using normal HTTP requests and res.socket
  * These tests should run in both Node.js and Bun
  */
@@ -441,6 +703,8 @@ describe("HTTP server socket access via normal requests", () => {
 });
 
 describe("Should be compatible with node.js", () => {
+  // The spawned run executes the whole node-http-connect.node.mts suite, which
+  // takes several seconds on debug builds; the default 5s timeout is too tight.
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -450,7 +714,7 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 60_000);
   test("tests should run on bun", async () => {
     const process = Bun.spawn({
       cmd: [bunExe(), "test", join(import.meta.dir, "node-http-connect.node.mts")],
@@ -460,5 +724,5 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  });
+  }, 60_000);
 });

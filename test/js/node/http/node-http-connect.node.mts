@@ -411,3 +411,108 @@ describe("HTTP server CONNECT", () => {
     expect(combined.match(/Hello/g)?.length).toBe(2);
   });
 });
+
+describe("HTTP client CONNECT", () => {
+  test("sends an authority-form request-target and emits 'connect'", async () => {
+    const requestHead = Promise.withResolvers<string>();
+    await using server = net.createServer(sock => {
+      let buffered = "";
+      sock.on("data", chunk => {
+        buffered += chunk;
+        if (buffered.includes("\r\n\r\n")) {
+          requestHead.resolve(buffered);
+          sock.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        }
+      });
+      sock.on("error", requestHead.reject);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:443" });
+    const connected = Promise.withResolvers<{ res: any; socket: net.Socket }>();
+    req.on("connect", (res, socket) => connected.resolve({ res, socket }));
+    req.on("response", () => connected.reject(new Error("unexpected 'response' event for CONNECT")));
+    req.on("error", connected.reject);
+    req.end();
+
+    const rawRequest = await requestHead.promise;
+    expect(rawRequest.split("\r\n")[0]).toBe("CONNECT example.com:443 HTTP/1.1");
+    expect(rawRequest).toContain(`Host: 127.0.0.1:${port}\r\n`);
+
+    const { res, socket } = await connected.promise;
+    expect(res.statusCode).toBe(200);
+    expect(res.statusMessage).toBe("Connection Established");
+    socket.destroy();
+  });
+
+  test("emits 'connect' for non-2xx responses", async () => {
+    await using server = net.createServer(sock => {
+      sock.once("data", () => {
+        sock.write('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="proxy"\r\n\r\n');
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const req = http.request({ method: "CONNECT", host: "127.0.0.1", port, path: "example.com:80" });
+    const connected = Promise.withResolvers<{ res: any; socket: net.Socket }>();
+    req.on("connect", (res, socket) => connected.resolve({ res, socket }));
+    req.on("response", () => connected.reject(new Error("unexpected 'response' event for CONNECT")));
+    req.on("error", connected.reject);
+    req.end();
+
+    const { res, socket } = await connected.promise;
+    expect(res.statusCode).toBe(407);
+    expect(res.headers["proxy-authenticate"]).toBe('Basic realm="proxy"');
+    socket.destroy();
+  });
+
+  test("tunnels an HTTP request through a proxy", async () => {
+    await using targetServer = http.createServer((req, res) => {
+      res.end("hello from target");
+    });
+    await once(targetServer.listen(0, "127.0.0.1"), "listening");
+    const targetAddress = targetServer.address() as AddressInfo;
+
+    await using proxyServer = http.createServer();
+    proxyServer.on("connect", (proxyReq, clientSocket, head) => {
+      const [host, port] = proxyReq.url?.split(":") ?? [];
+      const serverSocket = net.connect(parseInt(port), host, () => {
+        clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length) serverSocket.write(head);
+        serverSocket.pipe(clientSocket);
+        clientSocket.pipe(serverSocket);
+      });
+      serverSocket.on("error", () => clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n"));
+      clientSocket.on("error", () => serverSocket.destroy());
+    });
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const proxyAddress = proxyServer.address() as AddressInfo;
+
+    const req = http.request({
+      method: "CONNECT",
+      host: proxyAddress.address,
+      port: proxyAddress.port,
+      path: `${targetAddress.address}:${targetAddress.port}`,
+    });
+    const connected = Promise.withResolvers<{ res: any; socket: net.Socket }>();
+    req.on("connect", (res, socket) => connected.resolve({ res, socket }));
+    req.on("error", connected.reject);
+    req.end();
+
+    const { res, socket } = await connected.promise;
+    expect(res.statusCode).toBe(200);
+
+    const response = Promise.withResolvers<string>();
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("end", () => response.resolve(data));
+    socket.on("error", response.reject);
+    socket.write(`GET / HTTP/1.1\r\nHost: ${targetAddress.address}:${targetAddress.port}\r\nConnection: close\r\n\r\n`);
+
+    const rawResponse = await response.promise;
+    expect(rawResponse).toContain("HTTP/1.1 200 OK");
+    expect(rawResponse).toContain("hello from target");
+  });
+});

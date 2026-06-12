@@ -1648,6 +1648,21 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
+            // Mirror the fetch/error/nodeHTTP handler callbacks into the
+            // wrapper's WriteBarrier slots so they trace from the wrapper.
+            // ServerConfig still holds Strong handles; the slot writes are
+            // additive until those are dropped in a follow-up.
+            // TODO: wsHandlers / allClosedPromise / onClientError are written
+            // from their respective set sites in later commits.
+            if let Some(h) = server_ref.config.on_request.as_ref() {
+                <$ServerType>::js_gc_on_request_set(obj, global_object, h.get());
+            }
+            if let Some(h) = server_ref.config.on_error.as_ref() {
+                <$ServerType>::js_gc_on_error_set(obj, global_object, h.get());
+            }
+            if let Some(h) = server_ref.config.on_node_http_request.as_ref() {
+                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, h.get());
+            }
             server_ref.js_value.set_strong(obj, global_object);
 
             if global_object.bun_vm().test_isolation_enabled {

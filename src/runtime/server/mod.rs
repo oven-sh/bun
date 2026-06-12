@@ -2963,6 +2963,45 @@ macro_rules! cached_value_dispatch {
     };
 }
 
+impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
+    cached_value_dispatch!(
+        js_gc_on_request_get,
+        js_gc_on_request_set,
+        on_request_get_cached,
+        on_request_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_on_error_get,
+        js_gc_on_error_set,
+        on_error_get_cached,
+        on_error_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_on_node_http_request_get,
+        js_gc_on_node_http_request_set,
+        on_node_h_t_t_p_request_get_cached,
+        on_node_h_t_t_p_request_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_on_client_error_get,
+        js_gc_on_client_error_set,
+        on_client_error_get_cached,
+        on_client_error_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_handlers_get,
+        js_gc_ws_handlers_set,
+        ws_handlers_get_cached,
+        ws_handlers_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_all_closed_promise_get,
+        js_gc_all_closed_promise_set,
+        all_closed_promise_get_cached,
+        all_closed_promise_set_cached
+    );
+}
+
 // ─── extern "C" trampolines ──────────────────────────────────────────────────
 // Monomorphized on the const-generic server params;
 // the bodies downcast `user_data` and forward into the typed method.

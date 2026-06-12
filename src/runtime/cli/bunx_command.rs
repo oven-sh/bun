@@ -548,7 +548,7 @@ impl BunxCommand {
     ///
     /// On non-Unix targets there is no comparable shared world-writable temp
     /// dir / uid model, so the check is a no-op there.
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_env = "ohos")))]
     fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
         let lstat_ok = |st: &bun_sys::Stat| {
             let kind = st.st_mode & libc::S_IFMT;
@@ -574,7 +574,23 @@ impl BunxCommand {
         true
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, target_env = "ohos"))]
+    #[inline(always)]
+    fn is_trusted_cached_binary(_destination: &ZStr, _uid: libc::uid_t) -> bool {
+        // OHOS shared storage filesystem doesn't follow standard Unix ownership model;
+        // st_uid from lstat may not match getuid(), so skip this check.
+        true
+    }
+
+    #[cfg(all(unix, target_env = "ohos"))]
+    #[inline(always)]
+    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: libc::uid_t) -> bool {
+        // OHOS shared storage filesystem doesn't follow standard Unix ownership model;
+        // st_uid from lstat may not match getuid(), so skip this check.
+        true
+    }
+
+    #[cfg(all(unix, not(target_env = "ohos")))]
     fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
         match bun_sys::lstat(cache_root) {
             Ok(st) => {

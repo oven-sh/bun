@@ -2919,17 +2919,48 @@ use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create}
 /// `${T}Prototype__routeList{Get,Set}CachedValue` (generate-classes.ts).
 mod route_list_cached {
     pub(super) mod http {
-        bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList);
+        bun_jsc::codegen_cached_accessors!(
+            "HTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+        );
     }
     pub(super) mod https {
-        bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList);
+        bun_jsc::codegen_cached_accessors!(
+            "HTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+        );
     }
     pub(super) mod debug_http {
-        bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList);
+        bun_jsc::codegen_cached_accessors!(
+            "DebugHTTPServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+        );
     }
     pub(super) mod debug_https {
-        bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList);
+        bun_jsc::codegen_cached_accessors!(
+            "DebugHTTPSServer"; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, wsHandlers, allClosedPromise
+        );
     }
+}
+
+macro_rules! cached_value_dispatch {
+    ($get_fn:ident, $set_fn:ident, $get_cached:ident, $set_cached:ident) => {
+        #[allow(dead_code)]
+        pub fn $get_fn(server_js: JSValue) -> Option<JSValue> {
+            match (SSL, DEBUG) {
+                (false, false) => route_list_cached::http::$get_cached(server_js),
+                (true, false) => route_list_cached::https::$get_cached(server_js),
+                (false, true) => route_list_cached::debug_http::$get_cached(server_js),
+                (true, true) => route_list_cached::debug_https::$get_cached(server_js),
+            }
+        }
+        #[allow(dead_code)]
+        pub fn $set_fn(server_js: JSValue, global: &JSGlobalObject, v: JSValue) {
+            match (SSL, DEBUG) {
+                (false, false) => route_list_cached::http::$set_cached(server_js, global, v),
+                (true, false) => route_list_cached::https::$set_cached(server_js, global, v),
+                (false, true) => route_list_cached::debug_http::$set_cached(server_js, global, v),
+                (true, true) => route_list_cached::debug_https::$set_cached(server_js, global, v),
+            }
+        }
+    };
 }
 
 // ─── extern "C" trampolines ──────────────────────────────────────────────────

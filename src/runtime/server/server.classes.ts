@@ -90,7 +90,15 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
-    values: ["routeList"],
+    values: [
+      "routeList",
+      "onRequest",
+      "onError",
+      "onNodeHTTPRequest",
+      "onClientError",
+      "wsHandlers",
+      "allClosedPromise",
+    ],
   });
 }
 export default [
@@ -335,7 +343,7 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
-    values: ["socket"],
+    values: ["server"],
   }),
 
   define({

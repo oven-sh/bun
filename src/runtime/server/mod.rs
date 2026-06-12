@@ -1583,9 +1583,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn stop(&mut self, abrupt: bool) {
-        if self.js_value.is_not_empty() {
-            self.js_value.downgrade();
-        }
         if self.config.allow_hot && !self.config.id.is_empty() {
             // `hot_map()` is reached via the thread-local VM singleton (raw ptr
             // deref) and does not borrow `self`, so it cannot overlap with the
@@ -1664,6 +1661,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
+            // Wrapper-rooted handlers need the wrapper to outlive every
+            // dispatch; downgrade only once nothing can call them.
+            self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
             }

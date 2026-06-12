@@ -1,5 +1,4 @@
-use core::ptr::NonNull;
-
+use crate::virtual_machine::VmHandle;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -10,6 +9,9 @@ unsafe extern "C" {
     safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
         task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
+    safe fn Bun__EventLoopTaskNoContext__createdInBunVmGeneration(
+        task: &EventLoopTaskNoContext,
+    ) -> u64;
 }
 
 bun_opaque::opaque_ffi! {
@@ -47,13 +49,15 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// Get the VM that created this task. `VirtualMachine` is process-lifetime
-    /// (PORTING.md §Global mutable state), so a [`BackRef`] is the right
-    /// non-owning handle: callers project `&VirtualMachine` via `Deref` and
-    /// route mutation through the VM's safe interior accessors (e.g.
-    /// `event_loop_shared()`).
-    pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
-        NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
+    /// Schedule-time [`VmHandle`] of the VM that created this task, captured
+    /// by the C++ constructor (`EventLoopTaskNoContext`) next to the `bunVM`
+    /// pointer. The creating VM may be a worker freed by terminate() — all
+    /// use goes through the checked `VirtualMachine` entry points.
+    pub fn vm_handle(&self) -> VmHandle {
+        VmHandle::from_raw_parts(
+            Bun__EventLoopTaskNoContext__createdInBunVm(self) as usize,
+            Bun__EventLoopTaskNoContext__createdInBunVmGeneration(self),
+        )
     }
 }
 
@@ -73,18 +77,14 @@ impl ConcurrentCppTask {
         let cpp_task = self.cpp_task;
         // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
         // is the centralised non-null deref proof. Valid until `run` consumes it.
-        let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
+        let vm_handle = EventLoopTaskNoContext::opaque_ref(cpp_task).vm_handle();
         drop(self);
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        if let Some(vm) = maybe_vm {
-            // Checked: runs on the work-pool thread; the creating VM may be a
-            // worker freed by terminate() while this task ran. Address-only:
-            // the pointer was captured by C++ (`EventLoopTaskNoContext`) and
-            // carries no generation.
-            VirtualMachine::try_unref_concurrently_addr_only(vm.as_ptr());
-        }
+        // Checked: runs on the work-pool thread; the creating VM may be a
+        // worker freed by terminate() while this task ran.
+        VirtualMachine::try_unref_concurrently(vm_handle);
     }
 }
 
@@ -93,10 +93,8 @@ pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoo
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
-    if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
-        // Checked for symmetry with the pool-thread unref in `run_owned`.
-        VirtualMachine::try_ref_concurrently_addr_only(vm.as_ptr());
-    }
+    // Checked for symmetry with the pool-thread unref in `run_owned`.
+    VirtualMachine::try_ref_concurrently(EventLoopTaskNoContext::opaque_ref(cpp_task).vm_handle());
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
         workpool_task: WorkPoolTask::default(),

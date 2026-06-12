@@ -31,6 +31,16 @@ pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
 }
 
+/// The current thread's VM generation (see `live_vm_registry`), for C++ call
+/// sites that capture `(bunVM, generation)` pairs at creation time and later
+/// reassemble a `VmHandle` for the checked concurrent entry points.
+// HOST_EXPORT(Bun__getVmGeneration, c)
+pub fn get_vm_generation() -> u64 {
+    VirtualMachine::get()
+        .live_generation
+        .load(core::sync::atomic::Ordering::Relaxed)
+}
+
 /// Caller must check for termination exception
 // HOST_EXPORT(Bun__drainMicrotasks, c)
 pub fn drain_microtasks() {

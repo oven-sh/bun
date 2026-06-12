@@ -10,8 +10,8 @@ using TicketData = JSC::DeferredWorkTimer::TicketData;
 namespace Bun {
 using namespace JSC;
 
-extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(void* bunVM, void* task);
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__queueJSCDeferredWorkTaskConcurrently(void* bunVM, void* task, uint64_t bunVMGeneration);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta, uint64_t bunVMGeneration);
 
 class JSCDeferredWorkTask {
 public:
@@ -42,7 +42,7 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
-        Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
+        Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1, clientData->bunVMGeneration);
         scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTF::move(ticket));
     } else {
         scheduler.m_pendingTicketsOther.add(WTF::move(ticket));
@@ -51,12 +51,13 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
 {
     auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
-    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
+    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job, clientData->bunVMGeneration);
 }
 
 void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket ticket)
 {
     auto* bunVM = clientData->bunVM;
+    auto bunVMGeneration = clientData->bunVMGeneration;
     auto& scheduler = clientData->deferredWorkTimer;
 
     Locker<Lock> holder { scheduler.m_lock };
@@ -67,7 +68,7 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
 
     if (isKeepingEventLoopAlive) {
         holder.unlockEarly();
-        Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
+        Bun__eventLoop__incrementRefConcurrently(bunVM, -1, bunVMGeneration);
     } else {
         scheduler.m_pendingTicketsOther.removeIf([ticket](auto pendingTicket) {
             return pendingTicket.ptr() == ticket;
@@ -75,14 +76,14 @@ void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, 
     }
 }
 
-static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
+static void runPendingWork(void* bunVM, uint64_t bunVMGeneration, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
     Locker<Lock> holder { scheduler.m_lock };
     auto pendingTicket = scheduler.m_pendingTicketsKeepingEventLoopAlive.take(job->ticket);
     if (!pendingTicket) {
         pendingTicket = scheduler.m_pendingTicketsOther.take(job->ticket);
     } else {
-        Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
+        Bun__eventLoop__incrementRefConcurrently(bunVM, -1, bunVMGeneration);
     }
     holder.unlockEarly();
 
@@ -98,7 +99,7 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
     auto& vm = job->vm();
     auto clientData = WebCore::clientData(vm);
 
-    runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);
+    runPendingWork(clientData->bunVM, clientData->bunVMGeneration, clientData->deferredWorkTimer, job);
 }
 
 }

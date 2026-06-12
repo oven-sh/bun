@@ -178,6 +178,8 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
+        , m_bunVM(globalObject->bunVM())
+        , m_bunVMGeneration(globalObject->bunVMGeneration())
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -380,6 +382,11 @@ public:
     }
 
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
+    // Schedule-time `(bunVM, generation)` capture (see Rust
+    // `live_vm_registry`): lets non-JS threads holding a NapiEnv ref build a
+    // checked VM handle without dereferencing the (possibly freed) global.
+    inline void* bunVM() const { return m_bunVM; }
+    inline uint64_t bunVMGeneration() const { return m_bunVMGeneration; }
     // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
     // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
@@ -498,6 +505,8 @@ private:
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
+    void* m_bunVM;
+    uint64_t m_bunVMGeneration;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;

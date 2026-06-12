@@ -36,7 +36,7 @@
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta, uint64_t bunVMGeneration);
 
 namespace WebCore {
 
@@ -341,7 +341,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!m_hasRef) {
         m_hasRef = true;
         ref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1, WebCore::clientData(lexicalGlobalObject->vm())->bunVMGeneration);
     }
 }
 
@@ -350,7 +350,7 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
     if (m_hasRef) {
         m_hasRef = false;
         deref();
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1, WebCore::clientData(lexicalGlobalObject->vm())->bunVMGeneration);
     }
 }
 

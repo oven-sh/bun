@@ -513,10 +513,12 @@ impl VMHolder {
 /// generation, fails the `(addr, generation)` match, and the task is dropped instead
 /// of being delivered to the wrong VM.
 ///
-/// Residual: entry points whose pointer is captured by C++ and cannot carry a
-/// generation yet (`JSVMClientData::bunVM` via JSCScheduler,
-/// `EventLoopTaskNoContext` via CppTask) still check by address alone — see
-/// the `*_addr_only` variants below.
+/// C++ producers participate the same way: the creation-time captures of
+/// `bunVM` (`JSVMClientData`, `Zig::GlobalObject`, `EventLoopTaskNoContext`,
+/// `NapiEnv`) store the generation next to the pointer (via
+/// `Bun__getVmGeneration`) and pass both back across the ABI, where
+/// [`VmHandle::from_raw_parts`](super::VmHandle::from_raw_parts) reassembles
+/// the handle.
 ///
 /// Lock ordering: this lock is a leaf. The critical sections only touch the
 /// target's MPSC queue (wait-free push) and `wakeup()` (a syscall); they take
@@ -548,25 +550,39 @@ pub(crate) mod live_vm_registry {
         NEXT_GENERATION.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Register `vm` and both of its embedded event loops under one freshly
-    /// minted generation, and stamp that generation into
+    /// Mint this VM's process-unique generation and stamp it into
     /// `vm.live_generation` / both loops' `live_generation` so
-    /// `concurrent_handle()` can build handles without the lock. Called once
-    /// as the final step of `VirtualMachine::init()`, after every fallible
-    /// init step has succeeded.
-    pub(crate) fn register_vm(vm: *mut VirtualMachine) {
+    /// `concurrent_handle()` can build handles without the lock and the C++
+    /// side (`Bun__getVmGeneration`) can capture it during global creation.
+    /// Called once from `VirtualMachine::init()` before
+    /// `Zig__GlobalObject__create`; until `register_vm` publishes the entry,
+    /// the stamped `(addr, generation)` pair matches nothing.
+    pub(crate) fn stamp_generation(vm: *mut VirtualMachine) {
         let generation = mint_generation();
         // SAFETY: `vm` is the freshly initialised allocation with no other
         // live borrows; `init()` has exclusive access at this point.
-        let (regular, macro_) = unsafe {
+        unsafe {
             (*vm).live_generation.store(generation, Ordering::Relaxed);
             (*vm).regular_event_loop.live_generation = generation;
             (*vm).macro_event_loop.live_generation = generation;
+        }
+    }
+
+    /// Register `vm` and both of its embedded event loops under the
+    /// generation stamped by [`stamp_generation`]. Called once as the final
+    /// step of `VirtualMachine::init()`, after every fallible init step has
+    /// succeeded.
+    pub(crate) fn register_vm(vm: *mut VirtualMachine) {
+        // SAFETY: `vm` is the freshly initialised allocation; `addr_of!` only
+        // projects field addresses, and `live_generation` is atomic.
+        let (regular, macro_, generation) = unsafe {
             (
                 core::ptr::addr_of!((*vm).regular_event_loop),
                 core::ptr::addr_of!((*vm).macro_event_loop),
+                (*vm).live_generation.load(Ordering::Relaxed),
             )
         };
+        debug_assert!(generation != 0, "register_vm before stamp_generation");
         let mut reg = REGISTRY.lock();
         reg.push(Entry {
             vm: vm as usize,
@@ -664,11 +680,14 @@ impl VmHandle {
         }
     }
 
-    /// Reassemble a handle whose parts were carried separately (e.g. the
-    /// package-manager `WakeHandler`, whose context pointer and generation
-    /// travel as distinct fields because the low-tier crate cannot name this
-    /// type). No liveness is implied.
-    pub(crate) fn from_raw_parts(addr: usize, generation: u64) -> Self {
+    /// Reassemble a handle whose parts were carried separately, because the
+    /// carrier cannot name this type: the package-manager `WakeHandler` (its
+    /// context pointer and generation travel as distinct fields in a low-tier
+    /// crate) and the C++ `(bunVM, generation)` captures that come back
+    /// across the ABI (`JSVMClientData`, `EventLoopTaskNoContext`,
+    /// `NapiEnv`). No liveness is implied — the checked entry points verify
+    /// the pair against the registry on every use.
+    pub fn from_raw_parts(addr: usize, generation: u64) -> Self {
         VmHandle { addr, generation }
     }
 
@@ -2358,6 +2377,15 @@ impl VirtualMachine {
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(core::sync::atomic::AtomicPtr::new(regular));
 
+            // Stamp the VM's process-unique generation before
+            // `Zig__GlobalObject__create` below: the C++ side captures
+            // `(bunVM, generation)` pairs during global creation
+            // (`JSVMClientData`, `Zig::GlobalObject`, via
+            // `Bun__getVmGeneration`). The registration itself still happens
+            // as the final step of `init` — an unregistered `(addr,
+            // generation)` pair matches nothing in the checked entry points.
+            live_vm_registry::stamp_generation(vm);
+
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.
             addr_of_mut!((*vm).saved_source_map_table)
@@ -3843,47 +3871,6 @@ impl VirtualMachine {
         }
     }
 
-    /// Shared body of [`Self::with_live_vm`] / [`Self::with_live_vm_addr_only`]:
-    /// run `f` against the VM at `addr` only while the registry proves it
-    /// live. `generation` is `None` for the address-only residual (C++-captured
-    /// pointers that cannot carry a generation yet).
-    fn with_live_vm_impl<R>(
-        addr: usize,
-        generation: Option<u64>,
-        f: impl FnOnce(&VirtualMachine) -> R,
-    ) -> Option<R> {
-        if addr == 0 {
-            return None;
-        }
-        // Fast path: the main-thread VM is allocated once and never freed, so
-        // an address (+ generation) match proves liveness without the lock. A
-        // stale (pre-`register_vm`) generation read only causes a spurious
-        // miss into the locked path below.
-        let main = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
-        if main as usize == addr {
-            // SAFETY: main-thread VM, never freed; `live_generation` is atomic.
-            let main = unsafe { &*main };
-            if generation.is_none_or(|g| {
-                g == main
-                    .live_generation
-                    .load(core::sync::atomic::Ordering::Relaxed)
-            }) {
-                return Some(f(main));
-            }
-        }
-        let reg = live_vm_registry::REGISTRY.lock();
-        if !reg
-            .iter()
-            .any(|e| e.vm == addr && generation.is_none_or(|g| e.generation == g))
-        {
-            return None;
-        }
-        // SAFETY: the VM at `addr` is registered-live, and `unregister_vm`
-        // (which happens-before any free of the VM) takes the same lock we
-        // hold, so the VM cannot be freed while `f` runs.
-        Some(f(unsafe { &*(addr as *const VirtualMachine) }))
-    }
-
     /// Run `f` against the VM identified by `handle` only if that exact
     /// registration is still alive, tolerating the VM having been freed
     /// (terminated worker) — and, unlike an address check, tolerating a new
@@ -3902,23 +3889,37 @@ impl VirtualMachine {
         handle: VmHandle,
         f: impl FnOnce(&VirtualMachine) -> R,
     ) -> Option<R> {
-        Self::with_live_vm_impl(handle.addr, Some(handle.generation), f)
-    }
-
-    /// Address-only variant of [`Self::with_live_vm`] for producers whose VM
-    /// pointer was captured by C++ and cannot carry a generation yet
-    /// (`JSVMClientData::bunVM`, `EventLoopTaskNoContext`). Residual: a new
-    /// VM allocated at a dead VM's address passes this check — see
-    /// [`live_vm_registry`].
-    // Deliberately takes `*mut` and is NOT `unsafe`: accepting a possibly
-    // dangling pointer is the function's contract, and no deref happens until
-    // the registry proves the pointee live (and holds off its free).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn with_live_vm_addr_only<R>(
-        vm: *mut VirtualMachine,
-        f: impl FnOnce(&VirtualMachine) -> R,
-    ) -> Option<R> {
-        Self::with_live_vm_impl(vm as usize, None, f)
+        let VmHandle { addr, generation } = handle;
+        if addr == 0 {
+            return None;
+        }
+        // Fast path: the main-thread VM is allocated once and never freed, so
+        // an address + generation match proves liveness without the lock. A
+        // stale (pre-`stamp_generation`) generation read only causes a
+        // spurious miss into the locked path below.
+        let main = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        if main as usize == addr {
+            // SAFETY: main-thread VM, never freed; `live_generation` is atomic.
+            let main = unsafe { &*main };
+            if generation
+                == main
+                    .live_generation
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            {
+                return Some(f(main));
+            }
+        }
+        let reg = live_vm_registry::REGISTRY.lock();
+        if !reg
+            .iter()
+            .any(|e| e.vm == addr && e.generation == generation)
+        {
+            return None;
+        }
+        // SAFETY: the VM at `addr` is registered-live, and `unregister_vm`
+        // (which happens-before any free of the VM) takes the same lock we
+        // hold, so the VM cannot be freed while `f` runs.
+        Some(f(unsafe { &*(addr as *const VirtualMachine) }))
     }
 
     /// Cross-thread enqueue that tolerates the handle's VM having been freed
@@ -3938,23 +3939,6 @@ impl VirtualMachine {
         task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
     ) -> bool {
         match Self::with_live_vm(handle, |vm| {
-            vm.event_loop_shared().enqueue_task_concurrent(task);
-        }) {
-            Some(()) => true,
-            None => {
-                crate::event_loop::discard_unqueued_concurrent_task(task);
-                false
-            }
-        }
-    }
-
-    /// Address-only variant of [`Self::try_enqueue_task_concurrent`] — same
-    /// residual as [`Self::with_live_vm_addr_only`].
-    pub fn try_enqueue_task_concurrent_addr_only(
-        vm: *mut VirtualMachine,
-        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
-    ) -> bool {
-        match Self::with_live_vm_addr_only(vm, |vm| {
             vm.event_loop_shared().enqueue_task_concurrent(task);
         }) {
             Some(()) => true,
@@ -3986,16 +3970,14 @@ impl VirtualMachine {
     }
 
     /// `ref_concurrently`/`unref_concurrently` variants of
-    /// [`Self::try_enqueue_task_concurrent`] for pointers captured by C++ —
-    /// no-ops when the VM is gone (a freed loop has no liveness counter left
-    /// to balance), with the same address-only residual as
-    /// [`Self::with_live_vm_addr_only`].
-    pub fn try_ref_concurrently_addr_only(vm: *mut VirtualMachine) {
-        let _ = Self::with_live_vm_addr_only(vm, |vm| vm.event_loop_shared().ref_concurrently());
+    /// [`Self::try_enqueue_task_concurrent`] — no-ops when the handle's VM is
+    /// gone (a freed loop has no liveness counter left to balance).
+    pub fn try_ref_concurrently(handle: VmHandle) {
+        let _ = Self::with_live_vm(handle, |vm| vm.event_loop_shared().ref_concurrently());
     }
 
-    pub fn try_unref_concurrently_addr_only(vm: *mut VirtualMachine) {
-        let _ = Self::with_live_vm_addr_only(vm, |vm| vm.event_loop_shared().unref_concurrently());
+    pub fn try_unref_concurrently(handle: VmHandle) {
+        let _ = Self::with_live_vm(handle, |vm| vm.event_loop_shared().unref_concurrently());
     }
 
     /// `cond` is `&Cell<bool>` (not `&mut bool`): the re-entrant

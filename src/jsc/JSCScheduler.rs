@@ -40,16 +40,19 @@ impl JSCDeferredWorkTask {
 pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
     jsc_vm: *mut VirtualMachine,
     delta: c_int,
+    generation: u64,
 ) {
     crate::mark_binding!();
     // Checked: called from JSC helper threads, which can outlive a
-    // terminated worker's VM (the counter of a freed loop needs no balancing).
-    // Address-only: the pointer was captured by C++ (`JSVMClientData::bunVM`)
-    // and carries no generation.
+    // terminated worker's VM (the counter of a freed loop needs no
+    // balancing). C++ captured `(bunVM, generation)` at creation time
+    // (`JSVMClientData` / `Zig::GlobalObject`), so the reassembled handle
+    // rejects a new VM reusing the freed address.
+    let handle = crate::virtual_machine::VmHandle::from_raw_parts(jsc_vm as usize, generation);
     if delta > 0 {
-        VirtualMachine::try_ref_concurrently_addr_only(jsc_vm);
+        VirtualMachine::try_ref_concurrently(handle);
     } else {
-        VirtualMachine::try_unref_concurrently_addr_only(jsc_vm);
+        VirtualMachine::try_unref_concurrently(handle);
     }
 }
 
@@ -57,15 +60,17 @@ pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
 pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     jsc_vm: *mut VirtualMachine,
     task: *mut JSCDeferredWorkTask,
+    generation: u64,
 ) {
     crate::mark_binding!();
     // Checked: called from JSC concurrent threads, which can outlive a
     // terminated worker's VM. `create_from` heap-allocates with the
     // auto-delete bit set (freed by the checked enqueue when the VM is gone).
-    // Address-only: the pointer was captured by C++ (`JSVMClientData::bunVM`)
-    // and carries no generation.
-    let _ = VirtualMachine::try_enqueue_task_concurrent_addr_only(
-        jsc_vm,
+    // C++ captured `(bunVM, generation)` at creation time
+    // (`JSVMClientData`), so the reassembled handle rejects a new VM reusing
+    // the freed address.
+    let _ = VirtualMachine::try_enqueue_task_concurrent(
+        crate::virtual_machine::VmHandle::from_raw_parts(jsc_vm as usize, generation),
         ConcurrentTask::create_from(task),
     );
 }

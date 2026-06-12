@@ -108,6 +108,8 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
+    fn NapiEnv__bunVM(env: *mut NapiEnv) -> *mut core::ffi::c_void;
+    fn NapiEnv__bunVMGeneration(env: *mut NapiEnv) -> u64;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn napi_internal_get_version(env: *mut NapiEnv) -> u32;
     fn NapiEnv__deref(env: *mut NapiEnv);
@@ -119,6 +121,20 @@ impl NapiEnv {
     pub fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
+    }
+
+    /// Schedule-time [`VmHandle`] of the VM that owns this env, captured by
+    /// the C++ `NapiEnv` constructor. Safe to read from any thread holding an
+    /// env ref (plain data owned by the refcounted env); all VM access goes
+    /// through the checked `VirtualMachine` entry points.
+    pub fn vm_handle(&self) -> bun_jsc::virtual_machine::VmHandle {
+        // SAFETY: env is non-null; C++ side reads POD members only.
+        unsafe {
+            bun_jsc::virtual_machine::VmHandle::from_raw_parts(
+                NapiEnv__bunVM(self.as_mut_ptr()) as usize,
+                NapiEnv__bunVMGeneration(self.as_mut_ptr()),
+            )
+        }
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -4258,31 +4274,32 @@ impl NapiFinalizerTask {
     }
 
     pub fn schedule(self: Box<Self>) {
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-
-        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
-        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
-        // from C++; "main thread" is determined by whether the thread-local VM
-        // holder is populated.
-        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = global_this.bun_vm();
+        // "Main thread" here means the thread owning some VM: the thread-local
+        // VM holder is populated. On any other thread nothing VM-owned may be
+        // dereferenced — the env's creation-time `(bunVM, generation)` capture
+        // is the only VM identity used.
         let is_main_thread = VirtualMachine::get_or_null().is_some();
 
         if !is_main_thread {
+            // SAFETY: env is valid (held by NapiEnvRef); `vm_handle` reads
+            // POD members only.
+            let vm_handle = unsafe { &*self.finalizer.env.get() }.vm_handle();
             let this = bun_core::heap::into_raw(self);
             // Checked: scheduled from non-JS threads (addon threads, GC
             // helpers) that can outlive a terminated worker's VM. When the VM
             // is gone the finalizer box leaks, matching a task left undrained
-            // in the dead worker's queue. Address-only: the VM identity comes
-            // from the napi env, which carries no schedule-time generation
-            // (napi env teardown is a tracked follow-up).
-            let _ = VirtualMachine::try_enqueue_task_concurrent_addr_only(
-                core::ptr::from_ref(vm).cast_mut(),
+            // in the dead worker's queue.
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                vm_handle,
                 ConcurrentTask::create(Task::init(this)),
             );
             return;
         }
+
+        // SAFETY: env is valid (held by NapiEnvRef); on the owning thread the
+        // global and its VM are alive.
+        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let vm: &VirtualMachine = global_this.bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {

@@ -886,40 +886,39 @@ describe.concurrent("exit is leak-clean under LeakSanitizer", () => {
     `;
   }
 
-  const cases: [label: string, args: string[]][] = [
+  // LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
+  // startup error on platforms without LSan (macOS arm64); the CI lane
+  // that leak-checks is linux x64-asan.
+  const leakCheckEnv = {
+    ...bunEnv,
+    // The CI runner sets this for outer test processes; the exit path
+    // must be leak-clean without the full destruct-on-exit teardown too.
+    BUN_DESTRUCT_VM_ON_EXIT: undefined,
+    BUN_TEST_PARALLEL_SCALE_MS: "0",
+    ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+    LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "leaksan.supp")}`,
+  };
+
+  test.skipIf(!isASAN || !isLinux).each([
     ["serial", []],
     ["--isolate", ["--isolate"]],
     ["--parallel=2", ["--parallel=2"]],
-  ];
-  for (const [label, args] of cases) {
-    // LeakSanitizer only exists in ASAN builds, and `detect_leaks=1` is a
-    // startup error on platforms without LSan (macOS arm64); the CI lane
-    // that leak-checks is linux x64-asan.
-    test.skipIf(!isASAN || !isLinux)(label, async () => {
-      using dir = tempDir(`test-exit-lsan-${args.length ? args[0].replace(/[^a-z0-9]/g, "") : "serial"}`, files);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", ...args, "."],
-        env: {
-          ...bunEnv,
-          // The CI runner sets this for outer test processes; the exit path
-          // must be leak-clean without the full destruct-on-exit teardown too.
-          BUN_DESTRUCT_VM_ON_EXIT: undefined,
-          BUN_TEST_PARALLEL_SCALE_MS: "0",
-          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
-          LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "leaksan.supp")}`,
-        },
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // A --parallel worker's at-exit abort does not change the coordinator's
-      // exit code (its results were already collected by then), but the
-      // report still prints to inherited stderr, so assert on the report
-      // text too. On failure, not.toContain prints the whole report.
-      expect(stderr).not.toContain("LeakSanitizer");
-      expect(stderr).toContain(`${FILE_COUNT} pass`);
-      expect(exitCode).toBe(0);
+  ] as [label: string, args: string[]][])("%s", async (label, args) => {
+    using dir = tempDir(`test-exit-lsan-${label.replace(/[^a-z0-9]/g, "")}`, files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "."],
+      env: leakCheckEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  }
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A --parallel worker's at-exit abort does not change the coordinator's
+    // exit code (its results were already collected by then), but the
+    // report still prints to inherited stderr, so assert on the report
+    // text too. On failure, not.toContain prints the whole report.
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect(stderr).toContain(`${FILE_COUNT} pass`);
+    expect(exitCode).toBe(0);
+  });
 });

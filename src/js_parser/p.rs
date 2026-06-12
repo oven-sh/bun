@@ -5613,18 +5613,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if self.options.repl_mode {
                 return None;
             }
-            // A file is an ES module if it has ESM syntax, or if ".mjs"/".mts"
-            // or package.json "type": "module" forces it (module_type == Esm)
-            // even without import/export syntax.
-            if (self.has_es_module_syntax || self.options.module_type == options::ModuleType::Esm)
-                && self.commonjs_named_exports.count() == 0
-            {
+            if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
                 // compile time using expression substitution here.
                 return Some(Expr {
                     loc,
-                    data: js_ast::ExprData::EUndefined(E::Undefined),
+                    data: null_value_expr(),
                 });
             } else {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
@@ -9703,6 +9698,10 @@ pub fn key_expr_data() -> js_ast::ExprData {
     // and infrequent — see js_ast::expr::IntoExprData for `EString`).
     use js_ast::expr::IntoExprData as _;
     E::String::init(b"key").into_data_store()
+}
+#[inline]
+pub fn null_value_expr() -> js_ast::ExprData {
+    js_ast::ExprData::ENull(E::Null {})
 }
 #[inline]
 pub fn false_value_expr() -> js_ast::ExprData {

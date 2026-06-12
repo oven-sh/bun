@@ -1175,6 +1175,23 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     crate::abort_tracker()
 }
 
+/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
+/// point at live (unfreed) memory. A stale entry here means some socket-close
+/// path forgot `unregister_abort_tracker`, which later manifests as a
+/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
+/// JS thread aborts that request id. Runs before and after each loop tick so
+/// the report fires at the tick that leaked, not at the eventual abort.
+#[inline]
+fn assert_abort_tracker_sockets_alive() {
+    if cfg!(debug_assertions) {
+        for socket in abort_tracker().values() {
+            if let Some(usocket) = socket.socket().get() {
+                bun_core::asan::assert_unpoisoned(usocket);
+            }
+        }
+    }
+}
+
 use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1347,12 +1364,14 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
+                assert_abort_tracker_sockets_alive();
                 Output::flush();
 
                 let uws_loop = self.uws_loop_mut();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
+                assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
                     Output::flush();

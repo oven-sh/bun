@@ -145,6 +145,28 @@ impl SavedSourceMap {
             unsafe { bun_core::heap::destroy(provider) };
         }
     }
+
+    /// Releases every cached entry, leaving the table empty but valid (unlike
+    /// `Drop`, which tears the table down for good). Used by the pre-exit
+    /// leak-check collection: the table stores its entries as tagged pointers
+    /// (`Value`), which LeakSanitizer does not recognize as pointers, so any
+    /// entry still cached at exit is reported as a leak even though it is
+    /// live VM state.
+    pub fn clear(&mut self) {
+        self.lock();
+        // Mirror `put_value`: the caches may point at blobs freed below.
+        self.find_cache.invalidate_all();
+        self.last_ism = None;
+        let map = self.map_mut();
+        for val in map.values() {
+            let value = Value::from(Some(*val));
+            // SAFETY: values were stored by us and are live until released
+            // here; `clear()` below removes them so they are not released again.
+            unsafe { Self::release_value(value) };
+        }
+        map.clear();
+        self.unlock();
+    }
 }
 
 /// Thin forwarder to the leaf-crate state in

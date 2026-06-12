@@ -953,6 +953,15 @@ impl BunTest {
         // SAFETY: see block-SAFETY above. `step()` may call `.get()` internally;
         // no outer `&mut` overlaps because we only touch `*this` between calls.
         while let Some(result) = unsafe { (*this).result_queue.read_item() } {
+            // Once --bail has hit its threshold, discard queued results
+            // instead of stepping them: stepping a queued completion would
+            // report another test result after the bail message. The drive
+            // loop in `TestCommand::run` unwinds to the bail exit.
+            // SAFETY: short-lived reborrow; the reporter outlives every
+            // BunTest (owned by `test_command::exec`).
+            if unsafe { (*this).reporter.is_some_and(|r| r.as_ref().jest.bailed) } {
+                break;
+            }
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {

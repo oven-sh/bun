@@ -1344,8 +1344,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
               // single query arrives after all slots idled out — the
               // #30632 burst, shifted from cold start to post-idle.
               // Additional slots are revived on demand as more queries
-              // arrive (each enters this scan) or via
-              // flushConcurrentQueries() once a connection is ready.
+              // arrive (each enters this scan), or grown via
+              // flushConcurrentQueries() if the pool is still below max.
               break;
             } else {
               // we have some error, lets grab it and fail if unable to start a connection

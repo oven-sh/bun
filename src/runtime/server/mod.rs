@@ -1614,6 +1614,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
+            // Shut idle keep-alive sockets so a late request can't dispatch
+            // after the JS wrapper drops its strong root. `JsRef::Weak` holds
+            // a raw JSValue (not a JSC::Weak), so `try_get` can hand back a
+            // dead-but-unswept cell and the Finalized→503 guard alone leaves a
+            // window. In-flight requests aren't idle and drain normally.
+            if let Some(app) = self.app {
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).close_idle_connections();
+            }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

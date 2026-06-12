@@ -1364,6 +1364,8 @@ The same `state` object is handed back from every `listen()` call on this SQL in
 
 `sql.notify(channel, payload)` runs `SELECT pg_notify($1, $2)` through the regular query pool — it does not require an active subscription. It returns a Promise that resolves once the server has accepted the NOTIFY (committed at the next transaction boundary, which for autocommit queries is immediate).
 
+The handles returned by `sql.reserve()` and `sql.begin()` carry the same three methods. Their `notify()` runs on that handle's own connection, so inside `sql.begin()` the notification participates in the transaction: PostgreSQL queues it and delivers it only on COMMIT, and drops it on ROLLBACK. `listen()`/`unlisten()` always operate on the adapter-wide dedicated listen connection, regardless of which handle they are called on.
+
 Channel names are quoted as PostgreSQL identifiers; null bytes are rejected. PostgreSQL's default `NOTIFY` payload limit is 8000 bytes — payloads above that produce a server-side error.
 
 ##### Error handling

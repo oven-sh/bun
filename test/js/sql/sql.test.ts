@@ -12804,6 +12804,53 @@ CREATE TABLE ${table_name} (
         await listenPromise; // should resolve/reject cleanly without leaking
       });
 
+      test("tx.notify participates in the transaction: delivered on commit, dropped on rollback", async () => {
+        await using db = postgres(options);
+        const received: string[] = [];
+        const { promise: gotCommitted, resolve: resolveCommitted } = Promise.withResolvers<void>();
+        const { promise: gotBarrier, resolve: resolveBarrier } = Promise.withResolvers<void>();
+
+        await db.listen("test_tx_notify", payload => {
+          received.push(payload);
+          if (payload === "committed") resolveCommitted();
+        });
+        await db.listen("test_tx_notify_barrier", () => resolveBarrier());
+
+        // NOTIFY inside a rolled-back transaction must never be delivered.
+        await expect(
+          db.begin(async tx => {
+            await tx.notify("test_tx_notify", "rolled-back");
+            throw new Error("force rollback");
+          }),
+        ).rejects.toThrow("force rollback");
+
+        // NOTIFY inside a committed transaction is queued until COMMIT.
+        await db.begin(async tx => {
+          await tx.notify("test_tx_notify", "committed");
+        });
+        await gotCommitted;
+
+        // Barrier on the same ordered listen connection: once it arrives, a
+        // pending "rolled-back" delivery would already have been observed.
+        await db.notify("test_tx_notify_barrier", "go");
+        await gotBarrier;
+
+        expect(received).toEqual(["committed"]);
+        await db.unlisten("test_tx_notify");
+        await db.unlisten("test_tx_notify_barrier");
+      });
+
+      test("reserved.listen and reserved.notify work from a reserved connection", async () => {
+        await using db = postgres(options);
+        await using reserved = await db.reserve();
+
+        const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+        const sub = await reserved.listen("test_reserved_listen", p => resolve(p));
+        await reserved.notify("test_reserved_listen", "from-reserved");
+        expect(await gotPayload).toBe("from-reserved");
+        await sub.unlisten();
+      });
+
       test("sql.listen onlisten fires after server-side LISTEN is registered", async () => {
         await using db = postgres(options);
         const { promise: onlistenFired, resolve } = Promise.withResolvers<void>();
@@ -13405,7 +13452,9 @@ async function createMockListenServer(
           ]),
         );
       } else {
-        socket.write(Buffer.concat([commandComplete("UNLISTEN"), readyForQuery]));
+        // Echo the command word as the tag (UNLISTEN, BEGIN, COMMIT, ...).
+        const tag = query.split(" ", 1)[0].toUpperCase();
+        socket.write(Buffer.concat([commandComplete(tag), readyForQuery]));
       }
     });
     socket.on("close", () => {
@@ -13734,4 +13783,49 @@ test("process survives the reconnect backoff window and gets notifications after
   expect(stdout).toBe("SUBSCRIBED\nGOT after-reconnect\n");
   expect(filterSpawnStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// The scoped handles returned by reserve() and begin() inherit
+// listen/unlisten/notify from SQL in the type declarations, so the runtime
+// objects must carry them too: listen/unlisten delegate to the adapter-wide
+// dedicated listen connection, notify is bound to the handle's own connection.
+test("reserved and transaction handles expose listen/unlisten/notify", async () => {
+  await using mock = await createMockListenServer({
+    reserved_chan: [{ channel: "reserved_chan", payload: "via-reserved" }],
+  });
+  await using db = postgres({
+    url: `postgres://u@127.0.0.1:${mock.port}/db`,
+    max: 1,
+    idleTimeout: 5,
+    connectionTimeout: 5,
+  });
+
+  // reserve(): listen works end to end through the shared dedicated connection.
+  {
+    await using reserved = await db.reserve();
+    expect(typeof reserved.listen).toBe("function");
+    expect(typeof reserved.unlisten).toBe("function");
+    expect(typeof reserved.notify).toBe("function");
+
+    const { promise: gotPayload, resolve } = Promise.withResolvers<string>();
+    const sub = await reserved.listen("reserved_chan", p => resolve(p));
+    expect(await gotPayload).toBe("via-reserved");
+    // Last subscription: tears down the dedicated listen connection.
+    await sub.unlisten();
+    await mock.waitForClose();
+  }
+
+  // begin(): the transaction handle carries the same surface (the
+  // notification methods exist; BEGIN/COMMIT run as simple queries against
+  // the mock). notify's transactional wire behavior needs a real server and
+  // is covered in the docker-gated suite.
+  await db.begin(async tx => {
+    expect(typeof tx.listen).toBe("function");
+    expect(typeof tx.unlisten).toBe("function");
+    expect(typeof tx.notify).toBe("function");
+  });
+
+  expect(mock.queries).toContain('LISTEN "reserved_chan"');
+  expect(mock.queries.some(q => q.startsWith("BEGIN"))).toBe(true);
+  expect(mock.queries.some(q => q.startsWith("COMMIT"))).toBe(true);
 });

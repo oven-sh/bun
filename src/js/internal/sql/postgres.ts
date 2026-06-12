@@ -593,6 +593,7 @@ class PostgresAdapter
 
     const { promise, resolve, reject } = Promise.withResolvers<$ZigGeneratedClasses.PostgresSQLConnection>();
     let connected = false;
+    let thisConn: $ZigGeneratedClasses.PostgresSQLConnection | null = null;
     // The shared helper resolves the password and marshals the native
     // createConnection arguments; the overrides pin the dedicated listen
     // connection open (never idle out, never recycle) and keep prepared
@@ -615,6 +616,7 @@ class PostgresAdapter
           return;
         }
         connected = true;
+        thisConn = conn;
         this.#listenConnection = conn;
         this.#listenReconnectDelay = 250;
         // Mutate the shared #listenState in place so every previously-returned
@@ -633,14 +635,22 @@ class PostgresAdapter
         resolve(conn);
       },
       err => {
-        this.#listenConnection = null;
         if (!connected) {
           // Errors before the first successful connect (including password
           // resolution failures caught inside the shared helper) must reject
-          // the pending listen() instead of scheduling a reconnect.
+          // the pending listen() instead of scheduling a reconnect. The
+          // connection was never published to #listenConnection, so there is
+          // nothing to clear.
           reject(wrapPostgresError(err ?? this.connectionClosedError()));
           return;
         }
+        // A deliberately-closed connection's onClose can fire on a later tick
+        // (TLS defers the raw close until the close_notify round-trip ends).
+        // By then a new listen() may have repopulated the channel set and even
+        // connected a replacement; a stale callback must not null out that
+        // replacement or arm a spurious reconnect on its behalf.
+        if (this.#listenConnection !== thisConn) return;
+        this.#listenConnection = null;
         this.#scheduleListenReconnect();
       },
     );

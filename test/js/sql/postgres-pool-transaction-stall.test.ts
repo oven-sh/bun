@@ -90,6 +90,9 @@ function startMockServer() {
   const release = Promise.withResolvers<void>();
   let armed = false;
   let released = false;
+  // frame handler failures; asserted empty by the tests so protocol bugs in
+  // the mock surface as failures instead of fixture hangs
+  const errors: unknown[] = [];
   // count of hold_me Binds that had arrived (across connections) when the
   // release control query was handled
   let holdMeBindsAtRelease = -1;
@@ -199,10 +202,13 @@ function startMockServer() {
   async function pump(conn: Conn) {
     if (conn.busy) return;
     conn.busy = true;
-    while (conn.frames.length > 0) {
-      await handleFrame(conn, conn.frames.shift()!);
+    try {
+      while (conn.frames.length > 0) {
+        await handleFrame(conn, conn.frames.shift()!);
+      }
+    } finally {
+      conn.busy = false;
     }
-    conn.busy = false;
   }
 
   const server = net.createServer(socket => {
@@ -240,13 +246,18 @@ function startMockServer() {
         logFrame(conn, frame);
         conn.frames.push(frame);
       }
-      pump(conn).catch(() => {});
+      pump(conn).catch(err => {
+        errors.push(err);
+        // kill the connection so the fixture fails fast instead of hanging
+        socket.destroy(err instanceof Error ? err : new Error(String(err)));
+      });
     });
   });
 
   return {
     server,
     conns,
+    errors,
     forceRelease: () => release.resolve(),
     holdMeBindsAtRelease: () => holdMeBindsAtRelease,
     listen: () =>
@@ -279,17 +290,22 @@ test("pool does not stall when sql.begin() runs concurrently with pooled prepare
   try {
     const { stdout, stderr, exitCode } = await runFixture("postgres-pool-transaction-stall-fixture.ts", port);
 
-    // every stage of the fixture must have completed (sorted: the relative
-    // order of "released" and "victim resolved" legitimately depends on
-    // scheduling)
+    // every stage of the fixture must have completed, in order; only the
+    // relative order of "released" and "victim resolved" legitimately depends
+    // on scheduling, so normalize that adjacent pair before the exact
+    // sequence comparison
+    const steps = stdout.split(/\r?\n/).filter(line => line.startsWith("STEP ") || line === "DONE");
+    const released = steps.indexOf("STEP released");
+    const victim = steps.indexOf("STEP victim resolved");
+    if (released !== -1 && victim === released - 1) {
+      steps[victim] = "STEP released";
+      steps[released] = "STEP victim resolved";
+    }
     expect({
-      steps: stdout
-        .split(/\r?\n/)
-        .filter(line => line.startsWith("STEP ") || line === "DONE")
-        .sort()
-        .join("\n"),
+      steps: steps.join("\n"),
       stderr: stderr.includes("WATCHDOG") ? "WATCHDOG" : "",
       exitCode,
+      mockErrors: mock.errors,
     }).toEqual({
       steps: [
         "STEP prepared",
@@ -303,11 +319,10 @@ test("pool does not stall when sql.begin() runs concurrently with pooled prepare
         "STEP tx resolved",
         "STEP pool alive",
         "DONE",
-      ]
-        .sort()
-        .join("\n"),
+      ].join("\n"),
       stderr: "",
       exitCode: 0,
+      mockErrors: [],
     });
 
     // wire-order assertions on the transaction's connection: while the
@@ -346,10 +361,12 @@ test("pipelining feature flag keeps one query in flight per connection", async (
         .join("\n"),
       stderr: stderr.includes("WATCHDOG") ? "WATCHDOG" : "",
       exitCode,
+      mockErrors: mock.errors,
     }).toEqual({
       steps: ["STEP prepared", "STEP armed", "STEP released", "STEP q1 done", "STEP q2 done", "DONE"].join("\n"),
       stderr: "",
       exitCode: 0,
+      mockErrors: [],
     });
 
     // By the time the release control query was handled, only the held

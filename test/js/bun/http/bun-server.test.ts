@@ -628,6 +628,7 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
         const { fullGC } = require("bun:jsc");
 
         let received = "";
+        let sockClosed = false;
         let waiter = Promise.withResolvers();
         const nextResponse = () => {
           // Wait until a complete HTTP/1.1 response (headers + 2-byte body or
@@ -646,6 +647,7 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
                   return status;
                 }
               }
+              if (sockClosed) return "";
               await waiter.promise;
               waiter = Promise.withResolvers();
             }
@@ -668,8 +670,8 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
                 received += data.toString("latin1");
                 waiter.resolve();
               },
-              close() { waiter.resolve(); },
-              error() { waiter.resolve(); },
+              close() { sockClosed = true; waiter.resolve(); },
+              error() { sockClosed = true; waiter.resolve(); },
             },
           });
 
@@ -707,7 +709,11 @@ test("late keep-alive request to a route after stop()+GC does not crash", async 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toMatch(/HTTP\/1\.1 (200|503)/);
+  // The second request either dispatches (wrapper survived → 200), is refused
+  // (wrapper downgraded → 503), or never arrives because graceful stop closed
+  // the idle keep-alive socket (empty). Any of these is correct; the point is
+  // the process didn't crash.
+  expect(stdout.trim()).toMatch(/^(|HTTP\/1\.1 (200|503).*)$/s);
   expect(exitCode).toBe(0);
 });
 
@@ -791,11 +797,12 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   expect(stderr).toBe("");
   const { baseline, afterStopGC, afterCloseGC } = JSON.parse(stdout.trim());
   // js_value stays Strong while a websocket is connected → GC must not
-  // collect the wrapper.
-  expect(afterStopGC).toBeGreaterThan(baseline);
+  // collect the wrapper. objectTypeCounts includes the prototype (1) once the
+  // first server has been created, so the live instance shows as baseline+2.
+  expect(afterStopGC).toBeGreaterThan(baseline + 1);
   // Last websocket closing triggers deinit_if_we_can → downgrade → wrapper
   // becomes collectable again (no leak).
-  expect(afterCloseGC).toBeLessThanOrEqual(baseline);
+  expect(afterCloseGC).toBeLessThanOrEqual(baseline + 1);
   expect(exitCode).toBe(0);
 });
 

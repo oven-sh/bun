@@ -1,8 +1,4 @@
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_sql::postgres::types::int_types::Short;
-
-pub const TO: i32 = 1184;
-pub const FROM: [Short; 3] = [1082, 1114, 1184];
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.

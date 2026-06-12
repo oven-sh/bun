@@ -286,7 +286,7 @@ impl<'a> Iterator<'a> {
 /// Prefer `Iterator` for a simpler iterator.
 pub struct ArgumentsSlice<'a> {
     /// Backing storage for the remaining-args view. [`Self::init`] borrows —
-    /// `all: &'a [JSValue]` already ties this
+    /// the `Cow::Borrowed` already ties this
     /// struct's lifetime to the source slice, so a heap-owned dupe
     /// buys nothing here (it could not outlive `'a`). Kept as
     /// `Cow` so a future caller that does own its args can pass `Owned`
@@ -299,7 +299,6 @@ pub struct ArgumentsSlice<'a> {
     /// whose `new()` calls `mi_heap_new()` eagerly, so we keep it `None` until a
     /// caller actually needs scratch storage (currently none do).
     pub arena: Option<bun_alloc::Arena>,
-    pub all: &'a [JSValue],
     pub threw: bool,
     pub will_be_async: bool,
 }
@@ -329,7 +328,6 @@ impl<'a> ArgumentsSlice<'a> {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
-            all: slice,
             arena: None,
             threw: false,
             will_be_async: false,

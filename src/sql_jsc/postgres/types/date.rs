@@ -1,6 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_sql::postgres::types::int_types::Short;
-use bun_sql::shared::Data;
 
 pub const TO: i32 = 1184;
 pub const FROM: [Short; 3] = [1082, 1114, 1184];
@@ -58,40 +57,4 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
 
     let unix_timestamp: i64 = double_value as i64;
     Ok((unix_timestamp - POSTGRES_EPOCH_DATE) * US_PER_MS)
-}
-
-// Conversion dispatches over a closed set {i64, Data}; modeled as a trait
-// with per-type impls so `tag_jsc::to_js_with_type` can dispatch uniformly.
-pub trait DateToJs {
-    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue;
-}
-
-impl DateToJs for i64 {
-    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        to_js_i64(global_object, self)
-    }
-}
-
-impl DateToJs for Data {
-    fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        to_js_data(global_object, &self)
-    }
-}
-
-pub fn to_js<T: DateToJs>(global_object: &JSGlobalObject, value: T) -> JSValue {
-    value.date_to_js(global_object)
-}
-
-pub fn to_js_i64(global_object: &JSGlobalObject, value: i64) -> JSValue {
-    // Convert from Postgres timestamp (μs since 2000-01-01) to Unix timestamp (ms)
-    let ms = value.div_euclid(US_PER_MS) + POSTGRES_EPOCH_DATE;
-    JSValue::from_date_number(global_object, ms as f64)
-}
-
-pub fn to_js_data(global_object: &JSGlobalObject, value: &Data) -> JSValue {
-    let z = value.slice_z();
-    // SAFETY: ZStr invariant guarantees a readable NUL terminator at `len`; Postgres
-    // date payloads contain no interior NULs, satisfying CStr's contract.
-    let cstr = unsafe { bun_core::ffi::cstr(z.as_ptr()) };
-    JSValue::from_date_string(global_object, cstr)
 }

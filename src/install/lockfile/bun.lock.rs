@@ -43,8 +43,8 @@ use bun_install_types::DependencyVersionTag;
 use super::PackageIDSlice;
 use super::package::{Meta, PackageColumns as _};
 use super::{
-    DependencySlice, LoadResult, Lockfile as BinaryLockfile, Package, PackageIndexEntry,
-    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
+    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -2797,6 +2797,7 @@ pub fn parse_into_binary_lockfile(
         // parsed above; used to bind peer edges by version rather than by
         // tree path (see `resolve_peer_dep_version_based`).
         let package_index = &lockfile.package_index;
+        let overrides = &lockfile.overrides;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -2813,7 +2814,13 @@ pub fn parse_into_binary_lockfile(
                 let dep = &mut dependencies[dep_id as usize];
 
                 let peer_res_id = if is_deferred_peer(dep) {
-                    resolve_peer_dep_version_based(dep, package_index, pkg_resolutions, string_buf)
+                    resolve_peer_dep_version_based(
+                        dep,
+                        package_index,
+                        overrides,
+                        pkg_resolutions,
+                        string_buf,
+                    )
                 } else {
                     None
                 };
@@ -2895,6 +2902,7 @@ pub fn parse_into_binary_lockfile(
                         resolve_peer_dep_version_based(
                             dep,
                             package_index,
+                            overrides,
                             pkg_resolutions,
                             string_buf,
                         )
@@ -2970,7 +2978,13 @@ pub fn parse_into_binary_lockfile(
                 let dep = &mut dependencies[dep_id as usize];
 
                 let peer_res_id = if is_deferred_peer(dep) {
-                    resolve_peer_dep_version_based(dep, package_index, pkg_resolutions, string_buf)
+                    resolve_peer_dep_version_based(
+                        dep,
+                        package_index,
+                        overrides,
+                        pkg_resolutions,
+                        string_buf,
+                    )
                 } else {
                     None
                 };
@@ -3025,11 +3039,15 @@ pub fn parse_into_binary_lockfile(
 }
 
 /// True for peer edges the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. `*` peers are exempt:
-/// they express no version preference and bind to whatever sibling pin
-/// existed first, which the printed tree's path walk reproduces.
+/// (`install_peer`) and binds by version there. Two exemptions, matching
+/// `enqueue_dependency_with_main_and_success_fn`: optional peers return
+/// before the deferred phase and are bound to the hoisted-tree sibling by
+/// `process_subtree` instead, and `*` peers express no version preference
+/// and bind to whatever sibling pin existed first. Both of those are
+/// exactly what the printed tree's path walk reproduces, so they keep it.
 fn is_deferred_peer(dep: &Dependency) -> bool {
     dep.behavior.is_peer()
+        && !dep.behavior.is_optional_peer()
         && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().version.is_star())
 }
 
@@ -3057,6 +3075,7 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 fn resolve_peer_dep_version_based(
     dep: &Dependency,
     package_index: &PackageIndexMap,
+    overrides: &OverrideMap,
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
 ) -> Option<PackageID> {
@@ -3075,6 +3094,21 @@ fn resolve_peer_dep_version_based(
         }
         _ => dep.name_hash,
     };
+
+    // The fresh resolver rewrites the name and range through
+    // `lockfile.overrides` (and any catalog entry an override points at)
+    // before its scan, so filtering candidates with the raw manifest range
+    // here would pick a version the override replaced. The printed tree
+    // already reflects the overridden resolution, so overridden edges keep
+    // the path walk. The exemptions mirror
+    // `enqueue_dependency_with_main_and_success_fn`: `npm:` aliases and
+    // workspace-only edges are never overridden.
+    let overridable = !dep.behavior.is_workspace()
+        && (dep.version.tag != DependencyVersionTag::Npm || !dep.version.npm().is_alias);
+    if overridable && overrides.get(name_hash).is_some() {
+        return None;
+    }
+
     let entry = package_index.get(&name_hash)?;
     let candidates: &[PackageID] = match entry {
         PackageIndexEntry::Id(id) => core::slice::from_ref(id),

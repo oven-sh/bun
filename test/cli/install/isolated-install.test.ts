@@ -819,6 +819,92 @@ test("aliased peer dependency binds to its real package across installs from bun
   expect(await file(aliasLink).json()).toEqual(fresh);
 });
 
+test("optional ranged peer keeps its hoisted-tree binding across installs from bun.lock", async () => {
+  // Optional peers never reach the fresh resolver's deferred-peer phase: it
+  // returns before the version scan and the edge is bound to the
+  // hoisted-tree sibling during tree resolution, which the printed tree's
+  // path walk reproduces exactly. With both no-deps@1.0.1 and no-deps@1.1.0
+  // in the graph, binding the optional peer by version on load would pick
+  // the highest satisfying (1.1.0) while the fresh install bound the hoisted
+  // 1.0.1, re-keying the entry on the first reinstall.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-optional-peers",
+      dependencies: {
+        "one-optional-peer-dep": "1.0.2",
+        "normal-dep-and-dev-dep": "1.0.0",
+        "two-range-deps": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));
+  expect(freshEntries).toHaveLength(1);
+  const freshVersion = (
+    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json()
+  ).version;
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"))).toEqual(freshEntries);
+  expect(
+    await file(join(bunDir, freshEntries[0], "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: freshVersion });
+});
+
+test("overridden peer dependency keeps the override across installs from bun.lock", async () => {
+  // `overrides` rewrites the peer range before the fresh resolver's version
+  // scan, binding the peer to no-deps@1.0.1 even though the graph also
+  // contains no-deps@1.1.0 (via an override-exempt npm: alias). Loading
+  // bun.lock must not re-filter candidates with the raw ^1.0.0 manifest
+  // range, which the override replaced; that would rebind the edge to 1.1.0
+  // and re-key the entry on the first reinstall.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-overridden-peers",
+      dependencies: {
+        "peer-deps-fixed": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
+        // provides no-deps@1.0.1 so the overridden peer range resolves to an
+        // installed package
+        "normal-dep-and-dev-dep": "1.0.0",
+      },
+      overrides: { "no-deps": "1.0.1" },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const entryName = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
+  expect(await readdirSorted(bunDir)).toContain(entryName);
+  expect(
+    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.1" });
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
+  expect(
+    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.1" });
+});
+
 describe("existing node_modules, missing node_modules/.bun", () => {
   test("root and workspace node_modules are reset", async () => {
     const { packageDir } = await registry.createTestDir({

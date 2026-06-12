@@ -617,7 +617,6 @@ pub(crate) fn wrap_handler_slot(
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-
     /// Per-monomorphization static.
     /// Rust statics cannot be const-generic; routed through a
     /// `&'static AtomicBool` so the four (SSL,DEBUG) instantiations share one

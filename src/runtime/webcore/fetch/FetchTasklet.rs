@@ -1741,7 +1741,6 @@ impl FetchTasklet {
             http_.enable_response_body_streaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        let _ = &self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
         self.clear_stream_cancel_handler();

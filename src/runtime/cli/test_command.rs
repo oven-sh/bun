@@ -1380,7 +1380,14 @@ impl CommandLineReporter {
                     );
                     Output::flush();
                     this.write_junit_report_if_needed();
-                    Global::exit(1);
+                    // Don't `Global::exit(1)` here: the active file is
+                    // mid-execution (`BunTest::run` frames and the run loop's
+                    // strong ref are live), so exiting now would skip all
+                    // teardown. Setting `bailed` stops the stepper from
+                    // starting new entries and unwinds every run loop back to
+                    // `TestCommand::exec`, which exits 1 through the shared
+                    // teardown path.
+                    this.jest.bailed = true;
                 }
             }
         }
@@ -2085,6 +2092,7 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
+                bailed: false,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context); cast back to a typed `NonNull` —
@@ -2597,6 +2605,30 @@ impl TestCommand {
             }
         }
 
+        // --bail hit its failure threshold: the bail message and junit report
+        // were already written at the bail site, the run loops unwound without
+        // running further tests, and everything after this point in the normal
+        // tail (snapshot writes, coverage, summary) is intentionally skipped.
+        // Exit 1 through the same teardown sequence as the normal tail below
+        // so the exit is clean under ASAN leak checking.
+        if reporter.jest.bailed {
+            vm.exit_handler.exit_code = 1;
+            vm.is_shutting_down = true;
+            reporter.jest.bun_test_root.deinit_for_exit();
+            // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS
+            // thread; no concurrent reader exists on this shutdown path.
+            unsafe {
+                jest::Jest::RUNNER.write(None);
+            }
+            drop(reporter);
+            vm.collect_for_leak_check_at_exit();
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only and `global_exit()`
+            // diverges, so the closure is the sole mutator.
+            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+        }
+
         // With --changed, only a subset of test files (possibly none) runs,
         // so the module loader won't naturally add every source file to the
         // watcher. Seed it from the module graph so editing any local source
@@ -3008,6 +3040,9 @@ impl TestCommand {
                         ) {
                             handle_top_level_test_error_before_javascript_start(err);
                         }
+                        if reporter.jest.bailed {
+                            return;
+                        }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
@@ -3184,25 +3219,11 @@ impl TestCommand {
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
                         reporter.write_junit_report_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        // Unwind to `TestCommand::exec`'s bail exit: the
+                        // `exit_file()` defer above releases the active file's
+                        // `Strong`s on the way out, and exec tears down the
+                        // rest (`RUNNER`, pre-exit collection) before exiting 1.
+                        reporter.jest.bailed = true;
                     }
 
                     return Ok(());
@@ -3230,10 +3251,12 @@ impl TestCommand {
                 bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
+                if !reporter.jest.bailed {
+                    vm.event_loop_ref().tick();
+                }
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
-                while buntest.phase != bun_test::Phase::Done {
+                while !reporter.jest.bailed && buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
@@ -3248,6 +3271,14 @@ impl TestCommand {
                         vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
+                }
+
+                if reporter.jest.bailed {
+                    // Bail message already printed. Stop ticking the event
+                    // loop so nothing else runs or prints, and unwind to
+                    // `TestCommand::exec`'s bail exit (the defers above
+                    // release the active file on the way out).
+                    return Ok(());
                 }
 
                 let el = vm.event_loop();

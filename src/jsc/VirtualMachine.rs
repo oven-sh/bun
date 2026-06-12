@@ -1525,6 +1525,12 @@ impl VirtualMachine {
         // during `destructOnExit()`'s collection after `on_exit()` ran.
         self.has_run_cleanup_hooks = true;
         let _ = self.garbage_collect(true);
+        // Remapping a stack trace (printing a test failure does this) caches
+        // a `ParsedSourceMap` Arc in the saved-source-map table, which stores
+        // entries as tagged pointers LSan cannot see through, so any cached
+        // entry is reported as a leak. Nothing remaps after this point on
+        // these exit paths; the table stays valid (empty) either way.
+        self.source_mappings.clear();
     }
 
     pub fn global_exit(&mut self) -> ! {

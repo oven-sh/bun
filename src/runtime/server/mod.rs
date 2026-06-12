@@ -2983,7 +2983,10 @@ macro_rules! cached_value_set_dispatch {
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     cached_value_set_dispatch!(js_gc_on_request_set, on_request_set_cached);
     cached_value_set_dispatch!(js_gc_on_error_set, on_error_set_cached);
-    cached_value_set_dispatch!(js_gc_on_node_http_request_set, on_node_h_t_t_p_request_set_cached);
+    cached_value_set_dispatch!(
+        js_gc_on_node_http_request_set,
+        on_node_h_t_t_p_request_set_cached
+    );
     cached_value_set_dispatch!(js_gc_on_client_error_set, on_client_error_set_cached);
     cached_value_set_dispatch!(js_gc_ws_on_open_set, ws_on_open_set_cached);
     cached_value_set_dispatch!(js_gc_ws_on_message_set, ws_on_message_set_cached);

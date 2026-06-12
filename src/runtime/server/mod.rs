@@ -221,6 +221,9 @@ bitflags::bitflags! {
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
         const HANDLERS_RELEASED           = 1 << 3;
+        /// Transient: set only while the abrupt-stop `app.close()` drains
+        /// websockets synchronously under `stop_listening`'s `&mut self`.
+        const WEBSOCKETS_DRAINING         = 1 << 4;
     }
 }
 
@@ -1614,8 +1617,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ws.handler.app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
+            // `app.close()` dispatches every websocket's `on_close`
+            // synchronously while this frame holds `&mut self`; the flag keeps
+            // `on_websocket_closed` from re-entering `deinit_if_we_can` under
+            // that borrow (`stop()` runs the idle pass right after anyway).
+            self.flags.insert(ServerFlags::WEBSOCKETS_DRAINING);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
+            self.flags.remove(ServerFlags::WEBSOCKETS_DRAINING);
         }
     }
 
@@ -3524,12 +3533,15 @@ impl AnyServer {
     /// an already-stopped server, run the idle pass so the handler release
     /// (and deferred deinit) that was held back by the open sockets fires.
     ///
-    /// Skipped while TERMINATED: the abrupt-stop path drains every socket
-    /// synchronously from inside `stop_listening` (which holds `&mut self`),
-    /// and `stop()` runs `deinit_if_we_can` itself right after.
+    /// Skipped while WEBSOCKETS_DRAINING (transient): the abrupt-stop path
+    /// drains sockets synchronously from inside `stop_listening`, which holds
+    /// `&mut self`, and `stop()` runs `deinit_if_we_can` itself right after.
+    /// A socket whose `on_close` is the frame that *called* `stop(true)`
+    /// decrements only after `stop()` returns, with the flag already cleared,
+    /// so its drain still triggers the pass.
     pub(crate) fn on_websocket_closed(&self) {
         let drained = any_server_dispatch!(self, |s| {
-            s.note_websocket_closed() && !s.flags.contains(ServerFlags::TERMINATED)
+            s.note_websocket_closed() && !s.flags.contains(ServerFlags::WEBSOCKETS_DRAINING)
         });
         if drained {
             any_server_dispatch_mut!(self, |s| s.deinit_if_we_can());

@@ -258,3 +258,94 @@ test.each([
     afterClose: base,
   });
 });
+
+// Server-side ws.close()/ws.terminate() set the closed flag and then
+// synchronously re-enter on_close, which skips its own accounting; the
+// methods balance the count themselves. If they did not, the live-socket
+// count would stay above zero forever and the idle release could never run.
+test.each(["close", "terminate"])("server-side ws.%s() keeps the live-socket count balanced", async method => {
+  const script = /* js */ `
+    ${protectedAsyncFnsPrelude}
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("ok");
+      },
+      websocket: {
+        async open(ws) { ws.KICK_METHOD(); },
+        async message(ws, m) {},
+      },
+    });
+
+    const closed = Promise.withResolvers();
+    const client = new WebSocket(server.url.href.replace("http", "ws"));
+    client.onclose = () => closed.resolve();
+    client.onerror = () => closed.resolve();
+    await closed.promise;
+
+    // The kicked socket must have been fully uncounted: this graceful stop
+    // finds the server idle and releases the handlers.
+    server.stop();
+    let afterStop = protectedAsyncFns();
+    for (let i = 0; i < 200 && afterStop !== base; i++) {
+      await Bun.sleep(10);
+      afterStop = protectedAsyncFns();
+    }
+    console.log(JSON.stringify({ base, afterStop }));
+  `.replace("KICK_METHOD", method);
+
+  const { base, afterStop } = await runProbe(script);
+  expect(afterStop).toBe(base);
+});
+
+// stop(true) called from inside a websocket close handler: the calling
+// socket's own decrement lands only after stop() returns, so the idle pass
+// must still fire then (the transient draining flag is already cleared).
+test("stop(true) from inside a websocket close handler still releases the handlers", async () => {
+  const script = /* js */ `
+    ${protectedAsyncFnsPrelude}
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("ok");
+      },
+      websocket: {
+        open(ws) {},
+        message(ws, m) {},
+        // The only async handler, so the probe tracks exactly this closure,
+        // which also captures \`server\` (the cycle the release breaks).
+        async close(ws) {
+          server.stop(true);
+        },
+      },
+    });
+
+    const clientClosed = Promise.withResolvers();
+    const client = new WebSocket(server.url.href.replace("http", "ws"));
+    const opened = Promise.withResolvers();
+    client.onopen = () => opened.resolve();
+    client.onclose = () => clientClosed.resolve();
+    client.onerror = () => {
+      opened.resolve();
+      clientClosed.resolve();
+    };
+    await opened.promise;
+
+    client.close();
+    await clientClosed.promise;
+
+    let afterStop = protectedAsyncFns();
+    for (let i = 0; i < 200 && afterStop !== base; i++) {
+      await Bun.sleep(10);
+      afterStop = protectedAsyncFns();
+    }
+    console.log(JSON.stringify({ base, afterStop }));
+  `;
+
+  const { base, afterStop } = await runProbe(script);
+  expect(afterStop).toBe(base);
+});

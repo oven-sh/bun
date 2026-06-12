@@ -1369,8 +1369,14 @@ impl ServerWebSocket {
             break 'brk args.ptr[1].to_slice_or_null(global_this)?;
         };
 
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
+        // `end()` re-enters `on_close`, which skips its own accounting
+        // because the closed flag is already set; balance it here.
         self.websocket().end(code, message_value.slice());
+        if let Some(server) = server {
+            server.on_websocket_closed();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1388,8 +1394,14 @@ impl ServerWebSocket {
             return Ok(JSValue::UNDEFINED);
         }
 
+        let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
+        // `close()` re-enters `on_close`, which skips its own accounting
+        // because the closed flag is already set; balance it here.
         self.websocket().close();
+        if let Some(server) = server {
+            server.on_websocket_closed();
+        }
 
         Ok(JSValue::UNDEFINED)
     }

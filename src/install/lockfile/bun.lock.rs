@@ -20,7 +20,8 @@ use crate::{
     bin::{Bin, Tag as BinTag},
     dependency,
     dependency::{
-        Behavior, Dependency, Value as DependencyVersionValue, Version as DependencyVersion,
+        Behavior, Dependency, DependencyExt as _, Value as DependencyVersionValue,
+        Version as DependencyVersion,
     },
     invalid_package_id,
     resolution::Tag as ResolutionTag,
@@ -3037,10 +3038,13 @@ fn is_deferred_peer(dep: &Dependency) -> bool {
 /// `install_peer`): scan the package ids recorded for the dependency's
 /// name — `package_index` lists are kept ordered by descending
 /// `Resolution::order` — and take the first whose resolution satisfies
-/// the range, falling back to the highest same-kind resolution (the
-/// "incorrect peer dependency" case). Returns `None` when no package
-/// with the name exists or no same-kind candidate is available; the
-/// caller then falls back to the path walk.
+/// the range. When nothing satisfies, fall back to the highest-ordered
+/// candidate, and only when it is the same kind as the dependency (the
+/// "incorrect peer dependency" case; the fresh resolver inspects only
+/// `list[0]` there, and reproducing its choice exactly is the point of
+/// this helper). Returns `None` when no package with the name exists
+/// or the fallback is a different kind; the caller then falls back to
+/// the path walk.
 ///
 /// Peer edges cannot be resolved from the printed tree the way regular
 /// edges are: a peer never materializes its own `node_modules` path when
@@ -3056,7 +3060,22 @@ fn resolve_peer_dep_version_based(
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
 ) -> Option<PackageID> {
-    let entry = package_index.get(&dep.name_hash)?;
+    // `package_index` is keyed by *real* package names while `dep.name_hash`
+    // holds the alias, so an `npm:`-aliased peer must be looked up under the
+    // aliased name. Mirrors the realname hashing in
+    // `enqueue_dependency_with_main_and_success_fn`.
+    let name_hash = match dep.version.tag {
+        DependencyVersionTag::DistTag
+        | DependencyVersionTag::Git
+        | DependencyVersionTag::Github
+        | DependencyVersionTag::Npm
+        | DependencyVersionTag::Tarball
+        | DependencyVersionTag::Workspace => {
+            StringBuilder::string_hash(dep.realname().slice(string_buf))
+        }
+        _ => dep.name_hash,
+    };
+    let entry = package_index.get(&name_hash)?;
     let candidates: &[PackageID] = match entry {
         PackageIndexEntry::Id(id) => core::slice::from_ref(id),
         PackageIndexEntry::Ids(ids) => ids.as_slice(),

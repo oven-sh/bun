@@ -25,6 +25,12 @@ function ReadStream(fd): void {
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
+    Object.defineProperty(Prototype, "constructor", {
+      value: ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior

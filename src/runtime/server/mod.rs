@@ -220,6 +220,11 @@ bitflags::bitflags! {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
+        /// Set for the duration of [`NewServer::deinit_if_we_can`]; lets a
+        /// nested call (reached via a callback the body fires) early-return
+        /// instead of re-running the downgrade/teardown while the outer frame
+        /// still holds `&mut self`.
+        const DEINIT_RUNNING              = 1 << 3;
     }
 }
 
@@ -1653,8 +1658,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ws.handler.app = None;
             }
             self.flags.insert(ServerFlags::TERMINATED);
+            // `app.close()` synchronously drains every open websocket; their
+            // `on_close` defers call `on_websocket_closed`, which would
+            // dispatch `deinit_if_we_can` through a fresh `&mut NewServer`
+            // while this frame still holds `&mut self`. Hold DEINIT_RUNNING
+            // across the drain so that nested call early-returns — `stop()`
+            // runs `deinit_if_we_can` itself right after this returns.
+            self.flags.insert(ServerFlags::DEINIT_RUNNING);
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(self.app.unwrap()).close();
+            self.flags.remove(ServerFlags::DEINIT_RUNNING);
         }
     }
 
@@ -1677,6 +1690,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     #[inline]
     pub fn deinit_if_we_can(&mut self) {
+        // Re-entrance guard. The websocket-close trigger reaches this through
+        // an `AnyServer` raw-ptr dispatch and can land here while an outer
+        // `&mut self` frame is already on the stack (abrupt `app.close()`
+        // drains sockets synchronously; their close defers call back in). The
+        // body is idempotent, so the outer call will finish the work — skip
+        // the nested run rather than mutate under the aliased borrow.
+        // This replaces the old `!TERMINATED` proxy in `on_websocket_closed`,
+        // which was permanent and so also blocked the *post*-stop close defer
+        // that should fire the downgrade.
+        if self.flags.contains(ServerFlags::DEINIT_RUNNING) {
+            return;
+        }
+        self.flags.insert(ServerFlags::DEINIT_RUNNING);
+        let flags = core::ptr::addr_of_mut!(self.flags);
+        scopeguard::defer! {
+            // SAFETY: `flags` points into `*self`, which is live for the whole
+            // body; every intermediate `self.flags` access goes through the
+            // same `&mut self` this raw ptr was derived from.
+            unsafe { (*flags).remove(ServerFlags::DEINIT_RUNNING) };
+        }
+
         httplog!(
             "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
             self.pending_requests,
@@ -3632,16 +3666,16 @@ impl AnyServer {
     /// an already-stopped server, run the idle pass so the `JsRef` downgrade
     /// (and deferred deinit) that was held back by the open sockets fires.
     ///
-    /// Skipped while still listening (the idle pass would no-op) and while
-    /// TERMINATED: the abrupt-stop path drains every socket synchronously
-    /// from inside `stop_listening` (which holds `&mut self`), and `stop()`
-    /// runs `deinit_if_we_can` itself right after.
+    /// Skipped while still listening (the idle pass would no-op). Re-entrance
+    /// during the abrupt-stop synchronous drain is handled by the
+    /// `DEINIT_RUNNING` guard inside `deinit_if_we_can` itself — gating on
+    /// `TERMINATED` here also blocked the post-`stop(true)` close defer that
+    /// must fire the downgrade when `stop` was called from inside a close
+    /// handler (the socket whose handler ran decrements only after `stop`
+    /// returns, so `stop`'s own idle pass still sees it live).
     pub(crate) fn on_websocket_closed(&self) {
-        let drained = any_server_dispatch!(self, |s| {
-            s.note_websocket_closed()
-                && !s.has_listener()
-                && !s.flags.contains(ServerFlags::TERMINATED)
-        });
+        let drained =
+            any_server_dispatch!(self, |s| s.note_websocket_closed() && !s.has_listener());
         if drained {
             any_server_dispatch_mut!(self, |s| s.deinit_if_we_can());
         }

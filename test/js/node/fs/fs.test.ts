@@ -4400,20 +4400,38 @@ it("async fs ops snapshot path buffers backed by resizable ArrayBuffers before a
         if (!fs.existsSync(path.join(dir, "real-dest.txt"))) throw new Error("rename did not happen");
       }
 
-      // Uint8Array view over a resizable ArrayBuffer, shrunk while hundreds
-      // of renames are still queued on the work pool.
+      // Issues 256 renames of a missing source, then shrinks the backing
+      // store while they are still queued on the work pool. Every rename must
+      // reject with ENOENT; a resolution or any other code means the path
+      // bytes were not snapshotted correctly.
+      async function expectAllEnoent(pathArg, rab, dest) {
+        const all = [];
+        for (let i = 0; i < 256; i++) {
+          all.push(fs.promises.rename(pathArg, dest).then(() => "resolved", err => err.code));
+        }
+        rab.resize(0);
+        const codes = await Promise.all(all);
+        if (!codes.every(c => c === "ENOENT")) {
+          throw new Error("expected all ENOENT, got: " + JSON.stringify([...new Set(codes)]));
+        }
+      }
+
+      // Uint8Array view over a resizable ArrayBuffer.
       {
         const srcBytes = Buffer.from(path.join(dir, "missing-view"));
         const rab = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
         new Uint8Array(rab).set(srcBytes);
         const view = new Uint8Array(rab, 0, srcBytes.length);
-        const dest = path.join(dir, "dest-view");
-        const all = [];
-        for (let i = 0; i < 256; i++) all.push(fs.promises.rename(view, dest).catch(err => err.code));
-        rab.resize(0);
-        const codes = await Promise.all(all);
-        const bad = codes.find(c => c !== "ENOENT");
-        if (bad !== undefined) throw new Error("expected ENOENT, got: " + bad);
+        await expectAllEnoent(view, rab, path.join(dir, "dest-view"));
+      }
+
+      // DataView over a resizable ArrayBuffer.
+      {
+        const srcBytes = Buffer.from(path.join(dir, "missing-dataview"));
+        const rab = new ArrayBuffer(128 * 1024, { maxByteLength: 128 * 1024 });
+        new Uint8Array(rab).set(srcBytes);
+        const view = new DataView(rab, 0, srcBytes.length);
+        await expectAllEnoent(view, rab, path.join(dir, "dest-dataview"));
       }
 
       // Resizable ArrayBuffer passed directly as the path.
@@ -4421,13 +4439,7 @@ it("async fs ops snapshot path buffers backed by resizable ArrayBuffers before a
         const srcBytes = Buffer.from(path.join(dir, "missing-direct"));
         const rab = new ArrayBuffer(srcBytes.length, { maxByteLength: srcBytes.length });
         new Uint8Array(rab).set(srcBytes);
-        const dest = path.join(dir, "dest-direct");
-        const all = [];
-        for (let i = 0; i < 256; i++) all.push(fs.promises.rename(rab, dest).catch(err => err.code));
-        rab.resize(0);
-        const codes = await Promise.all(all);
-        const bad = codes.find(c => c !== "ENOENT");
-        if (bad !== undefined) throw new Error("expected ENOENT, got: " + bad);
+        await expectAllEnoent(rab, rab, path.join(dir, "dest-direct"));
       }
 
       console.log("done");

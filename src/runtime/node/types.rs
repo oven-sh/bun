@@ -1272,7 +1272,13 @@ impl PathLikeExt for PathLike {
                 }
                 snapshot_resizable_path_buffer(&mut buffer, arguments.will_be_async);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    // The owned snapshot no longer references the JS backing
+                    // store, so the original value needs no GC root.
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 
@@ -1294,7 +1300,13 @@ impl PathLikeExt for PathLike {
                 }
                 snapshot_resizable_path_buffer(&mut buffer, arguments.will_be_async);
 
-                arguments.protect_eat();
+                if buffer.owns_buffer {
+                    // The owned snapshot no longer references the JS backing
+                    // store, so the original value needs no GC root.
+                    arguments.eat();
+                } else {
+                    arguments.protect_eat();
+                }
                 Ok(Some(Self::Buffer(buffer)))
             }
 

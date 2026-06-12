@@ -5619,7 +5619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // compile time using expression substitution here.
                 return Some(Expr {
                     loc,
-                    data: null_value_expr(),
+                    data: js_ast::ExprData::EUndefined(E::Undefined),
                 });
             } else {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
@@ -9698,10 +9698,6 @@ pub fn key_expr_data() -> js_ast::ExprData {
     // and infrequent — see js_ast::expr::IntoExprData for `EString`).
     use js_ast::expr::IntoExprData as _;
     E::String::init(b"key").into_data_store()
-}
-#[inline]
-pub fn null_value_expr() -> js_ast::ExprData {
-    js_ast::ExprData::ENull(E::Null {})
 }
 #[inline]
 pub fn false_value_expr() -> js_ast::ExprData {

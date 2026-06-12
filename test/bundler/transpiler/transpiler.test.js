@@ -4764,3 +4764,34 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}🦊`, message);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/32167
+describe("top-level this substitution", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+
+  it("substitutes undefined in an ES module with export syntax", () => {
+    expect(transpiler.transformSync("export {};\nconsole.log(this);")).toBe("export {};\nconsole.log(undefined);\n");
+  });
+
+  it("substitutes undefined in an ES module with import syntax", () => {
+    expect(transpiler.transformSync('import "foo";\nconsole.log(this);')).toBe(
+      'import"foo";\nconsole.log(undefined);\n',
+    );
+  });
+
+  it("substitutes undefined inside a top-level arrow in an ES module", () => {
+    expect(transpiler.transformSync("export {};\nconst f = () => [this];")).toBe(
+      "export {};\nconst f = () => [undefined];\n",
+    );
+  });
+
+  it("substitutes exports in a CommonJS module", () => {
+    expect(transpiler.transformSync("console.log(this);")).toBe("console.log(exports);\n");
+  });
+
+  it("does not substitute this nested inside a function", () => {
+    expect(transpiler.transformSync("export {};\nfunction f() {\n  return this;\n}")).toBe(
+      "export {};\nfunction f() {\n  return this;\n}\n",
+    );
+  });
+});

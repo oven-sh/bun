@@ -5301,7 +5301,7 @@ describe.concurrent("bundler", () => {
       "/node_modules/pkg/file2.js": `export default [this, this]`,
     },
     run: {
-      stdout: "[ null, null ] [ null, null ]",
+      stdout: "[ undefined, undefined ] [ undefined, undefined ]",
     },
   });
   itBundled("default/QuotedProperty", {

@@ -253,9 +253,14 @@ for (const [adapter, closedCode] of [
   ["postgres", "ERR_POSTGRES_CONNECTION_CLOSED"],
   ["mysql", "ERR_MYSQL_CONNECTION_CLOSED"],
 ] as const) {
-  test.concurrent(`${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`, async () => {
-    const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
-    expect(stdout).toBe(`onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`);
-    expect(exitCode).toBe(0);
-  });
+  test.concurrent(
+    `${adapter}: a throwing onclose does not prevent forced close() from resolving mid-handshake`,
+    async () => {
+      const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
+      expect(stdout).toBe(
+        `onclose: ${closedCode}\nuncaught: boom from onclose\nclosed\nquery rejected: ${closedCode}\n`,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
 }

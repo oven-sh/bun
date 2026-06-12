@@ -8,6 +8,7 @@ const {
   isatty,
   getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
+const { TTY } = process.platform === "win32" ? process.binding("tty_wrap") : { TTY: undefined };
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
@@ -20,6 +21,14 @@ function ReadStream(fd): void {
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
+  if (process.platform === "win32" && fd !== 0 && this.isTTY) {
+    // Windows raw mode for non-stdin tty.ReadStream instances must go through
+    // uv_tty_set_mode, which needs a uv_tty_t wrapper for this fd. fd 0 uses
+    // Bun's shared stdin source and Source__setRawModeStdin instead, while
+    // non-TTY fds should keep the existing construction behavior and only fail
+    // if setRawMode() is later requested.
+    this.$bunNativePtr = new TTY(fd);
+  }
 }
 $toClass(ReadStream, "ReadStream", fs.ReadStream);
 
@@ -71,12 +80,17 @@ Object.defineProperty(ReadStream, "prototype", {
             return this;
           }
 
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
+          // If you call setRawMode before you call on('data'), native-readable
+          // streams need to be constructed before uv_tty_set_mode to avoid EBADF.
+          // This corresponds to the `ensureConstructed` function in
+          // `native-readable.ts`. Plain fd-backed tty.ReadStream instances, such
+          // as reopened CONIN$, do not have $start and only use the TTYWrap for
+          // console mode changes.
+          this.$start?.();
 
-          const err = handle.setRawMode(flag);
+          // Native-readable handles expose setRawMode(bool), but the TTYWrap
+          // binding mirrors libuv and expects numeric uv_tty_mode_t values.
+          const err = handle.setRawMode(handle instanceof TTY ? (flag ? 1 : 0) : flag);
           if (err) {
             this.emit("error", err);
             return this;

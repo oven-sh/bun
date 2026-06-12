@@ -722,6 +722,10 @@ class PostgresAdapter
       try {
         const conn = await this.#ensureListenConnection();
         for (const channel of channels) {
+          // Connection dropped mid-sweep: the remaining rejections are
+          // connection-level, not per-channel, and onClose already armed the
+          // next tick for the replacement connection.
+          if (this.#listenConnection !== conn) break;
           // Channel may have been unlistened while we awaited the connection.
           if (!this.#listenChannels.has(channel)) continue;
           // Already acked on this connection (by a concurrent listen() or a
@@ -744,6 +748,9 @@ class PostgresAdapter
               }
             }
           } catch (err) {
+            // The rejection came from the connection dying, not from this
+            // channel: don't blame the channel; onClose owns the reschedule.
+            if (this.#listenConnection !== conn) break;
             // Per-channel LISTEN failed on a live connection (transient PG error,
             // permissions blip, etc). Surface the error and track consecutive
             // failures — drop the channel after #listenMaxChannelFailures so we
@@ -772,7 +779,7 @@ class PostgresAdapter
           // Schedule another tick; PG tolerates duplicate LISTENs as no-ops.
           this.#listenReconnectDelay = Math.min(this.#listenReconnectDelay * 2, 32000);
           this.#scheduleListenReconnect();
-        } else {
+        } else if (this.#listenConnection === conn) {
           // All channels reconnected successfully — reset backoff for the next failure.
           this.#listenReconnectDelay = 250;
           // Dropping permanently-failing channels above may have drained the

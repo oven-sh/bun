@@ -14006,3 +14006,60 @@ test("listen() during an in-flight sweep re-LISTEN fires its onlisten exactly on
   await db.unlisten("held_chan");
   await subOther!.unlisten();
 });
+
+// When the dedicated connection dies while the re-LISTEN sweep is iterating,
+// the remaining channels' rejections are connection-level failures; they must
+// not be booked (and warned about) as per-channel LISTEN failures, or one
+// drop counts N times toward the 10-strikes drop cap.
+test("a mid-sweep connection drop is not booked as per-channel LISTEN failures", async () => {
+  const warns: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warns.push(args.join(" "));
+  };
+  try {
+    await using mock = await createMockListenServer({});
+    await using db = postgres({
+      url: `postgres://u@127.0.0.1:${mock.port}/db`,
+      max: 1,
+      idleTimeout: 5,
+      connectionTimeout: 5,
+    });
+
+    let onlistenA = 0;
+    const { promise: recoveredA, resolve: resolveRecoveredA } = Promise.withResolvers<void>();
+    await db.listen(
+      "sweep_a",
+      () => {},
+      () => {
+        // Fires on the initial LISTEN and again when the post-drop sweep
+        // finally re-registers the channel on the recovered connection.
+        if (++onlistenA === 2) resolveRecoveredA();
+      },
+    );
+    await db.listen("sweep_b", () => {});
+    await db.listen("sweep_c", () => {});
+
+    // Freeze the reconnect sweep mid-LISTEN on its first channel, then kill
+    // the connection it is sweeping.
+    mock.holdAcksFor(["sweep_a"]);
+    mock.destroyConnections();
+    await mock.waitForQuery(qs => qs.filter(q => q === 'LISTEN "sweep_a"').length >= 2);
+    mock.holdAcksFor([]);
+    mock.destroyConnections();
+
+    // The next reconnect re-registers everything; onlisten for sweep_a fires
+    // again only once that sweep's LISTEN acks on the recovered connection.
+    await recoveredA;
+
+    // The drop is a connection-level failure: no channel may be blamed with
+    // a per-channel "failed (attempt N/10)" warning for it.
+    expect(warns).toEqual([]);
+
+    await db.unlisten("sweep_a");
+    await db.unlisten("sweep_b");
+    await db.unlisten("sweep_c");
+  } finally {
+    console.warn = originalWarn;
+  }
+});

@@ -11,11 +11,12 @@ const {
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
 const nodeHttpClient = $newZigFunction("fetch.zig", "nodeHttpClient", 2);
+const econnrefusedErrorCode = $newZigFunction("node_util_binding.zig", "econnrefusedErrorCode", 0);
 const { urlToHttpOptions } = require("internal/url");
 const { throwOnInvalidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
-const { ConnResetException } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort } = require("internal/shared");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -329,7 +330,9 @@ function ClientRequest(input, options, cb) {
       }
     };
 
-    const go = (url, proxy, softFail = false) => {
+    // `address` is the host actually being connected to: the host itself, or
+    // one of the resolved addresses when a custom lookup function is used.
+    const go = (url, proxy, softFail = false, address = host) => {
       const tls =
         protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
 
@@ -489,8 +492,10 @@ function ClientRequest(input, options, cb) {
         this[kFetchRequest]
           .catch(err => {
             if (err.code === "ConnectionRefused") {
-              err = new Error("ECONNREFUSED");
-              err.code = "ECONNREFUSED";
+              // Node reports connection failures via exceptionWithHostPort:
+              // "connect ECONNREFUSED 127.0.0.1:8000" plus errno, syscall,
+              // address and port properties.
+              err = new ExceptionWithHostPort(econnrefusedErrorCode(), "connect", address, +port);
             } else if (err.code === "InvalidContentLength") {
               // The native client refuses to deliver a response with a
               // malformed or conflicting Content-Length. Node surfaces this
@@ -582,14 +587,16 @@ function ClientRequest(input, options, cb) {
         // The last address is required to work, and if it fails we'll throw an error.
 
         const iterate = () => {
-          if (candidates.length === 0) {
-            // If we get to this point, it means that none of the addresses could be connected to.
-            fail(`connect ECONNREFUSED ${host}:${port}`, "Error", "ECONNREFUSED", "connect");
-            return;
+          const address = candidates.shift().address;
+          const [url, proxy] = getURL(address);
+          const softFail = candidates.length > 0;
+          const promise = go(url, proxy, softFail, address);
+          if (softFail) {
+            // More addresses remain: skip to the next one on failure.
+            // The last address must not attach this handler, or the failure
+            // would be reported twice (go() already emits the error).
+            promise.catch(iterate);
           }
-
-          const [url, proxy] = getURL(candidates.shift().address);
-          go(url, proxy, candidates.length > 0).catch(iterate);
         };
 
         iterate();

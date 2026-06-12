@@ -4876,7 +4876,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `mark_strict_mode_feature` performs for sloppy scopes.
             if self.is_strict_mode_output_format() {
                 for (feature, r, detail) in deferred {
-                    if feature == StrictModeFeature::ForInVarInit {
+                    // Like `ForInVarInit`, legacy octal literals never survive
+                    // into the printed output: the printer formats `E::Number`
+                    // from its f64 value, so `010` is already `8` there. And
+                    // the only caller that queues them (`e_number`) is gated
+                    // on `is_strict_mode()`, so sloppy scopes never reached
+                    // the output-format fallback for them in the first place.
+                    if matches!(
+                        feature,
+                        StrictModeFeature::ForInVarInit | StrictModeFeature::LegacyOctalLiteral
+                    ) {
                         continue;
                     }
                     let text = self.strict_mode_feature_text(feature, detail);
@@ -9226,6 +9235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
+        fn_or_arrow_data_parse.is_outside_fn_or_arrow = true;
         if opts.features.top_level_await || SCAN_ONLY {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
             fn_or_arrow_data_parse.is_top_level = true;

@@ -310,6 +310,60 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("legacy octal literal in a CommonJS-classified .mjs file still bundles to ESM format", async () => {
+    // Unlike sloppy-only declarations, legacy octal literals never survive
+    // into the printed bundle (the printer emits the numeric value), so the
+    // ESM output format check must not reject them.
+    using dir = tempDir("forced-esm-bundle-octal", {
+      "utils.mjs": "exports.x = 010;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Legacy octal literals");
+    expect(stdout).toContain("8");
+    expect(exitCode).toBe(0);
+  });
+
+  test("top-level return keeps the interop carve-out under non-ESM bundle formats", async () => {
+    // Top-level return detection must not depend on the output format: the
+    // same .mjs file classifies as CommonJS (sloppy) whether bundling to
+    // esm, cjs, or iife.
+    using dir = tempDir("forced-esm-bundle-return-formats", {
+      "r.mjs": "var v = 010;\nconsole.log(v);\nreturn;\n",
+    });
+    for (const [format, outfile, expected] of [
+      ["esm", "out.mjs", "8\n"],
+      ["cjs", "out.cjs", "8\n"],
+      // A CommonJS-classified entry point is wrapped but not invoked under
+      // the iife format (pre-existing for any CJS entry, e.g. a .cjs file).
+      ["iife", "out.iife.js", ""],
+    ]) {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "r.mjs", `--format=${format}`, `--outfile=${outfile}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [buildStdout, buildStderr, buildExit] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect({ format, buildStdout, buildStderr }).toMatchObject({ format, buildStderr: "" });
+      expect(buildExit).toBe(0);
+      const { stdout, stderr, exitCode } = await run(dir, outfile);
+      expect({ format, stdout, stderr }).toEqual({ format, stdout: expected, stderr: "" });
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("block-level functions in CommonJS-style .mjs files keep sloppy hoisting when bundled", async () => {
     // Symbol hoisting runs before exports_kind classification, so the
     // forced-ESM marking must not disable the sloppy-mode Annex B handling

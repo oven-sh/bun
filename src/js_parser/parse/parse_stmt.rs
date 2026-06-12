@@ -723,7 +723,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 b"A return statement cannot be used here",
             );
         }
-        if p.fn_or_arrow_data_parse.is_top_level
+        if p.fn_or_arrow_data_parse.is_outside_fn_or_arrow
             && !p.options.features.remove_cjs_module_wrapper
             && !p.options.repl_mode
         {

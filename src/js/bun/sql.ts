@@ -341,7 +341,9 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.notify = pool.listen
       ? (channel: string, payload: string) => {
           validateNotifyArgs(channel, payload);
-          return reserved_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+          // .execute() starts the query eagerly: notify() must send even when
+          // the caller fires and forgets instead of awaiting the lazy Query.
+          return reserved_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
         }
       : sql.notify;
     function onTransactionFinished(transaction_promise: Promise<any>) {
@@ -628,7 +630,9 @@ const SQL: typeof Bun.SQL = function SQL(
     transaction_sql.notify = pool.listen
       ? (channel: string, payload: string) => {
           validateNotifyArgs(channel, payload);
-          return transaction_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+          // .execute() starts the query eagerly: notify() must send even when
+          // the caller fires and forgets instead of awaiting the lazy Query.
+          return transaction_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
         }
       : sql.notify;
 
@@ -984,7 +988,9 @@ const SQL: typeof Bun.SQL = function SQL(
     // notify uses a regular pool connection via parameterized query — no dedicated listen connection
     sql.notify = (channel, payload) => {
       validateNotifyArgs(channel, payload);
-      return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+      // .execute() starts the query eagerly: notify() must send even when the
+      // caller fires and forgets instead of awaiting the lazy Query.
+      return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute();
     };
   } else {
     // Stubs for adapters without LISTEN/NOTIFY — keep the API shape uniform

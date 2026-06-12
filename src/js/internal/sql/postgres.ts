@@ -542,6 +542,13 @@ class PostgresAdapter
   // Shared by concurrent listen() calls on the same channel so they all await
   // the same LISTEN ack instead of skipping it and resolving early.
   #listenInFlight: Map<string, Promise<void>> = new Map();
+  // Channels whose LISTEN has been acked on the CURRENT connection. The
+  // reconnect sweep skips these so it only (re-)registers channels that are
+  // not yet live on this connection, instead of re-firing onlisten for
+  // channels that never lost it (e.g. one registered by a concurrent listen()
+  // on the same fresh connection, or one that already succeeded on a previous
+  // partial-failure retry tick). Cleared whenever the connection changes.
+  #listenRegisteredChannels: Set<string> = new Set();
   #listenReconnectDelay: number = 250;
   #listenReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   // Track consecutive per-channel LISTEN failures during reconnect. A channel
@@ -569,6 +576,7 @@ class PostgresAdapter
     this.#listenOnlistenCallbacks.clear();
     this.#listenChannelFailures.clear();
     this.#listenInFlight.clear();
+    this.#listenRegisteredChannels.clear();
     this.#listenReconnectDelay = 250;
     // Intentionally do NOT zero #listenState here — user code holding a `state`
     // reference from a previous listen() should be able to inspect the last-known
@@ -619,6 +627,16 @@ class PostgresAdapter
         thisConn = conn;
         this.#listenConnection = conn;
         this.#listenReconnectDelay = 250;
+        this.#listenRegisteredChannels.clear();
+        // A listen() arriving during the backoff window establishes the
+        // replacement connection before the armed reconnect timer fires;
+        // fast-forward it so every previously-tracked channel is re-LISTENed
+        // on this connection now instead of up to ~32s later.
+        if (this.#listenReconnectTimer) {
+          clearTimeout(this.#listenReconnectTimer);
+          this.#listenReconnectTimer = null;
+          this.#scheduleListenReconnect(true);
+        }
         // Mutate the shared #listenState in place so every previously-returned
         // listen() result sees the new connection's pid/secret on reconnect.
         const connWithIds = conn as unknown as { processId: number; secretKey: number };
@@ -651,6 +669,7 @@ class PostgresAdapter
         // replacement or arm a spurious reconnect on its behalf.
         if (this.#listenConnection !== thisConn) return;
         this.#listenConnection = null;
+        this.#listenRegisteredChannels.clear();
         this.#scheduleListenReconnect();
       },
     );
@@ -677,7 +696,7 @@ class PostgresAdapter
     }
   }
 
-  #scheduleListenReconnect() {
+  #scheduleListenReconnect(immediate = false) {
     // Reconnect retries indefinitely as long as there are tracked channels and
     // the adapter is open. There is no global attempt cap — if PG is permanently
     // down, this will keep firing every ≤32s forever (capped delay below). Stops
@@ -690,9 +709,10 @@ class PostgresAdapter
     if (this.closed || this.#listenChannels.size === 0 || this.#listenReconnectTimer) return;
     // Apply ±25% jitter (multiplier in [0.75, 1.25]) to the base delay to avoid
     // synchronized retry storms when many adapters in the same process lose their
-    // listen connection at once.
+    // listen connection at once. `immediate` skips the backoff entirely (used
+    // when the connection is already live and only the re-LISTEN pass is owed).
     const jitter = 0.75 + Math.random() * 0.5;
-    const delayMs = Math.max(1, Math.floor(this.#listenReconnectDelay * jitter));
+    const delayMs = immediate ? 0 : Math.max(1, Math.floor(this.#listenReconnectDelay * jitter));
     const timer = setTimeout(async () => {
       this.#listenReconnectTimer = null;
       if (this.closed || this.#listenChannels.size === 0) return;
@@ -704,8 +724,13 @@ class PostgresAdapter
         for (const channel of channels) {
           // Channel may have been unlistened while we awaited the connection.
           if (!this.#listenChannels.has(channel)) continue;
+          // Already acked on this connection (by a concurrent listen() or a
+          // previous partial-failure retry tick): re-issuing would re-fire
+          // onlisten for a subscription that never lost its connection.
+          if (this.#listenRegisteredChannels.has(channel)) continue;
           try {
             await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+            this.#listenRegisteredChannels.add(channel);
             const failures = this.#listenChannelFailures.get(channel);
             if (failures !== undefined) this.#listenChannelFailures.delete(channel);
             const onlistenPairs = this.#listenOnlistenCallbacks.get(channel);
@@ -849,6 +874,7 @@ class PostgresAdapter
             return;
           }
           await this.#runListenQuery(conn, `LISTEN ${this.#quoteChannel(channel)}`);
+          this.#listenRegisteredChannels.add(channel);
         })().finally(() => {
           if (this.#listenInFlight.get(channel) === inFlight) this.#listenInFlight.delete(channel);
         });
@@ -935,6 +961,7 @@ class PostgresAdapter
       // registration, so no UNLISTEN round-trip is needed.
       this.#closeListenConnectionIfIdle();
     } else if (this.#listenConnection && !this.#listenChannels.has(channel)) {
+      this.#listenRegisteredChannels.delete(channel);
       await this.#runListenQuery(this.#listenConnection, `UNLISTEN ${this.#quoteChannel(channel)}`);
     }
   }
@@ -951,6 +978,7 @@ class PostgresAdapter
     }
     const conn = this.#listenConnection;
     this.#listenConnection = null;
+    this.#listenRegisteredChannels.clear();
     if (conn) {
       try {
         conn.close();

@@ -327,7 +327,8 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
 
   test("reserved word inside a class body is an error even in a CommonJS-classified .mjs file", async () => {
     using dir = tempDir("forced-esm-class-reserved", {
-      "class.mjs": "exports.C = class { m() { var package = 1; return package; } };\nconsole.log(new exports.C().m());\n",
+      "class.mjs":
+        "exports.C = class { m() { var package = 1; return package; } };\nconsole.log(new exports.C().m());\n",
     });
     const { stdout, stderr, exitCode } = await run(dir, "class.mjs");
     expect(stderr).toContain('"package" is a reserved word and cannot be used in strict mode');

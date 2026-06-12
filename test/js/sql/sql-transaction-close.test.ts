@@ -331,6 +331,8 @@ test("postgres: transaction.close({ timeout }) rolls back when pending queries d
   await expect(begin).rejects.toMatchObject({ code: "ERR_POSTGRES_CONNECTION_CLOSED" });
   expect(pendingResult).toEqual([{ x: "hold" }]);
   expect(queryAfterClose).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+  // the rejected post-close query never reached the wire
+  expect(pg.commands).not.toContain("select 1 as x");
   expect(pg.commands).toContain("ROLLBACK");
   expect(pg.commands).not.toContain("COMMIT");
 });
@@ -433,8 +435,10 @@ test("postgres: transaction.close({ timeout }) still rolls back when the timeout
       await Bun.sleep(5);
     }
     // ROLLBACK can only go out on the wire after the in-flight query
-    // completes, so answer it now (settlement of a cancelled in-flight
-    // query is not the subject here)
+    // completes (simple queries never pipeline), so it cannot have reached
+    // the server yet; answer the held query now (settlement of a cancelled
+    // in-flight query is not the subject here)
+    expect(pg.commands).not.toContain("ROLLBACK");
     socket.write(selectResponse("hold"));
     await (pending as Promise<unknown>).catch(() => {});
     await closed;

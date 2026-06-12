@@ -266,11 +266,7 @@ if (isBun) {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.split(/\r?\n/).filter(Boolean), exitCode }).toEqual({
         stdout: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
         exitCode: 0,
@@ -302,11 +298,7 @@ if (isBun) {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "found-relative", exitCode: 0 });
     } finally {
       cleanup();

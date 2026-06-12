@@ -13318,14 +13318,25 @@ console.log("FIXTURE_DONE");
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// ASAN debug builds print a benign interception warning at startup; everything
+// else on the spawned child's stderr is a real failure.
+function filterSpawnStderr(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 // Minimal PostgreSQL wire-protocol backend for LISTEN/NOTIFY tests without
 // docker. The startup message gets AuthenticationOk + BackendKeyData(pid,
 // secret) + ReadyForQuery; every simple query is acked with CommandComplete +
 // ReadyForQuery, and a `LISTEN "x"` query additionally pushes the
-// NotificationResponse ('A') messages configured under `notificationsOnListen.x`.
-// Received query texts are recorded in `queries`.
+// NotificationResponse ('A') messages configured under `notificationsOnListen.x`,
+// unless `x` is in `options.errorOnListen`, in which case the LISTEN is
+// rejected with an ErrorResponse. Received query texts are recorded in `queries`.
 async function createMockListenServer(
   notificationsOnListen: Record<string, Array<{ channel: string; payload: string }>>,
+  options: { errorOnListen?: string[] } = {},
 ) {
   const pkt = (type: string, body: Buffer) => {
     const header = Buffer.alloc(5);
@@ -13339,6 +13350,7 @@ async function createMockListenServer(
     return b;
   };
   const cstr = (s: string) => Buffer.concat([Buffer.from(s), Buffer.from([0])]);
+  const field = (type: string, value: string) => Buffer.concat([Buffer.from(type), cstr(value)]);
 
   const pid = 7777;
   const secret = 424242;
@@ -13348,8 +13360,22 @@ async function createMockListenServer(
   const commandComplete = (tag: string) => pkt("C", cstr(tag));
   const notification = (channel: string, payload: string) =>
     pkt("A", Buffer.concat([int32(pid), cstr(channel), cstr(payload)]));
+  // ErrorResponse body is a sequence of <field type byte><cstring value>
+  // pairs closed by a single zero byte; S/V/C/M are the fields libpq requires.
+  const errorResponse = (message: string) =>
+    pkt(
+      "E",
+      Buffer.concat([
+        field("S", "ERROR"),
+        field("V", "ERROR"),
+        field("C", "42601"),
+        field("M", message),
+        Buffer.from([0]),
+      ]),
+    );
 
   const queries: string[] = [];
+  const queryWaiters: Array<{ matches: (queries: string[]) => boolean; resolve: () => void }> = [];
   let closedConnections = 0;
   const closeWaiters: Array<() => void> = [];
   const liveSockets = new Set<net.Socket>();
@@ -13369,8 +13395,15 @@ async function createMockListenServer(
       const length = data.readInt32BE(1);
       const query = data.toString("utf8", 5, length);
       queries.push(query);
+      for (let i = queryWaiters.length - 1; i >= 0; i--) {
+        if (queryWaiters[i].matches(queries)) queryWaiters.splice(i, 1)[0].resolve();
+      }
       if (query.startsWith("LISTEN")) {
         const listened = query.slice('LISTEN "'.length, -1);
+        if (options.errorOnListen?.includes(listened)) {
+          socket.write(Buffer.concat([errorResponse(`listen failure for ${listened}`), readyForQuery]));
+          return;
+        }
         const toSend = notificationsOnListen[listened] ?? [];
         socket.write(
           Buffer.concat([
@@ -13403,10 +13436,19 @@ async function createMockListenServer(
     },
     waitForClose: () =>
       closedConnections > 0 ? Promise.resolve() : new Promise<void>(resolve => closeWaiters.push(resolve)),
+    // Resolves once the recorded query log satisfies the predicate (checked
+    // immediately and after every received query).
+    waitForQuery: (matches: (queries: string[]) => boolean) =>
+      matches(queries) ? Promise.resolve() : new Promise<void>(resolve => queryWaiters.push({ matches, resolve })),
     // Push a NotificationResponse to every live connection, independent of any
     // LISTEN ack (tests asynchronous NOTIFY delivery).
     notify: (channel: string, payload: string) => {
       for (const socket of liveSockets) socket.write(notification(channel, payload));
+    },
+    // Abruptly drop every live connection (simulates the backend dying) while
+    // keeping the server around for reconnect attempts.
+    destroyConnections: () => {
+      for (const socket of liveSockets) socket.destroy();
     },
     [Symbol.asyncDispose]: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
@@ -13531,8 +13573,9 @@ test("process exits after the last unlisten without an explicit close", async ()
     killSignal: "SIGKILL",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("UNLISTENED\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -13575,6 +13618,7 @@ test("process stays alive while subscribed and exits after the notification is h
     killSignal: "SIGKILL",
   });
 
+  const stderrPromise = proc.stderr.text();
   let stdout = "";
   let notified = false;
   const decoder = new TextDecoder();
@@ -13585,9 +13629,117 @@ test("process stays alive while subscribed and exits after the notification is h
       mock.notify("stay_alive_chan", "ping");
     }
   }
-  const exitCode = await proc.exited;
+  const [stderr, exitCode] = await Promise.all([stderrPromise, proc.exited]);
 
   // An exit before GOT means the subscription did not keep the process alive.
   expect(stdout).toBe("SUBSCRIBED\nGOT ping\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A LISTEN the server rejects (ErrorResponse on a live connection) rolls back
+// the registration it made; when that rollback drains the last subscription,
+// the freshly-created ref()'d dedicated connection must be released too or the
+// process would hang forever with zero subscriptions.
+test("process exits after a rejected listen without an explicit close", async () => {
+  await using mock = await createMockListenServer({}, { errorOnListen: ["bad_chan"] });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      try {
+        await sql.listen("bad_chan", () => {});
+        console.log("LISTEN DID NOT FAIL");
+      } catch (err) {
+        console.log("CAUGHT " + err.message);
+      }
+      // Deliberately no sql.close(): the process must exit on its own.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if the failed-listen rollback regresses into leaving
+    // the dedicated connection holding the event loop open forever.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("CAUGHT listen failure for bad_chan\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// Losing the dedicated listen connection arms a backoff timer before the
+// reconnect attempt. During that window the timer is the only thing keeping a
+// subscribed-but-disconnected process alive; if it were unref()'d the child
+// would exit after the drop and never see the post-reconnect notification.
+test("process survives the reconnect backoff window and gets notifications after reconnecting", async () => {
+  await using mock = await createMockListenServer({});
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { SQL } from "bun";
+      const sql = new SQL({
+        url: "postgres://u@127.0.0.1:${mock.port}/db",
+        max: 1,
+        idleTimeout: 5,
+        connectionTimeout: 5,
+      });
+      const sub = await sql.listen("reconnect_chan", async payload => {
+        console.log("GOT " + payload);
+        // Last subscription: closes the reconnected dedicated connection,
+        // freeing the process.
+        await sub.unlisten();
+      });
+      console.log("SUBSCRIBED");
+      // Deliberately nothing else keeping the event loop alive.
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Bounds the child if reconnect or the unlisten teardown regresses.
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+
+  const stderrPromise = proc.stderr.text();
+  let stdout = "";
+  let dropped = false;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    if (!dropped && stdout.includes("SUBSCRIBED\n")) {
+      dropped = true;
+      // Deliver the notification only once the child re-LISTENed on the
+      // reconnect connection (the channel's second LISTEN); not awaited so a
+      // child that wrongly exits during the backoff window ends the stdout
+      // loop and fails the assertions below instead of deadlocking the test.
+      mock
+        .waitForQuery(qs => qs.filter(q => q === 'LISTEN "reconnect_chan"').length >= 2)
+        .then(() => mock.notify("reconnect_chan", "after-reconnect"));
+      mock.destroyConnections();
+    }
+  }
+  const [stderr, exitCode] = await Promise.all([stderrPromise, proc.exited]);
+
+  // An exit before GOT means the process died during the backoff window
+  // instead of staying alive to reconnect.
+  expect(stdout).toBe("SUBSCRIBED\nGOT after-reconnect\n");
+  expect(filterSpawnStderr(stderr)).toBe("");
   expect(exitCode).toBe(0);
 });

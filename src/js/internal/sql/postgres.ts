@@ -740,13 +740,20 @@ class PostgresAdapter
         } else {
           // All channels reconnected successfully — reset backoff for the next failure.
           this.#listenReconnectDelay = 250;
+          // Dropping permanently-failing channels above may have drained the
+          // set; release the connection in that case.
+          this.#closeListenConnectionIfIdle();
         }
       } catch {
         this.#listenReconnectDelay = Math.min(this.#listenReconnectDelay * 2, 32000);
         this.#scheduleListenReconnect();
       }
     }, delayMs);
-    timer.unref?.();
+    // Deliberately NOT unref()'d: during the backoff window this timer is the
+    // only thing keeping a subscribed-but-disconnected process alive, and it
+    // can never outlive the subscriptions it serves (armed only while
+    // channels are tracked; cleared by #closeListen and
+    // #closeListenConnectionIfIdle when they drain).
     this.#listenReconnectTimer = timer;
   }
 
@@ -853,6 +860,10 @@ class PostgresAdapter
         this.#listenChannels.delete(channel);
         this.#listenOnlistenCallbacks.delete(channel);
       }
+      // The LISTEN can fail on a live connection (server ErrorResponse); if
+      // this rollback drained the last subscription, drop the now-idle
+      // ref()'d connection or it would hold the event loop open forever.
+      this.#closeListenConnectionIfIdle();
       throw err;
     }
 

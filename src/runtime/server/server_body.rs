@@ -329,6 +329,7 @@ impl ReqLike for uws_sys::h3::Request {
 }
 
 pub trait RespLike {
+    const IS_H3: bool;
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
     fn timeout(&mut self, seconds: u8);
@@ -336,6 +337,7 @@ pub trait RespLike {
     fn to_any_response(&mut self) -> uws::AnyResponse;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
+    const IS_H3: bool = false;
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::NewAppResponse::<SSL>::write_status(self, s)
@@ -375,6 +377,7 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     }
 }
 impl RespLike for uws_sys::h3::Response {
+    const IS_H3: bool = true;
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h3::Response::write_status(self, s)
@@ -403,13 +406,15 @@ impl RespLike for uws_sys::h3::Response {
 
 /// Answer a request that arrived after the server's JS wrapper was downgraded
 /// (idle keep-alive sockets aren't counted in `pending_requests`, so the
-/// wrapper can be gone before the next request fires). 503-and-close instead
-/// of dispatching into a dead handler shadow. One helper so every dispatch
-/// trampoline gets the same guard.
+/// wrapper can be gone before the next request fires). 503 instead of
+/// dispatching into a dead handler shadow. One helper so every dispatch
+/// trampoline gets the same guard. H1 closes the connection; H3 ends only this
+/// stream (`!R::IS_H3`) so sibling streams on the same QUIC connection survive
+/// — same per-protocol close treatment as the other reject fast paths.
 #[inline]
 pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
     resp.write_status(b"503 Service Unavailable");
-    resp.end_without_body(true);
+    resp.end_without_body(!R::IS_H3);
 }
 
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =

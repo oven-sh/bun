@@ -2806,6 +2806,12 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
+        if server.js_value_for_dispatch().is_none() {
+            RespLike::write_status(resp, b"503 Service Unavailable");
+            RespLike::end_without_body(resp, true);
+            return;
+        }
+
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx>(
             req,
@@ -2890,6 +2896,11 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
+        if self.js_value_for_dispatch().is_none() {
+            RespLike::write_status(resp, b"503 Service Unavailable");
+            RespLike::end_without_body(resp, true);
+            return;
+        }
         let self_ptr: *mut Self = self;
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = self.prepare_js_request_context_for::<Ctx>(
@@ -3189,6 +3200,12 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
+        if server_ref.js_value_for_dispatch().is_none() {
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
+
         let should_deinit_context = core::cell::Cell::new(false);
         // SAFETY: `server_ptr` is the live heap server registered for this route;
         // `req`/`resp` are the live uWS handles passed to the route handler.
@@ -3265,6 +3282,11 @@ where
         // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
         // duration.
         let this = unsafe { &mut *self_ptr };
+        if this.js_value_for_dispatch().is_none() {
+            resp.write_status(b"503 Service Unavailable");
+            resp.end_without_body(true);
+            return;
+        }
         if this.config.on_node_http_request.is_some() {
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.

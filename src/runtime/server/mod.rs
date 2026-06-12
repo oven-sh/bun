@@ -570,6 +570,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
+    /// Returns the wrapper, or None if it has been finalized (server fully
+    /// stopped and the JS reference dropped). Dispatch trampolines should
+    /// answer 503+close on None.
+    pub fn js_value_for_dispatch(&self) -> Option<JSValue> {
+        match &self.js_value {
+            jsc::JsRef::Finalized => None,
+            _ => self.js_value.try_get(),
+        }
+    }
+
     /// Per-monomorphization static.
     /// Rust statics cannot be const-generic; routed through a
     /// `&'static AtomicBool` so the four (SSL,DEBUG) instantiations share one
@@ -1031,6 +1041,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) {
+        // Idle keep-alive sockets aren't counted in pending_requests, so the
+        // wrapper can have been collected before this fires. Refuse and close
+        // rather than panicking in js_value_assert_alive() below.
+        // SAFETY: `this` is the live server backref for this request.
+        if unsafe { &*this }.js_value_for_dispatch().is_none() {
+            let resp_ref = bun_opaque::opaque_deref_mut(resp);
+            resp_ref.write_status(b"503 Service Unavailable");
+            resp_ref.end_without_body(true);
+            return;
+        }
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(prepared) = Self::prepare_js_request_context(
             this,
@@ -1081,6 +1101,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let user_route = unsafe { &*user_route };
         let server = user_route.server.cast_mut();
         let index = user_route.id;
+
+        // SAFETY: `server` is the live backref stored in `user_route`.
+        if unsafe { &*server }.js_value_for_dispatch().is_none() {
+            let resp_ref = bun_opaque::opaque_deref_mut(resp);
+            resp_ref.write_status(b"503 Service Unavailable");
+            resp_ref.end_without_body(true);
+            return;
+        }
 
         let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = Self::prepare_js_request_context(

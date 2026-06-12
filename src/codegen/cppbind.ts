@@ -1156,7 +1156,7 @@ async function main() {
         " ".repeat(sin) +
           (errors.length > 0 ? "✗" : "✓") +
           " cppbind.ts generated bindings to " +
-          resultFilePath +
+          rustFilePath +
           (errors.length > 0 ? " with errors" : "") +
           " in " +
           (now - start) +

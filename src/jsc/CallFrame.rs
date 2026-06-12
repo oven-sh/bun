@@ -317,13 +317,6 @@ impl<'a> ArgumentsSlice<'a> {
         self.arena.get_or_insert_with(bun_alloc::Arena::new)
     }
 
-    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        if self.remaining().is_empty() {
-            return None;
-        }
-        self.next_eat()
-    }
-
     pub fn from(vm: &'a VirtualMachine, slice: &'a [JSValueRef]) -> ArgumentsSlice<'a> {
         // SAFETY: JSValueRef and JSValue have identical layout (both are encoded i64).
         let as_values =

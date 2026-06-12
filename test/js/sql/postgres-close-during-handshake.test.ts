@@ -5,10 +5,11 @@
 // `pg_terminate_backend`) while the event loop was blocked. The underlying
 // PostgresSQLConnection queues its on_connect callback as a microtask when the
 // server's ReadyForQuery arrives; if the socket is closed in the same I/O tick,
-// `#onClose` runs synchronously first and transitions the pooled connection to
-// `closed`. The pending `#onConnected` microtask then fires and, without the
-// fix in `src/js/internal/sql/postgres.ts`, unconditionally overwrites state
-// to `connected` and re-adds the dead connection (with `this.connection ===
+// `handleClose` runs synchronously first and transitions the pooled connection
+// to `closed`. The pending `handleConnected` microtask then fires and, without
+// the guard in `BasePooledConnection.handleConnected`
+// (src/js/internal/sql/shared.ts), unconditionally overwrites state to
+// `connected` and re-adds the dead connection (with `this.connection ===
 // null`) to `readyConnections`. Subsequent queries dispatch `null` to Rust's
 // PostgresSQLQuery.run, which throws "connection must be a
 // PostgresSQLConnection" — and the pool never recovers because it thinks the
@@ -23,8 +24,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // socket. The ParameterStatus stack matches what a real server sends on
 // startup so uSockets' recv delivers the whole handshake plus the FIN in one
 // poll dispatch; that is what makes on_close land in the same I/O tick as
-// ReadyForQuery and fire `#onClose` before the queued `#onConnected` microtask
-// drains.
+// ReadyForQuery and fire `handleClose` before the queued `handleConnected`
+// microtask drains.
 const FIXTURE = /* js */ `
 const net = require("node:net");
 const { SQL } = require("bun");

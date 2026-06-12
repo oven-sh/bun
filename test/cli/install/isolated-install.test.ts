@@ -763,9 +763,10 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   await runBunInstall(bunEnv, packageDir);
 
   const bunDir = join(packageDir, "node_modules", ".bun");
-  const entryName = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-fixed@"))!;
-  // highest satisfying ^1.0.0 in the graph
-  expect(entryName).toBe("peer-deps-fixed@1.0.0+7ff199101204a65d");
+  // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
+  // listing when the entry is missing or keyed with a different peer hash
+  const entryName = "peer-deps-fixed@1.0.0+7ff199101204a65d";
+  expect(await readdirSorted(bunDir)).toContain(entryName);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     version: "1.1.0",
   });
@@ -778,6 +779,44 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     version: "1.1.0",
   });
+});
+
+test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
+  // The peer alias `no-deps` points at `npm:a-dep@^1.0.2` while the real
+  // no-deps package (in two versions) is also in the graph. Loading bun.lock
+  // must look the edge up under the aliased *real* name (a-dep) the way the
+  // fresh resolver does; a lookup under the alias would find the real
+  // no-deps packages, whose versions also satisfy ^1.0.2, and rebind the
+  // edge to the wrong package.
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "aliased-peer-root",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "normal-dep-and-dev-dep": "1.0.0",
+          "two-range-deps": "1.0.0",
+        },
+      }),
+      "packages/m/package.json": JSON.stringify({
+        name: "m",
+        version: "1.0.0",
+        peerDependencies: { "no-deps": "npm:a-dep@^1.0.2" },
+      }),
+    },
+  });
+
+  await runBunInstall(bunEnv, packageDir);
+  const aliasLink = join(packageDir, "packages", "m", "node_modules", "no-deps", "package.json");
+  const fresh = await file(aliasLink).json();
+  expect(fresh).toMatchObject({ name: "a-dep" });
+
+  // reinstall from bun.lock: still the aliased package, same version
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "packages", "m", "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(await file(aliasLink).json()).toEqual(fresh);
 });
 
 describe("existing node_modules, missing node_modules/.bun", () => {

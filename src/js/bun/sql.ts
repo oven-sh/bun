@@ -237,6 +237,21 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  const validateChannel = (channel: string) => {
+    if (typeof channel !== "string" || !channel) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+    if (channel.indexOf("\0") !== -1) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    }
+  };
+  const validateNotifyArgs = (channel: string, payload: string) => {
+    validateChannel(channel);
+    if (typeof payload !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+    }
+  };
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -317,6 +332,18 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
+    // listen/unlisten share the adapter-wide dedicated listen connection
+    // regardless of caller; NOTIFY runs on this reserved connection so it
+    // joins any transaction the user opened on it. Non-Postgres adapters get
+    // the same stubs as the top-level sql.
+    reserved_sql.listen = sql.listen;
+    reserved_sql.unlisten = sql.unlisten;
+    reserved_sql.notify = pool.listen
+      ? (channel: string, payload: string) => {
+          validateNotifyArgs(channel, payload);
+          return reserved_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+        }
+      : sql.notify;
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -592,6 +619,18 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
     transaction_sql.array = sql.array;
+    // listen/unlisten share the adapter-wide dedicated listen connection;
+    // NOTIFY must run on this connection so it participates in the
+    // transaction (PostgreSQL queues it and delivers it only on COMMIT).
+    // Non-Postgres adapters get the same stubs as the top-level sql.
+    transaction_sql.listen = sql.listen;
+    transaction_sql.unlisten = sql.unlisten;
+    transaction_sql.notify = pool.listen
+      ? (channel: string, payload: string) => {
+          validateNotifyArgs(channel, payload);
+          return transaction_sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
+        }
+      : sql.notify;
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -939,23 +978,12 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
 
-  const validateChannel = (channel: string) => {
-    if (typeof channel !== "string" || !channel) {
-      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
-    }
-    if (channel.indexOf("\0") !== -1) {
-      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
-    }
-  };
   if (pool.listen) {
     sql.listen = (channel, onnotify, onlisten?) => pool.listen(channel, onnotify, onlisten);
     sql.unlisten = (channel, onnotify?) => pool.unlisten(channel, onnotify);
     // notify uses a regular pool connection via parameterized query — no dedicated listen connection
     sql.notify = (channel, payload) => {
-      validateChannel(channel);
-      if (typeof payload !== "string") {
-        throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
-      }
+      validateNotifyArgs(channel, payload);
       return sql.unsafe("SELECT pg_notify($1, $2)", [channel, payload]);
     };
   } else {
@@ -979,8 +1007,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return unsupported();
     };
     sql.notify = (channel, payload) => {
-      validateChannel(channel);
-      if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+      validateNotifyArgs(channel, payload);
       return unsupported();
     };
   }

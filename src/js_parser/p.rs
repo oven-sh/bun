@@ -4807,7 +4807,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::StrictModeKind::ExplicitStrictMode => {
                 if self.module_scope_directive_loc.start >= 0 {
-                    why = b"This file is in strict mode because of the \"use strict\" directive here";
+                    why =
+                        b"This file is in strict mode because of the \"use strict\" directive here";
                     where_ = self.source.range_of_string(self.module_scope_directive_loc);
                 } else {
                     // The directive is inside an enclosing function whose

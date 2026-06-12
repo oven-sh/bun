@@ -59,6 +59,22 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
       expect(err.message).toBe("Update needs to have at least one column");
     }
   });
+
+  test("empty update helper throws even alongside a literal assignment", async () => {
+    // sqlite previously allowed the helper-last form of this (it stripped the
+    // trailing comma and executed the literal assignment) while throwing for
+    // the helper-first form; postgres and mysql throw for both. All three now
+    // throw for both orders.
+    await using sql = makeSql();
+    for (const query of [
+      () => sql`UPDATE t SET updated_at = CURRENT_TIMESTAMP, ${sql({ name: undefined })} WHERE id = 1`,
+      () => sql`UPDATE t SET ${sql({ name: undefined })}, updated_at = CURRENT_TIMESTAMP WHERE id = 1`,
+    ]) {
+      const err = await query().catch(e => e);
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Update needs to have at least one column");
+    }
+  });
 });
 
 // Behaviors that must keep working; these execute real queries, so they run
@@ -71,6 +87,15 @@ describe("sqlite helper behavior preserved", () => {
 
     await sql`update t set ${sql({ name: "Mary", age: undefined })} where id = 1`;
     expect(await sql`SELECT * FROM t`).toEqual([{ id: 1, name: "Mary", age: 30 }]);
+  });
+
+  test("update helper alongside a literal assignment still works with defined values", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, flag INT)`;
+    await sql`INSERT INTO t (id, name, flag) VALUES (1, 'John', 0)`;
+
+    await sql`UPDATE t SET flag = 1, ${sql({ name: "Mary", age: undefined })} WHERE id = 1`;
+    expect(await sql`SELECT * FROM t`).toEqual([{ id: 1, name: "Mary", flag: 1 }]);
   });
 
   test("undefined items and null column values in WHERE IN helper still bind NULL", async () => {

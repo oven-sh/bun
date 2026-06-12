@@ -501,8 +501,8 @@ impl JSMySQLConnection {
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
         // `foundRows: true` (default) asks the server to return matched-rows
-        // counts instead of changed-rows counts in OK_Packet.affected_rows —
-        // matches the `mysql2` / `mariadb` driver defaults. Enabled at
+        // counts instead of changed-rows counts in OK_Packet.affected_rows,
+        // matching the `mysql2` / `mariadb` driver defaults. Enabled at
         // handshake time by OR-ing `CLIENT_FOUND_ROWS` into the client
         // capability set. `callframe.argument(16)` returns UNDEFINED when
         // the JS layer omits the arg; `to_boolean` coerces UNDEFINED to

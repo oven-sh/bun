@@ -1838,7 +1838,9 @@ function parseOptions(
       } else if (lowerKey === "foundrows") {
         // Accept "false"/"0" (case-insensitive) to disable; anything else
         // (including "true"/"1" or empty) leaves the default enabled. Only
-        // consumed by the MySQL adapter.
+        // consumed by the MySQL adapter. `toJSON()` returns an array when a
+        // key appears more than once (`?foundRows=a&foundRows=b`), so coerce
+        // to a string before calling `.toLowerCase`.
         const value = `${queryObject[key]}`.toLowerCase();
         foundRows = !(value === "false" || value === "0");
       } else {

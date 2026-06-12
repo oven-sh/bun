@@ -76,16 +76,8 @@ function EventEmitter(opts) {
     }
   }
 }
-Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = {};
-// A function's own "prototype" property is non-enumerable and non-configurable:
-// https://tc39.es/ecma262/#sec-function-instances-prototype
-Object.defineProperty(EventEmitter, "prototype", {
-  value: EventEmitterPrototype,
-  writable: true,
-  enumerable: false,
-  configurable: false,
-});
+$toClass(EventEmitter, "EventEmitter");
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -93,8 +85,6 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   return this;
 };
 Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
-
-EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return _getMaxListeners(this);

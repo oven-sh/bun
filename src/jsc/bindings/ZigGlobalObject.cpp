@@ -2733,6 +2733,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     auto target = callFrame->argument(0).toObject(globalObject);
     auto name = callFrame->argument(1);
     JSObject* base = callFrame->argument(2).getObject();
+    JSValue prototypeValue = callFrame->argument(3);
     JSObject* prototypeBase = nullptr;
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
@@ -2751,16 +2752,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
         }
     }
 
-    JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
+    // If the target already has its own "prototype" property, keep it. node:tty
+    // installs a lazy accessor for "prototype" that materializes on first use.
+    bool hasOwnPrototype = target->hasOwnProperty(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    prototype->structure()->setMayBePrototype(true);
-    prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+    if (!hasOwnPrototype) {
+        JSObject* prototype = prototypeValue.getObject();
+        if (!prototype) {
+            // No prototype object was passed: create one inheriting from the base's.
+            prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        }
+
+        // Transitions the structure rather than flagging it in place: the object may
+        // share its structure (object literals, the empty-object structure cache).
+        prototype->didBecomePrototype(vm);
+
+        // Keep a "constructor" the caller already defined (e.g. a shared class prototype).
+        bool hasOwnConstructor = prototype->hasOwnProperty(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (!hasOwnConstructor) {
+            prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+        }
+
+        // A function's own "prototype" property is non-enumerable and non-configurable
+        // (writable for function-style constructors): https://tc39.es/ecma262/#sec-function-instances-prototype
+        target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    }
 
     target->setPrototypeDirect(vm, base);
-    // A function's own "prototype" property is non-enumerable and non-configurable
-    // (writable for function-style constructors): https://tc39.es/ecma262/#sec-function-instances-prototype
-    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
     target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
 
     return JSValue::encode(jsUndefined());

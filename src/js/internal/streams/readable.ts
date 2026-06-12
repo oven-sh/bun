@@ -28,7 +28,6 @@ const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectDefineProperties = Object.defineProperties;
-const ObjectDefineProperty = Object.defineProperty;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
@@ -129,7 +128,7 @@ function ReadableState(options, stream, isDuplex) {
     this.encoding = options.encoding;
   }
 }
-ObjectDefineProperty(ReadableState, "prototype", { value: {}, writable: true, enumerable: false, configurable: false });
+$toClass(ReadableState, "ReadableState");
 ObjectDefineProperties(ReadableState.prototype, {
   objectMode: makeBitMapDescriptor(kObjectMode),
   ended: makeBitMapDescriptor(kEnded),

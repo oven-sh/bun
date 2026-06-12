@@ -92,7 +92,7 @@ function Certificate(): void {
   this.exportPublicKey = exportPublicKey;
   this.exportChallenge = exportChallenge;
 }
-Object.defineProperty(Certificate, "prototype", { value: {}, writable: true, enumerable: false, configurable: false });
+$toClass(Certificate, "Certificate");
 Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;

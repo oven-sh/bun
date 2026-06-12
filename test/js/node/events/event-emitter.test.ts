@@ -963,4 +963,20 @@ describe("constructor 'prototype' property descriptor", () => {
       configurable: false,
     });
   });
+
+  // $toClass also fills in prototype.constructor the way a class declaration
+  // would. tty's streams and Bun.$.Shell reuse prototype objects owned by
+  // other constructors, so they are excluded here.
+  const withOwnConstructor = constructors.filter(([name]) => !name.startsWith("tty.") && name !== "Bun.$.Shell");
+
+  test.each(withOwnConstructor)("%s prototype.constructor matches Node's descriptor", (_name, get) => {
+    const ctor = get();
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(ctor.prototype, "constructor")!;
+    expect(value).toBe(ctor);
+    expect(attributes).toEqual({
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
 });

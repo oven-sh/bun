@@ -996,7 +996,7 @@ function ClientRequest(input, options, cb) {
 }
 
 const ClientRequestPrototype = {
-  constructor: ClientRequest,
+  // "constructor" is defined (non-enumerable, like Node's) by $toClass below.
   __proto__: OutgoingMessage.prototype,
 
   setTimeout(msecs, callback) {
@@ -1078,13 +1078,7 @@ const ClientRequestPrototype = {
   },
 };
 
-Object.defineProperty(ClientRequest, "prototype", {
-  value: ClientRequestPrototype,
-  writable: true,
-  enumerable: false,
-  configurable: false,
-});
-$setPrototypeDirect.$call(ClientRequest, OutgoingMessage);
+$toClass(ClientRequest, "ClientRequest", OutgoingMessage, ClientRequestPrototype);
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {

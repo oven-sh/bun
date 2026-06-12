@@ -764,14 +764,19 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
  *
  * This does:
  * - Sets the name of the function to the given name
- * - Sets .prototype to Object.create(base?.prototype, { constructor: { value: fn } })
+ * - Defines .prototype with the spec's descriptor for a function-style class
+ *   ({ writable: true, enumerable: false, configurable: false }), using the
+ *   passed `prototype` object, or creating one inheriting base?.prototype.
+ *   A pre-existing own .prototype (e.g. a lazy accessor) is kept as-is.
+ * - Sets prototype.constructor to fn unless the object already has its own
  * - Calls Object.setPrototypeOf(fn, base ?? Function.prototype)
  *
  * @param fn - The function to convert to a class
  * @param name - The name of the class
  * @param base - The base class to inherit from
+ * @param prototype - Use this object as the prototype instead of creating one
  */
-declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
+declare function $toClass(fn: Function, name: string, base?: Function | undefined | null, prototype?: object);
 
 declare function $min(a: number, b: number): number;
 

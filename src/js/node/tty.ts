@@ -21,12 +21,7 @@ function ReadStream(fd): void {
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
-// Not $toClass: that would define a non-configurable "prototype" which the lazy
-// accessor below could not replace. Apply its other effects (static inheritance
-// and the function name) directly.
-$setPrototypeDirect.$call(ReadStream, fs.ReadStream);
-Object.defineProperty(ReadStream, "name", { value: "ReadStream", configurable: true });
-
+// Defined before $toClass so $toClass keeps this lazy accessor as the "prototype".
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
@@ -112,6 +107,7 @@ Object.defineProperty(ReadStream, "prototype", {
   enumerable: false,
   configurable: true,
 });
+$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);

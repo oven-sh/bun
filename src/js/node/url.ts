@@ -44,7 +44,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Object.defineProperty(Url, "prototype", { value: {}, writable: true, enumerable: false, configurable: false });
+$toClass(Url, "Url");
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 

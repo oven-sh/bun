@@ -957,6 +957,20 @@ fn step_sequence_one(
 ) -> JsResult<Option<AdvanceSequenceStatus>> {
     let _g = group_begin!();
     let buntest = buntest_strong.get();
+
+    // Once --bail has hit its threshold, start nothing further — no test
+    // callbacks, no remaining hooks. Reporting Done lets the group loops
+    // drain without executing anything so the run loop can unwind to the
+    // bail exit in `TestCommand::exec`.
+    if let Some(reporter) = buntest.reporter {
+        // SAFETY: the reporter outlives every BunTest (owned by
+        // `test_command::exec`); `exit_file()` nulls this field before the
+        // file is dropped.
+        if unsafe { reporter.as_ref() }.jest.bailed {
+            return Ok(Some(AdvanceSequenceStatus::Done));
+        }
+    }
+
     let buntest_ptr = NonNull::from(&mut *buntest);
     let this = &mut buntest.execution;
 

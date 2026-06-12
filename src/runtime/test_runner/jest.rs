@@ -127,6 +127,13 @@ pub struct TestRunner<'a> {
     pub concurrent_test_glob: Option<&'a [&'a [u8]]>,
     pub last_file: u64,
     pub bail: u32,
+    /// Set when `--bail`'s failure threshold is reached (after the bail
+    /// message has been printed). Execution stops starting new entries, the
+    /// run loops unwind without ticking the event loop further, and
+    /// `TestCommand::exec` exits 1 through the shared teardown path instead
+    /// of `Global::exit(1)` mid-run (which would skip the pre-exit
+    /// collection that keeps ASAN leak-check exits clean).
+    pub bailed: bool,
     pub max_concurrency: u32,
 
     pub drainer: jsc::AnyTask::AnyTask,

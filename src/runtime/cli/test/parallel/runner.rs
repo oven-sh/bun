@@ -352,10 +352,11 @@ fn build_worker_argv(
     if let Some(seed) = opts.seed {
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
-    // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (see test_command.rs handle_test_completed), which the coordinator would
-    // misread as a crash. Cross-worker bail is handled at file granularity by
-    // the coordinator instead.
+    // --bail is intentionally NOT forwarded: an in-worker bail (see
+    // test_command.rs handle_test_completed) would stop the worker mid
+    // file-list, which the coordinator would misread as a crash.
+    // Cross-worker bail is handled at file granularity by the coordinator
+    // instead, and `jest.bailed` is never set in a worker (bail stays 0).
     if opts.repeat_count > 0 {
         argv.push(print_z(format_args!("--rerun-each={}", opts.repeat_count))?);
     }

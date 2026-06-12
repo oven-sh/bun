@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes).
-function ustarHeader(name: string, size: number): Buffer {
+function ustarHeader(name: string, size: number, mode = 0o644, type: "0" | "5" = "0"): Buffer {
   if (Buffer.byteLength(name) > 99) throw new Error("ustar name too long: " + name);
   const h = Buffer.alloc(512);
   h.write(name, 0, 100, "utf8");
-  h.write("0000644\0", 100);
+  h.write(mode.toString(8).padStart(7, "0") + "\0", 100);
   h.write("0000000\0", 108);
   h.write("0000000\0", 116);
   h.write(size.toString(8).padStart(11, "0") + "\0", 124);
   h.write("00000000000\0", 136);
   h.write("        ", 148);
-  h.write("0", 156);
+  h.write(type, 156);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
@@ -23,13 +23,22 @@ function ustarHeader(name: string, size: number): Buffer {
   return h;
 }
 
-function ustarEntry(name: string, data: Buffer): Buffer {
+function ustarEntry(name: string, data: Buffer, mode?: number, type?: "0" | "5"): Buffer {
   const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
-  return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+  return Buffer.concat([ustarHeader(name, data.length, mode, type), data, pad]);
 }
 
-function buildTarball(entries: Array<{ name: string; data: Buffer | string }>): Uint8Array {
-  const parts = entries.map(e => ustarEntry(e.name, typeof e.data === "string" ? Buffer.from(e.data) : e.data));
+function buildTarball(
+  entries: Array<{ name: string; data?: Buffer | string; mode?: number; type?: "0" | "5" }>,
+): Uint8Array {
+  const parts = entries.map(e =>
+    ustarEntry(
+      e.name,
+      typeof e.data === "string" ? Buffer.from(e.data) : (e.data ?? Buffer.alloc(0)),
+      e.mode,
+      e.type,
+    ),
+  );
   parts.push(Buffer.alloc(1024));
   return new Uint8Array(Buffer.concat(parts));
 }
@@ -496,6 +505,21 @@ describe("Bun.Archive", () => {
 
       const content = await Bun.file(join(newDir, "hello.txt")).text();
       expect(content).toBe("Hello, World!");
+    });
+
+    test.skipIf(isWindows)("preserves directory mode after creating missing parents", async () => {
+      using dir = tempDir("archive-extract-dir-mode", {});
+      const tarball = buildTarball([{ name: "private/nested", mode: 0o700, type: "5" }]);
+      const archive = new Bun.Archive(tarball);
+
+      const previousUmask = process.umask(0);
+      try {
+        await archive.extract(String(dir));
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      expect(statSync(join(String(dir), "private", "nested")).mode & 0o777).toBe(0o700);
     });
 
     test("throws when extracting to a file path instead of directory", async () => {

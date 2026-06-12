@@ -2091,12 +2091,22 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    let mut custom_dir_buf = bun_paths::path_buffer_pool::get();
+                    // Node resolves relative `paths` entries against the cwd
+                    // (Module._nodeModulePaths); `check_package_path` requires
+                    // an absolute source dir.
+                    let custom_dir = if bun_paths::is_absolute(custom_utf8.slice()) {
+                        custom_utf8.slice()
+                    } else {
+                        let Some(joined) = self
+                            .fs_ref()
+                            .abs_buf_checked(&[custom_utf8.slice()], &mut *custom_dir_buf)
+                        else {
+                            continue;
+                        };
+                        joined
+                    };
+                    match self.check_package_path(custom_dir, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),

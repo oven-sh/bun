@@ -183,6 +183,42 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
   }
 });
 
+test("options.paths entries that are relative throw MODULE_NOT_FOUND instead of crashing", () => {
+  let err;
+  try {
+    require.resolve("package-that-does-not-exist-for-this-test", { paths: ["relative-dir"] });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+
+  const fakeParent = new Module("/some/other/directory/file.js");
+  fakeParent.filename = "/some/other/directory/file.js";
+  fakeParent.paths = Module._nodeModulePaths("/some/other/directory");
+
+  err = undefined;
+  try {
+    Module._resolveFilename("package-that-does-not-exist-for-this-test", fakeParent, false, {
+      paths: ["relative-dir"],
+    });
+  } catch (e) {
+    err = e;
+  }
+  expect(err.code).toBe("MODULE_NOT_FOUND");
+});
+
+test("options.paths entries that are numbers throw instead of crashing", () => {
+  let err;
+  try {
+    require.resolve("package-that-does-not-exist-for-this-test", { paths: [-2147483648, -2147483648] });
+  } catch (e) {
+    err = e;
+  }
+  // Node.js rejects non-string entries; Bun coerces them to strings and
+  // treats them as relative directories.
+  expect(err.code).toBe(isBun ? "MODULE_NOT_FOUND" : "ERR_INVALID_ARG_TYPE");
+});
+
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
   // Test with string (which is iterable but not an array)
   expect(() => {
@@ -199,3 +235,81 @@ test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is no
     Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
+
+if (isBun) {
+  // The unfixed resolver aborted the whole process on non-absolute
+  // options.paths entries, so run the crashing inputs in a subprocess.
+  const { bunExe, bunEnv } = await import("harness");
+
+  test("non-absolute options.paths entries do not abort the process", async () => {
+    const { path: dir, cleanup } = createTempDir("resolve-paths-nonabs", {
+      "package.json": JSON.stringify({ name: "fixture", version: "1.0.0" }),
+      // An existing node_modules directory disables auto-install in the
+      // spawned process, so no network is involved.
+      "node_modules/.bun-keep": "",
+      "index.js": `
+        for (const paths of [[-2147483648, -2147483648], ["relative-dir"], [""]]) {
+          try {
+            require("package-that-does-not-exist-for-this-test", { paths });
+            console.log("resolved");
+          } catch (e) {
+            console.log(e.code);
+          }
+        }
+      `,
+    });
+
+    try {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: dir,
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout: stdout.split(/\r?\n/).filter(Boolean), exitCode }).toEqual({
+        stdout: ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
+        exitCode: 0,
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("relative options.paths entries resolve against the current working directory", async () => {
+    const { path: dir, cleanup } = createTempDir("resolve-paths-relcwd", {
+      "package.json": JSON.stringify({ name: "fixture", version: "1.0.0" }),
+      "node_modules/.bun-keep": "",
+      "subdir/node_modules/paths-rel-pkg/package.json": JSON.stringify({
+        name: "paths-rel-pkg",
+        main: "index.js",
+      }),
+      "subdir/node_modules/paths-rel-pkg/index.js": "module.exports = 'found-relative';",
+      "index.js": `
+        const resolved = require.resolve("paths-rel-pkg", { paths: ["subdir"] });
+        console.log(require(resolved));
+      `,
+    });
+
+    try {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: dir,
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "found-relative", exitCode: 0 });
+    } finally {
+      cleanup();
+    }
+  });
+}

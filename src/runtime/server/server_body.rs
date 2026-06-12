@@ -3504,9 +3504,10 @@ where
         error_code: u8,
         raw_packet: &[u8],
     ) {
-        let Some(callback) = self.on_clienterror.get() else {
+        let callback = self.on_clienterror;
+        if callback.is_empty() {
             return;
-        };
+        }
         {
             let is_ssl = SSL;
             let global = self.global();
@@ -3651,8 +3652,8 @@ pub(super) fn server_set_on_client_error_(
                 // SAFETY: as_ returned a non-null *mut to a live server.
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
-                    this.on_clienterror.deinit();
-                    this.on_clienterror = StrongOptional::create(callback, global);
+                    this.on_clienterror = callback;
+                    <$T>::js_gc_on_client_error_set(server, global, callback);
                     // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(

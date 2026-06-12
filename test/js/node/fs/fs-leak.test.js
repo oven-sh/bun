@@ -134,6 +134,7 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
   const WARM = 32;
   const script = `
     const fs = require("node:fs");
+    const util = require("node:util");
     const { heapStats } = require("bun:jsc");
 
     const N = ${N};
@@ -178,6 +179,16 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
         .writeFile(Buffer.from("out-aborted.txt"), Buffer.from("data-" + i), { signal: AbortSignal.abort() })
         .catch(expectAborted),
     );
+    // writev/readv buffers take per-element roots at parse and the array root
+    // at schedule; both must be released at completion.
+    const writev = util.promisify(fs.writev);
+    const readv = util.promisify(fs.readv);
+    const vfd = fs.openSync("vec.txt", "w+");
+    deltas.writevBuffers = await measure("Uint8Array", i =>
+      writev(vfd, [Buffer.from("vec-a-" + i), Buffer.from("vec-b-" + i)], 0),
+    );
+    deltas.readvBuffers = await measure("Uint8Array", i => readv(vfd, [Buffer.alloc(8), Buffer.alloc(8)], 0));
+    fs.closeSync(vfd);
     if (!fs.existsSync("out-0.txt") || !fs.existsSync("out-1.txt")) {
       throw new Error("writeFile segment did not write its files");
     }
@@ -210,6 +221,8 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
     accessArrayBufferPath: "ok",
     writeFileBufferPath: "ok",
     abortedWriteFileBufferPath: "ok",
+    writevBuffers: "ok",
+    readvBuffers: "ok",
   });
   expect(exitCode).toBe(0);
 });

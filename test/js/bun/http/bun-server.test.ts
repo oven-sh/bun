@@ -613,6 +613,104 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
+test("late keep-alive request to a route after stop()+GC does not crash", async () => {
+  // Per-route handlers live in ServerRouteList, which is reachable from JS only
+  // through the Server wrapper. After a graceful stop() the user may drop the
+  // wrapper, and a subsequent GC may finalize it before an idle keep-alive
+  // connection sends one more request. Run in a subprocess so the previous
+  // js_value_assert_alive() panic on that path surfaces as a non-zero exit
+  // instead of taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { fullGC } = require("bun:jsc");
+
+        let received = "";
+        let waiter = Promise.withResolvers();
+        const nextResponse = () => {
+          // Wait until a complete HTTP/1.1 response (headers + 2-byte body or
+          // an empty body for 503) has arrived, then consume it.
+          return (async () => {
+            while (true) {
+              const headerEnd = received.indexOf("\\r\\n\\r\\n");
+              if (headerEnd !== -1) {
+                const head = received.slice(0, headerEnd);
+                const m = /content-length: (\\d+)/i.exec(head);
+                const bodyLen = m ? Number(m[1]) : 0;
+                const total = headerEnd + 4 + bodyLen;
+                if (received.length >= total) {
+                  const status = head.split("\\r\\n")[0];
+                  received = received.slice(total);
+                  return status;
+                }
+              }
+              await waiter.promise;
+              waiter = Promise.withResolvers();
+            }
+          })();
+        };
+
+        const port = await (async () => {
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            routes: { "/r": () => new Response("ok") },
+          });
+          const port = server.port;
+
+          globalThis.sock = await Bun.connect({
+            hostname: "127.0.0.1",
+            port,
+            socket: {
+              data(socket, data) {
+                received += data.toString("latin1");
+                waiter.resolve();
+              },
+              close() { waiter.resolve(); },
+              error() { waiter.resolve(); },
+            },
+          });
+
+          sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+          const first = await nextResponse();
+          if (!first.includes("200")) throw new Error("first request failed: " + first);
+
+          // Graceful stop: existing connections stay open, listener closes.
+          server.stop();
+          return port;
+        })();
+        // The only \`server\` binding is now out of scope.
+
+        for (let i = 0; i < 10; i++) {
+          Bun.gc(true);
+          fullGC();
+          await Bun.sleep(10);
+        }
+
+        // Reuse the same keep-alive socket. Previously this would dispatch into
+        // a finalized route list and panic; now it must answer (200 if the
+        // wrapper happened to survive, 503 if it was collected).
+        sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        const second = await nextResponse();
+        console.log(second);
+
+        sock.end();
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toMatch(/HTTP\/1\.1 (200|503)/);
+  expect(exitCode).toBe(0);
+});
+
 test("should be able to async upgrade using custom protocol", async () => {
   const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
   using server = Bun.serve<unknown>({

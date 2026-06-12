@@ -21,7 +21,7 @@
 
 import { spawn, spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -45,7 +45,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
   }, 120_000);
 
   test("napi env cleanup hooks run when the process exits from bun test", async () => {
-    const dir = tempDirWithFiles("napi-cleanup-hooks-bun-test", {
+    using dir = tempDir("napi-cleanup-hooks-bun-test", {
       "hooks.test.js": `
         import { test, expect } from "bun:test";
         const addon = require(${JSON.stringify(hookAddon)});
@@ -56,7 +56,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     await using proc = spawn({
       cmd: [bunExe(), "test", "hooks.test.js"],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -71,7 +71,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
   });
 
   test("napi_wrap finalizers run during env teardown when exiting from bun test", async () => {
-    const dir = tempDirWithFiles("napi-wrap-teardown-bun-test", {
+    using dir = tempDir("napi-wrap-teardown-bun-test", {
       "wrap.test.js": `
         import { test, expect } from "bun:test";
         const addon = require(${JSON.stringify(wrapAddon)});
@@ -82,7 +82,7 @@ describe.concurrent("napi cleanup at bun test exit", () => {
     await using proc = spawn({
       cmd: [bunExe(), "test", "wrap.test.js"],
       env: bunEnv,
-      cwd: dir,
+      cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });

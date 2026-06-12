@@ -838,7 +838,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    // Convert the raw `this` so a JSLexicalEnvironment passed by a scope-resolved
+    // bare call can never be stored in mock.contexts or returned by mockReturnThis.
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);
@@ -1425,12 +1427,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    globalObject->overridenDateNow = -1;
-    return JSValue::encode(callframe->thisValue());
-}
-
 // Helper function for native code to set the overriden Date.now() time
 extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__setOverridenDateNow(JSC::JSGlobalObject* globalObject, double time_ms)
 {
@@ -1455,12 +1451,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
         if (std::isnormal(dateInstance->internalNumber())) {
             globalObject->overridenDateNow = dateInstance->internalNumber();
         }
-        return JSValue::encode(callframe->thisValue());
+        return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
     }
     // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
     globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
 
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

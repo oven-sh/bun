@@ -2283,6 +2283,14 @@ impl JSValue {
             Ok(p)
         }
     }
+    /// `JSValue.toThis` with strict-mode semantics: identity for every value
+    /// except scope objects (`JSLexicalEnvironment` etc., which JSC passes as
+    /// the raw `this` of bare calls resolved through a scope), which become
+    /// `undefined`. Use this before exposing a callframe's `this` to user JS.
+    /// Cannot throw.
+    pub fn to_this_strict(self, global: &JSGlobalObject) -> JSValue {
+        JSC__JSValue__toThisStrict(self, global)
+    }
     /// `JSValue.unwrapBoxedPrimitive` — unwraps Number,
     /// Boolean, String, and BigInt objects to their primitive forms.
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -2646,6 +2654,7 @@ unsafe extern "C" {
     ) -> bool;
     safe fn Bun__JSValue__toNumber(this: JSValue, global: &JSGlobalObject) -> f64;
     safe fn JSC__JSValue__toObject(this: JSValue, global: &JSGlobalObject) -> *mut JSObject;
+    safe fn JSC__JSValue__toThisStrict(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__unwrapBoxedPrimitive(global: &JSGlobalObject, this: JSValue) -> JSValue;
     safe fn JSC__JSValue__getPrototype(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__getName(

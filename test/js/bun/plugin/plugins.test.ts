@@ -596,3 +596,26 @@ it("recursion throws stack overflow at entry point", () => {
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
 });
+
+it("builder methods called as bare functions do not leak the scope object", () => {
+  // A bare call through a captured variable makes JSC pass the activation
+  // object as the raw `this`, which must not be returned for chaining.
+  let results: unknown[] = [];
+  plugin({
+    name: "bare call this",
+    setup(builder) {
+      const onLoad = builder.onLoad;
+      const onResolve = builder.onResolve;
+      const module_ = builder.module;
+      function capture() {
+        return [onLoad, onResolve, module_];
+      }
+      results = [
+        onLoad({ filter: /never-matches-bare-call-this/ }, () => undefined as any),
+        onResolve({ filter: /never-matches-bare-call-this/ }, () => undefined),
+        module_("never-imported-bare-call-this-module", () => ({ exports: {}, loader: "object" })),
+      ];
+    },
+  });
+  expect(results).toEqual([undefined, undefined, undefined]);
+});

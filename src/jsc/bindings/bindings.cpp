@@ -4694,6 +4694,11 @@ JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC::JSGloba
     return value.toObject(arg1);
 }
 
+[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__toThisStrict(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+{
+    return JSC::JSValue::encode(JSC::JSValue::decode(JSValue0).toThis(arg1, JSC::ECMAMode::strict()));
+}
+
 [[ZIG_EXPORT(null_is_throw)]] JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

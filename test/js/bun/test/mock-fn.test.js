@@ -486,6 +486,22 @@ describe("mock()", () => {
     expect(fn).toHaveBeenCalledWith(43);
     expect(fn).toHaveBeenCalledWith(44);
   });
+  test("bare call through a captured variable does not leak the scope object", () => {
+    // When the callee is resolved through a closure scope, JSC passes the
+    // activation object as the raw `this`; the mock must sanitize it.
+    const returnsThis = jest.fn();
+    returnsThis.mockReturnThis();
+    const impl = jest.fn(function () {
+      return this;
+    });
+    function capture() {
+      return [returnsThis, impl];
+    }
+    expect(returnsThis()).toBeUndefined();
+    expect(returnsThis.mock.contexts).toEqual([undefined]);
+    expect(impl()).toBeUndefined();
+    expect(impl.mock.contexts).toEqual([undefined]);
+  });
   test("this arg", () => {
     const fn = jest.fn(function (add) {
       return this.foo + add;

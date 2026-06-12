@@ -1944,6 +1944,55 @@ describe("global virtual store", () => {
     expect(existsSync(join(entry, "node_modules", "no-deps", "package.json"))).toBe(true);
   });
 
+  test("disabling the global store detaches entries on the next install", async () => {
+    // The reverse of the upgrade test above: a project installed with the
+    // global store enabled has `node_modules/.bun/<X>` symlinks into
+    // `<cache>/links/`. Re-running install with the store disabled must
+    // replace those links with real project-local directories — the
+    // warm-path existence check passes *through* a live link, so without
+    // stale-link detection the project would silently keep running against
+    // (and a later rebuild would write into) the shared store.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-disable",
+        dependencies: { "two-range-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    expect(lstatSync(entry).isSymbolicLink()).toBe(true);
+    const globalTarget = readlinkSync(entry);
+
+    await runBunInstall({ ...bunEnv, BUN_INSTALL_GLOBAL_STORE: "0" }, packageDir, { savesLockfile: false });
+
+    // Every entry is detached into a real project-local directory.
+    expect(lstatSync(entry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(entry).isDirectory()).toBe(true);
+    const depEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.1.0");
+    expect(lstatSync(depEntry).isSymbolicLink()).toBe(false);
+    expect(lstatSync(depEntry).isDirectory()).toBe(true);
+
+    // The rebuilt project-local tree resolves, including dep links between
+    // detached entries.
+    expect(await file(join(entry, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+      version: "1.0.0",
+    });
+    expect(await file(join(entry, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+    });
+    expect(await file(join(packageDir, "node_modules", "two-range-deps", "package.json")).json()).toMatchObject({
+      name: "two-range-deps",
+    });
+
+    // The shared global entry is left untouched for other projects.
+    expect(existsSync(join(globalTarget, "node_modules", "two-range-deps", "package.json"))).toBe(true);
+  });
+
   test("preserves bun patch workspace when install runs before --commit", async () => {
     // Regression: `bun patch <pkg>` detaches the project store entry from the
     // global virtual store (symlink → real directory) so the user can edit it.

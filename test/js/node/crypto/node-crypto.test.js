@@ -575,6 +575,28 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  it("createDiffieHellman throws on invalid prime size", () => {
+    expect(() => crypto.createDiffieHellman(2)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "Invalid DH parameters",
+      })
+    );
+  });
+
+  it("createDiffieHellman throws when generator is non-numeric with numeric prime", () => {
+    // String generators are accepted in the buffer-prime branch (as the encoding arg), so the
+    // early type guard lets them through; the strict numeric check only fires in this branch.
+    expect(() => crypto.createDiffieHellman(1024, "abc")).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Second argument must be an int32",
+      })
+    );
+  });
 });
 
 describe("ECDH", () => {

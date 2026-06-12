@@ -631,6 +631,19 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   }
 
   protected handleConnected(err: any) {
+    // The native connection queues this callback as a microtask when the
+    // handshake completes (e.g. Postgres ReadyForQuery). If the socket is
+    // closed in the same I/O tick (the server's FIN rides the same read
+    // buffer, or the pool closes mid-handshake), handleClose runs
+    // synchronously first and transitions us to `closed`. When this
+    // microtask then fires, honoring it would resurrect a dead connection
+    // into readyConnections with `this.connection === null`, which
+    // dispatches null to the native query's run() and wedges the pool
+    // permanently (it never retries a slot it thinks is live). Only a slot
+    // still `pending` is legitimately waiting for this callback.
+    if (this.state !== PooledConnectionState.pending) {
+      return;
+    }
     if (err) {
       err = this.wrapError(err);
     }

@@ -40,10 +40,12 @@ const wrapAddon = join(napiAppDir, "build", "Debug", "test_wrap_cleanup_order.no
 //
 // BUN_DESTRUCT_VM_ON_EXIT is stripped too: these tests pin the normal exit
 // path, where pending wrap finalizers are skipped. Under destruct-vm the
-// final exit collection deliberately runs them (in sweep order, not LIFO),
-// which would print "finalize order:" and break the negative assertion
-// below. This file is also in test/no-validate-leaksan.txt so the asan
-// runner does not set destruct-vm or detect_leaks for it in the first place.
+// exit collection defers swept wraps' finalizers (and schedule() drops the
+// tasks), but wraps that survive the collection can still be finalized
+// immediately by ~VM's lastChanceToFinalize, which would print
+// "finalize order:" and break the negative assertion below. This file is
+// also in test/no-validate-leaksan.txt so the asan runner does not set
+// destruct-vm or detect_leaks for it in the first place.
 const childEnv = {
   ...bunEnv,
   BUN_JSC_validateExceptionChecks: undefined,

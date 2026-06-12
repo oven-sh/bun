@@ -2867,7 +2867,17 @@ class Foo {
     expectParseError("export {}; package: ;", reservedPackage);
     expectParseError('import package from "x"', reservedPackage);
     expectParseError('import * as package from "x"', reservedPackage);
-    expectParseError('import { a as package } from "x"', reservedPackage);
+    {
+      // The caret points at the local binding name, not the import alias
+      let err;
+      try {
+        parsed('import { a as package } from "x"', false, false);
+      } catch (e) {
+        err = e instanceof AggregateError ? e.errors[0] : e;
+      }
+      expect(err?.message).toBe(reservedPackage);
+      expect(err?.position).toMatchObject({ column: 15, length: 7 });
+    }
     expectParseError("export {}; let eval = 1", 'Declarations with the name "eval" cannot be used in strict mode');
     expectParseError(
       "export {}; function arguments() {}",

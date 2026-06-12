@@ -697,6 +697,16 @@ pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// `$newNativeFunction("runtime/cli/Arguments.rs", "getUseSystemCA", 0)` in
+/// `node:tls` — see `generated_js2native.rs`.
+pub(crate) fn get_use_system_ca(
+    _global: &bun_jsc::JSGlobalObject,
+    _frame: &bun_jsc::CallFrame,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    let v = Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
+    Ok(bun_jsc::JSValue::js_boolean(v))
+}
+
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing

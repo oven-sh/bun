@@ -4,8 +4,8 @@ const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
 const path = require("node:path");
 const { throwNotImplemented, kHandle } = require("internal/shared");
 
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
-const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
+const sendHelper = $newNativeFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const onInternalMessage = $newNativeFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 
 let child_process;
 

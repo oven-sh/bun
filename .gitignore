@@ -129,7 +129,6 @@ sign.json
 src/bake/generated.ts
 src/generated_enum_extractor.zig
 src/jsc/bindings-obj
-src/jsc/bindings/GeneratedJS2Native.zig
 src/jsc/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes

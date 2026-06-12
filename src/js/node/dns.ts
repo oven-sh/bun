@@ -65,17 +65,17 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $newZigFunction(
-  "runtime/dns_jsc/dns.zig",
+const getRuntimeDefaultResultOrderOption = $newNativeFunction(
+  "runtime/dns_jsc/dns.rs",
   "Resolver.getRuntimeDefaultResultOrderOption",
   0,
 );
 
 function newResolver(options) {
-  if (!newResolver.zig) {
-    newResolver.zig = $newZigFunction("runtime/dns_jsc/dns.zig", "Resolver.newResolver", 1);
+  if (!newResolver.native) {
+    newResolver.native = $newNativeFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1);
   }
-  return newResolver.zig(options);
+  return newResolver.native(options);
 }
 
 function defaultResultOrder() {

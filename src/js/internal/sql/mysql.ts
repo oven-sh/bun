@@ -18,7 +18,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $zig("mysql.zig", "createBinding") as MySQLDotZig;
+} = $native("mysql.rs", "createBinding") as MySQLNativeBinding;
 
 function wrapError(error: Error | MySQLErrorOptions) {
   if (Error.isError(error)) {
@@ -79,7 +79,7 @@ initMySQL(
   },
 );
 
-export interface MySQLDotZig {
+export interface MySQLNativeBinding {
   init: (
     onResolveQuery: (
       query: Query<any, any>,

@@ -143,8 +143,8 @@ const ONLY_ENUMERABLE = 2;
  *
  * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newZigFunction(
-  "node_util_binding.zig",
+const extractedSplitNewLinesFastPathStringsOnly = $newNativeFunction(
+  "node_util_binding.rs",
   "extractedSplitNewLinesFastPathStringsOnly",
   1,
 );

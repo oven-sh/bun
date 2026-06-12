@@ -664,7 +664,7 @@ const realpathSync: typeof import("node:fs").realpathSync =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newNativeFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }
@@ -787,7 +787,7 @@ const realpath: typeof import("node:fs").realpath =
           if (typeof options === "string") encoding = options;
           else encoding = options?.encoding;
           if (encoding) {
-            (assertEncodingForWindows ?? $newZigFunction("runtime/node/types.zig", "jsAssertEncodingValid", 1))(
+            (assertEncodingForWindows ?? $newNativeFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
               encoding,
             );
           }

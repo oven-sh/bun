@@ -19,16 +19,7 @@ pub use host_fns::{generate_symbol_for_function, generate_symbols};
 // ─── implementation modules ──────────────────────────────────────────────────
 
 #[path = "ffi_body.rs"]
-mod ffi_body;
-
-/// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
-/// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
-/// the codegen-expected path so the dispatch table links without forcing the
-/// generator to special-case `ffi/ffi.zig`.
-pub mod ffi {
-    pub use super::ffi_body::bun__ffi__cc;
-}
+pub mod ffi_body;
 
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;

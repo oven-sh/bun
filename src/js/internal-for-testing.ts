@@ -26,15 +26,17 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {
-  parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
-  apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
-  makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
+  parse: $newNativeFunction("patch_jsc/testing.rs", "TestingAPIs.parse", 1),
+  apply: $newNativeFunction("patch_jsc/testing.rs", "TestingAPIs.apply", 2),
+  makeDiff: $newNativeFunction("patch_jsc/testing.rs", "TestingAPIs.makeDiff", 2),
 };
 
 export const internalSourceMap = {
-  fromVLQ: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.fromVLQ", 1) as (vlq: string) => Uint8Array,
-  toVLQ: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.toVLQ", 1) as (blob: Uint8Array) => string,
-  find: $newZigFunction("sourcemap/InternalSourceMap.zig", "TestingAPIs.find", 3) as (
+  fromVLQ: $newNativeFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.fromVLQ", 1) as (
+    vlq: string,
+  ) => Uint8Array,
+  toVLQ: $newNativeFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.toVLQ", 1) as (blob: Uint8Array) => string,
+  find: $newNativeFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.find", 3) as (
     blob: Uint8Array,
     line: number,
     col: number,
@@ -47,14 +49,14 @@ export const internalSourceMap = {
   } | null,
 };
 
-const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
-const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
+const shellLex = $newNativeFunction("shell_body.rs", "TestingAPIs.shellLex", 2);
+const shellParse = $newNativeFunction("shell_body.rs", "TestingAPIs.shellParse", 2);
 
-export const sslCtxLiveCount = $newZigFunction("SecureContext.zig", "jsLiveCount", 0);
+export const sslCtxLiveCount = $newNativeFunction("SecureContext.rs", "jsLiveCount", 0);
 
-export const escapeRegExp = $newZigFunction("escapeRegExp.zig", "jsEscapeRegExp", 1);
-export const escapeRegExpForPackageNameMatching = $newZigFunction(
-  "escapeRegExp.zig",
+export const escapeRegExp = $newNativeFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
+export const escapeRegExpForPackageNameMatching = $newNativeFunction(
+  "escapeRegExp.rs",
   "jsEscapeRegExpForPackageNameMatching",
   1,
 );
@@ -70,33 +72,33 @@ export const shellInternals = {
    * const isDisabled = builtinDisabled("cp")
    * ```
    */
-  builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
+  builtinDisabled: $newNativeFunction("shell_body.rs", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
 export const subprocessInternals = {
-  injectStdioReadError: $newZigFunction("subprocess.zig", "TestingAPIs.injectStdioReadError", 2) as (
+  injectStdioReadError: $newNativeFunction("subprocess.rs", "TestingAPIs.injectStdioReadError", 2) as (
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
   ) => boolean,
 };
 
 export const iniInternals = {
-  parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
-  loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
+  parse: $newNativeFunction("ini_jsc.rs", "IniTestingAPIs.parse", 1),
+  loadNpmrc: $newNativeFunction("ini_jsc.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
 };
 
 export const cssInternals = {
-  minifyTestWithOptions: $newZigFunction("css_internals.zig", "minifyTestWithOptions", 3),
-  minifyErrorTestWithOptions: $newZigFunction("css_internals.zig", "minifyErrorTestWithOptions", 3),
-  testWithOptions: $newZigFunction("css_internals.zig", "testWithOptions", 3),
-  prefixTestWithOptions: $newZigFunction("css_internals.zig", "prefixTestWithOptions", 3),
-  minifyTest: $newZigFunction("css_internals.zig", "minifyTest", 3),
-  prefixTest: $newZigFunction("css_internals.zig", "prefixTest", 3),
-  _test: $newZigFunction("css_internals.zig", "_test", 3),
-  attrTest: $newZigFunction("css_internals.zig", "attrTest", 3),
+  minifyTestWithOptions: $newNativeFunction("css_internals.rs", "minifyTestWithOptions", 3),
+  minifyErrorTestWithOptions: $newNativeFunction("css_internals.rs", "minifyErrorTestWithOptions", 3),
+  testWithOptions: $newNativeFunction("css_internals.rs", "testWithOptions", 3),
+  prefixTestWithOptions: $newNativeFunction("css_internals.rs", "prefixTestWithOptions", 3),
+  minifyTest: $newNativeFunction("css_internals.rs", "minifyTest", 3),
+  prefixTest: $newNativeFunction("css_internals.rs", "prefixTest", 3),
+  _test: $newNativeFunction("css_internals.rs", "_test", 3),
+  attrTest: $newNativeFunction("css_internals.rs", "attrTest", 3),
 };
 
-export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
+export const crash_handler = $native("crash_handler_jsc.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
   panic: () => void;
@@ -105,12 +107,12 @@ export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") a
   raiseIgnoringPanicHandler: () => void;
 };
 
-export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {
+export const upgrade_test_helpers = $native("upgrade_command.rs", "upgrade_js_bindings.generate") as {
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
 };
 
-export const install_test_helpers = $zig("install_binding.zig", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $native("install_binding.rs", "bun_install_js_bindings.generate") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -126,25 +128,25 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
 
 // Linux-only. Create an in-memory file descriptor with a preset size.
 // You should call fs.closeSync(fd) when you're done with it.
-export const memfd_create: (size: number) => number = $newZigFunction(
-  "node_fs_binding.zig",
+export const memfd_create: (size: number) => number = $newNativeFunction(
+  "node_fs_binding.rs",
   "createMemfdForTesting",
   1,
 );
 
-export const createStatsForIno: (ino: bigint, big: boolean) => any = $newZigFunction(
-  "Stat.zig",
+export const createStatsForIno: (ino: bigint, big: boolean) => any = $newNativeFunction(
+  "Stat.rs",
   "createStatsForIno",
   2,
 );
 
-export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
-  "virtual_machine_exports.zig",
+export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newNativeFunction(
+  "virtual_machine_exports.rs",
   "Bun__setSyntheticAllocationLimitForTesting",
   1,
 );
 
-export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindings.generate") as {
+export const npm_manifest_test_helpers = $native("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.
    */
@@ -153,32 +155,28 @@ export const npm_manifest_test_helpers = $zig("npm.zig", "PackageManifest.bindin
 
 // Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
 export type Dependency = any;
-export const npa: (name: string) => Dependency = $newZigFunction("dependency.zig", "fromJS", 1);
+export const npa: (name: string) => Dependency = $newNativeFunction("dependency.rs", "fromJS", 1);
 
 export const npmTag: (
   name: string,
 ) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newZigFunction("dependency.zig", "Version.Tag.inferFromJS", 1);
+  $newNativeFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
 
-export const readTarball: (tarball: string) => any = $newZigFunction("pack_command.zig", "bindings.jsReadTarball", 1);
+export const readTarball: (tarball: string) => any = $newNativeFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
-export const isArchitectureMatch: (architecture: string[]) => boolean = $newZigFunction(
-  "npm.zig",
+export const isArchitectureMatch: (architecture: string[]) => boolean = $newNativeFunction(
+  "npm.rs",
   "Architecture.jsFunctionArchitectureIsMatch",
   1,
 );
 
-export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newZigFunction(
-  "npm.zig",
+export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newNativeFunction(
+  "npm.rs",
   "OperatingSystem.jsFunctionOperatingSystemIsMatch",
   1,
 );
 
-export const createSocketPair: () => [number, number] = $newZigFunction(
-  "runtime/socket/socket.zig",
-  "jsCreateSocketPair",
-  0,
-);
+export const createSocketPair: () => [number, number] = $newNativeFunction("socket_body.rs", "jsCreateSocketPair", 0);
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -186,14 +184,14 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   0,
 );
 
-export const frameworkRouterInternals = $zig("FrameworkRouter.zig", "JSFrameworkRouter.getBindings") as {
+export const frameworkRouterInternals = $native("FrameworkRouter.rs", "JSFrameworkRouter.getBindings") as {
   parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
   FrameworkRouter: {
     new (opts: any): any;
   };
 };
 
-export const bindgen = $zig("bindgen_test.zig", "getBindgenTestFunctions") as {
+export const bindgen = $native("bindgen_test.rs", "getBindgenTestFunctions") as {
   add: (a: any, b: any) => number;
   requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
 };
@@ -237,7 +235,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 );
 
 export const timerInternals = {
-  timerClockMs: $newZigFunction("runtime/timer/Timer.zig", "internal_bindings.timerClockMs", 0),
+  timerClockMs: $newNativeFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -247,9 +245,9 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
-export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
-export const linearFifoOrderedRemoveProbe = $newZigFunction(
-  "collections/linear_fifo.zig",
+export const getCounters = $newNativeFunction("Counters.rs", "createCountersObject", 0);
+export const linearFifoOrderedRemoveProbe = $newNativeFunction(
+  "collections/linear_fifo.rs",
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
@@ -260,11 +258,7 @@ interface setSocketOptionsFn {
   (socket: Bun.Socket, recvBuffer: 2, size: number): void;
 }
 
-export const setSocketOptions: setSocketOptionsFn = $newZigFunction(
-  "runtime/socket/socket.zig",
-  "jsSetSocketOptions",
-  3,
-);
+export const setSocketOptions: setSocketOptionsFn = $newNativeFunction("socket_body.rs", "jsSetSocketOptions", 3);
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -291,27 +285,27 @@ export const lowercaseHeaderNameSIMD: (name: string) => string = $newCppFunction
 );
 
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newZigFunction("event_loop.zig", "getActiveTasks", 0);
+  $newNativeFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
-  parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
-  fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
+  parseUrl: $newNativeFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
+  fromUrl: $newNativeFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),
 };
 
-export const translateUVErrorToE: (code: number) => string | undefined = $newZigFunction(
-  "sys.zig",
+export const translateUVErrorToE: (code: number) => string | undefined = $newNativeFunction(
+  "sys/Error.rs",
   "TestingAPIs.translateUVErrorToE",
   1,
 );
 
-export const translateNtStatusToE: (status: number) => string | undefined = $newZigFunction(
-  "sys.zig",
+export const translateNtStatusToE: (status: number) => string | undefined = $newNativeFunction(
+  "sys/Error.rs",
   "TestingAPIs.translateNtStatusToE",
   1,
 );
 
-export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newZigFunction(
-  "sys/Error.zig",
+export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newNativeFunction(
+  "sys/Error.rs",
   "TestingAPIs.sysErrorNameFromLibuv",
   1,
 );
@@ -322,7 +316,7 @@ export const sigactionLayout: () =>
       installed: { handler: number; flags: number };
       readback: { handler: number; flags: number };
       sizeof: number;
-    } = $newZigFunction("sys.zig", "TestingAPIs.sigactionLayout", 0);
+    } = $newNativeFunction("sys/Error.rs", "TestingAPIs.sigactionLayout", 0);
 
 export const stringsInternals = {
   /**
@@ -331,25 +325,27 @@ export const stringsInternals = {
    * path is otherwise only reachable from Windows `bun build --compile`
    * metadata, so this binding lets us exercise it on all platforms.
    */
-  toUTF16AllocSentinel: $newZigFunction("string/immutable/unicode.zig", "TestingAPIs.toUTF16AllocSentinel", 1) as (
-    bytes: Uint8Array,
-  ) => string,
+  toUTF16AllocSentinel: $newNativeFunction(
+    "bun_core/string/immutable/unicode.rs",
+    "TestingAPIs.toUTF16AllocSentinel",
+    1,
+  ) as (bytes: Uint8Array) => string,
 };
 
 export const fetchH2Internals = {
-  liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
+  liveCounts: $newNativeFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;
     streams: number;
   },
 };
 
 export const fetchH3Internals = {
-  liveCounts: $newZigFunction("http/H3Client.zig", "TestingAPIs.quicLiveCounts", 0) as () => {
+  liveCounts: $newNativeFunction("http/H3Client.rs", "TestingAPIs.quicLiveCounts", 0) as () => {
     sessions: number;
     streams: number;
   },
 };
 
 export const fileSinkInternals = {
-  liveCount: $newZigFunction("runtime/webcore/FileSink.zig", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+  liveCount: $newNativeFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };

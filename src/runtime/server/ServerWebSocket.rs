@@ -1377,6 +1377,11 @@ impl ServerWebSocket {
 
         self.update_flags(|f| f.set_closed(true));
         self.websocket().end(code, message_value.slice());
+        // on_close re-entered with was_closed=true so it skipped the
+        // accounting; balance the count here.
+        if let Some(server) = self.handler().server {
+            server.on_websocket_closed();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1396,6 +1401,11 @@ impl ServerWebSocket {
 
         self.update_flags(|f| f.set_closed(true));
         self.websocket().close();
+        // on_close re-entered with was_closed=true so it skipped the
+        // accounting; balance the count here.
+        if let Some(server) = self.handler().server {
+            server.on_websocket_closed();
+        }
 
         Ok(JSValue::UNDEFINED)
     }

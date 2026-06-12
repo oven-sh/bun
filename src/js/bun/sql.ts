@@ -419,13 +419,18 @@ const SQL: typeof Bun.SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      // validate before mutating any state: throwing after clearing
+      // acceptQueries would strand the reservation in a state where neither
+      // close() nor release() can return its pool slot
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      if (timeout) {
         if (timeout > 0 && (state.queries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout

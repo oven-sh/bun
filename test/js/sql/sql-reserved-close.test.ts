@@ -403,6 +403,24 @@ test("postgres: reserved.close({ timeout }) cancels in-flight queries when the t
   }
 });
 
+test("postgres: an invalid reserved.close() timeout does not strand the reservation", async () => {
+  await using pg = await startPostgresServer();
+  await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });
+
+  const reserved = await sql.reserve();
+  expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
+
+  // rejects without mutating the reservation's state
+  await expect(reserved.close({ timeout: -1 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+
+  // the reservation still accepts queries and can still be closed
+  expect(await reserved`select 1 as x`.simple()).toEqual([{ x: "1" }]);
+  await reserved.close();
+
+  // hung forever when the rejected close stranded the slot
+  await sql.close();
+});
+
 test("postgres: pool stays usable after reserved.close()", async () => {
   await using pg = await startPostgresServer();
   await using sql = new SQL({ url: `postgres://u@127.0.0.1:${pg.port}/db`, max: 1, connectionTimeout: 5 });

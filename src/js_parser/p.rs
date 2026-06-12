@@ -299,6 +299,19 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub is_file_considered_to_have_esm_exports: bool,
 
+    /// Source ranges of legacy octal number literals (e.g. `010`, `08`), keyed
+    /// by the literal's location. Recorded during the parse pass; the visit
+    /// pass reports them as errors when the enclosing scope is in strict mode.
+    pub legacy_octal_literals: HashMap<bun_ast::Loc, bun_ast::Range>,
+
+    /// Strict-mode feature errors found in scopes whose strictness comes only
+    /// from `StrictModeKind::ImplicitStrictModeModuleType`. Whether such a
+    /// file really executes as an ES module is only known after the visit pass
+    /// (it may be classified as CommonJS via Bun's interop), so these are
+    /// queued here and either emitted or discarded once `exports_kind` is
+    /// decided in `parse_entry.rs`.
+    pub deferred_forced_esm_strict_features: List<'a, (StrictModeFeature, bun_ast::Range, &'a [u8])>,
+
     pub has_called_runtime: bool,
 
     pub legacy_cjs_import_stmts: ListManaged<'a, Stmt>,
@@ -3133,6 +3146,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.top_level_await_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
+        } else if self.options.module_type == options::ModuleType::Esm
+            && !self.has_with_scope
+            && !self.has_top_level_return
+        {
+            // The file has no ESM syntax but is forced to be an ES module by its
+            // extension (".mjs"/".mts") or package.json "type": "module". It may
+            // still be classified as CommonJS after the visit pass when it uses
+            // "exports"/"module" (Bun's CommonJS interop), which is why errors
+            // for this kind are deferred (see `mark_strict_mode_feature`). A
+            // "with" statement or top-level return already proves the file will
+            // execute as CommonJS, so those stay in sloppy mode entirely.
+            self.module_scope_mut()
+                .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeModuleType);
         }
 
         self.hoist_symbols(self.module_scope_ref());
@@ -4689,10 +4715,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         feature: StrictModeFeature,
         r: bun_ast::Range,
-        detail: &[u8],
+        detail: &'a [u8],
     ) -> Result<(), bun_core::Error> {
         let can_be_transformed = feature == StrictModeFeature::ForInVarInit;
-        let text: &'a [u8] = match feature {
+        if self.is_strict_mode() {
+            let strict_mode = self.current_scope().strict_mode;
+            if strict_mode == js_ast::StrictModeKind::ImplicitStrictModeModuleType {
+                // The file is only strict because ".mjs"/".mts" or package.json
+                // "type": "module" forces ESM, and it may still be classified as
+                // CommonJS after the visit pass (Bun's CommonJS interop), in
+                // which case it executes in sloppy mode and this is not an
+                // error. Queue it; `parse_entry.rs` emits or discards the queue
+                // once `exports_kind` is known.
+                self.deferred_forced_esm_strict_features
+                    .push((feature, r, detail));
+            } else {
+                self.strict_mode_feature_error(feature, r, detail, strict_mode);
+            }
+        } else if !can_be_transformed && self.is_strict_mode_output_format() {
+            let text = self.strict_mode_feature_text(feature, detail);
+            self.log().add_range_error_fmt(
+                Some(self.source),
+                r,
+                format_args!(
+                    "{} cannot be used with the ESM output format due to strict mode",
+                    bstr::BStr::new(text)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    fn strict_mode_feature_text(&self, feature: StrictModeFeature, detail: &[u8]) -> &'a [u8] {
+        match feature {
             StrictModeFeature::WithStatement => b"With statements",
             StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::ForInVarInit => b"Variable initializers within for-in loops",
@@ -4713,57 +4768,110 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
             StrictModeFeature::LegacyOctalEscape => b"Legacy octal escape sequences",
             StrictModeFeature::IfElseFunctionStmt => b"Function declarations inside if statements",
-        };
+        }
+    }
 
-        let scope = self.current_scope();
-        if self.is_strict_mode() {
-            let mut why: &'a [u8] = b"";
-            let mut where_: bun_ast::Range = bun_ast::Range::NONE;
-            match scope.strict_mode {
-                js_ast::StrictModeKind::ImplicitStrictModeImport => {
-                    where_ = self.esm_import_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeExport => {
-                    where_ = self.esm_export_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
-                    where_ = self.top_level_await_keyword
-                }
-                js_ast::StrictModeKind::ImplicitStrictModeClass => {
-                    why = b"All code inside a class is implicitly in strict mode";
-                    where_ = self.enclosing_class_keyword;
-                }
-                _ => {}
+    fn strict_mode_feature_error(
+        &mut self,
+        feature: StrictModeFeature,
+        r: bun_ast::Range,
+        detail: &[u8],
+        strict_mode: js_ast::StrictModeKind,
+    ) {
+        let text = self.strict_mode_feature_text(feature, detail);
+        let mut why: &'a [u8] = b"";
+        let mut where_: bun_ast::Range = bun_ast::Range::NONE;
+        match strict_mode {
+            js_ast::StrictModeKind::ImplicitStrictModeImport => {
+                where_ = self.esm_import_keyword
             }
-            if why.is_empty() {
-                why = bun_alloc::arena_format!(
-                    in self.arena,
-                    "This file is implicitly in strict mode because of the \"{}\" keyword here",
-                    bstr::BStr::new(self.source.text_for_range(where_))
-                )
-                .into_bump_str()
-                .as_bytes();
+            js_ast::StrictModeKind::ImplicitStrictModeExport => {
+                where_ = self.esm_export_keyword
             }
-            // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
-            let notes: Box<[bun_ast::Data]> =
-                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())]);
-            self.log().add_range_error_fmt_with_notes(
-                Some(self.source),
+            js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait => {
+                where_ = self.top_level_await_keyword
+            }
+            js_ast::StrictModeKind::ImplicitStrictModeClass => {
+                why = b"All code inside a class is implicitly in strict mode";
+                where_ = self.enclosing_class_keyword;
+            }
+            js_ast::StrictModeKind::ImplicitStrictModeModuleType => {
+                // There is no keyword in the source to point at; the strictness
+                // comes from the file's extension or the enclosing package.json,
+                // so `where_` stays NONE and the note carries no location.
+                let ext = self.source.path.name().ext;
+                why = if ext == b".mjs" {
+                    b"This file is implicitly in strict mode because the \".mjs\" extension makes it an ECMAScript module"
+                } else if ext == b".mts" {
+                    b"This file is implicitly in strict mode because the \".mts\" extension makes it an ECMAScript module"
+                } else {
+                    b"This file is implicitly in strict mode because the enclosing package.json sets \"type\" to \"module\", making it an ECMAScript module"
+                };
+            }
+            _ => {}
+        }
+        if why.is_empty() {
+            why = bun_alloc::arena_format!(
+                in self.arena,
+                "This file is implicitly in strict mode because of the \"{}\" keyword here",
+                bstr::BStr::new(self.source.text_for_range(where_))
+            )
+            .into_bump_str()
+            .as_bytes();
+        }
+        // bun_ast::Data is !Copy (Cow) — build the notes Box directly.
+        let notes: Box<[bun_ast::Data]> =
+            if strict_mode == js_ast::StrictModeKind::ImplicitStrictModeModuleType {
+                Box::new([bun_ast::Data {
+                    text: why.to_vec().into(),
+                    ..Default::default()
+                }])
+            } else {
+                Box::new([bun_ast::range_data(Some(self.source), where_, why.to_vec())])
+            };
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            r,
+            notes,
+            format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
+        );
+    }
+
+    /// Emit or discard strict-mode feature errors queued from scopes whose
+    /// strictness comes only from `ImplicitStrictModeModuleType`. Called from
+    /// `parse_entry.rs` once `exports_kind` is final: a file that executes as
+    /// an ES module is really strict, while a file classified as CommonJS via
+    /// Bun's interop executes in sloppy mode, so its queued errors are not
+    /// errors at all.
+    pub(crate) fn flush_deferred_forced_esm_strict_features(&mut self, is_esm: bool) {
+        if self.deferred_forced_esm_strict_features.is_empty() {
+            return;
+        }
+        let deferred = core::mem::replace(
+            &mut self.deferred_forced_esm_strict_features,
+            BumpVec::new_in(self.arena),
+        );
+        if !is_esm {
+            return;
+        }
+        for (feature, r, detail) in deferred {
+            self.strict_mode_feature_error(
+                feature,
                 r,
-                notes,
-                format_args!("{} cannot be used in strict mode", bstr::BStr::new(text)),
-            );
-        } else if !can_be_transformed && self.is_strict_mode_output_format() {
-            self.log().add_range_error_fmt(
-                Some(self.source),
-                r,
-                format_args!(
-                    "{} cannot be used with the ESM output format due to strict mode",
-                    bstr::BStr::new(text)
-                ),
+                detail,
+                js_ast::StrictModeKind::ImplicitStrictModeModuleType,
             );
         }
-        Ok(())
+    }
+
+    /// Record the numeric literal at `loc` when the lexer scanned it as a
+    /// legacy octal literal (e.g. `010` or `08`) so the visit pass can report
+    /// it if the enclosing scope turns out to be in strict mode. Must be
+    /// called while the literal is still the lexer's current token.
+    pub fn check_for_legacy_octal_literal(&mut self, loc: bun_ast::Loc) {
+        if self.lexer.is_legacy_octal_literal {
+            self.legacy_octal_literals.insert(loc, self.lexer.range());
+        }
     }
 
     #[inline]
@@ -9177,6 +9285,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_export_keyword: false,
             has_with_scope: false,
             is_file_considered_to_have_esm_exports: false,
+            legacy_octal_literals: Default::default(),
+            deferred_forced_esm_strict_features: BumpVec::new_in(arena),
             has_called_runtime: false,
             injected_define_symbols: BumpVec::new_in(arena),
             symbol_uses,

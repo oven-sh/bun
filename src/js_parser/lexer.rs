@@ -3683,6 +3683,11 @@ lexer_impl_header! {
             let is_invalid_legacy_octal_literal = first == 0x30
                 && (self.code_point == 0x38 || self.code_point == 0x39);
 
+            // Numbers like "08" and "09" are decimal, but count as legacy
+            // octal literals for strict mode errors. Nothing in this branch
+            // reads the flag; it is consumed by the parser after the scan.
+            self.is_legacy_octal_literal = is_invalid_legacy_octal_literal;
+
             // Initial digits;
             loop {
                 if self.code_point < 0x30 || self.code_point > 0x39 {

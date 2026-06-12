@@ -48,13 +48,19 @@ it("client req.socket reports the connection's real endpoints", async () => {
 
     // res.socket reports the same connection.
     expect({
+      localAddress: res.socket.localAddress,
       localPort: res.socket.localPort,
-      remotePort: res.socket.remotePort,
+      localFamily: res.socket.localFamily,
       remoteAddress: res.socket.remoteAddress,
+      remotePort: res.socket.remotePort,
+      remoteFamily: res.socket.remoteFamily,
     }).toEqual({
+      localAddress: peer.remoteAddress,
       localPort: peer.remotePort,
-      remotePort: port,
+      localFamily: "IPv4",
       remoteAddress: "127.0.0.1",
+      remotePort: port,
+      remoteFamily: "IPv4",
     });
 
     res.resume();

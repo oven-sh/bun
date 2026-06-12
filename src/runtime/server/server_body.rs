@@ -328,6 +328,14 @@ impl ReqLike for uws_sys::h3::Request {
     }
 }
 
+/// Refuse a request that arrived after the idle pass released the server's
+/// handlers (a surviving keep-alive connection can deliver one more request
+/// after a graceful `stop()`): 503 and close the connection.
+pub(crate) fn reject_stopped(resp: &mut impl RespLike) {
+    resp.write_status(b"503 Service Unavailable");
+    resp.end_without_body(true);
+}
+
 pub trait RespLike {
     fn write_status(&mut self, status: &[u8]);
     fn end_without_body(&mut self, close_connection: bool);
@@ -2150,6 +2158,19 @@ where
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
         httplog!("onReload");
 
+        // A fully idle stopped server can never dispatch anything this reload
+        // would install, and the new handlers would only reinstate the
+        // native↔JS cycle the idle release breaks. Skip the route swap
+        // entirely; the caller frees whatever `new_config` still owns, except
+        // the websocket protections taken in `on_create`, which have no Drop
+        // and are released here.
+        if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
+            if let Some(ws) = new_config.websocket.as_ref() {
+                ws.unprotect();
+            }
+            return;
+        }
+
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
         self.app_mut().clear_routes();
@@ -2191,30 +2212,10 @@ where
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
                 if let Some(old_ws) = self.config.websocket.as_ref() {
-                    // Skip when an idle `deinit_if_we_can` already released the
-                    // old context's protections (stopped server being
-                    // reloaded); a second unprotect would unbalance the
-                    // per-value protect counts.
-                    if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
-                        old_ws.unprotect();
-                    }
-                    // Sockets opened under the old context keep dispatching
-                    // through the same inline storage after the swap (each
-                    // `ServerWebSocket` holds a `BackRef` to
-                    // `config.websocket.handler`), so the live-socket count
-                    // must follow them. A fresh zero would make
-                    // `has_active_web_sockets()` report an idle server and let
-                    // `deinit_if_we_can` release the new handlers while those
-                    // sockets can still invoke them.
-                    ws.handler
-                        .active_connections
-                        .set(old_ws.handler.active_connections.get());
+                    old_ws.unprotect();
                 }
                 ws.global_object = bun_ptr::BackRef::new(global);
                 self.config.websocket = Some(ws);
-                // The newly installed context holds fresh protections; let the
-                // next idle pass release them.
-                self.flags.remove(ServerFlags::HANDLERS_RELEASED);
             } else {
                 // Not adopting it: release the protections taken in
                 // `WebSocketServerContext::on_create` so the handlers don't leak.
@@ -2258,13 +2259,6 @@ where
                 ));
             }
         }
-
-        // A stopped (idle) server can never invoke the handlers this reload
-        // just installed, and they would otherwise pin the JS wrapper through
-        // the native↔JS cycle the idle release exists to break. Re-run the
-        // idle pass so they are released immediately. No-op while the server
-        // is still listening or has work in flight.
-        self.deinit_if_we_can();
     }
 
     pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
@@ -2328,11 +2322,18 @@ where
         jsc::mark_binding!();
 
         if self.config.on_request.is_none() {
+            // `deinit_if_we_can` clears `on_request` once a stopped server
+            // goes idle; tell that state apart from a server that never had a
+            // fetch handler.
+            let message: &[u8] = if self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
+                b"fetch() cannot be used after the server has been stopped"
+            } else {
+                b"fetch() requires the server to have a fetch handler"
+            };
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
-                    ZigString::init(b"fetch() requires the server to have a fetch handler")
-                        .to_error_instance(ctx),
+                    ZigString::init(message).to_error_instance(ctx),
                 ),
             );
         }
@@ -2833,12 +2834,9 @@ where
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
-        // Same stopped-server guard as the H1 `on_user_route_request`
-        // trampoline: after the idle release the JS wrapper that owns the
-        // route list may already be collected.
+        // Same late-503 path as `on_request` (see the comment there).
         if server.flags.contains(ServerFlags::HANDLERS_RELEASED) {
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            reject_stopped(resp);
             return;
         }
 
@@ -3225,12 +3223,9 @@ where
         let server_ptr = server_ref.as_ptr();
         let index = this.id;
 
-        // Same stopped-server guard as the request trampolines: after the
-        // idle release the JS wrapper that owns the route list may already be
-        // collected, so refuse late upgrades on surviving connections.
+        // Same late-503 path as `on_request` (see the comment there).
         if server_ref.flags.contains(ServerFlags::HANDLERS_RELEASED) {
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            reject_stopped(resp);
             return;
         }
 

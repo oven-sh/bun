@@ -613,6 +613,20 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
+test("fetch() on a stopped server rejects with a stopped-server error", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("ok");
+    },
+  });
+  expect(await (await server.fetch("/")).text()).toBe("ok");
+  // Idle at stop: the handler release runs inside stop(), so the rejection
+  // names the stopped state rather than a missing fetch handler.
+  server.stop(true);
+  await expect(server.fetch("/")).rejects.toThrow("fetch() cannot be used after the server has been stopped");
+});
+
 test("request on a surviving keep-alive connection after stop() closes instead of crashing", async () => {
   // A graceful stop() releases the handler references once nothing is in
   // flight, but an already-accepted keep-alive connection can still deliver

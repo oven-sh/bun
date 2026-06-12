@@ -34,10 +34,11 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Mutated through `&Handler` (the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread), so
-    /// it's a `Cell`.
-    pub active_connections: core::cell::Cell<usize>,
+    /// Type-erased backref to the owning `NewServer`, set alongside `app`
+    /// in `set_routes` (so it is in place before any socket can upgrade and
+    /// refreshed whenever a reload installs a new context). `ServerWebSocket`
+    /// open/close events route the live-socket accounting through it.
+    pub server: Option<super::AnyServer>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -66,19 +67,6 @@ impl Handler {
     #[inline]
     pub fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-
-    #[inline]
-    pub fn active_connections_saturating_add(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_add(n));
-    }
-
-    /// See `active_connections_saturating_add`.
-    #[inline]
-    pub fn active_connections_saturating_sub(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_sub(n));
     }
 
     pub fn run_error_callback(
@@ -119,7 +107,7 @@ impl Handler {
             app: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: core::cell::Cell::new(0),
+            server: None,
             flags: HandlerFlags::empty(),
         };
 

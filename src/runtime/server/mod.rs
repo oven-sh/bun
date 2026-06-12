@@ -266,6 +266,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub base_url_string_for_joining: Box<[u8]>,
     pub config: ServerConfig,
     pub pending_requests: usize,
+    /// Live `ServerWebSocket` count. Lives on the server (not the websocket
+    /// context) so a reload's context swap cannot reset it, and sits in a
+    /// `Cell` because the open/close accounting arrives through shared
+    /// `AnyServer` handles on the JS thread.
+    pub active_websocket_count: core::cell::Cell<u32>,
     pub request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until the H3 listen path runs (`HAS_H3 && config.http3`); never
     /// allocated when `!SSL`. Kept as a raw nullable pointer rather than a
@@ -1030,15 +1035,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `deinit_if_we_can` releases the handler Strongs once the server is
         // fully idle after a graceful `stop()`. A surviving keep-alive
         // connection can still deliver one more request after that; there is
-        // nothing left to dispatch it to, so close the connection instead of
-        // calling a released handler.
+        // nothing left to dispatch it to, so 503 and close the connection
+        // instead of calling a released handler. Every uws dispatch
+        // trampoline carries this same guard.
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; no other borrow derived from it is alive here.
         if unsafe { (*this).config.on_request.is_none() } {
             // S012: `NewAppResponse<SSL>` is a ZST opaque — safe deref.
-            let resp = bun_opaque::opaque_deref_mut(resp);
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            server_body::reject_stopped(bun_opaque::opaque_deref_mut(resp));
             return;
         }
 
@@ -1056,13 +1060,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
-        let on_request = server
-            .config
-            .on_request
-            .as_ref()
-            .map(|s| s.get())
-            .unwrap_or(JSValue::ZERO);
-        debug_assert!(!on_request.is_empty());
+        // `Some` is guaranteed by the early return above.
+        let on_request = server.config.on_request.as_ref().unwrap().get();
 
         let global = server.global_this();
         let js_value = server.js_value_assert_alive();
@@ -1093,17 +1092,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let server = user_route.server.cast_mut();
         let index = user_route.id;
 
-        // Same stopped-server guard as the `on_request` trampoline: once the
-        // idle pass after a graceful `stop()` has run, the JS wrapper (which
-        // owns the route list this dispatch reads) may already be collected,
-        // so close late requests on surviving keep-alive connections instead
-        // of dispatching them.
+        // Same late-503 path as `on_request` (see the comment there); the JS
+        // wrapper that owns the route list may already be collected.
         // SAFETY: `server` is the live backref stored in `user_route`.
         if unsafe { (*server).flags.contains(ServerFlags::HANDLERS_RELEASED) } {
             // S012: `NewAppResponse<SSL>` is a ZST opaque — safe deref.
-            let resp = bun_opaque::opaque_deref_mut(resp);
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            server_body::reject_stopped(bun_opaque::opaque_deref_mut(resp));
             return;
         }
 
@@ -1190,16 +1184,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         use bun_http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
 
-        // `deinit_if_we_can` releases the handler Strongs once the server is
-        // fully idle after a graceful `stop()`. A surviving keep-alive
-        // connection can still deliver one more request after that; there is
-        // nothing left to dispatch it to, so close the connection instead of
-        // forwarding a released callback to the C++ request handler.
+        // Same late-503 path as `on_request` (see the comment there).
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; no other borrow derived from it is alive here.
         if unsafe { (*this).config.on_node_http_request.is_none() } {
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            server_body::reject_stopped(resp);
             return;
         }
 
@@ -1248,12 +1237,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             None => JSValue::UNDEFINED,
         };
-        let callback = this_ref
-            .config
-            .on_node_http_request
-            .as_ref()
-            .map(|s| s.get())
-            .unwrap_or(JSValue::ZERO);
+        // `Some` is guaranteed by the early return above.
+        let callback = this_ref.config.on_node_http_request.as_ref().unwrap().get();
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
         // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
         // a raw `*mut Self` would zero those bits and trip the dispatch
@@ -1505,10 +1490,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub fn active_sockets_count(&self) -> u32 {
-        self.config
-            .websocket
-            .as_ref()
-            .map_or(0, |ws| ws.handler.active_connections.get() as u32)
+        self.active_websocket_count.get()
+    }
+
+    pub(crate) fn note_websocket_opened(&self) {
+        self.active_websocket_count
+            .set(self.active_websocket_count.get().saturating_add(1));
+    }
+
+    /// Returns true when this close drained the last live websocket.
+    pub(crate) fn note_websocket_closed(&self) -> bool {
+        let remaining = self.active_websocket_count.get().saturating_sub(1);
+        self.active_websocket_count.set(remaining);
+        remaining == 0
     }
 
     pub fn has_active_web_sockets(&self) -> bool {
@@ -1707,9 +1701,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
         if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
-            if let Some(ws) = self.config.websocket.as_mut() {
-                ws.handler.app = None;
-            }
             // No request or upgrade can reach the user's handler callbacks once
             // the listener is gone, the in-flight count is zero, and there are
             // no live websockets. Release their `Strong` handles now: a handler
@@ -1719,22 +1710,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // cannot see through, so the wrapper never finalizes and the box is
             // never freed.
             //
-            // The `Option<Strong>` / `StrongOptional` releases are idempotent,
-            // so they run on every idle pass (a reload on a stopped server may
-            // have installed fresh handlers since the last one). The websocket
-            // unprotect is counted per value, so it runs at most once per
-            // protected context: HANDLERS_RELEASED is set here and cleared by
-            // `on_reload_from_zig` when it installs a new protected context.
+            // The `Option<Strong>` / `StrongOptional` releases are idempotent
+            // and run on every idle pass. The websocket unprotect is counted
+            // per value, so HANDLERS_RELEASED gates it to exactly once. The
+            // flag is terminal: a released server can never dispatch again
+            // (every uws trampoline rejects on the flag or the cleared
+            // handler, and `on_reload_from_zig` short-circuits before
+            // installing anything new).
             self.config.on_request = None;
             self.config.on_node_http_request = None;
             self.config.on_error = None;
             self.on_clienterror.deinit();
-            if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
-                self.flags.insert(ServerFlags::HANDLERS_RELEASED);
-                if let Some(ws) = self.config.websocket.as_mut() {
+            if let Some(ws) = self.config.websocket.as_mut() {
+                ws.handler.app = None;
+                if !self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
                     ws.handler.unprotect();
                 }
             }
+            self.flags.insert(ServerFlags::HANDLERS_RELEASED);
             self.unref();
 
             // Detach DevServer. This is needed because there are aggressive
@@ -1973,6 +1966,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: 0,
+            active_websocket_count: core::cell::Cell::new(0),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Plain HTTP servers never allocate the ~816 KB H3 pool; defer to
             // the H3-listen path (`listen()` below) so HTTPS servers that
@@ -2115,6 +2109,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             websocket.global_object =
                 bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.server = Some(any_server);
             websocket
                 .handler
                 .flags
@@ -3519,6 +3514,26 @@ impl AnyServer {
 
     pub fn inspector_server_id(&self) -> jsc::DebuggerId {
         any_server_dispatch!(self, |s| s.inspector_server_id)
+    }
+
+    pub(crate) fn on_websocket_opened(&self) {
+        any_server_dispatch!(self, |s| s.note_websocket_opened());
+    }
+
+    /// Decrement the live-socket count and, when the last socket drained on
+    /// an already-stopped server, run the idle pass so the handler release
+    /// (and deferred deinit) that was held back by the open sockets fires.
+    ///
+    /// Skipped while TERMINATED: the abrupt-stop path drains every socket
+    /// synchronously from inside `stop_listening` (which holds `&mut self`),
+    /// and `stop()` runs `deinit_if_we_can` itself right after.
+    pub(crate) fn on_websocket_closed(&self) {
+        let drained = any_server_dispatch!(self, |s| {
+            s.note_websocket_closed() && !s.flags.contains(ServerFlags::TERMINATED)
+        });
+        if drained {
+            any_server_dispatch_mut!(self, |s| s.deinit_if_we_can());
+        }
     }
 
     pub fn set_inspector_server_id(&mut self, id: jsc::DebuggerId) {

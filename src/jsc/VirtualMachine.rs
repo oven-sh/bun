@@ -1482,14 +1482,6 @@ impl VirtualMachine {
         ExitHandler::dispatch_on_exit(self);
         self.is_shutting_down = true;
 
-        self.run_cleanup_hooks();
-    }
-
-    /// Drain `RareData::cleanup_hooks` and mark them drained. After this
-    /// point the list is never iterated again; `NapiFinalizerTask::schedule`
-    /// keys off `has_run_cleanup_hooks` to drop (instead of park) finalizers
-    /// deferred during the final `collectNow()`.
-    fn run_cleanup_hooks(&mut self) {
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
         // Note: each iteration re-fetches `rare_data` so the FFI hook
@@ -1516,19 +1508,6 @@ impl VirtualMachine {
         // FIXME: we should be doing this, but we're not, but unfortunately
         // doing it causes like 50+ tests to break
         // self.event_loop().tick();
-
-        // The test runner's exit paths set `is_shutting_down` directly and
-        // come here without `on_exit()` (bun test dispatches no process
-        // 'exit'), so `RareData::cleanup_hooks` was never drained.
-        // `NapiFinalizerTask::schedule` parks deferred finalizers there while
-        // `is_shutting_down && !has_run_cleanup_hooks`, relying on a later
-        // drain that would never happen, leaking every parked
-        // `Box<NapiFinalizerTask>`. Drain now, while the heap is alive, and
-        // mark drained so finalizers enqueued by `destructOnExit`'s final
-        // `collectNow()` below take the drop path instead of parking.
-        if !self.has_run_cleanup_hooks {
-            self.run_cleanup_hooks();
-        }
 
         if self.should_destruct_main_thread_on_exit() {
             if let Some(t) = self.event_loop_mut().forever_timer.take() {

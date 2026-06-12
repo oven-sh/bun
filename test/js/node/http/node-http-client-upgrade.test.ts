@@ -30,7 +30,9 @@ function rawUpgradeServer(
     socket.on("data", onData);
     socket.on("error", () => {});
   };
-  const server = options?.tls ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, connect) : net.createServer(connect);
+  const server = options?.tls
+    ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, connect)
+    : net.createServer(connect);
   return new Promise(resolve => {
     server.listen(0, "127.0.0.1", () => {
       resolve({ port: (server.address() as net.AddressInfo).port, server });

@@ -29,21 +29,20 @@ pub struct Handler {
     pub on_pong: JSValue,
 
     pub app: Option<*mut c_void>,
-    /// Backref to the owning server. Set in `set_routes()` alongside `app`.
-    /// Used by `ServerWebSocket::init` to write the server JS wrapper into the
-    /// per-socket `m_server` traced slot, so the wrapper (and the `m_ws*`
-    /// handler slots it carries) stays reachable while any socket is connected.
+    /// Type-erased backref to the owning `NewServer`, set alongside `app`
+    /// in `set_routes` (so it is in place before any socket can upgrade and
+    /// refreshed whenever a reload installs a new context).
+    /// `ServerWebSocket::init` reads it to write the server JS wrapper into the
+    /// per-socket `m_server` traced slot (keeping the wrapper, and the `m_ws*`
+    /// handler slots it carries, reachable while any socket is connected), and
+    /// `ServerWebSocket` open/close events route the live-socket accounting
+    /// through it.
     pub server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Type-erased backref to the owning `NewServer`, set alongside `app`
-    /// in `set_routes` (so it is in place before any socket can upgrade and
-    /// refreshed whenever a reload installs a new context). `ServerWebSocket`
-    /// open/close events route the live-socket accounting through it.
-    pub server: Option<super::AnyServer>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -113,7 +112,6 @@ impl Handler {
             server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            server: None,
             flags: HandlerFlags::empty(),
         };
 

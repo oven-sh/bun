@@ -81,7 +81,7 @@ type SyntaxNode = import("@lezer/common").SyntaxNode;
 const { parser: cppParser } = await import("@lezer/cpp");
 const { mkdir } = await import("fs/promises");
 const { join, relative } = await import("path");
-const { bannedTypes, sharedTypes, typeDeclarations } = await import("./shared-types");
+const { bannedTypes, sharedTypes } = await import("./shared-types");
 
 type Point = {
   line: number;
@@ -1127,18 +1127,6 @@ async function main() {
       await renderError(note.position, note.message, "note", "\x1b[36m");
     }
     console.error();
-  }
-
-  const resultFilePath = join(dstDir, "cpp.zig");
-  const resultContents =
-    typeDeclarations +
-    "\n" +
-    resultBindings.join("\n") +
-    "\n\nconst raw = struct {\n" +
-    resultRaw.join("\n") +
-    "\n};\n";
-  if ((await readFileOrEmpty(resultFilePath)) !== resultContents) {
-    await Bun.write(resultFilePath, resultContents);
   }
 
   const rustFilePath = join(dstDir, "cpp.rs");

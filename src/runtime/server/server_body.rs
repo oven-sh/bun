@@ -2275,10 +2275,8 @@ where
         }
         let route_list_value = self.set_routes();
         if !route_list_value.is_empty() {
-            if let Some(server_js_value) = self.js_value.try_get() {
-                if !server_js_value.is_empty() {
-                    Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);
-                }
+            if let Some(server_js_value) = self.js_value_for_dispatch() {
+                Self::js_gc_route_list_set(server_js_value, &self.global(), route_list_value);
             }
         }
         Ok(true)
@@ -3519,6 +3517,9 @@ where
         error_code: u8,
         raw_packet: &[u8],
     ) {
+        if self.js_value_for_dispatch().is_none() {
+            return;
+        }
         let callback = self.on_clienterror;
         if callback.is_empty() {
             return;

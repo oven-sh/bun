@@ -392,4 +392,26 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  itBundled("cjs2esm/ReservedWordBindingsInSloppyModeCJS", {
+    // Reserved words are valid binding names in sloppy-mode CommonJS. The
+    // renamer renames them, so bundling to the ESM output format must not
+    // error and must produce valid strict-mode output.
+    // https://github.com/oven-sh/bun/pull/32188
+    files: {
+      "/entry.js": /* js */ `
+        import dep from './dep.cjs';
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var package = { value: 40 };
+        function interface(x) { return x + 1; }
+        var static = interface(package.value) + 1;
+        module.exports = static;
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: "42",
+    },
+  });
 });

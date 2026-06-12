@@ -4736,11 +4736,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: &[u8],
     ) -> Result<(), bun_core::Error> {
         if bun_ast::lexer_tables::is_strict_mode_reserved_word(name) {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )
+            // Gated on strictness like the reference check in `e_identifier`:
+            // in sloppy code bundled to the ESM output format, the renamer
+            // renames reserved-word bindings to valid names, so the
+            // output-format error in `mark_strict_mode_feature` must not
+            // fire for them.
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::ReservedWord,
+                    js_lexer::range_of_identifier(self.source, loc),
+                    name,
+                )?;
+            }
+            Ok(())
         } else if is_eval_or_arguments(name) {
             self.mark_strict_mode_feature(
                 StrictModeFeature::EvalOrArguments,

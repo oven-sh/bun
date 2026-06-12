@@ -1066,12 +1066,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
-        let on_request = server
-            .config
-            .on_request
-            .as_ref()
-            .map(|s| s.get())
-            .unwrap_or(JSValue::ZERO);
+        let on_request = server.config.on_request;
         debug_assert!(!on_request.is_empty());
 
         let global = server.global_this();
@@ -1239,12 +1234,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             },
             None => JSValue::UNDEFINED,
         };
-        let callback = this_ref
-            .config
-            .on_node_http_request
-            .as_ref()
-            .map(|s| s.get())
-            .unwrap_or(JSValue::ZERO);
+        let callback = this_ref.config.on_node_http_request;
         // C++ forwards `any_server` to `NodeHTTPResponse::create`, which
         // unpacks it via `any_server_from_packed` (bits 49..64 = variant tag);
         // a raw `*mut Self` would zero those bits and trip the dispatch
@@ -2397,8 +2387,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 9. Consolidated "/*" HTTP fallback registration ---
         let ud = self_ptr.cast::<c_void>();
-        let has_node_http = self.config.on_node_http_request.is_some();
-        let has_on_request = self.config.on_request.is_some();
+        let has_node_http = !self.config.on_node_http_request.is_empty();
+        let has_on_request = !self.config.on_request.is_empty();
         if star_methods_covered_by_user == http_method::Set::all() {
             // User/Static/Dev has already provided a "/*" handler for ALL methods.
             // No further global "/*" HTTP fallback needed.
@@ -2720,7 +2710,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { &mut *this }.set_routes();
         }
 
-        if this_ref.config.on_node_http_request.is_some() {
+        if !this_ref.config.on_node_http_request.is_empty() {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }

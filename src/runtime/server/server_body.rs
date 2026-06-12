@@ -26,7 +26,7 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
+    JsResult, Node, StringJsc as _, StrongOptional, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -2160,29 +2160,33 @@ where
         }
 
         // Only reload `on_request` / `on_error` when the new config actually
-        // specifies one. `Option<Strong>` drops the old handle (= JSValue.unprotect()).
-        if new_config
-            .on_request
-            .as_ref()
-            .is_some_and(|s| !s.get().is_undefined())
-        {
-            self.config.on_request = new_config.on_request.take();
+        // specifies one. The shadow `JSValue` is updated alongside the
+        // wrapper's WriteBarrier slot (the GC root); both must agree.
+        let server_js = self.js_value.try_get().filter(|v| !v.is_empty());
+        if !new_config.on_request.is_empty_or_undefined_or_null() {
+            self.config.on_request = new_config.on_request;
+            if let Some(server_js) = server_js {
+                Self::js_gc_on_request_set(server_js, global, new_config.on_request);
+            }
         }
         // Swap on any change, *including* clearing to `.zero` when the reload
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
-        // `set_routes` stop routing through the node:http path. `take()` yields
-        // `None` when the new config omitted it; assignment drops the old Strong.
-        if self.config.on_node_http_request.as_ref().map(Strong::get)
-            != new_config.on_node_http_request.as_ref().map(Strong::get)
-        {
-            self.config.on_node_http_request = new_config.on_node_http_request.take();
+        // `set_routes` stop routing through the node:http path.
+        if self.config.on_node_http_request != new_config.on_node_http_request {
+            self.config.on_node_http_request = new_config.on_node_http_request;
+            if let Some(server_js) = server_js {
+                Self::js_gc_on_node_http_request_set(
+                    server_js,
+                    global,
+                    new_config.on_node_http_request,
+                );
+            }
         }
-        if new_config
-            .on_error
-            .as_ref()
-            .is_some_and(|s| !s.get().is_undefined())
-        {
-            self.config.on_error = new_config.on_error.take();
+        if !new_config.on_error.is_empty_or_undefined_or_null() {
+            self.config.on_error = new_config.on_error;
+            if let Some(server_js) = server_js {
+                Self::js_gc_on_error_set(server_js, global, new_config.on_error);
+            }
         }
 
         if let Some(mut ws) = new_config.websocket.take() {
@@ -2300,7 +2304,7 @@ where
     pub fn on_fetch(&mut self, ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
-        if self.config.on_request.is_none() {
+        if self.config.on_request.is_empty() {
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
@@ -2439,9 +2443,9 @@ where
         // local going out of scope does not also drop it (double-free / UAF).
         let request: *mut Request = bun_core::heap::into_raw(existing_request);
 
-        debug_assert!(self.config.on_request.is_some()); // confirmed above
+        debug_assert!(!self.config.on_request.is_empty()); // confirmed above
         let global_this = self.global();
-        let on_request = self.config.on_request.as_ref().unwrap().get();
+        let on_request = self.config.on_request;
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
@@ -2710,7 +2714,7 @@ where
         if !Self::HAS_H3 {
             unreachable!();
         }
-        if self.config.on_request.is_none() {
+        if self.config.on_request.is_empty() {
             return Self::on_h3_404(self, req, resp);
         }
         self.on_request_for::<ServerH3RequestContext<SSL, DEBUG>>(req, resp);
@@ -2917,16 +2921,11 @@ where
         // (`config.on_request`, `global_this`, `js_value`) are disjoint from
         // the request/ctx allocations it references. Reborrow to satisfy NLL.
         let this = unsafe { &mut *self_ptr };
-        debug_assert!(this.config.on_request.is_some());
+        debug_assert!(!this.config.on_request.is_empty());
 
         let global = this.global_this();
         let js_value = this.js_value_assert_alive();
-        let on_request_fn = this
-            .config
-            .on_request
-            .as_ref()
-            .map(|s| s.get())
-            .unwrap_or(JSValue::UNDEFINED);
+        let on_request_fn = this.config.on_request;
         let response_value =
             match on_request_fn.call(global, js_value, &[prepared.js_request, js_value]) {
                 Ok(v) => v,
@@ -3287,13 +3286,13 @@ where
             resp.end_without_body(true);
             return;
         }
-        if this.config.on_node_http_request.is_some() {
+        if !this.config.on_node_http_request.is_empty() {
             // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
             // JS, so a long-lived `&mut self` here would alias on callback.
             Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
             return;
         }
-        if this.config.on_request.is_none() {
+        if this.config.on_request.is_empty() {
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
             resp.write_status(b"403 Forbidden");
@@ -3354,7 +3353,7 @@ where
         let request_value = args[0];
         request_value.ensure_still_alive();
 
-        let response_value = match this.config.on_request.as_ref().unwrap().get().call(
+        let response_value = match this.config.on_request.call(
             &global,
             this.js_value_assert_alive(),
             &args,

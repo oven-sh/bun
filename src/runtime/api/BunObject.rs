@@ -1649,19 +1649,19 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
             // Mirror the fetch/error/nodeHTTP handler callbacks into the
-            // wrapper's WriteBarrier slots so they trace from the wrapper.
-            // ServerConfig still holds Strong handles; the slot writes are
-            // additive until those are dropped in a follow-up.
+            // wrapper's WriteBarrier slots — the wrapper is the sole GC root
+            // for these; `ServerConfig` only holds a raw `JSValue` shadow for
+            // hot-path dispatch reads.
             // TODO: wsHandlers / allClosedPromise / onClientError are written
             // from their respective set sites in later commits.
-            if let Some(h) = server_ref.config.on_request.as_ref() {
-                <$ServerType>::js_gc_on_request_set(obj, global_object, h.get());
+            if !server_ref.config.on_request.is_empty() {
+                <$ServerType>::js_gc_on_request_set(obj, global_object, server_ref.config.on_request);
             }
-            if let Some(h) = server_ref.config.on_error.as_ref() {
-                <$ServerType>::js_gc_on_error_set(obj, global_object, h.get());
+            if !server_ref.config.on_error.is_empty() {
+                <$ServerType>::js_gc_on_error_set(obj, global_object, server_ref.config.on_error);
             }
-            if let Some(h) = server_ref.config.on_node_http_request.as_ref() {
-                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, h.get());
+            if !server_ref.config.on_node_http_request.is_empty() {
+                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, server_ref.config.on_node_http_request);
             }
             server_ref.js_value.set_strong(obj, global_object);
 

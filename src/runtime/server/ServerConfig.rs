@@ -45,9 +45,12 @@ pub struct ServerConfig {
     /// If HMR is not enabled, then this field is ignored.
     pub enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong>,
-    pub on_request: Option<Strong>,
-    pub on_node_http_request: Option<Strong>,
+    /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`
+    /// WriteBarrier slots. The wrapper JSCell is the GC root; these are
+    /// `JSValue::ZERO` when unset and copied for hot-path dispatch reads.
+    pub on_error: JSValue,
+    pub on_request: JSValue,
+    pub on_node_http_request: JSValue,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -81,9 +84,9 @@ impl Default for ServerConfig {
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
             enable_chrome_devtools_automatic_workspace_folders: true,
-            on_error: None,
-            on_request: None,
-            on_node_http_request: None,
+            on_error: JSValue::ZERO,
+            on_request: JSValue::ZERO,
+            on_node_http_request: JSValue::ZERO,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -274,9 +277,9 @@ impl ServerConfig {
                 .broadcast_console_log_from_browser_to_server_for_bake,
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error.take(),
-            on_request: self.on_request.take(),
-            on_node_http_request: self.on_node_http_request.take(),
+            on_error: self.on_error,
+            on_request: self.on_request,
+            on_node_http_request: self.on_node_http_request,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -1270,8 +1273,7 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("Expected error to be a function"))
                 );
             }
-            let on_error_snapshot = on_error.with_async_context_if_needed(global);
-            args.on_error = Some(Strong::create(on_error_snapshot, global));
+            args.on_error = on_error.with_async_context_if_needed(global);
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1283,8 +1285,7 @@ impl ServerConfig {
                     "Expected onNodeHTTPRequest to be a function",
                 )));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_node_http_request = Some(Strong::create(on_request, global));
+            args.on_node_http_request = on_request_.with_async_context_if_needed(global);
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1292,10 +1293,9 @@ impl ServerConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_request = Some(Strong::create(on_request, global));
+            args.on_request = on_request_.with_async_context_if_needed(global);
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_none()
+            && args.on_node_http_request.is_empty()
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
             && opts.is_fetch_required

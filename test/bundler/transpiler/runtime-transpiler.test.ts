@@ -278,6 +278,37 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("legacy octal literal as a destructuring binding key in a .mjs file is an error", async () => {
+    using dir = tempDir("forced-esm-strict-octal-binding", {
+      "binding.mjs": "var { 010: x } = { 8: 1 };\nconsole.log(x);\n",
+    });
+    const { stdout, stderr, exitCode } = await run(dir, "binding.mjs");
+    expect(stderr).toContain("Legacy octal literals cannot be used in strict mode");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("eval and arguments declarations in CommonJS-classified .mjs files still fail ESM-format bundles", async () => {
+    // The file executes as CommonJS via the interop, but `bun build
+    // --format=esm` puts its wrapper inside a strict ES module, so the
+    // sloppy-only declaration must keep failing the build.
+    using dir = tempDir("forced-esm-bundle-esm-format", {
+      "utils.mjs": "exports.x = 1;\nvar arguments = 5;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "utils.mjs", "--format=esm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(
+      'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+    );
+    expect(exitCode).toBe(1);
+  });
+
   test("strict mode reserved word in a bare .mjs file is a transpiler error", async () => {
     using dir = tempDir("forced-esm-strict-reserved", {
       "reserved.mjs": "var package = { name: 1 };\nconsole.log(package.name);\n",

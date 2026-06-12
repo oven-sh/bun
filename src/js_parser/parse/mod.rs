@@ -1177,7 +1177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     p.lexer.loc(),
                 );
-                // check for legacy octal literal
+                p.check_for_legacy_octal_literal(key.loc);
                 p.lexer.next()?;
             }
             T::TStringLiteral => {

@@ -135,6 +135,17 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("evaluates a top-level return via the REPL wrapper", async () => {
+      // REPL input is wrapped in an IIFE, so a top-level return yields the
+      // returned value; it must not be treated as a CommonJS top-level return
+      // (which would skip the wrap and leave an invalid bare return).
+      const { stdout, exitCode } = await runRepl(["return 42069", ".exit"]);
+      const output = stripAnsi(stdout);
+      expect(output).toContain("42069");
+      expect(output).not.toContain("SyntaxError");
+      expect(exitCode).toBe(0);
+    });
+
     test("evaluates object literals", async () => {
       const { stdout, exitCode } = await runRepl(["({ a: 1, b: 2 })", ".exit"]);
       const output = stripAnsi(stdout);

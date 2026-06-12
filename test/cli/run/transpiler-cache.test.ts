@@ -86,6 +86,23 @@ describe("transpiler cache", () => {
     expect(a.stdout == "a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("cache hit of the main module keeps unknown extensions on the file loader", async () => {
+    // A cache hit on the entry point must still mark the VM as having loaded
+    // the main module (`has_loaded`); otherwise every later unknown-extension
+    // import takes the "potentially the main module" Tsx fallback and gets
+    // parsed as code instead of using the file loader.
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      dummyFile(50 * 1024, "1", { code: '(await import("./data.hbs")).default.endsWith(".hbs")' }),
+    );
+    writeFileSync(join(temp_dir, "data.hbs"), "<!DOCTYPE html>\n<html></html>\n");
+    const a = bunRun(join(temp_dir, "main.js"), env);
+    expect(a.stdout).toBe("true");
+    expect(newCacheCount()).toBe(1);
+    // Second run restores main.js from the cache.
+    const b = bunRun(join(temp_dir, "main.js"), env);
+    expect(b.stdout).toBe("true");
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     const a = bunRun(join(temp_dir, "a.js"), env);

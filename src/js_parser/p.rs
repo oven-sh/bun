@@ -4861,6 +4861,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::new_in(self.arena),
         );
         if !is_esm {
+            // The file executes as CommonJS (sloppy mode), so these are not
+            // strict-mode errors. But when bundling to an ESM output format
+            // the CommonJS wrapper still ends up inside a strict ES module,
+            // so re-apply the output-format check that
+            // `mark_strict_mode_feature` performs for sloppy scopes.
+            if self.is_strict_mode_output_format() {
+                for (feature, r, detail) in deferred {
+                    if feature == StrictModeFeature::ForInVarInit {
+                        continue;
+                    }
+                    let text = self.strict_mode_feature_text(feature, detail);
+                    self.log().add_range_error_fmt(
+                        Some(self.source),
+                        r,
+                        format_args!(
+                            "{} cannot be used with the ESM output format due to strict mode",
+                            bstr::BStr::new(text)
+                        ),
+                    );
+                }
+            }
             return;
         }
         for (feature, r, detail) in deferred {

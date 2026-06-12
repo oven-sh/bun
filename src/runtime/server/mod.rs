@@ -2979,10 +2979,46 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         on_client_error_set_cached
     );
     cached_value_dispatch!(
-        js_gc_ws_handlers_get,
-        js_gc_ws_handlers_set,
-        ws_handlers_get_cached,
-        ws_handlers_set_cached
+        js_gc_ws_on_open_get,
+        js_gc_ws_on_open_set,
+        ws_on_open_get_cached,
+        ws_on_open_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_message_get,
+        js_gc_ws_on_message_set,
+        ws_on_message_get_cached,
+        ws_on_message_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_close_get,
+        js_gc_ws_on_close_set,
+        ws_on_close_get_cached,
+        ws_on_close_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_drain_get,
+        js_gc_ws_on_drain_set,
+        ws_on_drain_get_cached,
+        ws_on_drain_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_error_get,
+        js_gc_ws_on_error_set,
+        ws_on_error_get_cached,
+        ws_on_error_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_ping_get,
+        js_gc_ws_on_ping_set,
+        ws_on_ping_get_cached,
+        ws_on_ping_set_cached
+    );
+    cached_value_dispatch!(
+        js_gc_ws_on_pong_get,
+        js_gc_ws_on_pong_set,
+        ws_on_pong_get_cached,
+        ws_on_pong_set_cached
     );
     cached_value_dispatch!(
         js_gc_all_closed_promise_get,
@@ -2990,6 +3026,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         all_closed_promise_get_cached,
         all_closed_promise_set_cached
     );
+
+    /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
+    /// WriteBarrier slots. Writes all slots unconditionally — `JSValue::ZERO`
+    /// clears, so a reload that omits a callback drops the previous root (G6).
+    /// Called after `ptr_to_js` in `serve()` and after the websocket-context
+    /// swap in `on_reload_from_zig`; dispatch keeps reading the shadow.
+    pub fn write_ws_handler_slots(&self, server_js: JSValue, global: &JSGlobalObject) {
+        let Some(ws) = self.config.websocket.as_ref() else {
+            return;
+        };
+        let h = &ws.handler;
+        Self::js_gc_ws_on_open_set(server_js, global, h.on_open);
+        Self::js_gc_ws_on_message_set(server_js, global, h.on_message);
+        Self::js_gc_ws_on_close_set(server_js, global, h.on_close);
+        Self::js_gc_ws_on_drain_set(server_js, global, h.on_drain);
+        Self::js_gc_ws_on_error_set(server_js, global, h.on_error);
+        Self::js_gc_ws_on_ping_set(server_js, global, h.on_ping);
+        Self::js_gc_ws_on_pong_set(server_js, global, h.on_pong);
+    }
 }
 
 // ─── extern "C" trampolines ──────────────────────────────────────────────────

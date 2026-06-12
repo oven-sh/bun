@@ -155,30 +155,6 @@ impl Handler {
             "WebSocketServerContext expects a message handler"
         )))
     }
-
-    pub fn protect(&self) {
-        self.on_open.protect();
-        self.on_message.protect();
-        self.on_close.protect();
-        self.on_drain.protect();
-        self.on_error.protect();
-        self.on_ping.protect();
-        self.on_pong.protect();
-    }
-
-    pub fn unprotect(&self) {
-        if self.vm.is_shutting_down() {
-            return;
-        }
-
-        self.on_open.unprotect();
-        self.on_message.unprotect();
-        self.on_close.unprotect();
-        self.on_drain.unprotect();
-        self.on_error.unprotect();
-        self.on_ping.unprotect();
-        self.on_pong.unprotect();
-    }
 }
 
 impl WebSocketServerContext {
@@ -194,14 +170,6 @@ impl WebSocketServerContext {
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
         }
-    }
-
-    pub fn protect(&self) {
-        self.handler.protect();
-    }
-
-    pub fn unprotect(&self) {
-        self.handler.unprotect();
     }
 }
 
@@ -422,6 +390,5 @@ pub(crate) fn on_create(
         }
     }
 
-    server.protect();
     Ok(server)
 }

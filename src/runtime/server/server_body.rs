@@ -2194,16 +2194,14 @@ where
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
             if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
-                if let Some(old_ws) = self.config.websocket.as_ref() {
-                    old_ws.unprotect();
-                }
                 ws.global_object = bun_ptr::BackRef::new(global);
                 self.config.websocket = Some(ws);
-            } else {
-                // Not adopting it: release the protections taken in
-                // `WebSocketServerContext::on_create` so the handlers don't leak.
-                ws.unprotect();
+                if let Some(server_js) = server_js {
+                    self.write_ws_handler_slots(server_js, global);
+                }
             }
+            // Not adopting it: nothing to release — handler callbacks are
+            // unrooted shadows until written into the wrapper's `m_wsOn*` slots.
         }
 
         // These get re-applied when we set the static routes again.

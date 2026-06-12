@@ -1648,12 +1648,9 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
-            // Mirror the fetch/error/nodeHTTP handler callbacks into the
-            // wrapper's WriteBarrier slots — the wrapper is the sole GC root
-            // for these; `ServerConfig` only holds a raw `JSValue` shadow for
-            // hot-path dispatch reads.
-            // TODO: wsHandlers / allClosedPromise / onClientError are written
-            // from their respective set sites in later commits.
+            // Mirror the handler callbacks into the wrapper's WriteBarrier
+            // slots — the wrapper is the sole GC root for these; `ServerConfig`
+            // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
             if !server_ref.config.on_request.is_empty() {
                 <$ServerType>::js_gc_on_request_set(obj, global_object, server_ref.config.on_request);
             }
@@ -1663,6 +1660,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             if !server_ref.config.on_node_http_request.is_empty() {
                 <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, server_ref.config.on_node_http_request);
             }
+            server_ref.write_ws_handler_slots(obj, global_object);
             server_ref.js_value.set_strong(obj, global_object);
 
             if global_object.bun_vm().test_isolation_enabled {

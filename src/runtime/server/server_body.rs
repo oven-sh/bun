@@ -2157,10 +2157,13 @@ where
     pub fn on_reload_from_zig(&mut self, new_config: &mut ServerConfig, global: &JSGlobalObject) {
         httplog!("onReload");
 
-        // An idle stopped server can never dispatch anything this reload
-        // would install; release the unadopted websocket protections (no
-        // Drop) and skip the route swap.
-        if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
+        // HANDLERS_RELEASED is terminal: nothing this reload installs could
+        // ever dispatch, and the idle pass will never unprotect it. Release
+        // the unadopted websocket protections (no Drop) and skip the route
+        // swap. Not the idle predicate: a late static/file request on a
+        // surviving keep-alive connection transiently bumps pending_requests
+        // after the release.
+        if self.flags.contains(ServerFlags::HANDLERS_RELEASED) {
             if let Some(ws) = new_config.websocket.as_mut() {
                 ws.unprotect();
             }

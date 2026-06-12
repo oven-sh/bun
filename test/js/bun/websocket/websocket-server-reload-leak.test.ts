@@ -129,6 +129,85 @@ test("a stopped server's reload does not leave newly installed websocket handler
   expect({ afterStop, afterReload }).toEqual({ afterStop: base, afterReload: base });
 });
 
+// Static/file routes dispatch without JS and bump pendingRequests with no
+// released-handlers guard, so a late request on a surviving keep-alive
+// connection makes the released server transiently non-idle. A reload() in
+// that window must still be skipped: the release already ran, so nothing
+// the reload installs could ever be unprotected again.
+test("reload() during a late static-route response on a released server does not leave handler protections behind", async () => {
+  const script = /* js */ `
+    ${protectedAsyncFnsPrelude}
+    const net = require("node:net");
+    const base = protectedAsyncFns();
+    const server = Bun.serve({
+      port: 0,
+      // Big enough that a paused client forces backpressure, holding the
+      // request pending while reload() runs.
+      routes: { "/big": new Response(Buffer.alloc(8 << 20, 65)) },
+      fetch() { return new Response("ok"); },
+      websocket: { async open(ws) {}, async message(ws, m) {} },
+    });
+    const afterServe = protectedAsyncFns();
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    await new Promise((resolve, reject) => {
+      socket.on("connect", resolve);
+      socket.on("error", reject);
+    });
+
+    // Serve one request first: the listener uses deferred accept, so a
+    // connection that has not sent data yet dies with the listener instead
+    // of surviving stop().
+    const firstDone = Promise.withResolvers();
+    let buffered = "";
+    socket.on("data", d => {
+      buffered += d.toString("latin1");
+      if (buffered.includes("\\r\\n\\r\\nok")) firstDone.resolve();
+    });
+    socket.write("GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: keep-alive\\r\\n\\r\\n");
+    await firstDone.promise;
+
+    // Graceful: only the listener closes; the established idle connection
+    // does not keep the server from releasing its handlers.
+    server.stop();
+    const afterStop = protectedAsyncFns();
+
+    // The static route still serves on the surviving connection. The paused
+    // client never drains, so the response backpressures and the request
+    // stays pending.
+    socket.pause();
+    socket.write("GET /big HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+    for (let i = 0; server.pendingRequests === 0; i++) {
+      if (i > 400) throw new Error("late static request never became pending");
+      await Bun.sleep(5);
+    }
+
+    server.reload({
+      fetch() { return new Response("reloaded"); },
+      websocket: { async open(ws) {}, async message(ws, m) {} },
+    });
+    const afterReload = protectedAsyncFns();
+
+    // Abort the response; the completion that drops pendingRequests to zero
+    // runs the idle pass synchronously in the same call.
+    socket.destroy();
+    for (let i = 0; server.pendingRequests > 0; i++) {
+      if (i > 400) throw new Error("aborted static response never completed");
+      await Bun.sleep(5);
+    }
+    const final = protectedAsyncFns();
+    console.log(JSON.stringify({ base, afterServe, afterStop, afterReload, final }));
+  `;
+
+  const { base, afterServe, afterStop, afterReload, final } = await runProbe(script);
+  expect({ afterServe, afterStop, afterReload, final }).toEqual({
+    afterServe: base + 2,
+    afterStop: base,
+    afterReload: base,
+    final: base,
+  });
+});
+
 // gcProtect is counted per value. When two servers share the same handler
 // functions, each onCreate protects them once. The idle release of a stopped
 // server drops that server's count; a later reload() of the stopped server

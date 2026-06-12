@@ -217,9 +217,13 @@ public:
             // The napi_set_instance_data() finalizer is part of env teardown
             // in Node and is still safe here: nothing on this path has been
             // freed, so it cannot observe the dangling state the skipped
-            // wrap-finalizer pass avoids.
+            // wrap-finalizer pass avoids. Null the pointer so finalizers that
+            // run later (the exit collection under BUN_DESTRUCT_VM_ON_EXIT
+            // runs swept wraps' finalizers immediately) see null from
+            // napi_get_instance_data instead of freed memory.
             instanceDataFinalizer.call(this, instanceData, true);
             instanceDataFinalizer.clear();
+            instanceData = nullptr;
             return;
         }
 
@@ -240,6 +244,7 @@ public:
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        instanceData = nullptr;
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)

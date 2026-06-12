@@ -375,7 +375,8 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     /// Makes `NapiEnv::cleanup()` run only the explicit env cleanup hooks,
     /// skipping pending `napi_wrap` finalizers (src/jsc/bindings/napi.cpp).
-    fn napi_internal_set_cleanup_hooks_only();
+    /// Sets a process-global flag; no preconditions.
+    safe fn napi_internal_set_cleanup_hooks_only();
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1533,8 +1534,7 @@ impl VirtualMachine {
         // that the abandoned work still references (see `NapiEnv::cleanup`).
         // Restrict the napi env cleanup to the explicit cleanup hooks.
         if !self.has_run_cleanup_hooks() {
-            // SAFETY: sets a process-global flag in napi.cpp; no preconditions.
-            unsafe { napi_internal_set_cleanup_hooks_only() };
+            napi_internal_set_cleanup_hooks_only();
         }
         self.run_cleanup_hooks();
         // FIXME: we should be doing this, but we're not, but unfortunately

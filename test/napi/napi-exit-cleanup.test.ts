@@ -37,10 +37,22 @@ const wrapAddon = join(napiAppDir, "build", "Debug", "test_wrap_cleanup_order.no
 // test/no-validate-exceptions.txt), so the child aborts while loading the
 // addon, before the fixture runs. Strip the validator from the child env
 // only, same as test/regression/issue/30205.test.ts.
+//
+// BUN_DESTRUCT_VM_ON_EXIT is stripped too: these tests pin the normal exit
+// path, where pending wrap finalizers are skipped. Under destruct-vm the
+// final exit collection deliberately runs them (in sweep order, not LIFO),
+// which would print "finalize order:" and break the negative assertion
+// below. This file is also in test/no-validate-leaksan.txt so the asan
+// runner does not set destruct-vm or detect_leaks for it in the first place.
 const childEnv = {
   ...bunEnv,
   BUN_JSC_validateExceptionChecks: undefined,
   BUN_JSC_dumpSimulatedThrows: undefined,
+  BUN_DESTRUCT_VM_ON_EXIT: undefined,
+  // detect_leaks aborts debug builds on known-benign exit allocations and is
+  // not what these tests measure; drop back to bun's baked ASAN defaults.
+  ASAN_OPTIONS: undefined,
+  LSAN_OPTIONS: undefined,
 };
 
 describe.concurrent("napi cleanup at bun test exit", () => {

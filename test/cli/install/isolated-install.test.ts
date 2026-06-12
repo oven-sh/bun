@@ -766,18 +766,18 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   const entryName = (await readdirSorted(bunDir)).find(e => e.startsWith("peer-deps-fixed@"))!;
   // highest satisfying ^1.0.0 in the graph
   expect(entryName).toBe("peer-deps-fixed@1.0.0+7ff199101204a65d");
-  expect(
-    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.1.0" });
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
 
   // reinstall from bun.lock: same peer variant, same resolved version
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
-  expect(
-    await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json(),
-  ).toMatchObject({ version: "1.1.0" });
+  expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
 });
 
 describe("existing node_modules, missing node_modules/.bun", () => {

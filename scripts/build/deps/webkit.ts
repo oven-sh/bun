@@ -7,7 +7,10 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "6d586e293f008f0e74e5697611a379b1b24815c9";
+// TEMPORARY preview pin: 6d586e293f + the asyncModuleExecutionResume fix from
+// oven-sh/WebKit#252 (cherry-picked in oven-sh/WebKit#253, fixes oven-sh/bun#32178).
+// Swap to an oven-sh/WebKit main autobuild SHA containing the fix before merging.
+export const WEBKIT_VERSION = "autobuild-preview-pr-253-7eb8e17e";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

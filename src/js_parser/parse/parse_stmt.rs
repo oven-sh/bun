@@ -723,6 +723,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 b"A return statement cannot be used here",
             );
         }
+        if p.fn_or_arrow_data_parse.is_top_level && !p.options.features.remove_cjs_module_wrapper {
+            // Top-level return is a CommonJS-only feature: `exports_kind`
+            // classification in parse_entry.rs uses this to pick CommonJS, and
+            // it keeps forced-ESM files out of implicit strict mode. The
+            // `[eval]`/`[stdin]` entry points (remove_cjs_module_wrapper) are
+            // excluded: they execute as a bare program with no function
+            // wrapper for the return to live in, matching `node -e "return"`
+            // being a SyntaxError.
+            p.has_top_level_return = true;
+        }
         p.lexer.next()?;
         let mut value: Option<Expr> = None;
         if p.lexer.token != T::TSemicolon

@@ -1490,6 +1490,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let scope = p.current_scope_mut();
                                 scope.strict_mode = StrictModeKind::ExplicitStrictMode;
                                 scope.use_strict_loc = stmt.loc;
+
+                                // Inside a function, strict mode propagates
+                                // from the function-body scope to the
+                                // parameter scope:
+                                //
+                                //   // This is a syntax error
+                                //   function fn(arguments) {
+                                //     "use strict";
+                                //   }
+                                //
+                                if scope.kind == js_ast::scope::Kind::FunctionBody {
+                                    if let Some(mut parent) = scope.parent {
+                                        if parent.kind == js_ast::scope::Kind::FunctionArgs
+                                            && parent.strict_mode == StrictModeKind::SloppyMode
+                                        {
+                                            parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                            parent.use_strict_loc = stmt.loc;
+                                        }
+                                    }
+                                }
                             } else if str_.eql_comptime(b"use asm") {
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});

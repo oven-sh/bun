@@ -2925,6 +2925,17 @@ class Foo {
     expectParseErrorWithNote('"use strict"; package: ;', reservedPackage, useStrictNote);
     // A function name is subject to the function's own strictness
     expectParseErrorWithNote('function package() { "use strict" }', reservedPackage, useStrictNote);
+    // A "use strict" directive in the body makes the parameter list strict too
+    expectParseErrorWithNote('function f(package) { "use strict" }', reservedPackage, useStrictNote);
+    expectParseErrorWithNote('((package) => { "use strict" })', reservedPackage, useStrictNote);
+    expectParseError(
+      'function f(eval) { "use strict" }',
+      'Declarations with the name "eval" cannot be used in strict mode',
+    );
+    expectParseError(
+      'function f(arguments) { "use strict" }',
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
 
     // TypeScript constructs that lower to "var" declarations
     ts.expectParseError('"use strict"; enum package { A }', reservedPackage);
@@ -2935,6 +2946,7 @@ class Foo {
     // Still allowed in sloppy mode
     expect(() => parsed("let package = 1", false, false)).not.toThrow();
     expect(() => parsed("function package() {}", false, false)).not.toThrow();
+    expect(() => parsed("function f(package) {}", false, false)).not.toThrow();
     expect(() => parsed("package: ;", false, false)).not.toThrow();
     expect(() => parsed("var eval = 1", false, false)).not.toThrow();
     // Reserved words are valid export aliases

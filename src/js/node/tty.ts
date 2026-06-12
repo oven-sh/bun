@@ -21,7 +21,11 @@ function ReadStream(fd): void {
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
+// Not $toClass: that would define a non-configurable "prototype" which the lazy
+// accessor below could not replace. Apply its other effects (static inheritance
+// and the function name) directly.
+$setPrototypeDirect.$call(ReadStream, fs.ReadStream);
+Object.defineProperty(ReadStream, "name", { value: "ReadStream", configurable: true });
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
@@ -95,11 +99,17 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+    // Once materialized, match the descriptor of a regular function's "prototype".
+    Object.defineProperty(ReadStream, "prototype", {
+      value: Prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     return Prototype;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
 
@@ -125,7 +135,13 @@ function WriteStream(fd): void {
 Object.defineProperty(WriteStream, "prototype", {
   get() {
     const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    // Once materialized, match the descriptor of a regular function's "prototype".
+    Object.defineProperty(WriteStream, "prototype", {
+      value: Real,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -190,7 +206,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
     return Real;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
 

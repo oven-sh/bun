@@ -340,7 +340,12 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     return Shell;
   }
 
-  Shell.prototype = ShellPrototype.prototype;
+  Object.defineProperty(Shell, "prototype", {
+    value: ShellPrototype.prototype,
+    writable: true,
+    enumerable: false,
+    configurable: false,
+  });
   Object.setPrototypeOf(Shell, ShellPrototype);
   Object.setPrototypeOf(BunShell, ShellPrototype.prototype);
 

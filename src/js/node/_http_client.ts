@@ -1078,7 +1078,12 @@ const ClientRequestPrototype = {
   },
 };
 
-ClientRequest.prototype = ClientRequestPrototype;
+Object.defineProperty(ClientRequest, "prototype", {
+  value: ClientRequestPrototype,
+  writable: true,
+  enumerable: false,
+  configurable: false,
+});
 $setPrototypeDirect.$call(ClientRequest, OutgoingMessage);
 
 function validateHost(host, name) {

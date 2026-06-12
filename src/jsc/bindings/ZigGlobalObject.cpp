@@ -2758,7 +2758,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
     target->setPrototypeDirect(vm, base);
-    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | 0);
+    // A function's own "prototype" property is non-enumerable and non-configurable
+    // (writable for function-style constructors): https://tc39.es/ecma262/#sec-function-instances-prototype
+    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
     target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
 
     return JSValue::encode(jsUndefined());

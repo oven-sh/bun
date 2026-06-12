@@ -413,7 +413,12 @@ const IncomingMessagePrototype = {
     this[fakeSocketSymbol] = value;
   },
 } satisfies typeof import("node:http").IncomingMessage.prototype;
-IncomingMessage.prototype = IncomingMessagePrototype;
+Object.defineProperty(IncomingMessage, "prototype", {
+  value: IncomingMessagePrototype,
+  writable: true,
+  enumerable: false,
+  configurable: false,
+});
 $setPrototypeDirect.$call(IncomingMessage, Readable);
 
 function requestHasNoBody(method, req) {

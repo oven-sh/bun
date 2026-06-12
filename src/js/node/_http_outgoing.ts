@@ -511,7 +511,12 @@ const OutgoingMessagePrototype = {
     return this;
   },
 };
-OutgoingMessage.prototype = OutgoingMessagePrototype;
+ObjectDefineProperty(OutgoingMessage, "prototype", {
+  value: OutgoingMessagePrototype,
+  writable: true,
+  enumerable: false,
+  configurable: false,
+});
 ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
   __proto__: null,
   get: deprecate(

@@ -103,7 +103,6 @@ function generate(name) {
       "wsOnError",
       "wsOnPing",
       "wsOnPong",
-      "allClosedPromise",
     ],
   });
 }

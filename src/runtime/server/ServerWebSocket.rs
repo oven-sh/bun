@@ -361,11 +361,11 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        if let Some(server) = handler.server {
-            let server_js = server.js_value();
-            if !server_js.is_undefined() {
-                js::server_set_cached(this_value, global_object, server_js);
-            }
+        // Only mirror the server wrapper while it is strongly rooted —
+        // `js_value()` would return a weak (potentially dead-but-unswept)
+        // address once the server has gone idle and downgraded.
+        if let Some(server_js) = handler.server.and_then(|s| s.js_value_if_strong()) {
+            js::server_set_cached(this_value, global_object, server_js);
         }
         this
     }

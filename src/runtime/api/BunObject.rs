@@ -1655,31 +1655,30 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // freshly-allocated wrapper fn is rooted by the slot immediately;
             // the unwrapped fn is held live by the user's options object on the
             // `serve()` stack across `init`/`listen` until this point.
-            if !server_ref.config.on_request.is_empty() {
-                let wrapped = server_ref
-                    .config
-                    .on_request
-                    .with_async_context_if_needed(global_object);
-                <$ServerType>::js_gc_on_request_set(obj, global_object, wrapped);
-                server_ref.config.on_request = wrapped;
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_request,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_request_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_error,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_error_set,
+            );
+            crate::server::wrap_handler_slot(
+                &mut server_ref.config.on_node_http_request,
+                Some(obj),
+                global_object,
+                <$ServerType>::js_gc_on_node_http_request_set,
+            );
+            // Skip the 7-slot write when there's no websocket config: the
+            // slots default ZERO so `write_ws_handler_slots`'s clear path
+            // would be 7 wasted FFI calls.
+            if server_ref.config.websocket.is_some() {
+                server_ref.write_ws_handler_slots(obj, global_object);
             }
-            if !server_ref.config.on_error.is_empty() {
-                let wrapped = server_ref
-                    .config
-                    .on_error
-                    .with_async_context_if_needed(global_object);
-                <$ServerType>::js_gc_on_error_set(obj, global_object, wrapped);
-                server_ref.config.on_error = wrapped;
-            }
-            if !server_ref.config.on_node_http_request.is_empty() {
-                let wrapped = server_ref
-                    .config
-                    .on_node_http_request
-                    .with_async_context_if_needed(global_object);
-                <$ServerType>::js_gc_on_node_http_request_set(obj, global_object, wrapped);
-                server_ref.config.on_node_http_request = wrapped;
-            }
-            server_ref.write_ws_handler_slots(obj, global_object);
             server_ref.js_value.set_strong(obj, global_object);
 
             if global_object.bun_vm().test_isolation_enabled {

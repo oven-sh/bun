@@ -401,6 +401,17 @@ impl RespLike for uws_sys::h3::Response {
     }
 }
 
+/// Answer a request that arrived after the server's JS wrapper was downgraded
+/// (idle keep-alive sockets aren't counted in `pending_requests`, so the
+/// wrapper can be gone before the next request fires). 503-and-close instead
+/// of dispatching into a dead handler shadow. One helper so every dispatch
+/// trampoline gets the same guard.
+#[inline]
+pub(super) fn respond_stopped_503<R: RespLike + ?Sized>(resp: &mut R) {
+    resp.write_status(b"503 Service Unavailable");
+    resp.end_without_body(true);
+}
+
 pub(super) type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub(super) type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
@@ -2159,56 +2170,52 @@ where
             }
         }
 
-        // Only reload `on_request` / `on_error` when the new config actually
-        // specifies one. The shadow `JSValue` is updated alongside the
-        // wrapper's WriteBarrier slot (the GC root); both must agree. The
-        // async-context wrap is applied here (deferred from `from_js`) so the
-        // wrapped fn is rooted by the slot the moment it exists.
+        // `on_request` / `on_error` keep their previous value when the reload
+        // config omits them; `on_node_http_request` swaps unconditionally
+        // (clearing to ZERO when omitted) so `on_web_socket_upgrade` /
+        // `set_routes` stop routing through the node:http path. The
+        // async-context re-wrap is unconditional — `with_async_context_if_needed`
+        // is a no-op when no ALS frame is active, so re-wrapping on every
+        // reload keeps the captured frame in sync with the call-time context.
         let server_js = self.js_value.try_get().filter(|v| !v.is_empty());
         if !new_config.on_request.is_empty_or_undefined_or_null() {
-            let wrapped = new_config.on_request.with_async_context_if_needed(global);
-            if let Some(server_js) = server_js {
-                Self::js_gc_on_request_set(server_js, global, wrapped);
-            }
-            self.config.on_request = wrapped;
+            super::wrap_handler_slot(
+                &mut new_config.on_request,
+                server_js,
+                global,
+                Self::js_gc_on_request_set,
+            );
+            self.config.on_request = new_config.on_request;
         }
-        // Swap on any change, *including* clearing to `.zero` when the reload
-        // config omits the handler, so subsequent `on_web_socket_upgrade` /
-        // `set_routes` stop routing through the node:http path.
-        if self.config.on_node_http_request != new_config.on_node_http_request {
-            let wrapped = if new_config.on_node_http_request.is_empty_or_undefined_or_null() {
-                JSValue::ZERO
-            } else {
-                new_config
-                    .on_node_http_request
-                    .with_async_context_if_needed(global)
-            };
-            if let Some(server_js) = server_js {
-                Self::js_gc_on_node_http_request_set(server_js, global, wrapped);
-            }
-            self.config.on_node_http_request = wrapped;
-        }
+        super::wrap_handler_slot(
+            &mut new_config.on_node_http_request,
+            server_js,
+            global,
+            Self::js_gc_on_node_http_request_set,
+        );
+        self.config.on_node_http_request = new_config.on_node_http_request;
         if !new_config.on_error.is_empty_or_undefined_or_null() {
-            let wrapped = new_config.on_error.with_async_context_if_needed(global);
-            if let Some(server_js) = server_js {
-                Self::js_gc_on_error_set(server_js, global, wrapped);
-            }
-            self.config.on_error = wrapped;
+            super::wrap_handler_slot(
+                &mut new_config.on_error,
+                server_js,
+                global,
+                Self::js_gc_on_error_set,
+            );
+            self.config.on_error = new_config.on_error;
         }
 
         if let Some(mut ws) = new_config.websocket.take() {
+            // `Handler::from_js` already rejected configs with no non-error
+            // callback, so any `Some(ws)` is adoptable — match initial-serve
+            // and adopt unconditionally.
             ws.handler
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);
-            if !ws.handler.on_message.is_empty() || !ws.handler.on_open.is_empty() {
-                ws.global_object = bun_ptr::BackRef::new(global);
-                self.config.websocket = Some(ws);
-                if let Some(server_js) = server_js {
-                    self.write_ws_handler_slots(server_js, global);
-                }
+            ws.global_object = bun_ptr::BackRef::new(global);
+            self.config.websocket = Some(ws);
+            if let Some(server_js) = server_js {
+                self.write_ws_handler_slots(server_js, global);
             }
-            // Not adopting it: nothing to release — handler callbacks are
-            // unrooted shadows until written into the wrapper's `m_wsOn*` slots.
         }
 
         // These get re-applied when we set the static routes again.
@@ -2708,13 +2715,7 @@ where
             return self.all_closed_promise.value();
         }
         self.all_closed_promise = jsc::JSPromiseStrong::init(global);
-        let prom = self.all_closed_promise.value();
-        // Only reachable via `server.stop()` (a JS-called method) — wrapper is
-        // alive. Mirror into the slot as a traced edge so the cycle through
-        // user `.then(cb)` is collectable; the Strong field above is the
-        // authoritative root that survives wrapper collection.
-        Self::js_gc_all_closed_promise_set(self.js_value_assert_alive(), global, prom);
-        prom
+        self.all_closed_promise.value()
     }
 
     // `notify_inspector_server_stopped` lives in the unbounded impl block
@@ -2821,8 +2822,7 @@ where
         let index = user_route.id;
 
         if server.js_value_for_dispatch().is_none() {
-            RespLike::write_status(resp, b"503 Service Unavailable");
-            RespLike::end_without_body(resp, true);
+            respond_stopped_503(resp);
             return;
         }
 
@@ -2911,8 +2911,7 @@ where
         resp: &mut Ctx::Resp,
     ) {
         if self.js_value_for_dispatch().is_none() {
-            RespLike::write_status(resp, b"503 Service Unavailable");
-            RespLike::end_without_body(resp, true);
+            respond_stopped_503(resp);
             return;
         }
         let self_ptr: *mut Self = self;
@@ -3210,8 +3209,7 @@ where
         let index = this.id;
 
         if server_ref.js_value_for_dispatch().is_none() {
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            respond_stopped_503(resp);
             return;
         }
 
@@ -3292,8 +3290,7 @@ where
         // duration.
         let this = unsafe { &mut *self_ptr };
         if this.js_value_for_dispatch().is_none() {
-            resp.write_status(b"503 Service Unavailable");
-            resp.end_without_body(true);
+            respond_stopped_503(resp);
             return;
         }
         if !this.config.on_node_http_request.is_empty() {
@@ -3666,7 +3663,12 @@ pub(super) fn server_set_on_client_error_(
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
                     this.on_clienterror = callback;
-                    <$T>::js_gc_on_client_error_set(server, global, callback);
+                    super::wrap_handler_slot(
+                        &mut this.on_clienterror,
+                        Some(server),
+                        global,
+                        <$T>::js_gc_on_client_error_set,
+                    );
                     // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(

@@ -1046,8 +1046,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     let count = 0;
     const len = this.connections.length;
     for (let i = 0; i < len; i++) {
-      const c = this.connections[i];
-      if (c && c.state === PooledConnectionState.pending) count++;
+      if (this.connections[i].state === PooledConnectionState.pending) count++;
     }
     return count;
   }
@@ -1162,9 +1161,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        // The slot can still be an unassigned hole while the pool is starting
-        // and a synchronous creation failure re-enters via release().
-        if (connection && connection.state !== PooledConnectionState.closed) {
+        if (connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
         }
@@ -1382,17 +1379,23 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
             } else {
               this.waitingQueue.push(onConnected);
             }
-            // Prefer growing the pool when there's room; otherwise reuse
-            // one of the existing closed slots via `forceRetry()` so the
-            // `max: 1` case (and any already-at-max pool) can still
-            // recover after credentials rotate.
-            if (!this.#tryGrowPool()) {
-              for (let i = 0; i < pollSize; i++) {
-                const c = this.connections[i];
-                if (c.state === PooledConnectionState.closed && c.forceRetry()) {
-                  break;
-                }
+            // Reuse an existing closed slot via `forceRetry()` before
+            // growing. A slot that failed auth with `canBeConnected` unset
+            // can never be revived by `retry()`, so growing here would
+            // strand it: it counts against `maxPoolSize` forever while a
+            // fresh slot takes its place. Retry-first costs the same one
+            // handshake and keeps the pool dense with live slots once the
+            // credential rotates.
+            let retried = false;
+            for (let i = 0; i < pollSize; i++) {
+              const c = this.connections[i];
+              if (c.state === PooledConnectionState.closed && c.forceRetry()) {
+                retried = true;
+                break;
               }
+            }
+            if (!retried) {
+              this.#tryGrowPool();
             }
           } else {
             // impossible to connect or retry

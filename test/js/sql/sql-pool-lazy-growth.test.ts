@@ -143,13 +143,13 @@ describe("postgres pool fast-fails on non-retryable auth errors (#30632)", () =>
   });
 
   test("synchronous `password()` throw does not hang subsequent queries", async () => {
-    // `createConnection` in postgres.ts catches a thrown `password()`
-    // and invokes `onClose` synchronously, so `release()` drains the
-    // queue on the same tick `connect()` enqueues onto it. If we push
-    // AFTER triggering the retry path, the waiter is lost and the query
-    // hangs forever. Guard against that: both queries must resolve with
-    // the thrown error. The runner's default per-test timeout fails the
-    // test if anything hangs, which is the failure mode we're guarding.
+    // `createPooledConnectionHandle` in shared.ts defers a thrown
+    // `password()` to `onClose` via `process.nextTick`. This guards the
+    // no-hang contract: even if a future change made that path
+    // synchronous (so `release()` could drain the queue before
+    // `connect()` enqueues the waiter), both queries must still reject
+    // with the thrown error instead of hanging. The runner's default
+    // per-test timeout fails the test if anything hangs.
     await using sql = new SQL({
       adapter: "postgres",
       host: "127.0.0.1",

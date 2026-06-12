@@ -597,7 +597,7 @@ describe("JsRef::Weak liveness", () => {
   });
 });
 
-it("startSamplingProfiler with a directory writes a report at exit", async () => {
+it.concurrent("startSamplingProfiler with a directory writes a report at exit", async () => {
   // https://github.com/oven-sh/bun/issues/32212
   using dir = tempDir("sampling-profiler", {
     "entry.mjs": `
@@ -617,6 +617,7 @@ it("startSamplingProfiler with a directory writes a report at exit", async () =>
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("done true\n");
   expect(exitCode).toBe(0);
 
@@ -626,7 +627,7 @@ it("startSamplingProfiler with a directory writes a report at exit", async () =>
   expect(statSync(join(profileDir, reports[0])).size).toBeGreaterThan(0);
 });
 
-it("startSamplingProfiler with a directory in a worker writes a report at worker teardown", async () => {
+it.concurrent("startSamplingProfiler with a directory in a worker writes a report at worker teardown", async () => {
   // https://github.com/oven-sh/bun/issues/32212
   using dir = tempDir("sampling-profiler-worker", {
     "main.mjs": `
@@ -665,6 +666,7 @@ it("startSamplingProfiler with a directory in a worker writes a report at worker
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("done true\nreports 1\n");
   expect(exitCode).toBe(0);
 });

@@ -637,7 +637,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      // (the exception keeps propagating after the finally block runs)
       if (connectionInfo?.onconnect) {
         connectionInfo.onconnect(err);
       }
@@ -739,7 +738,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     const connectionInfo = this.connectionInfo;
     try {
       // user code; a throw must not abort the pool bookkeeping below
-      // (the exception keeps propagating after the finally block runs)
       if (connectionInfo?.onclose) {
         connectionInfo.onclose(err);
       }

@@ -308,3 +308,31 @@ it.skipIf(!isPosix)("writing after end() fails during flush does not crash", asy
   await Promise.resolve(writer.end()).catch(() => {});
   await 1;
 });
+
+describe("truncation", () => {
+  // Options.truncate (default true) was ignored by the open path: writing a
+  // shorter payload over a longer existing file left the old tail in place.
+  it("Bun.file(path).writer() truncates an existing longer file", async () => {
+    const filePath = join(tmpdirSync(), "filesink-truncate.txt");
+    fs.writeFileSync(filePath, Buffer.alloc(1024, "X").toString());
+
+    const writer = Bun.file(filePath).writer();
+    writer.write("short");
+    await writer.end();
+
+    expect(await Bun.file(filePath).text()).toBe("short");
+  });
+
+  it("binary writes over an existing longer file truncate", async () => {
+    const filePath = join(tmpdirSync(), "filesink-truncate-binary.bin");
+    fs.writeFileSync(filePath, Buffer.alloc(64 * 1024, 0xee));
+
+    const writer = Bun.file(filePath).writer();
+    writer.write(Buffer.alloc(1000, 0x42));
+    await writer.end();
+
+    const got = fs.readFileSync(filePath);
+    expect(got.length).toBe(1000);
+    expect(got.every((b: number) => b === 0x42)).toBe(true);
+  });
+});

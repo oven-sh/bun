@@ -736,3 +736,40 @@ describe("dictionary buffer lifetime", () => {
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
 });
+
+describe("sync compression with an options getter that resizes the input", () => {
+  // A `level` getter that resizes the input's resizable ArrayBuffer to zero runs
+  // while options are read. The input descriptor is captured only after the
+  // getter, so compression sees the post-getter (empty) input rather than a
+  // freed view of the original bytes.
+  function resizingInput(level) {
+    const input = Buffer.alloc(4 * 1024 * 1024, 0x41);
+    const rab = new ArrayBuffer(input.length, { maxByteLength: input.length });
+    const view = new Uint8Array(rab);
+    view.set(input);
+    return {
+      view,
+      rab,
+      options: {
+        get level() {
+          rab.resize(0);
+          return level;
+        },
+      },
+    };
+  }
+
+  it("Bun.gzipSync compresses the post-getter empty input", () => {
+    const { view, rab, options } = resizingInput(6);
+    const out = Bun.gzipSync(view, options);
+    expect(rab.byteLength).toBe(0);
+    expect(out).toEqual(Bun.gzipSync(new Uint8Array(0), { level: 6 }));
+  });
+
+  it("Bun.zstdCompressSync compresses the post-getter empty input", () => {
+    const { view, rab, options } = resizingInput(3);
+    const out = Bun.zstdCompressSync(view, options);
+    expect(rab.byteLength).toBe(0);
+    expect(out).toEqual(Bun.zstdCompressSync(new Uint8Array(0), { level: 3 }));
+  });
+});

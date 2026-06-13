@@ -44,6 +44,7 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    pub has_loaded_system_config: bool,
 }
 
 impl Default for ContextData {
@@ -84,6 +85,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            has_loaded_system_config: false,
         }
     }
 }

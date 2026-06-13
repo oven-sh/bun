@@ -3629,18 +3629,10 @@ impl AnyServer {
         any_server_dispatch!(self, |s| &s.config)
     }
 
-    /// The server's JS wrapper object, or `UNDEFINED` if the `JsRef` has been
-    /// downgraded and the wrapper collected (post-`stop()` with no user refs).
-    #[inline]
-    pub fn js_value(&self) -> JSValue {
-        any_server_dispatch!(self, |s| s.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
-    }
-
-    /// Like [`Self::js_value`] but `None` once the server has gone idle and
-    /// the `JsRef` downgraded to weak — same gate as
+    /// The server's JS wrapper object, or `None` once the server has gone idle
+    /// and the `JsRef` downgraded — same gate as
     /// [`NewServer::js_value_for_dispatch`], closing the dead-but-unswept
-    /// window where a `Weak` may hold a stale address. Use this when writing
-    /// the wrapper into another GC-traced slot.
+    /// window where a `Weak` may hold a stale address.
     #[inline]
     pub fn js_value_if_strong(&self) -> Option<JSValue> {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())

@@ -630,12 +630,12 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
   // js_value_assert_alive() panic on that path surfaces as a non-zero exit
   // instead of taking down the test runner.
   //
-  // Graceful stop() calls close_idle_connections(), which would normally close
-  // our keep-alive socket before the late request can reach the 503 guard. To
-  // exercise that guard we hold the FIRST request in-flight (so the socket is
-  // non-idle and survives close_idle) and pipeline the LATE request behind it.
-  // When the first completes, pending_requests → 0 → js_value downgrades, and
-  // uws then dispatches the pipelined request into a None wrapper → 503.
+  // To reach the 503 guard the wrapper must already be downgraded when the
+  // late request dispatches. We sequence that by holding the FIRST request
+  // in-flight (pending_requests > 0) across stop(), pipelining the LATE
+  // request behind it, then releasing: first completes → pending_requests
+  // drops to 0 → deinit_if_we_can() downgrades js_value → uws reads the
+  // pipelined request → on_user_route_request hits the is_strong gate → 503.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -682,7 +682,7 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
               "/r": async () => {
                 if (++hits === 1) {
                   inflight.resolve();
-                  await release.promise; // hold socket non-idle through stop()
+                  await release.promise; // keep pending_requests > 0 across stop()
                 }
                 return new Response("ok");
               },
@@ -702,8 +702,8 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
             },
           });
 
-          // First request: handler parks on \`release\`, keeping the socket
-          // in-flight so close_idle_connections() skips it.
+          // First request: handler parks on \`release\`, keeping
+          // pending_requests > 0 so stop() defers the js_value downgrade.
           sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: keep-alive\\r\\n\\r\\n");
           await inflight.promise;
 
@@ -711,7 +711,7 @@ test("late keep-alive request to a route after stop()+GC answers 503", async () 
           // until the first response is sent, by which time js_value is Weak.
           sock.write("GET /r HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
 
-          // Graceful stop: listener closes, close_idle skips this socket.
+          // Graceful stop: listener closes; downgrade deferred (request in flight).
           server.stop();
         })();
         // The only \`server\` binding is now out of scope.

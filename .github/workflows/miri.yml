@@ -22,6 +22,7 @@ on:
       - "src/ptr/**"
       - "src/resolve_builtins/**"
       - "src/shell_parser/**"
+      - "src/uws_sys/**"
       - "src/wyhash/**"
       - "scripts/rust-miri.ts"
       - "Cargo.toml"

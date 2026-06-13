@@ -517,8 +517,16 @@ pub struct StreamBuffer {
     pub cursor: usize,
 }
 
+// Ownership invariant for the raw parts: a non-null `list_ptr` means the
+// struct owns the raw parts of exactly one `Vec<u8>` decomposed by `update`.
+// `take_stream_buffer` nulls the parts when it transfers ownership out, and
+// `update` drops any buffer still owned before overwriting them, so the
+// invariant holds on every path (C++ only ever zero-initializes the struct).
 impl us_socket_stream_buffer_t {
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
+        // Drop whatever is currently owned so overwriting the raw parts below
+        // can't leak a previous buffer.
+        drop(self.take_stream_buffer());
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.
         let mut list = core::mem::ManuallyDrop::new(stream_buffer.list);
@@ -536,36 +544,39 @@ impl us_socket_stream_buffer_t {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
 
-    pub fn to_stream_buffer(&self) -> StreamBuffer {
-        StreamBuffer {
-            list: if !self.list_ptr.is_null() {
-                unsafe {
-                    // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
-                    // Vec<u8> in `update`; global allocator (mimalloc) matches.
-                    Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap)
-                }
-            } else {
-                Vec::new()
-            },
-            cursor: self.cursor,
-        }
+    /// One-shot ownership transfer: rebuilds the owned `Vec<u8>` from the raw
+    /// parts and nulls them, so the returned `StreamBuffer` is the allocation's
+    /// sole owner and a second take (or a later `destroy`) sees an empty
+    /// buffer. `total_bytes_written` is cumulative socket state, not buffer
+    /// contents, and survives the take.
+    pub fn take_stream_buffer(&mut self) -> StreamBuffer {
+        let list = if !self.list_ptr.is_null() {
+            // SAFETY: per the ownership invariant above, the raw parts came
+            // from a Vec<u8> decomposed in `update` (global allocator
+            // matches), and nulling them below ends this struct's ownership.
+            unsafe { Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap) }
+        } else {
+            Vec::new()
+        };
+        let cursor = self.cursor;
+        self.list_ptr = ptr::null_mut();
+        self.list_len = 0;
+        self.list_cap = 0;
+        self.cursor = 0;
+        StreamBuffer { list, cursor }
     }
 
     /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
-    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
+    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl. Idempotent:
+    /// the take nulls the raw parts, so a second call is a no-op.
     ///
     /// SAFETY: `this` must point to a live `us_socket_stream_buffer_t` whose
     /// `list_ptr`/`list_cap` were produced by `update` (decomposed `Vec<u8>` on
-    /// the global mimalloc allocator). Not called more than once.
+    /// the global mimalloc allocator).
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is non-null and exclusively borrowed
         let this = unsafe { &mut *this };
-        if !this.list_ptr.is_null() {
-            unsafe {
-                // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
-            }
-        }
+        drop(this.take_stream_buffer());
     }
 }
 
@@ -575,3 +586,97 @@ pub(crate) extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_str
     unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs
+
+// Pure Rust (no FFI at test runtime), so these run under `cargo miri test`,
+// which catches double-frees and leaks of the raw-part round-trips.
+#[cfg(test)]
+mod stream_buffer_tests {
+    use super::{StreamBuffer, us_socket_stream_buffer_t};
+
+    // https://github.com/oven-sh/bun/issues/31971
+    #[test]
+    fn take_transfers_ownership_once() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: vec![1, 2, 3],
+            cursor: 1,
+        });
+
+        let first = raw.take_stream_buffer();
+        assert_eq!(first.list, [1, 2, 3]);
+        assert_eq!(first.cursor, 1);
+
+        // The take nulled the raw parts: a second take yields an empty buffer
+        // instead of a second owner of the same allocation.
+        let second = raw.take_stream_buffer();
+        assert!(second.list.is_empty());
+        assert_eq!(second.list.capacity(), 0);
+        assert_eq!(second.cursor, 0);
+        assert!(raw.list_ptr.is_null());
+    }
+
+    #[test]
+    fn destroy_after_take_is_a_noop() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: vec![4, 5, 6],
+            cursor: 0,
+        });
+        let taken = raw.take_stream_buffer();
+        // SAFETY: `raw` is a live stack value whose parts came from `update`.
+        unsafe { us_socket_stream_buffer_t::destroy(&mut raw) };
+        drop(taken);
+    }
+
+    #[test]
+    fn destroy_is_idempotent() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: vec![7; 32],
+            cursor: 0,
+        });
+        // SAFETY: `raw` is a live stack value whose parts came from `update`.
+        unsafe { us_socket_stream_buffer_t::destroy(&mut raw) };
+        unsafe { us_socket_stream_buffer_t::destroy(&mut raw) };
+        assert!(raw.list_ptr.is_null());
+    }
+
+    #[test]
+    fn update_drops_the_previously_owned_buffer() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: vec![1; 16],
+            cursor: 2,
+        });
+        raw.update(StreamBuffer {
+            list: vec![9, 9],
+            cursor: 0,
+        });
+        let taken = raw.take_stream_buffer();
+        assert_eq!(taken.list, [9, 9]);
+        assert_eq!(taken.cursor, 0);
+    }
+
+    #[test]
+    fn total_bytes_written_survives_the_take() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: vec![1, 2],
+            cursor: 0,
+        });
+        raw.wrote(5);
+        drop(raw.take_stream_buffer());
+        assert_eq!(raw.total_bytes_written, 5);
+    }
+
+    #[test]
+    fn empty_capacity_round_trips_as_null() {
+        let mut raw = us_socket_stream_buffer_t::default();
+        raw.update(StreamBuffer {
+            list: Vec::new(),
+            cursor: 0,
+        });
+        assert!(raw.list_ptr.is_null());
+        assert!(raw.take_stream_buffer().list.is_empty());
+    }
+}

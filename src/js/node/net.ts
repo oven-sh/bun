@@ -266,11 +266,13 @@ const SocketHandlers: SocketHandler = {
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
-    // Post-upgrade ciphertext belongs to the TLS layer, not this socket.
-    if (self[kupgradedToTLS]) return;
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // After `tls.connect({ socket })` the raw half still sees the post-upgrade
+    // ciphertext. This socket is the transport, so keep its idle timer and byte
+    // count live, but don't re-emit those bytes as cleartext `data`.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) {
       socket.pause();
     }
@@ -1011,12 +1013,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
   data(socket, buffer) {
     $debug("Bun.Socket data");
     const { self } = socket.data;
-    // After `tls.connect({ socket })` the raw half still sees the
-    // post-upgrade ciphertext; the TLS layer owns those bytes now, so don't
-    // re-emit them as cleartext `data` on the original socket.
-    if (self[kupgradedToTLS]) return;
     self._unrefTimer();
     self.bytesRead += buffer.length;
+    // After `tls.connect({ socket })` the raw half still sees the post-upgrade
+    // ciphertext. This socket is the transport, so keep its idle timer and byte
+    // count live, but don't re-emit those bytes as cleartext `data`.
+    if (self[kupgradedToTLS]) return;
     if (!self.push(buffer)) socket.pause();
   },
   drain(socket) {
@@ -1369,9 +1371,10 @@ function Socket(options?) {
       data(socket, buffer) {
         const { self } = socket.data;
         if (!self) return;
-        // Post-upgrade ciphertext belongs to the TLS layer, not this socket.
-        if (self[kupgradedToTLS]) return;
         self._unrefTimer();
+        // Post-upgrade ciphertext belongs to the TLS layer. Keep the idle timer
+        // live (this socket is the transport) but don't surface the bytes.
+        if (self[kupgradedToTLS]) return;
         try {
           onread.callback(buffer.length, buffer);
         } catch (e) {

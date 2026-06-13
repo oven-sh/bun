@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -595,4 +595,71 @@ it("recursion throws stack overflow at entry point", () => {
   });
 
   expect(result.stderr.toString()).toContain("RangeError: Maximum call stack size exceeded.");
+});
+
+describe("onLoad of a file-namespace CommonJS module preserves named exports", () => {
+  const pluginFixture = `
+    import { plugin } from "bun";
+    import { readFileSync } from "node:fs";
+    plugin({
+      name: "passthrough",
+      setup(build) {
+        build.onLoad({ filter: /foo\\.[cm]?ts$/, namespace: "file" }, async args => {
+          return { contents: readFileSync(args.path, "utf8"), loader: "js" };
+        });
+      },
+    });
+  `;
+
+  it.each(["cts", "mts"])("works for a .%s module imported as ESM", async ext => {
+    using dir = tempDir("plugin-cjs-exports", {
+      "plugin.ts": pluginFixture,
+      "foo.cts": `exports.foo = () => "foo";`,
+      "foo.mts": `export const foo = () => "foo";`,
+      "entry.ts": `
+        import * as ns from "./foo.${ext}";
+        import { foo } from "./foo.${ext}";
+        console.log(JSON.stringify({ hasFoo: Object.keys(ns).includes("foo"), foo: foo(), nsFoo: ns.foo() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--preload=./plugin.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ hasFoo: true, foo: "foo", nsFoo: "foo" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("works for a .cts module loaded with require()", async () => {
+    using dir = tempDir("plugin-cjs-require", {
+      "plugin.ts": pluginFixture,
+      "foo.cts": `exports.foo = () => "foo";`,
+      "entry.ts": `
+        const mod = require("./foo.cts");
+        console.log(JSON.stringify({ keys: Object.keys(mod), foo: mod.foo() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--preload=./plugin.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ keys: ["foo"], foo: "foo" });
+    expect(exitCode).toBe(0);
+  });
 });

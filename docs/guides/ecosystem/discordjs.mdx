@@ -4,7 +4,11 @@ sidebarTitle: "Discord.js with Bun"
 mode: center
 ---
 
-Discord.js works out of the box with Bun. Let's write a bot. First create a directory and initialize it with `bun init`.
+Discord.js runs on Bun with no extra setup. This guide builds a bot that answers a `/ping` slash command, then shows how to keep it running once you deploy. If this is your first bot, copy each block as you reach it and you'll have something working by the end.
+
+---
+
+Create a folder for your bot and set it up with `bun init`. Pick the defaults when it asks.
 
 ```sh terminal icon="terminal"
 mkdir my-bot
@@ -14,7 +18,7 @@ bun init
 
 ---
 
-Now install Discord.js.
+Add Discord.js to the project.
 
 ```sh terminal icon="terminal"
 bun add discord.js
@@ -22,21 +26,25 @@ bun add discord.js
 
 ---
 
-Before we go further, we need to go to the [Discord developer portal](https://discord.com/developers/applications), login/signup, create a new _Application_, then create a new _Bot_ within that application. Follow the [official guide](https://discordjs.guide/legacy/preparations/app-setup#creating-your-bot) for step-by-step instructions.
+Your bot needs its own account, which you create in Discord's developer portal. Open the [developer portal](https://discord.com/developers/applications), sign in, and create an **Application**. Inside it, open the **Bot** tab to create the bot user. Discord's [setup walkthrough](https://discordjs.guide/legacy/preparations/app-setup#creating-your-bot) has screenshots if you get lost.
+
+On that **Bot** tab, find the token and copy it. It's the password your code uses to log in as the bot, so treat it like one and keep it to yourself.
 
 ---
 
-Once complete, you'll be presented with your bot's _private key_. Let's add this to a file called `.env.local`. Bun automatically reads this file and loads it into `process.env`.
+A bot can't do anything in a server until you invite it. In the portal, open the **OAuth2** section and generate an invite URL with the `bot` and `applications.commands` scopes. Open that URL and add the bot to a server you manage. A personal server you make just for testing is the easiest place to start.
 
-<Note>This is an example token that has already been invalidated.</Note>
+---
+
+Save the token in a file named `.env.local`. Bun reads this file on startup and loads it into `process.env`, so the token stays out of your code.
 
 ```ini .env.local icon="settings"
-DISCORD_TOKEN=NzkyNzE1NDU0MTk2MDg4ODQy.X-hvzA.Ovy4MCQywSkoMRRclStW4xAYK7I
+DISCORD_TOKEN=your-bot-token
 ```
 
 ---
 
-Be sure to add `.env.local` to your `.gitignore`! It is dangerous to check your bot's private key into version control.
+Add `.env.local` to your `.gitignore` before you commit anything. Anyone who reads the token can control your bot, so it should never land in version control.
 
 ```txt .gitignore icon="file-code"
 node_modules
@@ -45,45 +53,69 @@ node_modules
 
 ---
 
-Now let's actually write our bot in a new file called `bot.ts`.
+Here's the whole bot. Save it as `bot.ts`.
 
 ```ts bot.ts icon="/icons/typescript.svg"
-// import discord.js
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import { Client, Events, GatewayIntentBits, SlashCommandBuilder } from "discord.js";
 
-// create a new Client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-// listen for the client to be ready
-client.once(Events.ClientReady, c => {
-  console.log(`Ready! Logged in as ${c.user.tag}`);
+// the command people see when they type "/" in your server
+const ping = new SlashCommandBuilder()
+  .setName("ping")
+  .setDescription("Replies with Pong!");
+
+// runs once, right after the bot connects
+client.once(Events.ClientReady, async readyClient => {
+  console.log(`Logged in as ${readyClient.user.tag}`);
+
+  // add the command to every server the bot is in so it shows up right away
+  for (const guild of readyClient.guilds.cache.values()) {
+    await guild.commands.set([ping]);
+  }
 });
 
-// login with the token from .env.local
+// runs every time someone uses one of your slash commands
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  if (interaction.commandName === "ping") {
+    await interaction.reply("Pong!");
+  }
+});
+
 client.login(process.env.DISCORD_TOKEN);
 ```
 
+When the bot connects, the ready handler registers `/ping` in every server it has joined, so the command appears right away. After that, `interactionCreate` runs whenever someone uses a command; it checks that the command was `/ping` and replies with `Pong!`. The last line signs in with the token Bun loaded from `.env.local`.
+
 ---
 
-Now we can run our bot with `bun run`. It may take several seconds for the client to initialize the first time you run the file.
+Start the bot with `bun run`.
 
 ```sh terminal icon="terminal"
 bun run bot.ts
 ```
 
+The first connection takes a few seconds. Once the login line prints, switch to Discord, type `/ping` in your server, and send it.
+
 ```txt
-Ready! Logged in as my-bot#1234
+Logged in as my-bot#1234
 ```
 
----
-
-You're up and running with a bare-bones Discord.js bot! This is a basic guide to setting up your bot with Bun; we recommend the [official discord.js docs](https://discordjs.guide/) for complete information on the `discord.js` API.
+The bot replies with `Pong!`. You've got a working Discord bot.
 
 ---
 
-When you're ready to deploy, you don't need a bundling or build step. Bun runs `bot.ts` and every file it imports directly, so you can ship your source as-is and start the bot with the same `bun run bot.ts` command you use in development.
+Adding more commands follows the same shape: build another `SlashCommandBuilder`, pass it to the `set` call next to `ping`, and add an `if` branch in `interactionCreate` for its name. The [Discord.js docs](https://discord.js.org/docs) cover command options, permissions, buttons, embeds, and the rest of the API.
 
-To keep the bot online and restart it after a crash or reboot, run it under a process manager:
+---
+
+When you deploy, there's no build or bundling step. Bun runs `bot.ts` and every file it imports directly, so you ship your source as-is and start it with the same `bun run bot.ts` you use while developing.
+
+One thing to know for production: this bot registers `/ping` in each server on startup, which is fine while you're testing in one. For a bot that joins many servers, register commands globally instead. Global commands work everywhere but can take up to an hour to update, so per-server registration is the friendlier choice while you build.
+
+To keep the bot online and bring it back after a crash or reboot, run it under a process manager.
 
 <Columns cols={2}>
   <Card title="systemd" href="/guides/ecosystem/systemd" icon="server">

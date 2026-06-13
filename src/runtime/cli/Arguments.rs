@@ -307,7 +307,10 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
     parse_param!(
-        "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
+        "-b, --bun <bool>?                 Force a script or package to use Bun's runtime instead of Node.js (via symlinking node). --bun=false opts out, same as --no-bun"
+    ),
+    parse_param!(
+        "--no-bun                          Force a script or package to use Node.js instead of Bun's runtime, overriding `bun = true` in bunfig.toml"
     ),
     parse_param!(
         "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
@@ -1388,9 +1391,34 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         cmd,
         CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::BunxCommand
     ) {
-        // "run.bun" in bunfig.toml
-        if args.flag(b"--bun") {
+        // "run.bun" in bunfig.toml. CLI flags override the bunfig value in either
+        // direction: --bun (or --bun=true) forces it on, --no-bun (or --bun=false)
+        // forces it off. The two are mutually exclusive (see the
+        // --compile-autoload-bunfig pair below).
+        //
+        // `--bun` takes an optional value: absent => None, bare `--bun` => Some("").
+        let wants_bun = match args.option(b"--bun") {
+            None => None,
+            Some(b"") | Some(b"true") => Some(true),
+            Some(b"false") => Some(false),
+            Some(other) => {
+                Output::err_generic(
+                    "Invalid value for --bun: expected `true` or `false`, got `{}`",
+                    format_args!("{}", BStr::new(other)),
+                );
+                Global::crash();
+            }
+        };
+        let force_bun = wants_bun == Some(true);
+        let force_node = wants_bun == Some(false) || args.flag(b"--no-bun");
+        if force_bun && force_node {
+            Output::err_generic("Cannot use both --bun and --no-bun", ());
+            Global::crash();
+        }
+        if force_bun {
             ctx.debug.run_in_bun = true;
+        } else if force_node {
+            ctx.debug.run_in_bun = false;
         }
     }
 

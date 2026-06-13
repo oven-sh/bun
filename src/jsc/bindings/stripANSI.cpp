@@ -16,21 +16,24 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         return std::nullopt;
     }
 
-    auto start = input.data();
-    const auto end = start + input.size();
+    const auto* const end = input.data() + input.size();
 
-    // Lazy flat-buffer allocation: don't touch the buffer until we find an
-    // escape. For no-escape input we return std::nullopt and the caller
-    // reuses the original JSString with zero copies.
+    // Lazy flat-buffer allocation: don't touch the buffer until we confirm a
+    // real ANSI escape sequence (not just a broad-mask candidate). `searchPos`
+    // tracks the search position; `start` tracks the copy origin. They only
+    // diverge while we're skipping pre-allocation false positives — once
+    // allocated they move together. findEscapeCharacter scans only bytes past
+    // searchPos, so total work stays O(input.size()).
     Vector<Char> buffer;
     Char* cursor = nullptr;
-    bool foundANSI = false;
+    auto* start = input.data();
+    auto* searchPos = start;
 
-    while (start != end) {
-        const auto* escPos = ANSI::findEscapeCharacter(start, end);
+    while (searchPos != end) {
+        const auto* escPos = ANSI::findEscapeCharacter(searchPos, end);
         if (!escPos) {
-            // No more escapes.
-            if (!foundANSI)
+            // No more escape candidates.
+            if (cursor == nullptr)
                 return std::nullopt;
             // Copy the rest of the string.
             const auto remaining = static_cast<size_t>(end - start);
@@ -39,36 +42,54 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
             break;
         }
 
-        // Lazily allocate the worst-case buffer on first ESC candidate. Guard
-        // on `cursor == nullptr` (not `!foundANSI`) so a broad-mask false
-        // positive that allocates the buffer doesn't reset the cursor on the
-        // next iteration when a real escape is finally found.
+        const auto* newPos = ANSI::consumeANSI(escPos, end);
+        if (newPos == escPos) {
+            // Broad-mask false positive (e.g. standalone 0x9C).
+            if (cursor == nullptr) {
+                // Pre-allocation: skip the byte without committing to a copy.
+                // `start` stays put so the byte is included in the prefix copy
+                // if a later real escape forces allocation.
+                searchPos = escPos + 1;
+                continue;
+            }
+            // Post-allocation: flush chunk and copy the byte literally.
+            if (escPos > start) {
+                const auto chunkLen = static_cast<size_t>(escPos - start);
+                memcpy(cursor, start, chunkLen * sizeof(Char));
+                cursor += chunkLen;
+            }
+            *cursor++ = *escPos;
+            start = escPos + 1;
+            searchPos = start;
+            continue;
+        }
+
+        // Real ANSI sequence — allocate worst-case buffer on first one.
         // POD types skip per-element initialization in Vector::grow.
         if (cursor == nullptr) {
             buffer.grow(input.size());
             cursor = buffer.begin();
         }
 
-        // Copy everything before the escape sequence.
+        // Copy everything before the escape (preserves any false-positive
+        // bytes skipped pre-allocation).
         if (escPos > start) {
             const auto chunkLen = static_cast<size_t>(escPos - start);
             memcpy(cursor, start, chunkLen * sizeof(Char));
             cursor += chunkLen;
         }
 
-        const auto* newPos = ANSI::consumeANSI(escPos, end);
-        if (newPos == escPos) {
-            // Broad-mask false positive — copy the byte literally.
-            *cursor++ = *escPos;
-            start = escPos + 1;
-            continue;
-        }
-
-        ASSERT(newPos > start);
+        ASSERT(newPos > escPos);
         ASSERT(newPos <= end);
-        foundANSI = true;
         start = newPos;
+        searchPos = newPos;
     }
+
+    // Loop exited via `searchPos == end` without ever allocating — only
+    // false-positive bytes were found (e.g. "hello\x9C"). Return nullopt so
+    // the caller reuses the original JSString with zero heap allocations.
+    if (cursor == nullptr)
+        return std::nullopt;
 
     const size_t reserved = buffer.size();
     const size_t outputLen = static_cast<size_t>(cursor - buffer.begin());
@@ -104,7 +125,9 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
         if (escPos != start) break;
         const auto after = ANSI::consumeANSI(start, end);
         if (after == start) {
-            start++;
+            // Broad-mask false positive (e.g. standalone 0x9C) — not a real
+            // escape sequence. Break without advancing so the byte falls into
+            // the next content slice instead of being silently dropped.
             break;
         }
         start = after;
@@ -117,7 +140,12 @@ extern "C" bool Bun__ANSI__next(BunANSIIterator* it)
         return false;
     }
 
-    const auto escPos = ANSI::findEscapeCharacter(start, end);
+    auto escPos = ANSI::findEscapeCharacter(start, end);
+    // If the escape candidate is at `start`, it's a false-positive from the
+    // skip-loop (e.g. standalone 0x9C — not a real ANSI sequence). Include it
+    // in the content by scanning from start + 1 for the actual next escape.
+    if (escPos == start)
+        escPos = (start + 1 < end) ? ANSI::findEscapeCharacter(start + 1, end) : nullptr;
     const auto slice_end = escPos ? escPos : end;
 
     it->slice_ptr = start;

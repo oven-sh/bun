@@ -1493,10 +1493,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if str_.eql_comptime(b"use strict") {
                                 skip = true;
                                 // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
+                                let scope = p.current_scope_mut();
+                                scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                scope.use_strict_loc = stmt.loc;
+
+                                // Inside a function, strict mode propagates
+                                // from the function-body scope to the
+                                // parameter scope:
+                                //
+                                //   // This is a syntax error
+                                //   function fn(arguments) {
+                                //     "use strict";
+                                //   }
+                                //
+                                if scope.kind == js_ast::scope::Kind::FunctionBody {
+                                    if let Some(mut parent) = scope.parent {
+                                        if parent.kind == js_ast::scope::Kind::FunctionArgs
+                                            && parent.strict_mode == StrictModeKind::SloppyMode
+                                        {
+                                            parent.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                            parent.use_strict_loc = stmt.loc;
+                                        }
+                                    }
                                 }
                             } else if str_.eql_comptime(b"use asm") {
                                 skip = true;

@@ -46,6 +46,11 @@ pub struct Scope {
 
     pub strict_mode: StrictModeKind,
 
+    // Location of the "use strict" directive when `strict_mode` is
+    // `ExplicitStrictMode`. Inherited by child scopes along with
+    // `strict_mode` so error notes can point at the directive.
+    pub use_strict_loc: crate::Loc,
+
     pub is_after_const_local_prefix: bool,
 
     // This will be non-null if this is a TypeScript "namespace" or "enum"
@@ -75,6 +80,7 @@ impl Scope {
         contains_direct_eval: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,
+        use_strict_loc: crate::Loc::EMPTY,
         is_after_const_local_prefix: false,
         ts_namespace: None,
     };
@@ -133,6 +139,7 @@ impl Scope {
         self.label_stmt_is_loop = false;
         self.contains_direct_eval = false;
         self.strict_mode = StrictModeKind::SloppyMode;
+        self.use_strict_loc = crate::Loc::EMPTY;
         self.kind = Kind::Block;
     }
 

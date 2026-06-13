@@ -70,6 +70,14 @@ const ObjectAssign = Object.assign;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
+// Installed as an 'error' listener on ClientRequest when `options.signal` is
+// passed so that the synthesised AbortError has somewhere to land when the
+// user hasn't attached their own 'error' handler. Node's ClientRequest ends
+// up in the same state (listenerCount('error') === 1) via its internal
+// `addAbortSignal` / `eos()` wiring. See the comment on the `this.on("error",
+// noop)` call below for the full rationale.
+function noop() {}
+
 function emitErrorEventNT(self, err) {
   if (self.destroyed) return;
   if (self.listenerCount("error") > 0) {
@@ -212,9 +220,24 @@ function ClientRequest(input, options, cb) {
     }
   };
 
+  // When `options.signal` is provided this is overwritten below to tear down
+  // the abort listener on settle; default is a no-op so the destroy/close
+  // paths can call it unconditionally.
+  let removeSignalListener: () => void = () => {};
+
+  // Latches true once the request has emitted a terminal `'error'` (or is
+  // about to, via a scheduled nextTick). Every error-emission path checks
+  // this so that a single request only ever surfaces one terminal error to
+  // the user — any subsequent source (late signal abort, happy-eyeballs
+  // `fail()`, dual-catch on the fetch rejection, async lookup error that
+  // races the signal, …) is silently dropped once someone else has claimed
+  // the terminal event.
+  let errorEmitted = false;
+
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    removeSignalListener();
 
     const res = this.res;
 
@@ -243,6 +266,7 @@ function ClientRequest(input, options, cb) {
 
   const socketCloseListener = () => {
     this.destroyed = true;
+    removeSignalListener();
 
     const res = this.res;
     if (res) {
@@ -267,8 +291,51 @@ function ClientRequest(input, options, cb) {
     }
   };
 
+  // Once the signal-abort path has been kicked off we ignore subsequent
+  // `onAbort` calls — the underlying `kAbortController` fires its listener
+  // once, but `abortHandler` also invokes `onAbort()` directly as a fallback
+  // for the pre-`startFetch` case, and we don't want the two to double-emit
+  // error/close/abort events.
+  let signalAbortHandled = false;
+
+  const emitSignalAbortNT = (err: Error) => {
+    // Emit 'error' before 'close' (matching Node.js). `socketCloseListener`
+    // synchronously emits 'close' and marks the request destroyed; we
+    // therefore emit the error first, then close, then the legacy 'abort'.
+    //
+    // NB: when the signal fires AFTER response headers arrive (body still
+    // streaming), Bun's pre-existing early-`'close'` divergence means the
+    // request's terminal `'close'` has already fired via `maybeEmitClose()`
+    // by the time we get here. In that window this `emit('error', err)`
+    // lands after `'close'` — a stream-contract violation inherited from
+    // the early-close behaviour, not from this abort path. User code using
+    // `req.on('error', …)` still observes the abort; only
+    // `stream.finished(req)` / `pipeline` consumers (which settle on
+    // `'close'`) will miss it.
+    if (!errorEmitted) {
+      errorEmitted = true;
+      this.emit("error", err);
+    }
+    socketCloseListener();
+    this.emit("abort");
+  };
+
   const onAbort = (_err?: Error) => {
+    if (signalAbortHandled) return;
     this[kClearTimeout]?.();
+    // If the abort was initiated by `options.signal` and the response has
+    // not already completed, emit an AbortError on 'error' (matching
+    // Node.js). Running this on nextTick lets listeners attached
+    // synchronously after `http.request(...)` bind first. Once the response
+    // has completed, a late-firing signal is a no-op — matching Node's
+    // behaviour of removing the signal listener on settle.
+    const signal = this[kSignal];
+    if (signal?.aborted && !this[abortedSymbol] && !this?.res?.complete) {
+      signalAbortHandled = true;
+      this[abortedSymbol] = true;
+      process.nextTick(emitSignalAbortNT, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
     socketCloseListener();
     if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
@@ -434,6 +501,11 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+          // Release the options.signal listener once the response body
+          // finishes — otherwise a long-lived shared signal (e.g. a
+          // process-wide shutdown AbortController) would retain every
+          // successful request's closure for the rest of the signal's life.
+          res.once("end", removeSignalListener);
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -508,6 +580,14 @@ function ClientRequest(input, options, cb) {
 
             if (!!$debug) globalReportError(err);
 
+            // The request is settling with a non-abort error (ECONNREFUSED,
+            // DNS failure, TLS error, …). Drop the options.signal listener so
+            // a later signal firing doesn't schedule a second 'error' event
+            // (an AbortError) on top of this one.
+            removeSignalListener();
+
+            if (errorEmitted) return;
+            errorEmitted = true;
             try {
               this.emit("error", err);
             } catch (_err) {
@@ -546,6 +626,14 @@ function ClientRequest(input, options, cb) {
       options.lookup(host, { all: true }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
+          // Mirror fail()'s guard: skip if the request has already been
+          // torn down (user-driven destroy()/abort() or a prior terminal
+          // error) so late-arriving lookup errors don't emit on a closed
+          // request.
+          if (this[abortedSymbol] || this.destroyed || errorEmitted) return;
+          errorEmitted = true;
+          // Drop the signal listener so a later abort doesn't double-emit.
+          removeSignalListener();
           process.nextTick((self, err) => self.emit("error", err), this, err);
           return;
         }
@@ -553,11 +641,19 @@ function ClientRequest(input, options, cb) {
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
+          // If the request has already been aborted or destroyed (e.g. the
+          // user's signal fired mid-connect during happy-eyeballs
+          // iteration, or req.abort() was called), swallow this error
+          // rather than firing a second 'error' event on top of the
+          // AbortError that `emitSignalAbortNT` has already scheduled.
+          if (this[abortedSymbol] || this.destroyed || errorEmitted) return;
+          errorEmitted = true;
           const error = new Error(message);
           error.name = name;
           error.code = code;
           error.syscall = syscall;
           if (!!$debug) globalReportError(error);
+          removeSignalListener();
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
 
@@ -598,7 +694,11 @@ function ClientRequest(input, options, cb) {
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
-      process.nextTick((self, err) => self.emit("error", err), this, err);
+      if (!errorEmitted) {
+        errorEmitted = true;
+        removeSignalListener();
+        process.nextTick((self, err) => self.emit("error", err), this, err);
+      }
       return false;
     }
   };
@@ -630,7 +730,11 @@ function ClientRequest(input, options, cb) {
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
-      this.emit("error", err);
+      if (!errorEmitted) {
+        errorEmitted = true;
+        removeSignalListener();
+        this.emit("error", err);
+      }
     } finally {
       process.nextTick(emitFinishAndDeferredCloseNT);
     }
@@ -665,6 +769,14 @@ function ClientRequest(input, options, cb) {
 
   const maybeEmitClose = () => {
     maybeEmitPrefinish();
+    // NB: we intentionally do NOT call `removeSignalListener()` here — this
+    // runs on the nextTick after response headers arrive (while the body is
+    // still streaming), so detaching the listener early would make
+    // `options.signal` a no-op for the remainder of the response. Successful
+    // completion detaches the listener on `res`'s `'end'` event (wired up in
+    // `handleResponse` when the response is created); the `!res.complete`
+    // guard in `onAbort` covers the narrow window between close-on-headers
+    // and end-of-body.
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);
@@ -753,14 +865,32 @@ function ClientRequest(input, options, cb) {
   const signal = options.signal;
   if (signal) {
     //We still want to control abort function and timeout so signal call our AbortController
-    signal.addEventListener(
-      "abort",
-      () => {
-        this[kAbortController]?.abort();
-      },
-      { once: true },
-    );
+    const abortHandler = () => {
+      this[kAbortController]?.abort?.();
+      onAbort();
+    };
+    if (signal.aborted) {
+      process.nextTick(abortHandler);
+    } else {
+      signal.addEventListener("abort", abortHandler, { once: true });
+      // Mirror Node's `eos()`-based cleanup: drop the abort listener once the
+      // request settles so a late-firing signal (e.g. a long-lived
+      // AbortSignal.timeout() used as a request deadline) doesn't fire
+      // `'error'` on a request that already finished or was destroyed by
+      // the caller. Call this from every settle/teardown path where the
+      // request will not do any more I/O (normal close, manual destroy, and
+      // every terminal-error branch).
+      removeSignalListener = () => signal.removeEventListener("abort", abortHandler);
+    }
     this[kSignal] = signal;
+    // Install a dummy 'error' listener so the synthesised AbortError doesn't
+    // become an uncaught exception when the user hasn't attached their own
+    // handler. Node's http.ClientRequest has the same listenerCount('error')
+    // === 1 when a signal is passed, installed via its `eos()`-based cleanup
+    // in `addAbortSignal`; this is the Bun equivalent. A user-provided
+    // `'error'` listener still fires alongside this one, so user code is
+    // unaffected.
+    this.on("error", noop);
   }
   let method = options.method;
   const methodIsString = typeof method === "string";

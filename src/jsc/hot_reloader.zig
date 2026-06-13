@@ -134,7 +134,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             };
 
             clear_screen = clear_screen_flag;
-            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator) catch |err| {
+            const watcher = Watcher.init(Reloader, reloader, fs, bun.default_allocator, .{}) catch |err| {
                 bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
             };
@@ -301,12 +301,17 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             };
 
             if (comptime @TypeOf(this.bun_watcher) == ImportWatcher) {
+                const exclude_patterns = if (@hasField(Ctx, "watch_excludes")) this.watch_excludes else &.{};
+
                 this.bun_watcher = if (reload_immediately)
                     .{ .watch = Watcher.init(
                         Reloader,
                         reloader,
                         this.transpiler.fs,
                         bun.default_allocator,
+                        .{
+                            .exclude_patterns = exclude_patterns,
+                        },
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
@@ -317,6 +322,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.transpiler.fs,
                         bun.default_allocator,
+                        .{
+                            .exclude_patterns = exclude_patterns,
+                        },
                     ) catch |err| {
                         bun.handleErrorReturnTrace(err, @errorReturnTrace());
                         Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
@@ -328,11 +336,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.hot);
                 }
             } else {
+                const exclude_patterns = if (@hasField(Ctx, "watch_excludes")) this.watch_excludes else &.{};
+
                 this.bun_watcher = Watcher.init(
                     Reloader,
                     reloader,
                     this.transpiler.fs,
                     bun.default_allocator,
+                    .{
+                        .exclude_patterns = exclude_patterns,
+                    },
                 ) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});

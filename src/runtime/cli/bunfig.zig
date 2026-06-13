@@ -252,6 +252,32 @@ pub const Bunfig = struct {
                 }
             }
 
+            if (comptime cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
+                if (json.get("watch")) |watch| {
+                    if (watch.get("excludes")) |expr| {
+                        if (expr.asArray()) |array_| {
+                            var array = array_;
+                            var excludes = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                            errdefer excludes.deinit();
+                            while (array.next()) |item| {
+                                try this.expectString(item);
+                                if (item.data.e_string.len() > 0)
+                                    excludes.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                            }
+                            this.ctx.debug.watch_excludes = excludes.items;
+                        } else if (expr.data == .e_string) {
+                            if (expr.data.e_string.len() > 0) {
+                                var excludes = try allocator.alloc(string, 1);
+                                excludes[0] = try expr.data.e_string.string(allocator);
+                                this.ctx.debug.watch_excludes = excludes;
+                            }
+                        } else if (expr.data != .e_null) {
+                            try this.addError(expr.loc, "Expected watch.excludes to be an array or string");
+                        }
+                    }
+                }
+            }
+
             if (comptime cmd == .TestCommand) {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {

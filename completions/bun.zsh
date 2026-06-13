@@ -929,6 +929,13 @@ _bun() {
             esac
 
             ;;
+        *)
+            # `bun <file> ...` — the first word isn't a known subcommand,
+            # so bun treats it as a script path. Complete positional args
+            # after the script with files, mirroring what `bun run` does.
+            _files
+
+            ;;
         esac
 
         ;;

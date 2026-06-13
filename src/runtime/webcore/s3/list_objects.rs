@@ -38,7 +38,7 @@ pub struct S3ListObjectsContents<'a> {
     // a maybe-owned slice.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
-    checksum_algorithme: Option<&'a [u8]>,
+    checksum_algorithm: Option<&'a [u8]>,
     last_modified: Option<&'a [u8]>,
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
@@ -100,8 +100,8 @@ impl<'a> S3ListObjectsV2Result<'a> {
                 object_info.put_optional_utf8(global_object, b"eTag", item.etag.as_deref())?;
                 object_info.put_optional_utf8(
                     global_object,
-                    b"checksumAlgorithme",
-                    item.checksum_algorithme,
+                    b"checksumAlgorithm",
+                    item.checksum_algorithm,
                 )?;
                 object_info.put_optional_utf8(
                     global_object,
@@ -217,7 +217,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     let mut etag: Option<&[u8]> = None;
                     let mut etag_owned: Option<Vec<u8>> = None;
                     let mut checksum_type: Option<&[u8]> = None;
-                    let mut checksum_algorithme: Option<&[u8]> = None;
+                    let mut checksum_algorithm: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
 
@@ -284,7 +284,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</ChecksumAlgorithm>")
                                     {
-                                        checksum_algorithme = Some(&xml[i..i + __tag_end]);
+                                        checksum_algorithm = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 20;
                                     } else {
                                         i = xml.len();
@@ -380,7 +380,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                 (None, None) => None,
                             },
                             checksum_type,
-                            checksum_algorithme,
+                            checksum_algorithm,
                             last_modified,
                             object_size,
                             storage_class,

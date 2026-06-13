@@ -2627,6 +2627,34 @@ where
     pub fn handle_resolve_stream(req: &mut Self) {
         stream_log!("handleResolveStream");
 
+        // endFromJS() can hit transport backpressure (common on QUIC right
+        // after the HEADERS frame) and park a pending_flush promise while
+        // onWritable drains the remaining bytes. Tearing the sink down now
+        // would discard those bytes and truncate the response, so wait for
+        // the flush to settle and re-enter. On abort, flushPromise() has
+        // already settled pending_flush, so this never waits on a dead
+        // socket.
+        if let Some(wrapper) = req.sink_mut() {
+            if !req.flags.aborted() && !wrapper.sink.aborted {
+                if let Some(flush) = wrapper.sink.pending_flush {
+                    stream_log!("handleResolveStream: waiting for pending flush");
+                    debug_assert!(req.server.is_some());
+                    // SAFETY: BACKREF
+                    let global_this = req.server().global_this();
+                    req.ref_();
+                    let cell = NativePromiseContext::create(global_this, req);
+                    // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+                    jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
+                        global_this,
+                        cell,
+                        Self::ON_RESOLVE_STREAM,
+                        Self::ON_REJECT_STREAM,
+                    );
+                    return;
+                }
+            }
+        }
+
         let mut wrote_anything = false;
         if let Some(wrapper) = req.sink_mut() {
             let wrapper_ptr = req.sink.take().expect("infallible: sink_mut returned Some");

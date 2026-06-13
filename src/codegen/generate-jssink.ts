@@ -670,16 +670,17 @@ void JS${controllerName}::detach() {
 
     auto readableStream = m_weakReadableStream.get();
     auto onClose = m_onClose.get();
-    
+
     if (readableStream && onClose) {
-        auto callData = JSC::getCallData(onClose);
-        if(callData.type != JSC::CallData::Type::None) {
-            JSC::JSGlobalObject *globalObject = this->globalObject();
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(readableStream);
-            arguments.append(jsUndefined());
-            call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
-        }
+        JSC::JSGlobalObject *globalObject = this->globalObject();
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        // m_onClose may be an AsyncContextFrame (startDirectStream wraps the
+        // callback when the stream was created with an async context), which
+        // JSC::getCallData reports as not callable. AsyncContextFrame::call
+        // unwraps the frame and also handles plain callables.
+        AsyncContextFrame::call(globalObject, onClose, JSC::jsUndefined(), arguments);
     }
 
     m_onClose.clear();

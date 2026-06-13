@@ -159,7 +159,11 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     for (dependency, 0..) |c, i| {
         switch (c) {
             '@' => {
-                if (at_index == null) at_index = i;
+                // SCP format is `[user@]host:path` — only one `@` is allowed
+                // before the colon. A second `@` means this is actually an
+                // alias like `alias@git@host:path`, not a valid SCP path.
+                if (at_index != null) return false;
+                at_index = i;
             },
             ':' => {
                 if (strings.hasPrefixComptime(dependency[i..], "://")) return false;

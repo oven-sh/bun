@@ -3,6 +3,18 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness"
 import { readFileSync } from "node:fs";
 import path from "path";
 
+// Debug/ASAN builds print "WARNING: ASAN interferes with JSC signal handlers; …"
+// to stderr on every JS-executing process launch — emitted via std::call_once
+// in Options.cpp, so at most once per subprocess. It leaks into snapshot tests
+// that capture stderr. Strip it before snapshotting so debug-ASAN CI lanes
+// match the release snapshot.
+function stripAsanWarning(s: string): string {
+  return s
+    .split("\n")
+    .filter(line => !line.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+}
+
 test("coverage crash", () => {
   const dir = tempDirWithFiles("cov", {
     "demo.test.ts": `class Y {
@@ -55,6 +67,47 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+// https://github.com/oven-sh/bun/issues/29691
+//
+// `class Foo extends Something() {}` has no user-written constructor, so JSC
+// synthesizes one from `(function (...args) { super(...args); })`. JSC also
+// records that synthetic function in its control-flow profiler indexed by the
+// USER's source ID, even though the offsets it records live in the synthetic
+// source. Coverage then reported the 37-byte range `[1, 38)` straddling the
+// import line and the class declaration line as an uncovered "function" —
+// marking line 1 (the import) as `DA:1,0` even though the module loaded.
+test("derived class with no explicit constructor (issue #29691)", () => {
+  const dir = tempDirWithFiles("cov-29691", {
+    "dep.ts": `export const Base = () => class {};\n`,
+    "subject.ts": `import { Base } from "./dep";
+export class Derived extends Base() {}
+`,
+    "subject.test.ts": `import { expect, test } from "bun:test";
+import { Derived } from "./subject";
+test("loads the class", () => {
+  expect(Derived.name).toBe("Derived");
+});
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, null, "pipe"],
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+
+  // subject.ts should not report the import on line 1 as uncovered (DA:1,0),
+  // and should not count the synthetic default constructor as a function.
+  const subjectRecord = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"))!;
+  expect(subjectRecord).toContain("FNF:1");
+  expect(subjectRecord).toContain("FNH:1");
+  expect(subjectRecord).toMatch(/DA:2,[1-9]\d*/); // class declaration line was evaluated (non-zero hits)
+  expect(subjectRecord).not.toContain("DA:1,0"); // import line is not bogusly marked unexecuted
 });
 
 test("coverage excludes node_modules directory", () => {
@@ -117,7 +170,7 @@ test("should call both functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -182,7 +235,7 @@ test("should call only some functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -192,8 +245,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+All files      |   75.00 |  100.00 |
+ include-me.ts |   50.00 |  100.00 | 
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -247,7 +300,7 @@ test("should call all functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -314,7 +367,7 @@ test("should call all functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -432,7 +485,7 @@ test("should pass", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize error output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -471,7 +524,7 @@ test("should pass", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize error output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -516,7 +569,7 @@ test("should call function", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 
@@ -569,7 +622,7 @@ test("should call function", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let stderr = result.stderr.toString("utf-8");
+  let stderr = stripAsanWarning(result.stderr.toString("utf-8"));
   // Normalize output for cross-platform consistency
   stderr = normalizeBunSnapshot(stderr, dir);
 

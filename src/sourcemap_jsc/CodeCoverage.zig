@@ -486,6 +486,15 @@ pub const ByteRangeMapping = struct {
                 }
             }
 
+            // Snapshot of lines marked executed by statement blocks above. Statement
+            // coverage is authoritative for line coverage — a never-called function's
+            // declaration line still ran as a statement, and JSC's synthetic default
+            // class constructor ranges get filed under the user's sourceID with
+            // offsets into a completely different (synthetic) source, so they must
+            // not unset lines that real statements already covered. Issue #29691.
+            var stmt_lines_which_have_executed = bun.handleOom(lines_which_have_executed.clone(allocator));
+            defer stmt_lines_which_have_executed.deinit(allocator);
+
             for (function_blocks, 0..) |function, i| {
                 if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
 
@@ -508,14 +517,16 @@ pub const ByteRangeMapping = struct {
 
                 const did_fn_execute = function.executionCount > 0 or function.hasExecuted;
 
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
+                // Mark executable lines for a function that did not execute — but
+                // preserve hits recorded by statement blocks.
                 if (!did_fn_execute) {
                     const end = @min(max_line, line_count);
-                    @memset(line_hits_slice[min_line..end], 0);
                     for (min_line..end) |line| {
                         executable_lines.set(line);
-                        lines_which_have_executed.unset(line);
+                        if (!stmt_lines_which_have_executed.isSet(line)) {
+                            lines_which_have_executed.unset(line);
+                            line_hits_slice[line] = 0;
+                        }
                     }
                 }
 
@@ -587,6 +598,11 @@ pub const ByteRangeMapping = struct {
                 }
             }
 
+            // Snapshot of lines marked executed by statement blocks above. See the
+            // same comment in the no-sourcemap branch for rationale. Issue #29691.
+            var stmt_lines_which_have_executed = bun.handleOom(lines_which_have_executed.clone(allocator));
+            defer stmt_lines_which_have_executed.deinit(allocator);
+
             for (function_blocks, 0..) |function, i| {
                 if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
 
@@ -624,14 +640,16 @@ pub const ByteRangeMapping = struct {
 
                 const did_fn_execute = function.executionCount > 0 or function.hasExecuted;
 
-                // only mark the lines as executable if the function has not executed
-                // functions that have executed have non-executable lines in them and thats fine.
+                // Mark executable lines for a function that did not execute — but
+                // preserve hits recorded by statement blocks.
                 if (!did_fn_execute) {
                     const end = @min(max_line, line_count);
                     for (min_line..end) |line| {
                         executable_lines.set(line);
-                        lines_which_have_executed.unset(line);
-                        line_hits_slice[line] = 0;
+                        if (!stmt_lines_which_have_executed.isSet(line)) {
+                            lines_which_have_executed.unset(line);
+                            line_hits_slice[line] = 0;
+                        }
                     }
                 }
 

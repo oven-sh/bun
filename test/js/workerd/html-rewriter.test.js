@@ -44,6 +44,32 @@ describe("HTMLRewriter", () => {
     ).toThrow("test");
   });
 
+  it("error inside document end handler", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .onDocument({
+          end() {
+            throw new Error("test");
+          },
+        })
+        .transform(new Response("<div>hello</div>")),
+    ).toThrow("test");
+    Bun.gc(true);
+  });
+
+  it("error inside document end handler (string)", () => {
+    expect(() =>
+      new HTMLRewriter()
+        .onDocument({
+          end() {
+            throw new Error("test");
+          },
+        })
+        .transform("<div>hello</div>"),
+    ).toThrow("test");
+    Bun.gc(true);
+  });
+
   it("fast async error inside element handler", () => {
     let caught = false;
     try {

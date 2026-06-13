@@ -1857,6 +1857,14 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // `exports_kind` is final here. A file whose strictness came only from
+        // being forced to ESM (".mjs"/".mts" or package.json "type": "module")
+        // is really strict only when it executes as an ES module; files
+        // classified as CommonJS (including `EsmWithDynamicFallbackFromCjs`)
+        // execute with CommonJS sloppy-mode semantics via Bun's interop, so
+        // their queued strict-mode errors are discarded.
+        p.flush_deferred_forced_esm_strict_features(exports_kind == js_ast::ExportsKind::Esm);
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {

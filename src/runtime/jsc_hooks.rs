@@ -2772,6 +2772,16 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
+                    // A cache hit must replicate the transpile path's
+                    // main-module bookkeeping: `has_loaded` gates the
+                    // unknown-extension loader fallback (Tsx for a potential
+                    // main module vs. the file loader) and the concurrent
+                    // transpiler, so leaving it false here makes every later
+                    // unknown-extension import parse as code.
+                    if is_main {
+                        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                        unsafe { (*jsc_vm).has_loaded = true };
+                    }
                     return Ok(OwnedResolvedSource::from(ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),

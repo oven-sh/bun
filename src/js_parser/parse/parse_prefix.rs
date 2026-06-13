@@ -307,7 +307,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
-        // p.checkForLegacyOctalLiteral()
+        p.check_for_legacy_octal_literal(loc);
         p.lexer.next()?;
         Ok(value)
     }

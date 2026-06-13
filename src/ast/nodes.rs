@@ -1222,6 +1222,15 @@ pub enum StrictModeKind {
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
+    /// The file is an ES module only because of its extension (".mjs"/".mts")
+    /// or the enclosing package.json "type": "module", not because of any ESM
+    /// syntax. Such a file may still be classified as CommonJS after the visit
+    /// pass (Bun's CommonJS-in-ESM interop), so strict-mode feature errors for
+    /// this kind are deferred until `exports_kind` is known and emitted only
+    /// when it is exactly `ExportsKind::Esm`; any other classification
+    /// (including `EsmWithDynamicFallbackFromCjs`) executes with CommonJS
+    /// sloppy-mode semantics and discards them.
+    ImplicitStrictModeModuleType,
 }
 
 pub fn printmem(args: fmt::Arguments<'_>) {

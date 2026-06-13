@@ -94,3 +94,75 @@ it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", asy
   await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);
 });
+
+it.if(isWindows)(
+  "tls.connect({ socket }) does not re-emit post-upgrade bytes on a named-pipe socket (STARTTLS) #32242",
+  async () => {
+    // Mock STARTTLS server over a named pipe: greet, reply PROCEED to STARTTLS,
+    // then send mock TLS records. Those bytes must reach the TLS layer (OpenSSL
+    // rejects them) rather than re-surface as cleartext `data` on the original
+    // pipe socket. The named-pipe upgrade leaves the native handle in place, so
+    // before the fix those bytes re-entered this handler and attempted a second
+    // upgrade (the #32239 "Invalid socket" pattern).
+    const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+
+    const server = net.createServer(serverSocket => {
+      serverSocket.on("error", () => {});
+      serverSocket.write("SERVER_GREETING");
+      let phase = "greeting";
+      serverSocket.on("data", data => {
+        if (phase === "greeting" && data.toString().includes("STARTTLS")) {
+          phase = "proceed";
+          serverSocket.write("PROCEED");
+        } else if (phase === "proceed") {
+          phase = "done";
+          serverSocket.write(Buffer.alloc(50, 0x16));
+        }
+      });
+    });
+
+    server.listen(pipe_name);
+    await once(server, "listening");
+
+    const { promise, resolve } = Promise.withResolvers<{ upgrades: number; message: string }>();
+
+    let upgrades = 0;
+    let upgraded = false;
+
+    const socket = net.connect(pipe_name);
+    try {
+      // Errors are an expected outcome here: OpenSSL rejects the mock handshake
+      // bytes (the TLS socket emits `error`) and the pipe may reset during
+      // teardown. Every terminal event settles `promise`, so a regression
+      // surfaces as a failed assertion rather than a hang.
+      socket.on("error", () => {});
+      socket.on("close", () => resolve({ upgrades, message: "" }));
+
+      socket.on("data", data => {
+        if (!upgraded && data.toString("latin1").includes("SERVER_GREETING")) {
+          socket.write("STARTTLS");
+          return;
+        }
+        // The legitimate upgrade (on PROCEED) and the buggy re-entry (on
+        // re-emitted ciphertext) both land here, mirroring the issue's handler.
+        upgraded = true;
+        upgrades++;
+        const tlsSocket = connect({ socket, rejectUnauthorized: false });
+        tlsSocket.on("error", err => resolve({ upgrades, message: err.message }));
+        tlsSocket.on("secureConnect", () => resolve({ upgrades, message: "" }));
+        tlsSocket.on("close", () => resolve({ upgrades, message: "" }));
+      });
+
+      const result = await promise;
+
+      // Once TLS owns the stream no further `data` event re-enters the handler,
+      // so exactly one upgrade is attempted and it never fails with "Invalid
+      // socket". A re-emitted post-upgrade chunk would push `upgrades` past 1.
+      expect(result.message).not.toContain("Invalid socket");
+      expect(result.upgrades).toBe(1);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  },
+);

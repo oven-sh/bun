@@ -614,6 +614,19 @@ pub fn migratePnpmLockfile(
 
                         pkg.meta.integrity = Integrity.parse(integrity_str);
                     }
+
+                    // If pnpm recorded an explicit tarball URL (e.g. GitHub Packages uses
+                    // `/download/...` instead of the npm `/-/` layout), prefer it over the
+                    // URL we synthesized from the registry scope above.
+                    if (res.tag == .npm) {
+                        if (res_expr.get("tarball")) |tarball_expr| {
+                            if (tarball_expr.asString(allocator)) |tarball_str| {
+                                if (tarball_str.len > 0) {
+                                    res.value.npm.url = try string_buf.append(tarball_str);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (package_obj.get("os")) |os_expr| {

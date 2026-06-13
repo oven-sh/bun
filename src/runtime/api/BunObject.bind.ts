@@ -21,3 +21,18 @@ export const gc = fn({
   },
   ret: t.usize,
 });
+
+// Builds the macOS launchd plist body (used by `Bun.cron()` on macOS) from its
+// inputs, so the log-path / XML-escaping logic can be unit-tested on any host.
+// Exposed via `bun:internal-for-testing`. Throws on an invalid cron expression.
+export const cronPlistForTesting = fn({
+  args: {
+    global: t.globalObject,
+    home: t.UTF8String,
+    title: t.UTF8String,
+    bunExe: t.UTF8String,
+    absPath: t.UTF8String,
+    schedule: t.UTF8String,
+  },
+  ret: t.DOMString,
+});

@@ -236,6 +236,16 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+
+// Builds the macOS launchd plist body from its inputs (host-independent) so the
+// cron log-path / XML-escaping logic can be asserted on any platform.
+export const cronPlistForTesting = $bindgenFn("BunObject.bind.ts", "cronPlistForTesting") as (
+  home: string,
+  title: string,
+  bunExe: string,
+  absPath: string,
+  schedule: string,
+) => string;
 export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newZigFunction(
   "collections/linear_fifo.zig",

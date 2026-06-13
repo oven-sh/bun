@@ -981,4 +981,409 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // The lowering moves `static {}` blocks out of the class body so they run after
+  // decoration. Private names referenced inside those blocks must be lowered too,
+  // otherwise the emitted code references `#foo` outside the class and is invalid.
+  describe("static blocks referencing private names", () => {
+    test("auto-accessor with private brand check in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          static {
+            console.log(#a in globalThis, #a in new Foo());
+          }
+          #a() {
+            return "private-a";
+          }
+          accessor x = 1;
+          callA() {
+            return this.#a();
+          }
+        }
+        const f = new Foo();
+        console.log(f.x, f.callA());
+        f.x = 5;
+        console.log(f.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("false true\n1 private-a\n5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("auto-accessor with private field access in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Counter {
+          #count = 7;
+          accessor label = "c";
+          static {
+            const c = new Counter();
+            console.log(c.#count, #count in c, c.label);
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("7 true c\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private auto-accessor brand check in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          accessor #x = 3;
+          getX() {
+            return this.#x;
+          }
+          static {
+            console.log(#x in new Foo(), #x in {});
+          }
+        }
+        console.log(new Foo().getX());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true false\n3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class decorator with static private method call in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(cls, ctx) {
+          return cls;
+        }
+        @dec class Foo {
+          static {
+            console.log("init:", this.#secret());
+          }
+          static #secret() {
+            return 42;
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("init: 42\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated method with private method call in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          static {
+            console.log(#helper in new Foo());
+          }
+          #helper() {}
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("function declaration inside a static block referencing a private method", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          accessor a = 1;
+          #m() {
+            return 7;
+          }
+          static {
+            function check(o) {
+              return #m in o;
+            }
+            console.log(check(new Foo()), check({}));
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true false\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("update and compound assignment on a private auto-accessor still work with decorated members", async () => {
+      // The rewriter must not touch references to private auto-accessors that stay
+      // declared on the class (e.g. `this.#x++` cannot be expressed with __privateGet).
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 0;
+          inc() {
+            return this.#x++;
+          }
+          add(n) {
+            this.#x += n;
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        console.log(f.inc(), f.add(2));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("0 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated member with private auto-accessor brand check in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo(), #x in {});
+          }
+          inc() {
+            return this.#x++;
+          }
+          get x() {
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        f.inc();
+        f.inc();
+        console.log(f.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true false\n2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private auto-accessor referenced in static block keeps native update expressions in methods", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo());
+          }
+          inc() {
+            return this.#x++;
+          }
+          getX() {
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        f.inc();
+        console.log(f.inc(), f.getX());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated private method before a private auto-accessor referenced in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec #m() {
+            return 1;
+          }
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo());
+          }
+          callM() {
+            return this.#m();
+          }
+        }
+        console.log(new Foo().callM());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class declared inside another class's static block keeps native private fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          accessor a = 1;
+          static {
+            class Inner {
+              accessor b = 1;
+              #y = 0;
+              inc() {
+                return this.#y++;
+              }
+            }
+            const i = new Inner();
+            i.inc();
+            console.log(i.inc(), new Outer().a);
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("nested class static block referencing an outer private does not lower the outer class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          accessor a = 1;
+          #o = 0;
+          bump() {
+            return this.#o++;
+          }
+          makeInner() {
+            return class {
+              accessor b = 2;
+              static {
+                console.log(#o in new Outer(), #o in {});
+              }
+            };
+          }
+        }
+        const o = new Outer();
+        o.bump();
+        console.log(o.bump());
+        o.makeInner();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\ntrue false\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("lowered private method body referencing a private auto-accessor", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 1;
+          #helper() {
+            return this.#x + 1;
+          }
+          use() {
+            return this.#helper();
+          }
+        }
+        console.log(new Foo().use());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler output with private name in static block reparses", () => {
+      // Fuzzer-found: "#a in _" used to be printed after the class body, which does not parse.
+      const transpiler = new Bun.Transpiler({
+        loader: "js",
+        target: "node",
+        minifyWhitespace: true,
+        deadCodeElimination: true,
+      });
+      const output = transpiler.transformSync(
+        "class Foo {\n static {\n [_caitProto] = babelHe323(#a in _).e;\n }\n #a() {\n }\n accessor 0;\n}",
+      );
+      // the lowered output must still be valid syntax
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+  });
+
+  // When private members get lowered to WeakMap/WeakSet helpers, their initializers are
+  // moved into the constructor / static `__privateAdd` blocks / after the class. Private
+  // references inside those initializers must be rewritten as well.
+  describe("field initializers referencing lowered privates", () => {
+    test("private field initializer referencing another private field (#28118)", async () => {
+      using dir = tempDir("es-dec-28118", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function id(
+            value: ClassAccessorDecoratorTarget<any, any>,
+            context: ClassAccessorDecoratorContext,
+          ): ClassAccessorDecoratorResult<any, any> {
+            return value;
+          }
+
+          class Broken {
+            @id accessor label: string = "";
+            #name = "hello";
+            #callback = () => this.#name;
+            run() {
+              return this.#callback();
+            }
+          }
+
+          console.log(new Broken().run());
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("hello\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static field and static accessor initializers referencing a private field", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function id(value, context) {
+          return value;
+        }
+        class Foo {
+          @id accessor a = 1;
+          #name = 2;
+          static #s = new Foo().#name + 1;
+          static accessor t = new Foo().#name + 5;
+          static getS() {
+            return Foo.#s;
+          }
+        }
+        console.log(Foo.getS(), Foo.t);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("3 7\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor initializer referencing a private method without decorators", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          #a() {
+            return 5;
+          }
+          accessor x = 1;
+          static accessor y = #a in new Foo();
+        }
+        console.log(Foo.y);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler output with private references in field initializers reparses", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true });
+      const inputs = [
+        // instance private field initializer referencing another private
+        "class Broken { @id accessor label = ''; #name = 'hello'; #callback = () => this.#name; }",
+        // kept public field initializer referencing a lowered private (must print as valid syntax;
+        // evaluation order of kept fields vs. constructor-injected private storage is a separate,
+        // pre-existing limitation of this lowering)
+        "class Foo { @id accessor a = 1; #name = 2; pub = this.#name; }",
+        // static private field + static auto-accessor initializers referencing a lowered private
+        "class Foo { @id accessor a = 1; #name = 2; static #s = new Foo().#name; static accessor t = new Foo().#name; }",
+      ];
+      for (const input of inputs) {
+        const output = transpiler.transformSync(input);
+        expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+      }
+    });
+  });
 });

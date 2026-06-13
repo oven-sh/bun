@@ -1052,6 +1052,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut body), map);
                     data.body = body;
                 }
+                js_ast::StmtData::SFunction(data) => {
+                    let stmts = data.func.body.stmts.slice_mut();
+                    self.rewrite_private_accesses_in_stmts(stmts, map);
+                }
                 _ => {}
             }
         }
@@ -1385,6 +1389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
+        let mut extracted_accessor_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
@@ -1399,25 +1404,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if cprop.kind == PropertyKind::ClassStaticBlock {
                     continue;
                 }
+                let is_private_key = cprop.key.is_some()
+                    && matches!(
+                        cprop.key.unwrap().data,
+                        js_ast::ExprData::EPrivateIdentifier(_)
+                    );
                 if cprop.ts_decorators.len_u32() > 0 {
                     has_any_decorated = true;
-                    if cprop.key.is_some()
-                        && matches!(
-                            cprop.key.unwrap().data,
-                            js_ast::ExprData::EPrivateIdentifier(_)
-                        )
-                    {
+                    if is_private_key {
+                        has_any_private = true;
                         lower_all_private = true;
                         break;
                     }
                 }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
-                {
+                if is_private_key {
                     has_any_private = true;
+                    if let js_ast::ExprData::EPrivateIdentifier(pi) = &cprop.key.unwrap().data
+                        && p.static_init_private_refs
+                            .contains_key(&pi.ref_.inner_index())
+                    {
+                        lower_all_private = true;
+                    }
                 }
             }
             if !lower_all_private && has_any_private && has_any_decorated {
@@ -1549,6 +1556,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name
                     };
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
+                    if let Some(k) = prop.key
+                        && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
+                    {
+                        extracted_accessor_map
+                            .insert(pi.ref_.inner_index(), PrivateLoweredInfo::new(wm_ref));
+                    }
                     let wme = p.new_weak_map_expr(loc);
                     prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 
@@ -1970,6 +1983,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
+                if let Some(init) = &mut nprop.initializer {
+                    p.rewrite_private_accesses_in_expr(init, &private_lowered_map);
+                }
                 if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
@@ -1979,6 +1995,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
                 }
             }
+            p.rewrite_private_accesses_in_stmts(
+                &mut constructor_inject_stmts,
+                &private_lowered_map,
+            );
+            for sp in static_private_add_blocks.iter_mut() {
+                if let Some(sb) = sp.class_static_block_mut() {
+                    p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
+                }
+            }
+        }
+
+        for (k, v) in extracted_accessor_map.iter() {
+            private_lowered_map.insert(*k, *v);
+        }
+
+        if !private_lowered_map.is_empty() {
             for entry in static_init_entries.iter_mut() {
                 if let Some(ini) = &mut entry.prop.initializer {
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
@@ -1999,6 +2031,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             for elem in instance_field_decorate.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
+            }
+            for elem in suffix_exprs.iter_mut() {
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
             }
             p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &private_lowered_map);

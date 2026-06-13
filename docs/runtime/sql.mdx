@@ -660,6 +660,9 @@ const sql = new SQL({
   username: "dbuser",
   password: "secretpass",
 
+  // Connect via unix socket
+  path: "/run/postgresql",
+
   // Connection pool settings
   max: 20, // Maximum connections in pool
   idleTimeout: 30, // Close idle connections after 30s

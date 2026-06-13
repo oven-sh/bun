@@ -2712,6 +2712,15 @@ pub const Resolver = struct {
         // below when called with user-controlled absolute import paths.
         if (input_path.len > bun.MAX_PATH_BYTES) return null;
 
+        // An empty path has no DirInfo. Callers such as `finalizeResult` and
+        // module-loader tag detection pass `Path.name.dir` directly, and that
+        // field can legitimately be empty (e.g. when the path has no
+        // separator). Every caller already tolerates a null return or a
+        // thrown error, so bail here rather than walking into the cache with
+        // an empty key or falling through to the `isAbsolute` check below.
+        // https://github.com/oven-sh/bun/issues/30429
+        if (input_path.len == 0) return null;
+
         if (comptime Environment.isWindows) {
             const win32_normalized_dir_info_cache_buf = bufs(.win32_normalized_dir_info_cache);
             input_path = r.fs.normalizeBuf(win32_normalized_dir_info_cache_buf, input_path);
@@ -2734,7 +2743,9 @@ pub const Resolver = struct {
             }
         }
 
-        bun.assertf(std.fs.path.isAbsolute(input_path), "cannot resolve DirInfo for non-absolute path: {s}", .{input_path});
+        // A non-absolute path likewise has no DirInfo — return null rather
+        // than panicking so callers can fall through to their error paths.
+        if (!std.fs.path.isAbsolute(input_path)) return null;
 
         const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);

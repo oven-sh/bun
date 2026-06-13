@@ -914,6 +914,7 @@ pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
 pub const JSSourceMap = @import("../sourcemap_jsc/JSSourceMap.zig");
 pub const InternalSourceMap = @import("./InternalSourceMap.zig");
+pub const InputSourceMap = @import("./InputSourceMap.zig");
 
 const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
 const decodeVLQ = VLQ.decode;

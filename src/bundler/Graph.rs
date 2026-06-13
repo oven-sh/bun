@@ -107,6 +107,13 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+    /// When this file carried an inline `//# sourceMappingURL=data:...`
+    /// comment, the decoded inner map plus its `sourcesContent` bytes. The
+    /// linker expands outer `sources[]` / `sourcesContent[]` with these
+    /// inner entries and the `Chunk::Builder` remaps its mappings through
+    /// the inner `find_mapping` so final stack traces surface in the
+    /// authored source. `None` when no chain is available (most inputs).
+    pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 
 impl Default for InputFile {
@@ -120,6 +127,7 @@ impl Default for InputFile {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
+            input_source_map: None,
         }
     }
 }
@@ -137,6 +145,7 @@ bun_collections::multi_array_columns! {
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
+        input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
     }
 }
 

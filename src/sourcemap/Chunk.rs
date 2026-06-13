@@ -360,6 +360,30 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     /// as `line_offset_table_byte_offset_list` above.
     pub line_offset_table_first_non_ascii: &'static [u32],
 
+    /// When set, the bundler/printer input file carried an inline
+    /// `//# sourceMappingURL=data:...` comment; `add_source_mapping` will
+    /// remap each mapping through its inner map so the emitted
+    /// `source_index` / original `(line, col)` refer to the authored
+    /// source instead of the bundler's intermediate input. Unset
+    /// otherwise — the emitted mapping uses the Builder's own
+    /// `prev_state.source_index` (the outer source's slot).
+    ///
+    /// Borrow lives in `Graph::input_files[i].input_source_map`
+    /// (`Option<Box<InputSourceMap>>`); the slot outlives every printer
+    /// invocation for the bundle pass, so the erased `'static` is safe.
+    pub input_source_map: Option<&'static crate::InputSourceMap>,
+
+    /// Last *intermediate-file* line emitted (before any `input_source_map`
+    /// remap), kept only to seed `find_line_with_hint`. When chaining is
+    /// active, `prev_state.original_line` holds the remapped *authored* line,
+    /// which is the wrong coordinate space for the intermediate's
+    /// line-offset table — using it as the hint would fail the O(1) fast
+    /// path on every token and fall through to binary search. This field
+    /// keeps the hint in the intermediate's space. `0` when no chaining is
+    /// active (then `prev_state.original_line` is already the intermediate
+    /// line, but reading this costs nothing).
+    pub prev_intermediate_line: i32,
+
     // This is a workaround for a bug in the popular "source-map" library:
     // https://github.com/mozilla/source-map/issues/261. The library will
     // sometimes return null when querying a source map unless every line
@@ -395,6 +419,8 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
             has_prev_state: false,
             line_offset_table_byte_offset_list: &[],
             line_offset_table_first_non_ascii: &[],
+            input_source_map: None,
+            prev_intermediate_line: 0,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
@@ -717,14 +743,19 @@ impl NewBuilder<VLQSourceMap> {
         let byte_offsets = self.line_offset_table_byte_offset_list;
 
         // The printer emits mappings in (mostly) source order, so the previous
-        // call's `original_line` is the right answer or one/two lines before
-        // it >95% of the time. Seed `find_line_with_hint` with it; the
-        // fallback is the same binary search as before.
+        // call's *intermediate* line is the right answer or one/two lines
+        // before it >95% of the time. Seed `find_line_with_hint` with it; the
+        // fallback is the same binary search as before. Hint from
+        // `prev_intermediate_line` (not `prev_state.original_line`) because the
+        // latter holds the remapped *authored* line when `input_source_map` is
+        // active — wrong coordinate space for this (intermediate) table, which
+        // would poison the fast path. Without chaining the two are equal.
         let original_line = LineOffsetTable::find_line_with_hint(
             byte_offsets,
             loc,
-            self.prev_state.original_line as u32,
+            self.prev_intermediate_line as u32,
         );
+        self.prev_intermediate_line = original_line.max(0);
         let idx = original_line.max(0) as usize;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.
@@ -753,6 +784,35 @@ impl NewBuilder<VLQSourceMap> {
 
         self.update_generated_line_and_column(output);
 
+        // Remap through the input's inline sourcemap if present. The
+        // intermediate input's `(original_line, original_column)` becomes
+        // the authored source's `(line, col)` via `find_mapping`. On
+        // hit, the emitted `source_index` is `1 + inner.source_index` —
+        // the layout `LinkerContext` uses for this file:
+        //   slot 0           → the intermediate input
+        //   1 + inner_idx    → inner `sources[inner_idx]`
+        // The emitted `source_index` is relative to the chunk's start
+        // (the Builder always begins with `prev_state.source_index = 0`);
+        // `LinkerContext` stitches the absolute base in when joining
+        // chunks. Mappings the inner map doesn't cover fall back to
+        // slot 0 (the intermediate) so stack traces land in the right
+        // file rather than silently disappearing.
+        let mut mapped_source_index: i32 = 0;
+        let mut mapped_original_line: i32 = original_line.max(0);
+        let mut mapped_original_column: i32 = original_column.max(0);
+        if let Some(ism) = self.input_source_map {
+            if let Some(inner) = ism.map.find_mapping(
+                crate::Ordinal::from_zero_based(mapped_original_line),
+                crate::Ordinal::from_zero_based(mapped_original_column),
+            ) {
+                mapped_source_index = 1 + inner.source_index;
+                mapped_original_line = inner.original.lines.zero_based();
+                mapped_original_column = inner.original.columns.zero_based();
+            }
+            // else: fall back to the intermediate (slot 0) using the
+            // (line, col) we already have in the intermediate.
+        }
+
         // If this line doesn't start with a mapping and we're about to add a mapping
         // that's not at the start, insert a mapping first so the line starts with one.
         if self.cover_lines_without_mappings
@@ -772,9 +832,9 @@ impl NewBuilder<VLQSourceMap> {
         self.append_mapping(SourceMapState {
             generated_line: self.prev_state.generated_line,
             generated_column: self.generated_column.max(0),
-            source_index: self.prev_state.source_index,
-            original_line: original_line.max(0),
-            original_column: original_column.max(0),
+            source_index: mapped_source_index,
+            original_line: mapped_original_line,
+            original_column: mapped_original_column,
         });
 
         // This line now has a mapping on it, so don't insert another one

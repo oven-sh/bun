@@ -993,7 +993,7 @@ impl BuildCommand {
                         // Check if already signed — binary-sign-tool adds a "codesign" section
                         let already_signed = std::process::Command::new("readelf")
                             .arg("-S")
-                            .arg(outfile_cstr.as_os_str())
+                            .arg(outfile_cstr.as_str().unwrap())
                             .output()
                             .map(|o| String::from_utf8_lossy(&o.stdout).contains("codesign"))
                             .unwrap_or(false);
@@ -1002,16 +1002,16 @@ impl BuildCommand {
                             let _ = std::process::Command::new("binary-sign-tool")
                                 .arg("sign")
                                 .arg("-inFile")
-                                .arg(outfile_cstr.as_os_str())
+                                .arg(outfile_cstr.as_str().unwrap())
                                 .arg("-outFile")
-                                .arg(outfile_cstr.as_os_str())
+                                .arg(outfile_cstr.as_str().unwrap())
                                 .arg("-selfSign")
                                 .arg("1")
                                 .output();
                         }
                         let _ = std::process::Command::new("chmod")
                             .arg("755")
-                            .arg(outfile_cstr.as_os_str())
+                            .arg(outfile_cstr.as_str().unwrap())
                             .output();
                     }
                 }

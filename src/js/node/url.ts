@@ -486,7 +486,7 @@ Url.prototype.format = function format() {
   var auth: string = this.auth || "";
   if (auth) {
     auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ":");
+    auth = auth.replace(/%3A/gi, ":");
     auth += "@";
   }
 

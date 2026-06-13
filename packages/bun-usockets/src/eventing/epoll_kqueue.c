@@ -52,6 +52,37 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 #endif
 #endif
 
+/* A saved copy of an outer dispatch's ready-poll batch. us_loop_run_bun_tick
+ * re-enters itself (a poll callback calls waitForPromise -> autoTick), and the
+ * inner tick's epoll_wait/kevent overwrites the shared loop->ready_polls and
+ * its counters while the outer us_internal_dispatch_ready_polls is still
+ * mid-iteration. Without saving the outer batch, the outer loop resumes against
+ * the inner batch's data and silently skips its remaining events; for one-shot
+ * fds (pipe readers, pidfds) the kernel has already disarmed them, so a skipped
+ * event is lost forever and its owner waits for an event that never comes.
+ * Snapshots form a LIFO stack (loop->data.ready_poll_snapshots) so an
+ * arbitrarily nested tick protects every enclosing dispatch. */
+#ifdef LIBUS_USE_EPOLL
+typedef struct epoll_event us_ready_poll_event_t;
+#define GET_SNAPSHOT_POLL(snap, index) (struct us_poll_t *) (snap)->polls[index].data.ptr
+#define SET_SNAPSHOT_POLL(snap, index, poll) (snap)->polls[index].data.ptr = (void*)poll
+#else
+typedef struct kevent64_s us_ready_poll_event_t;
+#define GET_SNAPSHOT_POLL(snap, index) (struct us_poll_t *) (snap)->polls[index].udata
+#if defined(__FreeBSD__)
+#define SET_SNAPSHOT_POLL(snap, index, poll) (snap)->polls[index].udata = (void*)poll
+#else
+#define SET_SNAPSHOT_POLL(snap, index, poll) (snap)->polls[index].udata = (uint64_t)poll
+#endif
+#endif
+
+struct us_ready_poll_snapshot_t {
+    struct us_ready_poll_snapshot_t *outer;
+    int num;
+    int current;
+    us_ready_poll_event_t polls[];
+};
+
 /* Loop */
 void us_loop_free(struct us_loop_t *loop) {
     us_internal_loop_data_free(loop);
@@ -352,6 +383,26 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     loop->data.tick_depth++;
 
+    /* current_ready_poll < num_ready_polls is true only while an outer
+     * us_internal_dispatch_ready_polls is mid-iteration (a completed dispatch
+     * leaves them equal). So it means this is a nested tick, and the epoll_wait
+     * below is about to clobber the outer batch. Save it (and its cursor) now
+     * and restore it before we return so the outer dispatch resumes intact. On
+     * allocation failure we skip the snapshot and degrade to the old
+     * event-dropping behavior rather than crash. */
+    struct us_ready_poll_snapshot_t *outer_snapshot = NULL;
+    if (loop->current_ready_poll < loop->num_ready_polls) {
+        int saved_num = loop->num_ready_polls;
+        outer_snapshot = us_malloc(sizeof(*outer_snapshot) + (size_t) saved_num * sizeof(outer_snapshot->polls[0]));
+        if (outer_snapshot) {
+            outer_snapshot->num = saved_num;
+            outer_snapshot->current = loop->current_ready_poll;
+            memcpy(outer_snapshot->polls, loop->ready_polls, (size_t) saved_num * sizeof(outer_snapshot->polls[0]));
+            outer_snapshot->outer = loop->data.ready_poll_snapshots;
+            loop->data.ready_poll_snapshots = outer_snapshot;
+        }
+    }
+
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
     // Only integrate the loop if we haven't already.
@@ -408,6 +459,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Emit post callback */
     us_internal_loop_post(loop);
+
+    /* Restore the outer batch we clobbered (entries a nested free nulled out
+     * are preserved). Pop before tick_depth-- so it is gone once this frame is
+     * no longer on the stack. */
+    if (outer_snapshot) {
+        memcpy(loop->ready_polls, outer_snapshot->polls, (size_t) outer_snapshot->num * sizeof(outer_snapshot->polls[0]));
+        loop->num_ready_polls = outer_snapshot->num;
+        loop->current_ready_poll = outer_snapshot->current;
+        loop->data.ready_poll_snapshots = outer_snapshot->outer;
+        us_free(outer_snapshot);
+    }
+
     loop->data.tick_depth--;
 }
 
@@ -432,6 +495,33 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
             num_entries_possibly_remaining--;
         }
     }
+
+    /* A poll freed/changed while a nested tick is live must also be fixed up in
+     * the saved outer batches, or the outer dispatch re-dispatches a stale
+     * (freed) entry when it resumes. Each buffer holds the poll at most once
+     * (epoll) or twice (kqueue), same as the live buffer above. */
+    for (struct us_ready_poll_snapshot_t *snap = loop->data.ready_poll_snapshots; snap; snap = snap->outer) {
+#ifdef LIBUS_USE_EPOLL
+        int remaining = 1;
+#else
+        int remaining = 2;
+#endif
+        for (int i = snap->current; i < snap->num && remaining; i++) {
+            if (GET_SNAPSHOT_POLL(snap, i) == old_poll) {
+                SET_SNAPSHOT_POLL(snap, i, new_poll);
+                remaining--;
+            }
+        }
+    }
+}
+
+/* Drop `poll` from the live ready-poll batch and every saved outer-batch
+ * snapshot so it is never dispatched after being freed. us_poll_stop/change
+ * already do this for uSockets sockets via us_internal_loop_update_pending_
+ * ready_polls; Bun's FilePolls are torn down on the Rust side and call this so
+ * they get the same protection across nested ticks. */
+void us_loop_invalidate_ready_poll(struct us_loop_t *loop, void *poll) {
+    us_internal_loop_update_pending_ready_polls(loop, (struct us_poll_t *) poll, NULL, 0, 0);
 }
 
 /* Poll */

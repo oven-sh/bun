@@ -138,6 +138,26 @@ impl PosixLoop {
         self.ready_polls[idx]
     }
 
+    /// Drop `poll` (a tagged `FilePoll` pointer) from the live ready-poll batch
+    /// and every saved outer-batch snapshot, so a `FilePoll` torn down
+    /// mid-dispatch is never re-dispatched from a stale `ready_polls` entry.
+    /// The uSockets socket path does this via
+    /// `us_internal_loop_update_pending_ready_polls`; `FilePoll`s are freed on
+    /// the Rust side and route through here for the same protection.
+    ///
+    /// Takes `this: *mut Self` (not `&mut self`): callers hold the C-owned loop
+    /// as a raw pointer and the C callee touches the same loop, so a `&mut`
+    /// reborrow would be the noalias hazard `mod c` documents.
+    ///
+    /// # Safety
+    /// `this` must be the live C-allocated loop pointer; `poll` is the tagged
+    /// pointer stored in `ready_polls`.
+    #[inline]
+    pub unsafe fn invalidate_ready_poll(this: *mut Self, poll: *mut c_void) {
+        // SAFETY: per fn contract.
+        unsafe { c::us_loop_invalidate_ready_poll(this, poll) };
+    }
+
     pub fn inc(&mut self) {
         bun_core::scoped_log!(Loop, "inc {} + 1 = {}", self.num_polls, self.num_polls + 1);
         self.num_polls += 1;
@@ -640,6 +660,8 @@ mod c {
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
+        #[cfg(not(windows))]
+        pub(super) fn us_loop_invalidate_ready_poll(loop_: *mut Loop, poll: *mut c_void);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]

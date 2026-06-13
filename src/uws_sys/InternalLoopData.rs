@@ -55,6 +55,12 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    /// LIFO stack of saved outer ready-poll batches (C
+    /// `struct us_ready_poll_snapshot_t`), one per active nested
+    /// `us_loop_run_bun_tick`. Owned and manipulated entirely on the C side;
+    /// mirrored here only so `InternalLoopData`'s size matches the C struct
+    /// (the `PosixLoop` layout assertions key `num_polls`' offset off it).
+    pub ready_poll_snapshots: *mut c_void,
 }
 
 impl InternalLoopData {

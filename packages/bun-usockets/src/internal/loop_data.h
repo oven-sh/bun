@@ -80,6 +80,10 @@ struct us_internal_loop_data_t {
      * sockets must be deferred to the outermost tick so the outer dispatch
      * doesn't read a freed poll. */
     int tick_depth;
+    /* LIFO stack of saved outer ready-poll batches, one per active nested
+     * us_loop_run_bun_tick (struct us_ready_poll_snapshot_t, defined in
+     * epoll_kqueue.c). NULL when no nested tick is in flight. */
+    void *ready_poll_snapshots;
 };
 
 #endif // LOOP_DATA_H

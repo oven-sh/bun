@@ -49,6 +49,11 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
                                                  struct us_poll_t *new_poll,
                                                  int old_events,
                                                  int new_events);
+
+/* Drop `poll` from the live ready-poll batch and every saved outer-batch
+ * snapshot. Called from Bun's Rust FilePoll teardown so a FilePoll freed
+ * mid-dispatch (or mid-nested-tick) is never re-dispatched from a stale entry. */
+void us_loop_invalidate_ready_poll(struct us_loop_t *loop, void *poll);
 #endif
 
 /* We only have one networking implementation so far */

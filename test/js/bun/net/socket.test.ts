@@ -1558,3 +1558,42 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
   expect(exitCode).toBe(0);
   void stderr;
 });
+
+it("socket handler validation errors throw instead of crashing", async () => {
+  // Handlers protects its callbacks only after validation succeeds, so the
+  // validation error paths must throw without tearing down a never-protected
+  // Handlers (debug builds assert on the protect/unprotect balance). Run in
+  // a subprocess so a panic is observable as a non-zero exit instead of
+  // killing the test runner.
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        for (const socket of [{}, { data() {}, end: 123 }]) {
+          for (const api of ["connect", "listen"]) {
+            try {
+              Bun[api]({ hostname: "localhost", port: 0, socket });
+            } catch (e) {
+              console.log(api + ":" + e.message);
+            }
+          }
+        }
+        Bun.gc(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(
+    'connect:Expected at least "data" or "drain" callback\n' +
+      'listen:Expected at least "data" or "drain" callback\n' +
+      'connect:Expected "onEnd" callback to be a function\n' +
+      'listen:Expected "onEnd" callback to be a function\n',
+  );
+  expect(exitCode).toBe(0);
+  void stderr;
+});

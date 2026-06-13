@@ -851,6 +851,18 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
+  emit(event) {
+    // Mirrors ServerResponse.prototype.emit: when the internal
+    // assignSocket path (`setCloseCallback(socket, onServerResponseClose)`)
+    // is in use, we must drive that one-shot callback here instead of
+    // relying on a real 'close' event listener. Without this the internal
+    // path never propagates the socket close to `res.on('close')`.
+    if (event === "close") {
+      callCloseCallback(this);
+    }
+    return Stream.prototype.emit.$apply(this, arguments);
+  }
+
   get bytesWritten() {
     const handle = this[kHandle];
     return handle
@@ -911,6 +923,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
 
+    // End the readable side first so `socket.on('end')` fires on peer
+    // disconnect, regardless of whether the request body had been fully
+    // consumed at the time of the abort. Mirrors Node's net.Socket
+    // handling of UV_EOF: push(null) + read(0) to drain the state machine.
+    if (!this.destroyed && this.readable && !this.readableEnded) {
+      if (!this.push(null)) {
+        this.read(0);
+      }
+    }
+
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
     // that are still in `state.incoming` — i.e. requests whose response has
     // not yet finished (`resOnFinish` does `incoming.shift()`). Our
@@ -938,6 +960,16 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       } else {
         req.destroy();
       }
+    }
+
+    // Ensure the Duplex socket emits its 'close' event when the native
+    // socket goes away. Without this, `res.on('close')` and
+    // `socket.on('close')` never fire after a peer abort if the request
+    // body was already fully consumed (req.complete === true) and the
+    // response hasn't finished, because the branch above destroys only
+    // the IncomingMessage; nothing else destroys the Duplex socket.
+    if (!this.destroyed) {
+      this.destroy();
     }
   }
   #onCloseForDestroy(closeCallback) {
@@ -1646,6 +1678,12 @@ ServerResponse.prototype.destroy = function (_err?: Error) {
   if (this.destroyed) return this;
   const handle = this[kHandle];
   this.destroyed = true;
+  // Mark _closed=true before emitting, so that the later socket-close
+  // path (NodeHTTPServerSocket.emit → callCloseCallback → onServerResponseClose
+  // → emitCloseNT) is gated out by emitCloseNT's `!self._closed` check. Without
+  // this, calling res.destroy() from outside the synchronous request handler
+  // (e.g. from a setTimeout) produces two 'close' events on the response.
+  this._closed = true;
   if (handle) {
     handle.abort();
   }

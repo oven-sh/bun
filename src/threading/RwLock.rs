@@ -297,6 +297,7 @@ impl<'a, T> Drop for RwLockWriteGuard<'a, T> {
 mod tests {
     use super::*;
 
+    #[cfg_attr(miri, ignore = "futex FFI is not interpretable under Miri")]
     #[test]
     fn smoke() {
         let rwl = RwLock::new(0u32);
@@ -333,6 +334,7 @@ mod tests {
         let _w = rwl.write();
     }
 
+    #[cfg_attr(miri, ignore = "futex FFI is not interpretable under Miri")]
     #[test]
     fn raw_internal_state() {
         // Regression test: the WRITER flag must be cleared (not subtracted) by lock().

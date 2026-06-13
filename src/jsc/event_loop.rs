@@ -1334,7 +1334,8 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 
 // `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
 // `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
-// JS thread.
+// JS thread, except `enqueue_task_concurrent` (the `&self` thread-safe
+// surface; async-task wakers dispatch it from any thread).
 bun_event_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         // Reads the EventLoop's own `uws_loop` field; on

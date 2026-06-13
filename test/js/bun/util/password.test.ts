@@ -421,3 +421,20 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
 });
+
+// The event loop must stay alive while a native password promise is pending,
+// even when the main script never awaits it.
+test("pending password.hash keeps the process alive until it settles", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `Bun.password.hash("k", { algorithm: "bcrypt", cost: 4 }).then(h => { if (typeof h \!== "string" || h.length < 10) process.exit(2); console.log("SETTLED"); });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("SETTLED");
+  expect(exitCode).toBe(0);
+});

@@ -57,6 +57,7 @@ pub const CONV: &str = "C";
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
 // .rs file.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod async_promise;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]

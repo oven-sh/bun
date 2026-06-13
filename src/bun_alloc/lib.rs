@@ -1683,6 +1683,60 @@ pub fn free_sensitive<T: Copy>(mut slice: Box<[T]>) {
     drop(slice);
 }
 
+/// Owned byte buffer that is volatile-zeroed before its memory is freed
+/// ([`free_sensitive`]).
+///
+/// Use for plaintext secrets (passwords, keys, passphrases). Wrap at the
+/// parse/creation boundary — the guarantee then travels with the data through
+/// every later owner (closures, spawned futures, error paths) with no
+/// per-site calls. `Debug` redacts the contents so secrets cannot leak
+/// through logging.
+pub struct SensitiveBytes(Box<[u8]>);
+
+impl From<Box<[u8]>> for SensitiveBytes {
+    #[inline]
+    fn from(bytes: Box<[u8]>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<Vec<u8>> for SensitiveBytes {
+    fn from(mut bytes: Vec<u8>) -> Self {
+        if bytes.capacity() == bytes.len() {
+            return Self(bytes.into_boxed_slice());
+        }
+        // `into_boxed_slice` on a Vec with spare capacity reallocates and
+        // frees the original buffer WITHOUT zeroing — exactly the leak this
+        // type exists to prevent. Copy to an exact-size allocation, then
+        // volatile-zero the source's initialized bytes before they are freed.
+        let boxed: Box<[u8]> = bytes.as_slice().into();
+        // SAFETY: `bytes` is exclusively owned and `len` bytes are initialized.
+        unsafe { secure_zero(bytes.as_mut_ptr(), bytes.len()) };
+        drop(bytes);
+        Self(boxed)
+    }
+}
+
+impl core::ops::Deref for SensitiveBytes {
+    type Target = [u8];
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl core::fmt::Debug for SensitiveBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SensitiveBytes({} bytes redacted)", self.0.len())
+    }
+}
+
+impl Drop for SensitiveBytes {
+    fn drop(&mut self) {
+        free_sensitive(core::mem::take(&mut self.0));
+    }
+}
+
 /// [`free_sensitive`] for the C-string
 /// case used by http SSLConfig. Zeros the allocation before freeing
 /// (defence-in-depth for keys/passphrases).

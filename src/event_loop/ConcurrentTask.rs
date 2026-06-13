@@ -76,6 +76,7 @@ pub mod task_tag {
         ArchiveFilesTask,
         AsyncGlobWalkTask,
         AsyncImageTask,
+        AsyncTask,
         AsyncTransformTask,
         BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask

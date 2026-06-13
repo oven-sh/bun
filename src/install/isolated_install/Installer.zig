@@ -949,6 +949,38 @@ pub const Installer = struct {
                     const string_buf = lockfile.buffers.string_bytes.items;
                     const dependencies = lockfile.buffers.dependencies.items;
 
+                    // If the workspace path traverses a symlink, dep symlinks
+                    // live under the realpath, so their relative targets must
+                    // be computed from there — not from the logical string,
+                    // which would walk past the project root. Null when the
+                    // path is already canonical so the hot path stays
+                    // syscall-free.
+                    var canonical_entry_node_modules: ?bun.AbsPath(.{ .sep = .auto }) = null;
+                    defer if (canonical_entry_node_modules) |*p| p.deinit();
+                    if (pkg_res.tag == .workspace) {
+                        var workspace_abs: bun.AbsPath(.{ .sep = .auto }) = .initTopLevelDir();
+                        defer workspace_abs.deinit();
+                        workspace_abs.append(pkg_res.value.workspace.slice(string_buf));
+
+                        const dir_fd = switch (bun.sys.open(workspace_abs.sliceZ(), bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+                            .result => |fd| fd,
+                            .err => |err| return .failure(.{ .symlink_dependencies = err }),
+                        };
+                        defer dir_fd.close();
+
+                        var real_buf: bun.PathBuffer = undefined;
+                        const real = switch (bun.sys.getFdPath(dir_fd, &real_buf)) {
+                            .result => |r| r,
+                            .err => |err| return .failure(.{ .symlink_dependencies = err }),
+                        };
+
+                        if (!strings.eqlLong(real, workspace_abs.slice(), true)) {
+                            var canonical: bun.AbsPath(.{ .sep = .auto }) = .from(real);
+                            canonical.append("node_modules");
+                            canonical_entry_node_modules = canonical;
+                        }
+                    }
+
                     for (entry_dependencies[this.entry_id.get()].slice()) |dep| {
                         const dep_name = dependencies[dep.dep_id].name.slice(string_buf);
 
@@ -996,6 +1028,19 @@ pub const Installer = struct {
                         }
 
                         const target = target: {
+                            if (canonical_entry_node_modules) |*canonical| {
+                                // Append `dep_name` then `undo(1)` so the
+                                // from-base is the symlink's real parent —
+                                // for scoped names like `@scope/pkg` that's
+                                // one level deeper than `node_modules`.
+                                var save = canonical.save();
+                                defer save.restore();
+
+                                canonical.append(dep_name);
+                                canonical.undo(1);
+                                break :target canonical.relative(&dep_store_path);
+                            }
+
                             var dest_save = dest.save();
                             defer dest_save.restore();
 

@@ -59,6 +59,15 @@ export const escapeRegExpForPackageNameMatching = $newZigFunction(
   1,
 );
 
+// macOS launchd StartCalendarInterval generator. Exposed so the 256-interval
+// cap can be tested on any platform (the production path only runs on macOS).
+// Returns the plist XML, or throws for invalid / over-cap expressions.
+export const cronToCalendarIntervalForTesting: (schedule: string) => string = $newZigFunction(
+  "runtime/api/cron.zig",
+  "jsCronToCalendarIntervalForTesting",
+  1,
+);
+
 export const shellInternals = {
   lex: (a, ...b) => shellLex(a.raw, b),
   parse: (a, ...b) => shellParse(a.raw, b),

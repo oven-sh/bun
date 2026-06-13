@@ -305,6 +305,31 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+
+        JSValue resourceLimitsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "resourceLimits"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (resourceLimitsValue) {
+            if (JSObject* resourceLimitsObject = resourceLimitsValue.getObject()) {
+                // Match Node: a field is applied only if it is a number; anything
+                // else (string, null, missing) falls back to the default that
+                // worker_threads.ts fills in.
+                auto readLimit = [&](ASCIILiteral name, std::optional<double>& out) -> void {
+                    JSValue fieldValue = resourceLimitsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, name));
+                    RETURN_IF_EXCEPTION(throwScope, void());
+                    if (fieldValue && fieldValue.isNumber()) {
+                        out = fieldValue.asNumber();
+                    }
+                };
+                readLimit("maxYoungGenerationSizeMb"_s, options.resourceLimits.maxYoungGenerationSizeMb);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                readLimit("maxOldGenerationSizeMb"_s, options.resourceLimits.maxOldGenerationSizeMb);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                readLimit("codeRangeSizeMb"_s, options.resourceLimits.codeRangeSizeMb);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                readLimit("stackSizeMb"_s, options.resourceLimits.stackSizeMb);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+        }
     }
 
     Vector<RefPtr<MessagePort>> ports;

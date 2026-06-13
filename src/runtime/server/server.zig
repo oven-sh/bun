@@ -2170,7 +2170,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         if (!node_response.flags.upgraded and node_response.raw_response != null) {
                             const raw_response = node_response.raw_response.?;
                             if (!node_response.flags.request_has_completed and raw_response.state().isResponsePending()) {
-                                if (raw_response.state().isHttpStatusCalled()) {
+                                if (!raw_response.state().isHttpStatusCalled()) {
                                     raw_response.writeStatus("500 Internal Server Error");
                                     raw_response.endWithoutBody(true);
                                 } else {

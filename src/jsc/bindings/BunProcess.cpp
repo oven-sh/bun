@@ -2721,14 +2721,17 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
         auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getControl, callData, globalObject->globalThis(), args);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return jsUndefined();
+        }
         return result;
     } else {
         return jsUndefined();
@@ -3820,8 +3823,20 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
         if (nextTick && nextTick.isObject())
             nextTickFn = asObject(nextTick);
         else {
-            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
-            return;
+            // The lazy initialization of process.nextTick may have failed earlier (e.g. it was
+            // first reified near the stack limit), reifying the property as undefined without
+            // setting m_nextTickFunction. Retry it so one failed initialization doesn't
+            // permanently break internal nextTick users (Worker construction, emitWarning, ...).
+            constructNextTickFn(vm, defaultGlobalObject(this->globalObject()));
+            RETURN_IF_EXCEPTION(scope, void());
+            nextTickFn = this->m_nextTickFunction.get();
+            if (!nextTickFn) {
+                throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+                return;
+            }
+            // Also repair the JS-visible property, which was reified as undefined by the
+            // failed initialization, so user code calling process.nextTick() recovers too.
+            this->putDirect(vm, Identifier::fromString(vm, "nextTick"_s), nextTickFn, 0);
         }
     }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
@@ -3893,22 +3908,46 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // PropertyCallback initializers must not leave an exception pending or
+    // return an empty JSValue: JSC's setUpStaticFunctionSlot will putDirect
+    // the result and report the slot as found regardless, which violates the
+    // !scope.exception() || !hasSlot invariant in JSValue::get.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto clear = [&]() -> JSValue {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    };
     auto* bun = globalObject->bunObject();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     auto& builtinNames = Bun::builtinNames(vm);
     JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     auto* requireMap = globalObject->requireMap();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     JSValue mainModule = requireMap->get(globalObject, mainValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return clear();
     return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // PropertyCallback initializers must not leave an exception pending or
+    // return an empty JSValue: JSC's setUpStaticFunctionSlot will putDirect
+    // the result and report the slot as found regardless, which violates the
+    // !scope.exception() || !hasSlot invariant in JSValue::get. On stack
+    // overflow profiledCall returns the Exception cell itself, so also avoid
+    // caching that into m_nextTickFunction. Unlike constructStdin /
+    // constructStdioWriteStream we do not reportUncaughtExceptionAtEventLoop
+    // here: that handler re-enters JS to emit 'uncaughtException', which
+    // fails again near the stack limit and trips the re-entrancy guard in
+    // VirtualMachine.uncaughtException -> process.exit(7).
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
@@ -3926,6 +3965,10 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }

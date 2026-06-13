@@ -386,6 +386,26 @@ extern "C" void Bun__unlink(const char*, size_t);
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
+#if OS(WINDOWS)
+// MOVEFILE_DELAY_UNTIL_REBOOT appends to
+// HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations,
+// which only elevated processes can write.
+static bool processIsElevated()
+{
+    static const bool elevated = [] {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+            return false;
+        TOKEN_ELEVATION elevation {};
+        DWORD returnLength = 0;
+        const bool result = GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &returnLength) && elevation.TokenIsElevated;
+        CloseHandle(token);
+        return result;
+    }();
+    return elevated;
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
@@ -486,12 +506,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 memcpy(dupeZ, span.data(), span.size_bytes());
                 dupeZ[span.size()] = L'\0';
 
-                // We can't immediately delete the file on Windows.
-                // Instead, we mark it for deletion on reboot.
-                MoveFileExW(
-                    dupeZ,
-                    NULL, // NULL destination means delete
-                    MOVEFILE_DELAY_UNTIL_REBOOT);
+                // This only succeeds when LoadLibrary failed: while the module
+                // is loaded, deleting its file fails with a sharing violation.
+                if (!DeleteFileW(dupeZ)) {
+                    // Fall back to marking the file for deletion on reboot.
+                    // Skip the call when the process is not elevated: it could
+                    // only fail with ERROR_ACCESS_DENIED, and third-party
+                    // MoveFileExW hooks (AV/EDR) have been observed to crash on
+                    // the NULL-destination (delete) form of this call.
+                    if (processIsElevated()) {
+                        MoveFileExW(
+                            dupeZ,
+                            NULL, // NULL destination means delete
+                            MOVEFILE_DELAY_UNTIL_REBOOT);
+                    }
+                }
                 delete[] dupeZ;
             }
         }

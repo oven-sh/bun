@@ -7,6 +7,16 @@ it(`Bun.hash()`, () => {
   expect(Bun.hash("hello world")).toBe(0x668d5e431c3b2573n);
   expect(Bun.hash(new TextEncoder().encode("hello world"))).toBe(0x668d5e431c3b2573n);
 });
+it("Bun.hash accepts SharedArrayBuffer input", () => {
+  // SharedArrayBuffer (and views over it) are snapshotted, not borrowed, before
+  // hashing. Stable shared input must hash identically to the owned-bytes vector.
+  const sab = new SharedArrayBuffer(11);
+  new Uint8Array(sab).set(new TextEncoder().encode("hello world"));
+  expect(Bun.hash(sab)).toBe(0x668d5e431c3b2573n);
+  expect(Bun.hash(new Uint8Array(sab))).toBe(0x668d5e431c3b2573n);
+  expect(Bun.hash.wyhash(new Uint8Array(sab))).toBe(0x668d5e431c3b2573n);
+  expect(Bun.hash.crc32(new Uint8Array(sab))).toBe(0x0d4a1185);
+});
 it(`Bun.hash.wyhash()`, () => {
   expect(Bun.hash.wyhash("hello world")).toBe(0x668d5e431c3b2573n);
   gcTick();

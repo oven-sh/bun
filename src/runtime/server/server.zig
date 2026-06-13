@@ -1177,6 +1177,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             const route_list_value = this.setRoutes();
+            this.setRoutesForServerNames();
             if (new_config.had_routes_object) {
                 if (this.js_value.tryGet()) |server_js_value| {
                     if (server_js_value != .zero) {
@@ -1194,6 +1195,44 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
+        /// When `tls.serverName` or SNI entries are configured, each gets its
+        /// own uWS router. `setRoutes()` only registers routes on whatever
+        /// `currentRouter` points at (the default one after `clearRoutes()`),
+        /// so after a reload we must re-apply routes to every SNI router too
+        /// — otherwise requests matching that SNI would have no handlers.
+        fn setRoutesForServerNames(this: *ThisServer) void {
+            if (comptime !ssl_enabled) return;
+            const app = this.app orelse return;
+            var any = false;
+
+            if (this.config.ssl_config) |*ssl_config| {
+                if (ssl_config.server_name) |server_name_ptr| {
+                    const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                    if (server_name.len > 0) {
+                        any = true;
+                        app.domain(server_name);
+                        _ = this.setRoutes();
+                    }
+                }
+            }
+
+            if (this.config.sni) |*sni| {
+                for (sni.slice()) |*sni_ssl_config| {
+                    if (sni_ssl_config.server_name) |server_name_ptr| {
+                        const sni_servername: [:0]const u8 = std.mem.span(server_name_ptr);
+                        if (sni_servername.len > 0) {
+                            any = true;
+                            app.domain(sni_servername);
+                            _ = this.setRoutes();
+                        }
+                    }
+                }
+            }
+
+            // Restore the default router for any subsequent route registrations.
+            if (any) app.domain("");
+        }
+
         pub fn reloadStaticRoutes(this: *ThisServer) !bool {
             if (this.app == null) {
                 // Static routes will get cleaned up when the server is stopped
@@ -1203,6 +1242,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             this.app.?.clearRoutes();
             if (comptime has_h3) if (this.h3_app) |h3a| h3a.clearRoutes();
             const route_list_value = this.setRoutes();
+            this.setRoutesForServerNames();
             if (route_list_value != .zero) {
                 if (this.js_value.tryGet()) |server_js_value| {
                     if (server_js_value != .zero) {

@@ -8151,7 +8151,7 @@ impl NodeFS {
             return if let Some(errno) = rc.errno() {
                 Err(sys::Error {
                     errno,
-                    syscall: sys::Tag::utime,
+                    syscall: sys::Tag::lutime,
                     path: args.path.slice().into(),
                     ..Default::default()
                 })

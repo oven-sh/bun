@@ -2928,13 +2928,17 @@ mod posix_impl {
         let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
         Ok(rc == 0)
     }
+    // The three time-setting wrappers tag `futime`/`utime`/`lutime` (libuv's
+    // op names, which node reports as `err.syscall`) rather than the
+    // underlying `futimens`/`utimensat` syscalls, matching the windows
+    // wrappers below.
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
         check!(
             // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
             // array and `futimens` reads exactly two `timespec`s.
             unsafe { libc::futimens(fd.native(), ts.as_ptr()) },
-            Tag::futimens
+            Tag::futime
         );
         Ok(())
     }
@@ -2944,7 +2948,7 @@ mod posix_impl {
             // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
             // stack array and `utimensat` reads exactly two `timespec`s.
             unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), ts.as_ptr(), 0) },
-            Tag::utimensat,
+            Tag::utime,
             path
         );
         Ok(())
@@ -2962,7 +2966,7 @@ mod posix_impl {
                     libc::AT_SYMLINK_NOFOLLOW,
                 )
             },
-            Tag::utimensat,
+            Tag::lutime,
             path
         );
         Ok(())
@@ -4205,7 +4209,7 @@ mod windows_impl {
         // must run before any return (fd-based, so no path buffer is captured,
         // but keep the pattern uniform with utimens/lutimens below).
         req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::futimens) {
+        if let Some(err) = Error::from_uv_rc(rc, Tag::futime) {
             return Err(err.with_fd(fd));
         }
         Ok(())

@@ -88,6 +88,65 @@ pub const TestingAPIs = struct {
             .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.Sigaction))),
         }, globalThis)).toJS();
     }
+
+    /// Verifies `bun.sys.termios`'s layout matches the host libc by
+    /// round-tripping distinctive values through `tcgetattr`/`tcsetattr` on a
+    /// freshly opened PTY slave. If the struct layout disagrees with libc
+    /// (as `std.posix.termios` does on Android bionic — `NCCS == 19` and no
+    /// `c_ispeed`/`c_ospeed`, 36B vs glibc's ~60B), libc and Zig read/write
+    /// `c_cc` at different extents and the values don't round-trip. Returns
+    /// `{ installed, readback, sizeof }` for the test to compare. POSIX-only.
+    pub fn termiosLayout(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime !Environment.isPosix) return .js_undefined;
+
+        const posix = std.posix;
+        // `posix_openpt`/`grantpt`/`unlockpt`/`ptsname` are in libc on Linux
+        // (glibc/musl/bionic), macOS and FreeBSD, so no libutil dlopen dance
+        // is needed. On BSD-derived systems the *master* fd isn't a terminal
+        // (`tcgetattr` → ENOTTY), so open the slave and probe that instead.
+        const pty = struct {
+            const posix_openpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "posix_openpt" });
+            const grantpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "grantpt" });
+            const unlockpt = @extern(*const fn (c_int) callconv(.c) c_int, .{ .name = "unlockpt" });
+            const ptsname = @extern(*const fn (c_int) callconv(.c) ?[*:0]const u8, .{ .name = "ptsname" });
+        };
+        const master = pty.posix_openpt(bun.O.RDWR | bun.O.NOCTTY);
+        if (master < 0) return .js_undefined;
+        defer bun.FD.fromNative(master).close();
+        if (pty.grantpt(master) != 0 or pty.unlockpt(master) != 0) return .js_undefined;
+        const slave_name = pty.ptsname(master) orelse return .js_undefined;
+        const slave = switch (bun.sys.open(std.mem.span(slave_name), bun.O.RDWR | bun.O.NOCTTY, 0)) {
+            .result => |f| f,
+            .err => return .js_undefined,
+        };
+        defer slave.close();
+        const fd = slave.native();
+
+        var t = bun.sys.tcgetattr(fd) catch return .js_undefined;
+        // Pick a cc index near the top of bionic's 19-slot array so a size
+        // mismatch is more likely to be observable, plus a flag word at a
+        // fixed offset (lflag is at 12 on every supported target).
+        const probe_cc: u8 = 0x5a;
+        const probe_echo = !t.lflag.ECHO;
+        t.cc[@intFromEnum(posix.V.LNEXT)] = probe_cc;
+        t.lflag.ECHO = probe_echo;
+        bun.sys.tcsetattr(fd, .NOW, t) catch return .js_undefined;
+        const rb = bun.sys.tcgetattr(fd) catch return .js_undefined;
+
+        const installed = (try jsc.JSObject.create(.{
+            .cc_lnext = @as(f64, @floatFromInt(probe_cc)),
+            .echo = probe_echo,
+        }, globalThis)).toJS();
+        const readback = (try jsc.JSObject.create(.{
+            .cc_lnext = @as(f64, @floatFromInt(rb.cc[@intFromEnum(posix.V.LNEXT)])),
+            .echo = rb.lflag.ECHO,
+        }, globalThis)).toJS();
+        return (try jsc.JSObject.create(.{
+            .installed = installed,
+            .readback = readback,
+            .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.termios))),
+        }, globalThis)).toJS();
+    }
 };
 
 const std = @import("std");

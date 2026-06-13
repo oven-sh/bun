@@ -2292,6 +2292,73 @@ pub fn sigaction(sig: u8, noalias act: ?*const Sigaction, noalias oact: ?*Sigact
     _ = libc_sigaction(sig, act, oact);
 }
 
+/// bionic's `struct termios` is the raw kernel `asm-generic/termbits.h` shape
+/// (`NCCS == 19`, no trailing `c_ispeed`/`c_ospeed`; baud lives in the
+/// `c_cflag` CBAUD bits). `std.c.termios` for `.linux` assumes the glibc/musl
+/// shape (`NCCS == 32` plus `c_ispeed`/`c_ospeed`, ~60B vs bionic's 36B). The
+/// first 36 bytes are layout-compatible so `tcgetattr`/`tcsetattr` appear to
+/// work, but writes to `.ispeed`/`.ospeed` land past bionic's struct and are
+/// silently ignored, and reinitialising `c_cflag` zeroes CBAUD → baud
+/// becomes B0. Until the Zig stdlib grows an `abi.isAndroid()` case, use
+/// this wrapper instead of `std.posix.termios` / `std.posix.tcgetattr` /
+/// `std.posix.tcsetattr`.
+pub const termios = if (Environment.isAndroid) extern struct {
+    // bionic libc/include/bits/termios_inlines.h → uapi asm-generic/termbits.h
+    comptime {
+        // Trip when the Zig stdlib gains a bionic `termios` so this
+        // workaround can be dropped. bionic has no `ispeed`/`ospeed` and
+        // `sizeof(struct termios) == 36`; std's glibc-shaped struct is ~60B
+        // with trailing speed fields.
+        if (!@hasField(posix.termios, "ispeed") and @sizeOf(posix.termios) == @sizeOf(@This()))
+            @compileError("std.posix.termios now matches bionic; remove the bun.sys.termios workaround");
+    }
+
+    // Reuse std's flag types — the bit layouts come from the kernel UAPI
+    // and are identical across glibc/musl/bionic on a given architecture.
+    iflag: posix.tc_iflag_t,
+    oflag: posix.tc_oflag_t,
+    cflag: posix.tc_cflag_t,
+    lflag: posix.tc_lflag_t,
+    line: posix.cc_t,
+    cc: [19]posix.cc_t,
+} else posix.termios;
+
+pub fn tcgetattr(handle: posix.fd_t) posix.TermiosGetError!termios {
+    if (comptime !Environment.isAndroid) return posix.tcgetattr(handle);
+    // `std.c.tcgetattr`'s parameter type is the glibc-shaped `termios`; call
+    // libc directly with the bionic struct instead.
+    const libc_tcgetattr = @extern(
+        *const fn (posix.fd_t, *termios) callconv(.c) c_int,
+        .{ .name = "tcgetattr" },
+    );
+    while (true) {
+        var term: termios = undefined;
+        switch (posix.errno(libc_tcgetattr(handle, &term))) {
+            .SUCCESS => return term,
+            .INTR => continue,
+            .NOTTY => return error.NotATerminal,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+}
+
+pub fn tcsetattr(handle: posix.fd_t, optional_action: posix.TCSA, termios_p: termios) posix.TermiosSetError!void {
+    if (comptime !Environment.isAndroid) return posix.tcsetattr(handle, optional_action, termios_p);
+    const libc_tcsetattr = @extern(
+        *const fn (posix.fd_t, posix.TCSA, *const termios) callconv(.c) c_int,
+        .{ .name = "tcsetattr" },
+    );
+    while (true) {
+        switch (posix.errno(libc_tcsetattr(handle, optional_action, &termios_p))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .NOTTY => return error.NotATerminal,
+            .IO => return error.ProcessOrphaned,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+}
+
 pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*const std.posix.sigset_t) Maybe(usize) {
     while (true) {
         const rc = switch (Environment.os) {

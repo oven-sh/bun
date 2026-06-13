@@ -2086,9 +2086,9 @@ fn probeKittyGraphics() bool {
     // restoring to a fixed .normal would corrupt it — instead reapply
     // exactly what we read. tcgetattr failing means stdin isn't a real
     // TTY in a way we can snapshot; skip probing entirely.
-    const saved_termios = std.posix.tcgetattr(0) catch return false;
+    const saved_termios = bun.sys.tcgetattr(0) catch return false;
     _ = bun.tty.setMode(0, .raw);
-    defer std.posix.tcsetattr(0, .NOW, saved_termios) catch {
+    defer bun.sys.tcsetattr(0, .NOW, saved_termios) catch {
         _ = bun.tty.setMode(0, .normal);
     };
 

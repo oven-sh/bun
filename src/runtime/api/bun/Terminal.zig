@@ -507,7 +507,7 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
-    if (std.posix.tcgetattr(slave_fd)) |termios| {
+    if (bun.sys.tcgetattr(slave_fd)) |termios| {
         var t = termios;
 
         // Input flags: standard terminal input processing
@@ -566,11 +566,16 @@ fn createPtyPosix(cols: u16, rows: u16) CreatePtyError!PtyResult {
         t.cc[@intFromEnum(std.posix.V.MIN)] = 1; // Min chars for non-canonical read
         t.cc[@intFromEnum(std.posix.V.TIME)] = 0; // Timeout for non-canonical read
 
-        // Set baud rate to 38400 (standard for PTYs)
-        t.ispeed = .B38400;
-        t.ospeed = .B38400;
+        // Set baud rate to 38400 (standard for PTYs). bionic's termios has
+        // no `ispeed`/`ospeed` — baud lives in the CBAUD bits of `c_cflag`
+        // instead — so this write is a no-op there. It's a PTY, so the
+        // baud rate is advisory only.
+        if (comptime @hasField(@TypeOf(t), "ispeed")) {
+            t.ispeed = .B38400;
+            t.ospeed = .B38400;
+        }
 
-        std.posix.tcsetattr(slave_fd, .NOW, t) catch {};
+        bun.sys.tcsetattr(slave_fd, .NOW, t) catch {};
     } else |err| {
         // tcgetattr failed, log in debug builds but continue without modifying termios
         if (comptime bun.Environment.allow_assert) {
@@ -941,18 +946,18 @@ pub fn setRawMode(
     return .js_undefined;
 }
 /// POSIX termios struct for terminal flags manipulation
-const Termios = if (Environment.isPosix) std.posix.termios else void;
+const Termios = if (Environment.isPosix) bun.sys.termios else void;
 
 /// Get terminal attributes using tcgetattr
 fn getTermios(fd: bun.FD) ?Termios {
     if (comptime !Environment.isPosix) return null;
-    return std.posix.tcgetattr(fd.cast()) catch null;
+    return bun.sys.tcgetattr(fd.cast()) catch null;
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
 fn setTermios(fd: bun.FD, termios_p: *const Termios) bool {
     if (comptime !Environment.isPosix) return false;
-    std.posix.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
+    bun.sys.tcsetattr(fd.cast(), .NOW, termios_p.*) catch return false;
     return true;
 }
 

@@ -152,6 +152,25 @@ bun list --all
 ├── ...
 ```
 
+## sbom
+
+Generate a Software Bill of Materials (SBOM) from the lockfile in [CycloneDX 1.7](https://cyclonedx.org/) or [SPDX 2.3](https://spdx.dev/) JSON format:
+
+```bash terminal icon="terminal"
+# CycloneDX 1.7 (default) to stdout
+bun pm sbom
+
+# SPDX 2.3 to a file
+bun pm sbom --format spdx -o sbom.spdx.json
+```
+
+For every package in the lockfile the SBOM includes the name and resolved version, a [purl](https://github.com/package-url/purl-spec) identifier, the tarball download URL (when available), the integrity hash, and the full dependency graph. Dev dependencies are marked `excluded` (CycloneDX) / `DEV_DEPENDENCY_OF` (SPDX) and optional dependencies are marked `optional` / `OPTIONAL_DEPENDENCY_OF`, so downstream scanners like Grype, Trivy, or Dependency-Track can distinguish production from development packages.
+
+| Flag                   | Description                                |
+| ---------------------- | ------------------------------------------ |
+| `--format <format>`    | `cyclonedx` (default) or `spdx`            |
+| `-o, --outfile <path>` | Write the SBOM to a file instead of stdout |
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

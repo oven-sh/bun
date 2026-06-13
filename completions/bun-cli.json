@@ -2852,6 +2852,30 @@
           "flags": [],
           "positionalArgs": []
         },
+        "sbom": {
+          "name": "sbom",
+          "description": "generate a Software Bill of Materials (SBOM) from the lockfile",
+          "flags": [
+            {
+              "name": "format",
+              "description": "Output format: cyclonedx (default) or spdx",
+              "hasValue": true,
+              "valueType": "string",
+              "required": false,
+              "multiple": false
+            },
+            {
+              "name": "outfile",
+              "shortName": "o",
+              "description": "Write the SBOM to a file instead of stdout",
+              "hasValue": true,
+              "valueType": "string",
+              "required": false,
+              "multiple": false
+            }
+          ],
+          "positionalArgs": []
+        },
         "why": {
           "name": "why",
           "description": "<pkg>            show dependency tree explaining why a package is installed",

@@ -1,0 +1,78 @@
+name: Rust Tests
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/jsc/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-test.yml"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
+  merge_group:
+
+env:
+  BUN_VERSION: "1.3.2"
+  LLVM_VERSION_MAJOR: "21"
+  # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+  # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need).
+  # Keep in sync with `channel` in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: nightly-2026-05-06
+
+jobs:
+  doctest:
+    name: cargo test --doc
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Setup system deps
+        # cmake/ninja for `--configure-only`; clang-21 for toolchain detection
+        # (configure resolves cfg.cc/cxx even though we won't compile C++).
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION_MAJOR }} main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build clang-${{ env.LLVM_VERSION_MAJOR }} lld-${{ env.LLVM_VERSION_MAJOR }} llvm-${{ env.LLVM_VERSION_MAJOR }}
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          rustup override set "$RUSTUP_TOOLCHAIN"
+          # rustc diagnostics → inline PR annotations
+          echo "::add-matcher::.github/rust-matcher.json"
+
+      - name: Generate codegen
+        # bun_jsc's build.rs include!()s files under build/debug/codegen/;
+        # `clone-lolhtml` fetches the vendored Rust path-dep
+        # (`src/lolhtml_sys/Cargo.toml` points at `vendor/lolhtml/c-api`).
+        run: |
+          bun install --frozen-lockfile
+          bun scripts/build.ts --configure-only
+          ninja -C build/debug codegen clone-lolhtml
+
+      - name: cargo test --doc
+        # `--doc` only: bun_jsc's non-doc test targets cannot link without the
+        # C++ side of the runtime. Its doctests are compile_fail contract tests
+        # (e.g. the MarkedArrayBuffer ownership boundary, issue #31969), which
+        # rustdoc verifies without linking.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: cargo test --doc -p bun_jsc

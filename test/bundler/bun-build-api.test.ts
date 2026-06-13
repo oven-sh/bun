@@ -1,9 +1,275 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
-import path, { join } from "path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  realpathSync,
+  readFileSync,
+  writeFileSync,
+} from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
+import path, { dirname, join } from "path";
+import { pathToFileURL } from "url";
 import { buildNoThrow } from "./buildNoThrow";
+
+type ModuleFederationHostBundler = "webpack" | "rspack";
+
+const moduleFederationRuntimePackages = [
+  "runtime",
+  "runtime-core",
+  "runtime-tools",
+  "sdk",
+  "error-codes",
+  "webpack-bundler-runtime",
+];
+
+function moduleFederationPackageSource(packageName: string, scopeDirs: string[]) {
+  for (const scopeDir of scopeDirs) {
+    const packageDir = join(scopeDir, packageName);
+    if (existsSync(packageDir)) {
+      return realpathSync(packageDir);
+    }
+  }
+
+  throw new Error(`@module-federation/${packageName} fixture package is not installed`);
+}
+
+function installModuleFederationRuntimeFixture(dir: string) {
+  const scopeCandidates = [
+    join(import.meta.dir, "../node_modules/@module-federation"),
+    join(import.meta.dir, "../../node_modules/@module-federation"),
+    join(import.meta.dir, "../node_modules/.bun/node_modules/@module-federation"),
+    join(import.meta.dir, "../../node_modules/.bun/node_modules/@module-federation"),
+  ];
+  const runtimeSource = moduleFederationPackageSource("runtime", scopeCandidates);
+  const scopeDirs = [
+    ...scopeCandidates,
+    dirname(runtimeSource),
+  ];
+
+  mkdirSync(join(dir, "node_modules"), { recursive: true });
+  const target = join(dir, "node_modules/@module-federation");
+  mkdirSync(target, { recursive: true });
+  for (const packageName of moduleFederationRuntimePackages) {
+    cpSync(moduleFederationPackageSource(packageName, scopeDirs), join(target, packageName), {
+      recursive: true,
+    });
+  }
+}
+
+async function expectScriptHostImportsBunRemote(
+  bundler: ModuleFederationHostBundler,
+) {
+  const dir = tempDirWithFiles(`bun-build-module-federation-${bundler}-global-host`, {
+    remote: {
+      "entry.ts": `export const entry = "entry";`,
+      src: {
+        "Expose.ts": `export const value = "${bundler}-bun-remote"; export default { value };`,
+      },
+    },
+    host: {
+      src: {
+        "index.js": `
+          globalThis.__mfDone = import("bunRemote/Expose").then(remote => {
+            console.log(JSON.stringify({
+              value: remote.value,
+              defaultValue: remote.default.value,
+            }));
+          });
+        `,
+      },
+    },
+  });
+  const remoteOutdir = join(dir, "remote/out");
+  const remoteResult = await Bun.build({
+    entrypoints: [join(dir, "remote/entry.ts")],
+    outdir: remoteOutdir,
+    target: "browser",
+    moduleFederation: {
+      name: "bunRemote",
+      exposes: {
+        "./Expose": join(dir, "remote/src/Expose.ts"),
+      },
+    },
+  });
+  expect(remoteResult.success).toBe(true);
+
+  const remoteEntry = remoteResult.outputs.find(
+    output => path.basename(output.path) === "remoteEntry.js",
+  );
+  expect(remoteEntry).toBeDefined();
+  expect(await remoteEntry!.text()).not.toContain("export ");
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const pathname = new URL(request.url).pathname;
+      const file = Bun.file(join(remoteOutdir, pathname.slice(1)));
+      return new Response(file, {
+        headers: { "Content-Type": "application/javascript" },
+      });
+    },
+  });
+
+  const hostDir = join(dir, "host");
+  const hostOutdir = join(hostDir, "dist");
+  installModuleFederationRuntimeFixture(hostDir);
+  writeFileSync(
+    join(hostDir, `build-${bundler}.mjs`),
+    `
+      import { createRequire } from "node:module";
+      const require = createRequire(${JSON.stringify(join(import.meta.dir, "../package.json"))});
+      const bundler = require(${JSON.stringify(bundler === "webpack" ? "webpack" : "@rspack/core")});
+      const ModuleFederationPlugin = bundler.container.ModuleFederationPlugin;
+      const compiler = bundler({
+        mode: "development",
+        target: "web",
+        context: ${JSON.stringify(hostDir)},
+        entry: "./src/index.js",
+        output: {
+          path: ${JSON.stringify(hostOutdir)},
+          filename: "host.js",
+          publicPath: "auto",
+        },
+        optimization: { minimize: false },
+        plugins: [
+          new ModuleFederationPlugin({
+            name: ${JSON.stringify(`${bundler}Host`)},
+            remotes: {
+              bunRemote: ${JSON.stringify(`bunRemote@${server.url}remoteEntry.js`)},
+            },
+          }),
+        ],
+      });
+      await new Promise((resolve, reject) => {
+        compiler.run((error, stats) => {
+          const done = () => error ? reject(error) : stats?.hasErrors()
+            ? reject(new Error(stats.toString({ all: false, errors: true, warnings: true })))
+            : resolve();
+          if (compiler.close) compiler.close(closeError => closeError ? reject(closeError) : done());
+          else done();
+        });
+      });
+    `,
+  );
+
+  await using buildProc = Bun.spawn({
+    cmd: [bunExe(), join(hostDir, `build-${bundler}.mjs`)],
+    cwd: hostDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+    buildProc.stdout.text(),
+    buildProc.stderr.text(),
+    buildProc.exited,
+  ]);
+  expect(buildStdout).toBe("");
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  writeFileSync(
+    join(hostDir, "run-host.mjs"),
+    `
+      globalThis.self = globalThis;
+      globalThis.window = globalThis;
+      globalThis.global = globalThis;
+      Object.defineProperty(Object, "hasOwnProperty", {
+        configurable: true,
+        value: Object.hasOwnProperty || Object.prototype.hasOwnProperty,
+      });
+      class HTMLScriptElement {}
+      globalThis.HTMLScriptElement = HTMLScriptElement;
+      const scripts = [];
+      const head = {
+        appendChild(script) {
+          scripts.push(script);
+          queueMicrotask(async () => {
+            try {
+              const response = await fetch(script.src);
+              if (!response.ok) throw new Error("script load failed " + response.status);
+              const source = await response.text();
+              const previousScript = document.currentScript;
+              document.currentScript = script;
+              try {
+                (0, eval)(source + "\\n//# sourceURL=" + script.src);
+              } finally {
+                document.currentScript = previousScript;
+              }
+              script.onload?.({ type: "load", target: script });
+            } catch (error) {
+              script.onerror?.({ type: "error", target: script, error });
+            }
+          });
+          return script;
+        },
+        removeChild(script) {
+          const index = scripts.indexOf(script);
+          if (index !== -1) scripts.splice(index, 1);
+        },
+      };
+      globalThis.document = {
+        defaultView: globalThis,
+        currentScript: {
+          src: new URL("./dist/host.js", import.meta.url).href,
+          tagName: "SCRIPT",
+        },
+        createElement(tagName) {
+          const element = tagName === "script" ? new HTMLScriptElement() : {};
+          Object.assign(element, {
+            tagName,
+            parentNode: head,
+            setAttribute(name, value) {
+              this[name] = value;
+            },
+            getAttribute(name) {
+              return this[name];
+            },
+          });
+          return element;
+        },
+        getElementsByTagName(tagName) {
+          if (tagName === "script") return scripts;
+          if (tagName === "head") return [head];
+          return [];
+        },
+        head,
+      };
+      await import(new URL("./dist/host.js", import.meta.url).href);
+      await globalThis.__mfDone;
+    `,
+  );
+
+  await using runProc = Bun.spawn({
+    cmd: [bunExe(), join(hostDir, "run-host.mjs")],
+    cwd: hostDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    runProc.stdout.text(),
+    runProc.stderr.text(),
+    runProc.exited,
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect(stdout.trim()).toBe(
+    JSON.stringify({
+      value: `${bundler}-bun-remote`,
+      defaultValue: `${bundler}-bun-remote`,
+    }),
+  );
+}
 
 describe("Bun.build", () => {
   test("css works", async () => {
@@ -29,7 +295,9 @@ describe("Bun.build", () => {
 
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
-    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+    expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(
+      ".hello{color:#00f}.hi{color:red}\n",
+    );
   });
 
   test("bytecode works", async () => {
@@ -85,7 +353,7 @@ describe("Bun.build", () => {
     // reference lexer). Otherwise a LF at index 1 truncates the value to `"("`.
     "(\nrest",
     "*\nrest",
-  ])("define value %j is auto-quoted when not valid JSON", value => {
+  ])("define value %j is auto-quoted when not valid JSON", (value) => {
     test("emits a quoted string literal", async () => {
       const dir = tempDirWithFiles("bun-build-define-auto-quote", {
         "entry.ts": `declare const X: string; console.log(X);`,
@@ -169,6 +437,1658 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("moduleFederation accepts valid config", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-config", {
+      "entry.ts": `export const value = 1;`,
+      src: {
+        "Button.tsx": `export default "button";`,
+        "Card.tsx": `export const Card = "card";`,
+      },
+    });
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        name: "host",
+        filename: "remoteEntry.js",
+        remotes: {
+          remote: "remote@http://localhost:3001/remoteEntry.js",
+          other: {
+            external: "other@http://localhost:3002/remoteEntry.js",
+            shareScope: "default",
+          },
+        },
+        exposes: {
+          "./Button": join(dir, "src/Button.tsx"),
+          "./Card": {
+            import: [join(dir, "src/Card.tsx")],
+            name: "Card",
+          },
+        },
+        shared: {
+          react: { singleton: true, requiredVersion: "^19.0.0" },
+          "react-dom": false,
+          lodash: "lodash-es",
+        },
+        manifest: { fileName: "mf-manifest.json", disableAssetsAnalyze: true },
+        runtimePlugins: [
+          "./runtime-plugin.ts",
+          ["./runtime-plugin-with-options.ts", { flag: true }],
+        ],
+        shareStrategy: "version-first",
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs.length).toBeGreaterThanOrEqual(4);
+    expect(
+      result.outputs.some(
+        (output) => path.basename(output.path) === "remoteEntry.js",
+      ),
+    ).toBe(true);
+  });
+
+  test("moduleFederation asyncStartup config is accepted", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-async-startup-config",
+      {
+        "entry.ts": `export const value = 1;`,
+      },
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          app: "app@http://localhost:3001/remoteEntry.js",
+        },
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outputs).toHaveLength(1);
+  });
+
+  test("moduleFederation asyncStartup waits for static remote imports before entry startup", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-async-startup-host",
+      {
+        "host.ts": `
+        import button from "app/Button";
+
+        globalThis.__mfAsyncStartupEvents ??= [];
+        globalThis.__mfAsyncStartupEvents.push("entry:" + button.label);
+        console.log(JSON.stringify(globalThis.__mfAsyncStartupEvents));
+      `,
+      },
+    );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {
+          globalThis.__mfAsyncStartupEvents ??= [];
+          globalThis.__mfAsyncStartupEvents.push("init");
+        }
+        export function get(request) {
+          globalThis.__mfAsyncStartupEvents.push("get:" + request);
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => {
+            globalThis.__mfAsyncStartupEvents.push("factory");
+            return { default: { label: "async-button" } };
+          };
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const hostOutput = result.outputs.find(
+      (output) => path.basename(output.path) === "host.js",
+    );
+    expect(await hostOutput!.text()).toContain("__bunMFAsyncStartup");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify([
+        "init",
+        "get:./Button",
+        "factory",
+        "entry:async-button",
+      ]),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation asyncStartup surfaces static remote startup failures", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-async-startup-failure",
+      {
+        "host.ts": `
+        import button from "app/Button";
+
+        console.log("entry:" + button.label);
+      `,
+      },
+    );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          throw new Error("missing remote expose " + request);
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("missing remote expose ./Button");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("moduleFederation browser asyncStartup waits for static module remotes", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-browser-async-startup-host",
+      {
+        "host.ts": `
+        import button from "app/Button";
+
+        globalThis.__mfBrowserAsyncStartupEvents ??= [];
+        globalThis.__mfBrowserAsyncStartupEvents.push("entry:" + button.label);
+        console.log(JSON.stringify(globalThis.__mfBrowserAsyncStartupEvents));
+      `,
+        "runtime-plugin.ts": `
+        export default function runtimePlugin(options) {
+          globalThis.__mfBrowserAsyncStartupEvents ??= [];
+          globalThis.__mfBrowserAsyncStartupEvents.push("plugin-init:" + options.flag);
+          return {
+            beforeRequest(context) {
+              globalThis.__mfBrowserAsyncStartupEvents.push("before:" + context.id + ":" + options.flag);
+              return context;
+            },
+            afterLoadRemote(context) {
+              globalThis.__mfBrowserAsyncStartupEvents.push("after:" + context.id + ":" + options.flag);
+            },
+          };
+        }
+      `,
+      },
+    );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {
+          globalThis.__mfBrowserAsyncStartupEvents ??= [];
+          globalThis.__mfBrowserAsyncStartupEvents.push("init");
+        }
+        export function get(request) {
+          globalThis.__mfBrowserAsyncStartupEvents.push("get:" + request);
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => {
+            globalThis.__mfBrowserAsyncStartupEvents.push("factory");
+            return { default: { label: "browser-async-button" } };
+          };
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "browser",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+        runtimePlugins: [
+          [join(dir, "runtime-plugin.ts"), { flag: "browser" }],
+        ],
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const hostOutput = result.outputs.find(
+      (output) => path.basename(output.path) === "host.js",
+    );
+    const hostText = await hostOutput!.text();
+    expect(hostText).toContain("__bunMFAsyncStartup");
+    expect(hostText).toContain("@module-federation/runtime");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify([
+        "plugin-init:browser",
+        "before:app/Button:browser",
+        "init",
+        "get:./Button",
+        "factory",
+        "after:app/Button:browser",
+        "entry:browser-async-button",
+      ]),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation browser asyncStartup surfaces static remote startup failures", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-browser-async-startup-failure",
+      {
+        "host.ts": `
+        import button from "app/Button";
+
+        console.log("entry:" + button.label);
+      `,
+      },
+    );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          throw new Error("missing browser remote expose " + request);
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "browser",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+        experiments: { asyncStartup: true },
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("missing browser remote expose ./Button");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("moduleFederation emits an importable ESM remote entry wrapper", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-remote-entry", {
+      "entry.ts": `export const entry = "entry";`,
+      src: {
+        "Expose.ts": `export const value = "exposed"; export default { value };`,
+      },
+      "host.ts": `
+        const remote = await import(new URL("./out/remoteEntry.js.mjs", import.meta.url).href);
+        remote.init();
+        const factory = await remote.get("./Expose");
+        const exposed = await factory();
+        console.log(JSON.stringify({
+          hasGet: typeof remote.get,
+          hasInit: typeof remote.init,
+          hasDefaultGet: typeof remote.default.get,
+          globalIsDefault: globalThis.remote === remote.default,
+          value: exposed.value,
+          defaultValue: exposed.default.value,
+        }));
+      `,
+    });
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const remoteEntry = result.outputs.find(
+      (output) => path.basename(output.path) === "remoteEntry.js",
+    );
+    expect(remoteEntry).toBeDefined();
+    const remoteEntryText = await remoteEntry!.text();
+    expect(remoteEntryText).toContain(`createContainer`);
+    expect(remoteEntryText).not.toContain(`export const get`);
+    const remoteEntryModule = result.outputs.find(
+      (output) => path.basename(output.path) === "remoteEntry.js.mjs",
+    );
+    expect(remoteEntryModule).toBeDefined();
+    expect(await remoteEntryModule!.text()).toContain(
+      `export const get = container.get`,
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        hasGet: "function",
+        hasInit: "function",
+        hasDefaultGet: "function",
+        globalIsDefault: true,
+        value: "exposed",
+        defaultValue: "exposed",
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation remote entry exposes a script global container", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-global-container",
+      {
+        "entry.ts": `export const entry = "entry";`,
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `export const value = "remote-shared";`,
+          },
+        },
+        src: {
+          "Expose.ts": `export const value = "global-exposed"; export default { value };`,
+        },
+        "host.ts": `
+          await import(new URL("./out/remoteEntry.js", import.meta.url).href);
+          const container = globalThis.remote;
+          const shareScope = {};
+          await container.init(shareScope, [], { shareScopeMap: { default: shareScope }, shareScopeKeys: "default", version: "" });
+          await container.init(shareScope, [], { shareScopeMap: { default: shareScope }, shareScopeKeys: "default", version: "" });
+          const factory = await container.get("./Expose");
+          const exposed = await factory();
+          console.log(JSON.stringify({
+            hasGet: typeof container.get,
+            hasInit: typeof container.init,
+            value: exposed.value,
+            defaultValue: exposed.default.value,
+            registeredVersions: Object.keys(shareScope["shared-lib"] || {}),
+          }));
+        `,
+      },
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+        shared: {
+          "shared-lib": {
+            singleton: true,
+            version: "1.0.0",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const remoteEntry = result.outputs.find(
+      (output) => path.basename(output.path) === "remoteEntry.js",
+    );
+    expect(remoteEntry).toBeDefined();
+    const remoteEntryText = await remoteEntry!.text();
+    expect(remoteEntryText).toContain(`globalThis["remote"] = container`);
+    expect(remoteEntryText).not.toContain(`export default container`);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "host.ts"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        hasGet: "function",
+        hasInit: "function",
+        value: "global-exposed",
+        defaultValue: "global-exposed",
+        registeredVersions: ["1.0.0"],
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation host imports a configured module remote once", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-script-host", {
+      "host.ts": `
+        import { getInstance } from "@module-federation/runtime";
+
+        getInstance(instance => !!instance).initShareScopeMap("default", { react: { "19.0.0": { version: "19.0.0", from: "host" } } });
+        const first = await import("app/Button");
+        const second = await import("app/Button");
+        console.log(JSON.stringify({
+          first: first.default,
+          second: second.default,
+          same: first.default === second.default,
+        }));
+      `,
+    });
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        let initCount = 0;
+        let lastShareScope;
+        export function init(shareScope) {
+          initCount++;
+          lastShareScope = shareScope;
+        }
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({
+            default: {
+              label: "remote-button",
+              initCount,
+              shared: lastShareScope.react.version,
+            },
+          });
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        first: { label: "remote-button", initCount: 1, shared: "19.0.0" },
+        second: { label: "remote-button", initCount: 1, shared: "19.0.0" },
+        same: true,
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation Webpack script host imports a real Bun remote", async () => {
+    await expectScriptHostImportsBunRemote("webpack");
+  });
+
+  test("moduleFederation Rspack script host imports a real Bun remote", async () => {
+    await expectScriptHostImportsBunRemote("rspack");
+  });
+
+  test("moduleFederation host registers runtimePlugins before loading remotes", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-runtime-plugins",
+      {
+        "host.ts": `
+        const button = await import("pluginApp/Button");
+        console.log(JSON.stringify({
+          button: button.default,
+          calls: globalThis.__mfPluginCalls,
+        }));
+      `,
+        "runtime-plugin.ts": `
+        export default function runtimePlugin(options) {
+          globalThis.__mfPluginCalls ??= [];
+          globalThis.__mfPluginCalls.push(["init", options.flag]);
+          return {
+            beforeRequest(context) {
+              globalThis.__mfPluginCalls.push(["before", context.id, options.flag]);
+              return context;
+            },
+            afterLoadRemote(context) {
+              globalThis.__mfPluginCalls.push(["after", context.id, options.flag]);
+            },
+            errorLoadRemote(context) {
+              globalThis.__mfPluginCalls.push(["error", context.id, context.error.message]);
+            },
+          };
+        }
+      `,
+      },
+    );
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        export function init() {}
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({ default: { label: "plugin-remote-button" } });
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          pluginApp: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+        runtimePlugins: [
+          [join(dir, "runtime-plugin.ts"), { flag: "from-options" }],
+        ],
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        button: { label: "plugin-remote-button" },
+        calls: [
+          ["init", "from-options"],
+          ["before", "pluginApp/Button", "from-options"],
+          ["after", "pluginApp/Button", "from-options"],
+        ],
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation runtimePlugins work with module remotes", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-runtime-plugins-module",
+      {
+        "host.ts": `
+        const button = await import("moduleApp/Button");
+        console.log(JSON.stringify({
+          button: button.default,
+          calls: globalThis.__mfModulePluginCalls,
+        }));
+      `,
+        "remote-entry.js": `
+        export function init() {}
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({ default: { label: "module-plugin-button" } });
+        }
+      `,
+        "runtime-plugin.ts": `
+        export const plugin = options => ({
+          name: "module-plugin",
+          beforeRequest(context) {
+            globalThis.__mfModulePluginCalls ??= [];
+            globalThis.__mfModulePluginCalls.push(["before", context.id, options.flag]);
+            return context;
+          },
+          afterLoadRemote(context) {
+            globalThis.__mfModulePluginCalls.push(["after", context.id, options.flag]);
+          },
+        });
+      `,
+      },
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          moduleApp: pathToFileURL(join(dir, "remote-entry.js")).href,
+        },
+        runtimePlugins: [
+          [join(dir, "runtime-plugin.ts"), { flag: "module-options" }],
+        ],
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        button: { label: "module-plugin-button" },
+        calls: [
+          ["before", "moduleApp/Button", "module-options"],
+          ["after", "moduleApp/Button", "module-options"],
+        ],
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation host imports a configured module remote with share scope", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-manifest-host", {
+      "host.ts": `
+        import { getInstance } from "@module-federation/runtime";
+
+        getInstance(instance => !!instance).initShareScopeMap("default", { react: { "19.0.0": { version: "19.0.0", from: "host" } } });
+        const first = await import("app/Button");
+        const second = await import("app/Button");
+        console.log(JSON.stringify({
+          first: first.default,
+          second: second.default,
+          same: first.default === second.default,
+        }));
+      `,
+    });
+    writeFileSync(
+      join(dir, "remote-entry.js"),
+      `
+        let initCount = 0;
+        let lastShareScope;
+        export function init(shareScope) {
+          initCount++;
+          lastShareScope = shareScope;
+        }
+        export function get(request) {
+          if (request !== "./Button") throw new Error("unknown expose " + request);
+          return () => ({
+            default: {
+              label: "manifest-remote-button",
+              initCount,
+              shared: lastShareScope.react.version,
+            },
+          });
+        }
+      `,
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        remotes: {
+          app: {
+            external: pathToFileURL(join(dir, "remote-entry.js")).href,
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "out/host.js")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        first: {
+          label: "manifest-remote-button",
+          initCount: 1,
+          shared: "19.0.0",
+        },
+        second: {
+          label: "manifest-remote-button",
+          initCount: 1,
+          shared: "19.0.0",
+        },
+        same: true,
+      }),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("moduleFederation shared singleton uses host copy across separate host and remote roots", async () => {
+    const hostDir = tempDirWithFiles(
+      "bun-build-module-federation-shared-host",
+      {
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+            export const origin = "host";
+            export const instance = globalThis.__hostSharedSingleton ??= { origin, count: 0 };
+            export function touch() {
+              instance.count++;
+              return instance;
+            }
+            export default instance;
+          `,
+          },
+        },
+        "host.ts": `
+        import hostDefault, { instance as hostInstance } from "shared-lib";
+
+        let hostFactoryCount = 0;
+        const shareScope = { "shared-lib": { "1.0.0": {
+          version: "1.0.0",
+          from: "host",
+          shareConfig: { singleton: true, requiredVersion: "^1.0.0" },
+          get: async () => {
+            hostFactoryCount++;
+            const shared = await import("shared-lib");
+            return () => shared;
+          },
+        } } };
+        const shareScopeMap = { default: shareScope };
+
+        const remote = await import(process.argv[2]);
+        await remote.init(shareScope, [], { shareScopeMap, shareScopeKeys: "default", version: "" });
+
+        const registrySharedFactory = await shareScope["shared-lib"]["1.0.0"].get();
+        const registryShared = await registrySharedFactory();
+        const firstFactory = await remote.get("./Expose");
+        const first = await firstFactory();
+        const secondFactory = await remote.get("./Expose");
+        const second = await secondFactory();
+        const firstNamed = first.readNamed();
+        const secondNamed = second.readNamed();
+
+        console.log(JSON.stringify({
+          registryIsHost: registryShared.instance === hostInstance,
+          defaultIsHost: first.readDefault() === hostDefault,
+          exposedIsHost: firstNamed.instance === hostInstance,
+          exposedOrigin: firstNamed.origin,
+          count: secondNamed.count,
+          hostFactoryCount,
+        }));
+      `,
+      },
+    );
+    installModuleFederationRuntimeFixture(hostDir);
+    const remoteDir = tempDirWithFiles(
+      "bun-build-module-federation-shared-remote",
+      {
+        "entry.ts": `export const entry = "entry";`,
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+            export const origin = "remote";
+            export const instance = globalThis.__remoteSharedSingleton ??= { origin, count: 0 };
+            export function touch() {
+              instance.count++;
+              return instance;
+            }
+            export default instance;
+          `,
+          },
+        },
+        src: {
+          "Expose.ts": `
+          import sharedDefault, { origin, instance, touch } from "shared-lib";
+          export function readNamed() {
+            return { origin, instance: touch(), count: instance.count };
+          }
+          export function readDefault() {
+            return sharedDefault;
+          }
+        `,
+        },
+      },
+    );
+    installModuleFederationRuntimeFixture(remoteDir);
+
+    const result = await Bun.build({
+      entrypoints: [join(remoteDir, "entry.ts")],
+      outdir: join(remoteDir, "out"),
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(remoteDir, "src/Expose.ts"),
+        },
+        shared: {
+          "shared-lib": {
+            singleton: true,
+            version: "1.0.0",
+            requiredVersion: "^1.0.0",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const remoteEntry = result.outputs.find(
+      (output) => path.basename(output.path) === "remoteEntry.js",
+    );
+    expect(remoteEntry).toBeDefined();
+    const remoteEntryText = await remoteEntry!.text();
+    expect(remoteEntryText).toContain("@module-federation/runtime");
+    expect(remoteEntryText).not.toContain(`__bunModuleFederationShareScopes`);
+    expect(remoteEntryText).toContain(`__mfInstance = __bunMFInit`);
+    expect(remoteEntryText).toContain(`requiredVersion: "^1.0.0"`);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "host.ts",
+        pathToFileURL(join(remoteDir, "out/remoteEntry.js.mjs")).href,
+      ],
+      cwd: hostDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(stdout.trim()).toBe(
+      JSON.stringify({
+        registryIsHost: true,
+        defaultIsHost: true,
+        exposedIsHost: true,
+        exposedOrigin: "host",
+        count: 2,
+        hostFactoryCount: 1,
+      }),
+    );
+  });
+
+  test("moduleFederation reports unsupported shared namespace imports", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-shared-namespace",
+      {
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+              export const origin = "host";
+              export const instance = { count: 0 };
+              export function touch() {
+                instance.count++;
+                return instance;
+              }
+              export default { origin, instance };
+            `,
+          },
+        },
+        "host.ts": `
+          import * as shared from "shared-lib";
+          console.log(shared.origin);
+        `,
+      },
+    );
+
+    const result = await buildNoThrow({
+      entrypoints: [join(dir, "host.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      moduleFederation: {
+        name: "host",
+        shared: {
+          "shared-lib": {
+            singleton: true,
+            version: "1.0.0",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].message).toContain(
+      "Module Federation shared namespace imports are not supported yet",
+    );
+  });
+
+  test("moduleFederation shared singleton falls back or errors for incompatible host versions", async () => {
+    const hostDir = tempDirWithFiles(
+      "bun-build-module-federation-shared-version-host",
+      {
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "1.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+              export const origin = "host";
+              export default { origin };
+            `,
+          },
+        },
+        "host.ts": `
+          const shareScope = { "shared-lib": { "1.0.0": {
+              version: "1.0.0",
+              from: "host",
+              shareConfig: { singleton: true, requiredVersion: "^1.0.0" },
+              get: async () => {
+                const shared = await import("shared-lib");
+                return () => shared;
+              },
+          } } };
+          const shareScopeMap = { default: shareScope };
+
+          let strictMessage = "";
+          try {
+            const strictRemote = await import(process.argv[2]);
+            await strictRemote.init(shareScope, [], { shareScopeMap, shareScopeKeys: "default", version: "" });
+            const strictFactory = await strictRemote.get("./Expose");
+            const strictExpose = await strictFactory();
+            strictExpose.read();
+          } catch (error) {
+            strictMessage = error.message;
+          }
+
+          const fallbackRemote = await import(process.argv[3]);
+          await fallbackRemote.init(shareScope, [], { shareScopeMap, shareScopeKeys: "default", version: "" });
+          const fallbackFactory = await fallbackRemote.get("./Expose");
+          const fallbackExpose = await fallbackFactory();
+
+          console.log(JSON.stringify({
+            fallbackOrigin: fallbackExpose.read(),
+            strictMessage,
+          }));
+        `,
+      },
+    );
+    installModuleFederationRuntimeFixture(hostDir);
+    const fallbackRemoteDir = tempDirWithFiles(
+      "bun-build-module-federation-shared-version-fallback-remote",
+      {
+        "entry.ts": `export const entry = "entry";`,
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "2.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+              export const origin = "remote-fallback";
+              export default { origin };
+            `,
+          },
+        },
+        src: {
+          "Expose.ts": `
+            import { origin } from "shared-lib";
+            export function read() {
+              return origin;
+            }
+          `,
+        },
+      },
+    );
+    installModuleFederationRuntimeFixture(fallbackRemoteDir);
+    const strictRemoteDir = tempDirWithFiles(
+      "bun-build-module-federation-shared-version-strict-remote",
+      {
+        "entry.ts": `export const entry = "entry";`,
+        node_modules: {
+          "shared-lib": {
+            "package.json": JSON.stringify({
+              name: "shared-lib",
+              version: "2.0.0",
+              type: "module",
+              main: "index.js",
+            }),
+            "index.js": `
+              export const origin = "remote-strict";
+            `,
+          },
+        },
+        src: {
+          "Expose.ts": `
+            import { origin } from "shared-lib";
+            export function read() {
+              return origin;
+            }
+          `,
+        },
+      },
+    );
+    installModuleFederationRuntimeFixture(strictRemoteDir);
+
+    const fallbackResult = await Bun.build({
+      entrypoints: [join(fallbackRemoteDir, "entry.ts")],
+      outdir: join(fallbackRemoteDir, "out"),
+      moduleFederation: {
+        name: "fallbackRemote",
+        exposes: {
+          "./Expose": join(fallbackRemoteDir, "src/Expose.ts"),
+        },
+        shared: {
+          "shared-lib": {
+            singleton: true,
+            version: "2.0.0",
+            requiredVersion: "^2.0.0",
+          },
+        },
+      },
+    });
+    expect(fallbackResult.success).toBe(true);
+
+    const strictResult = await Bun.build({
+      entrypoints: [join(strictRemoteDir, "entry.ts")],
+      outdir: join(strictRemoteDir, "out"),
+      moduleFederation: {
+        name: "strictRemote",
+        exposes: {
+          "./Expose": join(strictRemoteDir, "src/Expose.ts"),
+        },
+        shared: {
+          "shared-lib": {
+            import: false,
+            singleton: true,
+            version: "2.0.0",
+            requiredVersion: "^2.0.0",
+            strictVersion: true,
+          },
+        },
+      },
+    });
+    expect(strictResult.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "host.ts",
+        pathToFileURL(join(strictRemoteDir, "out/remoteEntry.js.mjs")).href,
+        pathToFileURL(join(fallbackRemoteDir, "out/remoteEntry.js.mjs")).href,
+      ],
+      cwd: hostDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({
+      fallbackOrigin: "remote-fallback",
+      strictMessage:
+        "[ Federation Runtime ]: Version 1.0.0 from host of shared singleton module shared-lib does not satisfy the requirement of strictRemote which needs ^2.0.0)",
+    });
+  });
+
+  test("moduleFederation emits default manifest", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-manifest-default",
+      {
+        "entry.ts": `export const value = 1;`,
+        src: {
+          "Expose.ts": `export const exposed = "exposed";`,
+        },
+      },
+    );
+    const outdir = join(dir, "out");
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir,
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+        remotes: {
+          host: "host@http://localhost:3000/remoteEntry.js",
+        },
+        shared: {
+          react: { singleton: true, requiredVersion: "^19.0.0" },
+        },
+        manifest: true,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const manifestOutput = result.outputs.find(
+      (output) => path.basename(output.path) === "mf-manifest.json",
+    );
+    const remoteEntryOutput = result.outputs.find(
+      (output) => path.basename(output.path) === "remoteEntry.js",
+    );
+    expect(manifestOutput).toBeDefined();
+    expect(remoteEntryOutput).toBeDefined();
+    expect(readFileSync(join(outdir, "mf-manifest.json"), "utf8")).toBe(
+      await manifestOutput!.text(),
+    );
+
+    const manifest = await manifestOutput!.json();
+    expect(manifest.name).toBe("remote");
+    expect(manifest.filePath).toBe("mf-manifest.json");
+    expect(manifest.metaData.remoteEntry.name).toBe("remoteEntry.js.mjs");
+    expect(manifest.metaData.remoteEntry.type).toBe("module");
+    expect(manifest.remoteEntry.path).toBe("remoteEntry.js.mjs");
+    expect(manifest.remoteEntry.type).toBe("module");
+    expect(
+      readFileSync(join(outdir, "remoteEntry.js"), "utf8"),
+    ).toContain("createContainer");
+    expect(
+      readFileSync(join(outdir, manifest.remoteEntry.path), "utf8"),
+    ).toContain("export default container");
+    const expose = manifest.exposes.find(
+      (item: any) => item.name === "./Expose",
+    );
+    expect(expose.assets.js.sync[0]).toBeTruthy();
+    expect(
+      readFileSync(join(outdir, expose.assets.js.sync[0]), "utf8"),
+    ).toContain("exposed");
+    const hostRemote = manifest.remotes.find(
+      (item: any) => item.alias === "host",
+    );
+    expect(hostRemote.entry).toBe("http://localhost:3000/remoteEntry.js");
+    expect(hostRemote.type).toBe("global");
+    expect(hostRemote.name).toBe("host");
+    const reactShared = manifest.shared.find(
+      (item: any) => item.name === "react",
+    );
+    expect(reactShared.singleton).toBe(true);
+    expect(reactShared.requiredVersion).toBe("^19.0.0");
+  });
+
+  test("moduleFederation manifest supports custom fileName and filePath", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-manifest-custom",
+      {
+        "entry.ts": `export const value = 1;`,
+        src: {
+          "Expose.ts": `export default "custom";`,
+        },
+      },
+    );
+    const outdir = join(dir, "out");
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir,
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+        manifest: {
+          fileName: "custom-mf.json",
+          filePath: "meta/federation",
+          disableAssetsAnalyze: true,
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const manifestOutput = result.outputs.find((output) =>
+      output.path.endsWith("meta/federation/custom-mf.json"),
+    );
+    expect(manifestOutput).toBeDefined();
+    const manifest = await manifestOutput!.json();
+    expect(manifest.filePath).toBe("meta/federation/custom-mf.json");
+    expect(manifest.disableAssetsAnalyze).toBe(true);
+    expect(
+      readFileSync(join(outdir, "meta/federation/custom-mf.json"), "utf8"),
+    ).toBe(await manifestOutput!.text());
+  });
+
+  test("moduleFederation manifest is readable without outdir", async () => {
+    const dir = tempDirWithFiles(
+      "bun-build-module-federation-manifest-memory",
+      {
+        "entry.ts": `export const value = 1;`,
+        src: {
+          "Expose.ts": `export const value = "memory";`,
+        },
+      },
+    );
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+        manifest: true,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const manifestOutput = result.outputs.find(
+      (output) => path.basename(output.path) === "mf-manifest.json",
+    );
+    expect(manifestOutput).toBeDefined();
+    expect((await manifestOutput!.text()).trim()).toStartWith("{");
+    expect((await manifestOutput!.json()).remoteEntry.path).toBe(
+      "remoteEntry.js.mjs",
+    );
+  });
+
+  test("moduleFederation without exposes does not emit a remote entry", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-no-exposes", {
+      "entry.ts": `export const value = 1;`,
+      src: {
+        "Expose.ts": `export const value = "exposed";`,
+      },
+    });
+    installModuleFederationRuntimeFixture(dir);
+
+    const noExposes = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        name: "remote",
+      },
+    });
+
+    expect(noExposes.success).toBe(true);
+    expect(noExposes.outputs).toHaveLength(1);
+    expect(
+      noExposes.outputs.some(
+        (output) => path.basename(output.path) === "remoteEntry.js",
+      ),
+    ).toBe(false);
+
+    const noName = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+      },
+    });
+
+    expect(noName.success).toBe(true);
+    expect(noName.outputs).toHaveLength(1);
+    expect(
+      noName.outputs.some(
+        (output) => path.basename(output.path) === "remoteEntry.js",
+      ),
+    ).toBe(false);
+  });
+
+  test("moduleFederation without manifest does not emit a manifest", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-no-manifest", {
+      "entry.ts": `export const value = 1;`,
+      src: {
+        "Expose.ts": `export const value = "exposed";`,
+      },
+    });
+    installModuleFederationRuntimeFixture(dir);
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Expose": join(dir, "src/Expose.ts"),
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      result.outputs.some(
+        (output) => path.basename(output.path) === "mf-manifest.json",
+      ),
+    ).toBe(false);
+  });
+
+  test("moduleFederation reports missing expose imports", async () => {
+    const dir = tempDirWithFiles("bun-build-module-federation-missing-expose", {
+      "entry.ts": `export const value = 1;`,
+    });
+
+    const result = await buildNoThrow({
+      entrypoints: [join(dir, "entry.ts")],
+      moduleFederation: {
+        name: "remote",
+        exposes: {
+          "./Missing": join(dir, "src/Missing.ts"),
+        },
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.logs).toHaveLength(1);
+    expect(result.logs[0].message).toContain(`ModuleNotFound resolving`);
+  });
+
+  test("moduleFederation rejects invalid config", () => {
+    const entrypoints = [join(import.meta.dir, "./fixtures/trivial/index.js")];
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: 1,
+      } as any),
+    ).toThrow("moduleFederation must be an object");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          remotes: {
+            remote: { external: 1 },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.remotes entry.external must be a string");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          remotes: {
+            remote: [],
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.remotes entry must be a string or an object");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          remotes: {
+            remote: { external: [] },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.remotes entry.external must be a string");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          remotes: {
+            remote: {},
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.remotes entry.external is required");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          remotes: {
+            remote: { external: "" },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.remotes entry.external must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          exposes: {
+            "./Button": [],
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.exposes entry must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          exposes: {
+            "./Button": { import: [] },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.exposes entry.import must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          shared: {
+            react: "",
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.shared entry must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          shared: {
+            react: {
+              import: "",
+            },
+          },
+        },
+      } as any),
+    ).toThrow("moduleFederation.shared entry.import must not be empty");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          shareStrategy: "invalid",
+        },
+      } as any),
+    ).toThrow(
+      'moduleFederation.shareStrategy must be one of "version-first", "loaded-first"',
+    );
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          runtimePlugins: "./plugin.ts",
+        },
+      } as any),
+    ).toThrow("moduleFederation.runtimePlugins must be an array");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          runtimePlugins: [["./plugin.ts"]],
+        },
+      } as any),
+    ).toThrow("moduleFederation.runtimePlugins tuple must be [string, object]");
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          runtimePlugins: [["./plugin.ts", null]],
+        },
+      } as any),
+    ).toThrow(
+      "moduleFederation.runtimePlugins tuple options must be an object",
+    );
+
+    expect(() =>
+      Bun.build({
+        entrypoints,
+        moduleFederation: {
+          experiments: true,
+        },
+      } as any),
+    ).toThrow("moduleFederation.experiments must be an object");
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({
@@ -222,7 +2142,9 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
     });
     await Bun.write(path.join(tmpdir, "index.js"), x.outputs[0]);
-    expect(readFileSync(path.join(tmpdir, "index.js"), "utf-8")).toMatchSnapshot();
+    expect(
+      readFileSync(path.join(tmpdir, "index.js"), "utf-8"),
+    ).toMatchSnapshot();
     Bun.gc(true);
   });
 
@@ -355,7 +2277,9 @@ describe("Bun.build", () => {
       outdir: tempDirWithFiles("response-buildartifact", {}),
     });
     const response = new Response(x.outputs[0]);
-    expect(response.headers.get("content-type")).toBe("text/javascript;charset=utf-8");
+    expect(response.headers.get("content-type")).toBe(
+      "text/javascript;charset=utf-8",
+    );
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
@@ -392,20 +2316,22 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
-  test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
-    // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
-    // indexed by the property position instead of a dense counter, leaving garbage in
-    // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
-    // bundler thread surfaces as a test failure instead of taking down the test runner.
-    const dir = tempDirWithFiles("bun-build-loader-empty-key", {
-      "entry.ts": `export const x: number = 42;\n`,
-    });
+  test.concurrent(
+    "loader map with an empty-string key is ignored without leaving uninitialized slots",
+    async () => {
+      // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
+      // indexed by the property position instead of a dense counter, leaving garbage in
+      // the skipped slot that was later read/freed. Run in a subprocess so a crash in the
+      // bundler thread surfaces as a test failure instead of taking down the test runner.
+      const dir = tempDirWithFiles("bun-build-loader-empty-key", {
+        "entry.ts": `export const x: number = 42;\n`,
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const result = await Bun.build({
             entrypoints: [${JSON.stringify(join(dir, "entry.ts"))}],
             loader: { "": "js", ".ts": "ts", ".js": "js" },
@@ -413,17 +2339,22 @@ describe("Bun.build", () => {
           if (!result.success) throw new AggregateError(result.logs, "build failed");
           console.log(JSON.stringify({ success: result.success, outputs: result.outputs.length }));
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
-    expect(exitCode).toBe(0);
-  });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({ success: true, outputs: 1 });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("rebuilding busts the directory entries cache", async () => {
     Bun.gc(true);
@@ -432,12 +2363,18 @@ describe("Bun.build", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "fixtures", "bundler-reloader-script.ts"),
+      ],
       env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
       stderr: "pipe",
       stdout: "inherit",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     if (stderr.length > 0) {
       throw new Error(stderr);
     }
@@ -478,7 +2415,7 @@ describe("Bun.build", () => {
         plugins: [
           {
             name: "test",
-            setup: b => {
+            setup: (b) => {
               b.module("ad", () => {
                 return {
                   exports: {
@@ -495,10 +2432,20 @@ describe("Bun.build", () => {
   });
 
   test.concurrent("non-object plugins throw invalid argument errors", () => {
-    for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
+    for (const plugin of [
+      null,
+      undefined,
+      1,
+      "hello",
+      true,
+      false,
+      Symbol.for("hello"),
+    ]) {
       expect(() => {
         Bun.build({
-          entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
+          entrypoints: [
+            join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts"),
+          ],
           plugins: [
             // @ts-expect-error
             plugin,
@@ -542,7 +2489,10 @@ describe("Bun.build", () => {
     if (!first.success) throw new AggregateError(first.logs);
     expect(first.outputs.length).toBe(3);
 
-    writeFileSync(join(fixture, "bar.ts"), readFileSync(join(fixture, "bar.ts"), "utf8").replace("BAR", "BAZ"));
+    writeFileSync(
+      join(fixture, "bar.ts"),
+      readFileSync(join(fixture, "bar.ts"), "utf8").replace("BAR", "BAZ"),
+    );
 
     const second = await Bun.build({
       entrypoints: [join(fixture, "entry1.ts"), join(fixture, "entry2.ts")],
@@ -607,7 +2557,9 @@ describe("Bun.build", () => {
     });
     if (!bundle.success) throw new AggregateError(bundle.logs);
 
-    expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
+    expect(await bundle.outputs[0].text()).toBe(
+      "var o=/*@__PURE__*/console.log(1);export{o as OUT};\n",
+    );
   });
 
   test.concurrent(
@@ -641,16 +2593,19 @@ describe("Bun.build", () => {
           {
             name: "test-plugin",
             setup(build) {
-              build.onLoad({ filter: /\.html$/ }, async args => {
+              build.onLoad({ filter: /\.html$/ }, async (args) => {
                 onLoadCalled = true;
                 const contents = await Bun.file(args.path).text();
                 return {
-                  contents: contents.replace("</head>", "<meta name='injected-by-plugin' content='true'></head>"),
+                  contents: contents.replace(
+                    "</head>",
+                    "<meta name='injected-by-plugin' content='true'></head>",
+                  ),
                   loader: "html",
                 };
               });
 
-              build.onResolve({ filter: /\.(js|css)$/ }, args => {
+              build.onResolve({ filter: /\.(js|css)$/ }, (args) => {
                 onResolveCalled = true;
                 return {
                   path: join(fixture, args.path),
@@ -670,18 +2625,24 @@ describe("Bun.build", () => {
       expect(build.outputs).toHaveLength(3);
 
       // Verify we have one of each type
-      const types = build.outputs.map(o => o.type);
+      const types = build.outputs.map((o) => o.type);
       expect(types).toContain("text/html;charset=utf-8");
       expect(types).toContain("text/javascript;charset=utf-8");
       expect(types).toContain("text/css;charset=utf-8");
 
       // Verify the JS output contains the __dirname
-      const js = build.outputs.find(o => o.type === "text/javascript;charset=utf-8");
+      const js = build.outputs.find(
+        (o) => o.type === "text/javascript;charset=utf-8",
+      );
       expect(await js?.text()).toContain("console.log(3)");
 
       // Verify our plugin modified the HTML
-      const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
-      expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+      const html = build.outputs.find(
+        (o) => o.type === "text/html;charset=utf-8",
+      );
+      expect(await html?.text()).toContain(
+        "<meta name='injected-by-plugin' content='true'>",
+      );
     },
   );
 });
@@ -862,7 +2823,9 @@ describe.concurrent("sourcemap boolean values", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
 
     const output = await build.outputs[0].text();
-    expect(output).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(output).toContain(
+      "//# sourceMappingURL=data:application/json;base64,",
+    );
   });
 
   test("sourcemap: false should work (boolean)", async () => {
@@ -897,8 +2860,8 @@ describe.concurrent("sourcemap boolean values", () => {
     expect(build.success).toBe(true);
     expect(build.outputs).toHaveLength(2);
 
-    const jsOutput = build.outputs.find(o => o.kind === "entry-point");
-    const mapOutput = build.outputs.find(o => o.kind === "sourcemap");
+    const jsOutput = build.outputs.find((o) => o.kind === "entry-point");
+    const mapOutput = build.outputs.find((o) => o.kind === "sourcemap");
 
     expect(jsOutput).toBeTruthy();
     expect(mapOutput).toBeTruthy();
@@ -1031,7 +2994,7 @@ export { greeting };`,
           {
             name: "test-plugin",
             setup(builder) {
-              builder.onEnd(result => {
+              builder.onEnd((result) => {
                 onEndCalled = true;
                 onEndCalledBeforeReject = !promiseRejected;
                 // Result should contain error information
@@ -1073,7 +3036,7 @@ export { greeting };`,
         {
           name: "test-plugin",
           setup(builder) {
-            builder.onEnd(result => {
+            builder.onEnd((result) => {
               onEndCalled = true;
               onEndCalledBeforeResolve = !promiseResolved;
               // Result should contain error information
@@ -1114,7 +3077,7 @@ export { greeting };`,
         {
           name: "test-plugin",
           setup(builder) {
-            builder.onEnd(result => {
+            builder.onEnd((result) => {
               onEndCalled = true;
               onEndCalledBeforeResolve = !promiseResolved;
               // Result should indicate success
@@ -1210,7 +3173,10 @@ test.skipIf(!isDebug && !isASAN)(
     // before each sample to let JSC collect the output blobs and mimalloc
     // purge freed pages.
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
-      "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
+      "entry.ts":
+        "export const a = 1;\n/* " +
+        Buffer.alloc(30 * 1024 * 1024, "x").toString() +
+        " */\n",
       "run.ts": `
         const entry = process.argv[2];
         async function build() {
@@ -1236,7 +3202,11 @@ test.skipIf(!isDebug && !isASAN)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const { growth } = JSON.parse(stdout.trim());
@@ -1281,7 +3251,8 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   for (let c = 0; c < CHAINS; c++) {
     for (let d = 0; d < DEPTH; d++) {
       let decls = "";
-      for (let v = 0; v < VARS_PER_SCOPE; v++) decls += `c${c}_d${d}_v${v}=${v},`;
+      for (let v = 0; v < VARS_PER_SCOPE; v++)
+        decls += `c${c}_d${d}_v${v}=${v},`;
       entry += `{let ${decls.slice(0, -1)};\n`;
     }
     entry += "}\n".repeat(DEPTH);
@@ -1317,7 +3288,11 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   expect(stderr).toBe("");
   const { growth } = JSON.parse(stdout.trim());
   // With arena-backed scopes (Zig spec) the 20 measured builds reuse the same
@@ -1384,7 +3359,11 @@ test("Bun.build can be called thousands of times in one process without crashing
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
   // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
   // the run completed cleanly instead.
   expect(stderr).toBe("");

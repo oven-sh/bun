@@ -568,14 +568,26 @@ pub fn compute_chunks(
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
 
+        let entry_source_index = chunk.entry_point.source_index();
+        let module_federation_expose_output_path = parse_graph
+            .entry_point_original_names
+            .get(entry_source_index)
+            .filter(|path| path.starts_with(b"bun-mf-expose-"));
+        let entry_output_path = module_federation_expose_output_path
+            .unwrap_or_else(|| output_paths[chunk.entry_point.entry_point_id() as usize].slice());
+        let is_module_federation_expose_entry =
+            module_federation_expose_output_path.is_some();
+
         if chunk.entry_point.is_entry_point()
             && (matches!(chunk.content, chunk::Content::Html)
                 || (kinds[chunk.entry_point.source_index() as usize]
                     == crate::EntryPoint::Kind::UserSpecified
                     && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
         {
-            // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
-            if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
+            if is_module_federation_expose_entry {
+                chunk.template = PathTemplate::FILE.into();
+                chunk.template.data = Box::from(b"[name].[ext]".as_slice());
+            } else if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();
             } else {
                 chunk.template = PathTemplate::FILE.into();
@@ -618,9 +630,7 @@ pub fn compute_chunks(
             }
         }
 
-        let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
-        );
+        let pathname = bun_fs::PathName::init(entry_output_path);
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 

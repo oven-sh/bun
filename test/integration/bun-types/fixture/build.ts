@@ -5,6 +5,42 @@ Bun.build({
   splitting: false,
 });
 
+Bun.build({
+  entrypoints: ["hey"],
+  moduleFederation: {
+    name: "host",
+    filename: "remoteEntry.js",
+    exposes: {
+      "./Button": "./src/Button.tsx",
+      "./Card": { import: ["./src/Card.tsx"], name: "Card" },
+    },
+    remotes: {
+      remote: "remote@http://localhost:3001/remoteEntry.js",
+      other: {
+        external: ["other@http://localhost:3002/remoteEntry.js"],
+        shareScope: "default",
+      },
+      manifestRemote: {
+        manifest: "http://localhost:3003/mf-manifest.json",
+        type: "script",
+        name: "manifestRemote",
+      },
+      manifestObjectRemote: {
+        manifest: { remoteEntry: { path: "remoteEntry.js", type: "module" } },
+      },
+    },
+    shared: {
+      react: { singleton: true, requiredVersion: "^19.0.0" },
+      "react-dom": false,
+      lodash: "lodash-es",
+    },
+    manifest: { fileName: "mf-manifest.json", disableAssetsAnalyze: true },
+    runtimePlugins: ["./runtime-plugin.ts", ["./runtime-plugin-with-options.ts", { flag: true }]],
+    shareStrategy: "version-first",
+    experiments: { asyncStartup: true },
+  },
+});
+
 // Build.CompileTarget should accept SIMD variants (issue #26247)
 expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-modern");
 expectAssignable<Bun.Build.CompileTarget>("bun-linux-x64-baseline");

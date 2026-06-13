@@ -33,6 +33,102 @@ pub(crate) use bun_ast::LoaderHashTable;
 /// Per-[`Loader`] static byte-string map (e.g. the stdin synthetic file names).
 pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModuleFederationShareStrategy {
+    #[default]
+    VersionFirst,
+    LoadedFirst,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModuleFederationOptions {
+    pub name: Option<Box<[u8]>>,
+    pub filename: Option<Box<[u8]>>,
+    pub exposes: Vec<ModuleFederationExpose>,
+    pub remotes: Vec<ModuleFederationRemote>,
+    pub shared: Vec<ModuleFederationShared>,
+    pub manifest: Option<ModuleFederationManifest>,
+    pub runtime_plugins: Vec<ModuleFederationRuntimePlugin>,
+    pub share_strategy: ModuleFederationShareStrategy,
+    pub experiments: ModuleFederationExperiments,
+}
+
+impl ModuleFederationOptions {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.filename.is_none()
+            && self.exposes.is_empty()
+            && self.remotes.is_empty()
+            && self.shared.is_empty()
+            && self.manifest.is_none()
+            && self.runtime_plugins.is_empty()
+            && self.share_strategy == ModuleFederationShareStrategy::VersionFirst
+            && !self.experiments.async_startup
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleFederationExpose {
+    pub name: Box<[u8]>,
+    pub import: Vec<Box<[u8]>>,
+    pub export_name: Option<Box<[u8]>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleFederationRemote {
+    pub alias: Box<[u8]>,
+    pub external: Vec<Box<[u8]>>,
+    pub entry: Option<Box<[u8]>>,
+    pub remote_type: ModuleFederationRemoteType,
+    pub global_name: Option<Box<[u8]>>,
+    pub share_scope: Option<Box<[u8]>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModuleFederationRemoteType {
+    #[default]
+    Module,
+    Script,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleFederationShared {
+    pub name: Box<[u8]>,
+    pub import: ModuleFederationSharedImport,
+    pub share_key: Option<Box<[u8]>>,
+    pub share_scope: Option<Box<[u8]>>,
+    pub version: Option<Box<[u8]>>,
+    pub required_version: Option<Box<[u8]>>,
+    pub singleton: bool,
+    pub strict_version: bool,
+    pub eager: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ModuleFederationSharedImport {
+    Auto,
+    Disabled,
+    Path(Box<[u8]>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleFederationManifest {
+    pub file_path: Option<Box<[u8]>>,
+    pub file_name: Option<Box<[u8]>>,
+    pub disable_assets_analyze: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleFederationRuntimePlugin {
+    pub import: Box<[u8]>,
+    pub options_json: Option<Box<[u8]>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ModuleFederationExperiments {
+    pub async_startup: bool,
+}
+
 /// `bun.http.MimeType` lives in `bun_http_types` (lower tier), not `bun_http`.
 mod bun_http {
     pub(super) use bun_http_types::MimeType::MimeType;
@@ -1328,6 +1424,7 @@ pub struct BundleOptions<'a> {
     pub code_splitting: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
+    pub module_federation: Option<ModuleFederationOptions>,
 
     pub disable_transpilation: bool,
 
@@ -1535,6 +1632,7 @@ impl<'a> BundleOptions<'a> {
             code_splitting: self.code_splitting,
             source_map: self.source_map,
             packages: self.packages,
+            module_federation: self.module_federation.clone(),
             disable_transpilation: self.disable_transpilation,
             global_cache: self.global_cache,
             prefer_offline_install: self.prefer_offline_install,
@@ -1807,6 +1905,7 @@ impl<'a> BundleOptions<'a> {
             code_splitting: false,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
+            module_federation: None,
             disable_transpilation: false,
             global_cache: GlobalCache::disable,
             prefer_offline_install: false,

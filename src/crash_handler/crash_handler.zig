@@ -863,7 +863,7 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const bun.sys.ucontext_t) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac, .freebsd => @intFromPtr(info.addr),
@@ -915,7 +915,11 @@ var windows_segfault_handle: ?windows.HANDLE = null;
 pub fn resetOnPosix() void {
     if (bun.Environment.enable_asan) return;
     var act = bun.sys.Sigaction{
-        .handler = .{ .sigaction = handleSegfaultPosix },
+        // `sigaction_fn`'s third parameter is `?*anyopaque`; ours is typed as
+        // `?*const bun.sys.ucontext_t` so future readers get the bionic-correct
+        // layout on x86_64 Android. Same C ABI — the kernel always passes a
+        // `ucontext_t*` there for `SA_SIGINFO` handlers.
+        .handler = .{ .sigaction = @ptrCast(&handleSegfaultPosix) },
         .mask = bun.sys.sigemptyset(),
         .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
     };

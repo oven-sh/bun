@@ -88,6 +88,26 @@ pub const TestingAPIs = struct {
             .sizeof = @as(f64, @floatFromInt(@sizeOf(bun.sys.Sigaction))),
         }, globalThis)).toJS();
     }
+
+    /// Exposes `bun.sys.ucontext_t`'s layout so tests can assert it matches
+    /// the host libc. `std.c.ucontext_t` on `.linux` assumes the glibc/musl
+    /// layout (128-byte sigmask); bionic x86_64 has an 8-byte sigmask, so
+    /// `fpregs_mem` sits 120 bytes earlier. `bun.sys.ucontext_t` carries the
+    /// bionic-correct struct on x86_64 Android and aliases `std.posix` on
+    /// every other target — this returns the offsets the crash handler would
+    /// see if it dereferenced its saved `ucontext_t*`. Linux x86_64 only
+    /// (aarch64 has no `fpregs_mem` field, other OSes have unrelated layouts).
+    pub fn ucontextLayout(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime !(Environment.isLinux and Environment.isX64)) return .js_undefined;
+        const T = bun.sys.ucontext_t;
+        return (try jsc.JSObject.create(.{
+            .sizeof = @as(f64, @sizeOf(T)),
+            .mcontext = @as(f64, @offsetOf(T, "mcontext")),
+            .sigmask = @as(f64, @offsetOf(T, "sigmask")),
+            .fpregs_mem = @as(f64, @offsetOf(T, "fpregs_mem")),
+            .android = Environment.isAndroid,
+        }, globalThis)).toJS();
+    }
 };
 
 const std = @import("std");

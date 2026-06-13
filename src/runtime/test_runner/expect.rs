@@ -27,6 +27,21 @@ use bun_jsc::js_error_to_write_error;
 
 
 
+/// Returns true if the active execution group has more than one sequence in
+/// flight (i.e. the caller is inside a `test.concurrent` group). Used by
+/// `expect.assertions` / `expect.hasAssertions` / snapshot matchers, which
+/// can't safely track per-sequence counters across `await` boundaries in a
+/// concurrent group (see https://github.com/oven-sh/bun/issues/29236).
+fn is_in_multi_sequence_concurrent_group(buntest: &bun_test::BunTest) -> bool {
+    if buntest.phase != bun_test::Phase::Execution {
+        return false;
+    }
+    let Some(active_group) = buntest.execution.active_group_ref() else {
+        return false;
+    };
+    active_group.sequences(&buntest.execution).len() > 1
+}
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
@@ -550,6 +565,14 @@ impl Expect {
         let parent = self.parent.as_ref().ok_or_else(|| bun_core::err!("NoTest"))?;
         let buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
         let buntest = buntest_strong.get();
+        // Snapshots in a concurrent group have the same limitation as
+        // `expect.assertions` — the sync call works, but a post-await call
+        // in the same test body can't resolve back to the right sequence.
+        // Reject at call time rather than silently writing to the wrong
+        // snapshot slot. See https://github.com/oven-sh/bun/issues/29236.
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            return Err(bun_core::err!("SnapshotInConcurrentGroup"));
+        }
         let execution_entry = parent
             .phase
             .entry(buntest)
@@ -1620,12 +1643,24 @@ impl Expect {
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
-            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
+            return Err(global_this.throw(format_args!("expect.hasAssertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            // expect.hasAssertions() and expect.assertions() can't work in
+            // concurrent tests: we can set the constraint on the calling
+            // sequence synchronously, but subsequent expect() matchers that
+            // resume after an `await` have no way to resolve back to the
+            // same sequence, so the counter diverges and the test ends with
+            // a spurious "expected N assertions" failure. Throw at call
+            // time instead of silently miscounting later.
+            return Err(global_this.throw(format_args!(
+                "expect.hasAssertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
+            )));
+        }
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("expect.hasAssertions() is not supported in the describe phase, between tests, or after test execution has completed")));
         };
         if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
             execution.expect_assertions = ExpectAssertions::AtLeastOne;
@@ -1676,9 +1711,17 @@ impl Expect {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            // Same limitation as `expect.hasAssertions` — see that function's
+            // comment for why we throw at call time instead of letting the
+            // per-sequence counter silently diverge across `await` boundaries.
+            return Err(global_this.throw(format_args!(
+                "expect.assertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
+            )));
+        }
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, between tests, or after test execution has completed")));
         };
         execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 

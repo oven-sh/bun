@@ -397,6 +397,21 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         };
         groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
+        // Mark this sequence/entry as the synchronously-executing callback
+        // so that `onTestFinished()` can look up which concurrent sequence
+        // it belongs to. Any awaited microtasks that are drained by
+        // `runCallbackWithResultAndForcefullyDrainMicrotasks` also see this
+        // context. The context is popped once the JS call returns, even if
+        // the returned promise is still pending.
+        //
+        // `expect.assertions()` / `expect.hasAssertions()` / snapshot
+        // matchers deliberately do NOT use this stack — they reject
+        // upfront in multi-sequence concurrent groups (see `expect.zig`)
+        // because their subsequent `expect(v)` matchers can't resolve the
+        // owning sequence once control has returned to the event loop.
+        buntest.pushCurrentCallback(callback_data);
+        defer buntest.popCurrentCallback();
+
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now(.force_real_time);
             _ = next_item.evaluateTimeout(sequence, now);

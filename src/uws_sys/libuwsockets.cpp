@@ -1400,6 +1400,89 @@ extern "C"
       }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
+
+  // Write raw bytes directly to the underlying socket buffer, bypassing all
+  // HTTP framing (no status line, no Content-Length, no chunked encoding).
+  // This is used for `res.socket.write(rawBytes)` / `res.connection.write(rawBytes)`,
+  // which Node's http API exposes as a way to emit malformed/raw HTTP responses
+  // (e.g. duplicate headers with different cases) and for 1xx informational
+  // responses written via writeEarlyHints / writeProcessing.
+  //
+  // We deliberately do NOT mark HTTP_STATUS_CALLED here — that would prevent
+  // a subsequent res.writeHead() from emitting its 2xx status line, breaking
+  // 1xx informational flows. If the user writes a complete raw response and
+  // then also calls res.end(), Node duplicates the response (it emits a
+  // second 200 OK on top); we match that behavior.
+  //
+  // Writes [out_written] = bytes accepted into the socket buffer (could be less
+  // than length if the socket is closed). Returns true if the write didn't
+  // generate backpressure (caller may continue writing without waiting for drain),
+  // false if backpressure (caller should wait for drain before writing more).
+  bool uws_res_write_raw(int ssl, uws_res_r res, const char *data, size_t length, size_t *out_written) nonnull_fn_decl;
+  bool uws_res_write_raw(int ssl, uws_res_r res, const char *data, size_t length, size_t *out_written)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      if (length < 16 * 1024 && length > 0) {
+        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
+          uwsRes->uWS::AsyncSocket<true>::cork();
+        }
+      }
+      auto written_failed = uwsRes->uWS::AsyncSocket<true>::write(data, (int)std::min<size_t>(length, INT_MAX));
+      if (out_written) *out_written = (size_t)written_failed.first;
+      return !written_failed.second;
+    }
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    if (length < 16 * 1024 && length > 0) {
+      if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
+        uwsRes->uWS::AsyncSocket<false>::cork();
+      }
+    }
+    auto written_failed = uwsRes->uWS::AsyncSocket<false>::write(data, (int)std::min<size_t>(length, INT_MAX));
+    if (out_written) *out_written = (size_t)written_failed.first;
+    return !written_failed.second;
+  }
+
+  // Mark a response as raw-finished: skip all HTTP framing on subsequent uWS
+  // internal calls. Used by `socket.end()` after the user wrote a raw response.
+  // Marks HTTP_STATUS_CALLED, HTTP_END_CALLED, HTTP_WROTE_CONTENT_LENGTH_HEADER,
+  // and calls markDone so uWS treats the response as fully written.
+  // The caller is responsible for shutting down the socket / draining the buffer.
+  void uws_res_end_raw(int ssl, uws_res_r res, bool close_connection) nonnull_fn_decl;
+  void uws_res_end_raw(int ssl, uws_res_r res, bool close_connection)
+  {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      // Pretend we wrote everything HTTP-framing-wise so internal end paths
+      // (e.g. via res.end()) don't re-emit headers on top of the user's bytes.
+      data->state |= uWS::HttpResponseData<true>::HTTP_STATUS_CALLED |
+                     uWS::HttpResponseData<true>::HTTP_END_CALLED |
+                     uWS::HttpResponseData<true>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+      data->markDone(uwsRes);
+      if (close_connection) {
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+        if (((uWS::AsyncSocket<true> *)uwsRes)->getBufferedAmount() == 0) {
+          ((uWS::AsyncSocket<true> *)uwsRes)->shutdown();
+        }
+      }
+      uwsRes->resetTimeout();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<false>::HTTP_STATUS_CALLED |
+                     uWS::HttpResponseData<false>::HTTP_END_CALLED |
+                     uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+      data->markDone(uwsRes);
+      if (close_connection) {
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+        if (((uWS::AsyncSocket<false> *)uwsRes)->getBufferedAmount() == 0) {
+          ((uWS::AsyncSocket<false> *)uwsRes)->shutdown();
+        }
+      }
+      uwsRes->resetTimeout();
+    }
+  }
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res) nonnull_fn_decl;
   uint64_t uws_res_get_write_offset(int ssl, uws_res_r res)
   {

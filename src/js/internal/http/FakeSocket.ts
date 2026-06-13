@@ -1,4 +1,4 @@
-const { kInternalSocketData, serverSymbol } = require("internal/http");
+const { kInternalSocketData, serverSymbol, kHandle } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
 const { Duplex } = require("internal/stream");
 
@@ -122,7 +122,24 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _write(_chunk, _encoding, _callback) {}
+  _write(_chunk, _encoding, _callback) {
+    // Per Node's docs, writing to `res.socket` / `res.connection` writes raw
+    // bytes to the underlying network socket, bypassing HTTP framing. The
+    // OutgoingMessage we wrap stores the native handle; forward through it
+    // when available. Without this, raw writes are silently dropped.
+    const data = this[kInternalSocketData];
+    const httpMessage = data?.[1] ?? this._httpMessage;
+    const handle = httpMessage?.[kHandle];
+    if (handle && $isCallable(handle.writeRaw)) {
+      try {
+        handle.writeRaw(_chunk, _encoding);
+      } catch (e) {
+        if ($isCallable(_callback)) _callback(e);
+        return;
+      }
+    }
+    if ($isCallable(_callback)) _callback();
+  }
 
   destroy() {
     this._httpMessage?.destroy?.();

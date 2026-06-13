@@ -159,6 +159,24 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
+
+    /// HTTP/3 has no raw socket abstraction — data is delivered as QUIC
+    /// frames, not bytes on a TCP socket. We can't write user-provided HTTP
+    /// status lines / framing as raw bytes here, so route through the
+    /// regular write path. Callers that genuinely need raw bytes are
+    /// HTTP/1.1-only (Playwright TestServer, etc.).
+    pub fn write_raw(&mut self, data: &[u8]) -> (usize, bool) {
+        match self.write(data) {
+            WriteResult::WantMore(len) => (len, true),
+            WriteResult::Backpressure(len) => (len, false),
+        }
+    }
+
+    /// HTTP/3 equivalent of `Response::end_raw` — closes the response stream
+    /// without writing extra HTTP framing. Maps to `end_without_body`.
+    pub fn end_raw(&mut self, close_connection: bool) {
+        self.end_without_body(close_connection)
+    }
     pub fn write_status(&mut self, status: &[u8]) {
         // SAFETY: self is a live FFI handle; status ptr/len valid for read
         unsafe { c::uws_h3_res_write_status(self, status.as_ptr(), status.len()) }

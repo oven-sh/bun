@@ -992,12 +992,23 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _final(callback) {
-    const handle = this[kHandle];
-    if (!handle) {
+    const socketHandle = this[kHandle];
+    if (!socketHandle) {
       callback();
       return;
     }
-    handle.end();
+    // socket.end() should not emit HTTP framing — use endRaw on the response
+    // handle to close the socket without writing a status line /
+    // Content-Length on top of any raw bytes the user already wrote via
+    // socket.write(). When the user did NOT write anything raw, endRaw still
+    // safely shuts down (it just marks the response done without
+    // auto-emitting a default 200 OK body).
+    const responseHandle = this._httpMessage?.[kHandle];
+    if (responseHandle && $isCallable(responseHandle.endRaw)) {
+      responseHandle.endRaw();
+    } else if ($isCallable(socketHandle.end)) {
+      socketHandle.end();
+    }
     callback();
   }
 
@@ -1107,11 +1118,23 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {
-    const handle = this[kHandle];
-    // only enable writting if we can drain
+    const socketHandle = this[kHandle];
+    // Per Node's docs, `res.socket.write(rawBytes)` writes raw bytes directly
+    // to the underlying socket, bypassing all HTTP framing. The active
+    // response's native handle exposes `writeRaw` which calls into uWS's
+    // AsyncSocket::write (instead of HttpResponse::write, which would emit a
+    // status line). `socketHandle` here is the raw socket handle (no
+    // writeRaw); `this._httpMessage[kHandle]` is the response handle.
+    const responseHandle = this._httpMessage?.[kHandle];
     let err;
     try {
-      if (handle && handle.ondrain && !handle.write(_chunk, _encoding)) {
+      if (responseHandle && $isCallable(responseHandle.writeRaw)) {
+        const ok = responseHandle.writeRaw(_chunk, _encoding);
+        if (ok === false) {
+          this.#pendingCallback = _callback;
+          return false;
+        }
+      } else if (socketHandle && socketHandle.ondrain && !socketHandle.write(_chunk, _encoding)) {
         this.#pendingCallback = _callback;
         return false;
       }

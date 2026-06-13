@@ -265,6 +265,35 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// Write raw bytes directly to the underlying socket buffer, bypassing all
+    /// HTTP framing (no status line, no Content-Length, no chunked encoding).
+    /// Used by `res.socket.write(rawBytes)` to allow Node-style raw HTTP responses.
+    /// Marks the response state as having written the status line so subsequent
+    /// uWS internal calls don't double-emit headers.
+    /// Returns (bytes written into the buffer, true if no backpressure).
+    pub fn write_raw(&mut self, data: &[u8]) -> (usize, bool) {
+        let mut written: usize = 0;
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call writes through `out_written`.
+        let no_backpressure = unsafe {
+            c::uws_res_write_raw(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+                &raw mut written,
+            )
+        };
+        (written, no_backpressure)
+    }
+
+    /// End a raw response: mark all framing-related state bits so uWS won't
+    /// emit headers on top of the user's bytes, then optionally shutdown
+    /// the socket. Used after the user wrote a raw HTTP response via
+    /// `res.socket.write()` and is calling `socket.end()`.
+    pub fn end_raw(&mut self, close_connection: bool) {
+        c::uws_res_end_raw(Self::ssl_flag(), self.as_raw(), close_connection)
+    }
+
     pub fn get_write_offset(&mut self) -> u64 {
         c::uws_res_get_write_offset(Self::ssl_flag(), self.as_raw())
     }
@@ -783,8 +812,18 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.write(data))
     }
 
+    /// Raw write — bypass all HTTP framing. See `Response::write_raw`.
+    pub fn write_raw(self, data: &[u8]) -> (usize, bool) {
+        any_dispatch!(self, |r| r.write_raw(data))
+    }
+
     pub fn end(self, data: &[u8], close_connection: bool) {
         any_dispatch!(self, |r| r.end(data, close_connection))
+    }
+
+    /// End a raw response with no framing. See `Response::end_raw`.
+    pub fn end_raw(self, close_connection: bool) {
+        any_dispatch!(self, |r| r.end_raw(close_connection))
     }
 
     pub fn should_close_connection(self) -> bool {
@@ -1103,6 +1142,14 @@ pub mod c {
             data: *const u8,
             length: *mut usize,
         ) -> bool;
+        pub(crate) fn uws_res_write_raw(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+            out_written: *mut usize,
+        ) -> bool;
+        pub(crate) safe fn uws_res_end_raw(ssl: i32, res: &mut uws_res, close_connection: bool);
         pub(crate) safe fn uws_res_get_write_offset(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;

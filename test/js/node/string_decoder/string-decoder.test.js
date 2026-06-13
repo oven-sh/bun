@@ -353,3 +353,19 @@ it(
   // Allocating a 2 GiB buffer under debug/ASAN is slow even when lazily committed.
   isDebug || isASAN ? 60_000 : undefined,
 );
+
+// Calling StringDecoder without new used to assert in debug builds (undefined
+// `this`), and with the callee resolved through a closure scope it wrote
+// `encoding` onto the activation object and returned it instead of a decoder.
+it("called without new returns a real decoder", () => {
+  expect(RealStringDecoder("utf8")).toBeInstanceOf(RealStringDecoder);
+
+  const SD = RealStringDecoder;
+  function capture() {
+    return SD;
+  }
+  let decoder;
+  decoder = SD("utf8");
+  expect(decoder).toBeInstanceOf(RealStringDecoder);
+  expect(decoder.write(Buffer.from("abc"))).toBe("abc");
+});

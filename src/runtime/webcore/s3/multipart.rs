@@ -144,6 +144,8 @@ pub struct MultiPartUpload {
     pub buffered: StreamBuffer,
 
     pub path: Box<[u8]>,
+    /// Explicit proxy override; empty means resolve HTTP_PROXY/HTTPS_PROXY
+    /// from the env against each part's signed URL.
     pub proxy: Box<[u8]>,
     pub content_type: Option<Box<[u8]>>,
     pub content_disposition: Option<Box<[u8]>>,
@@ -1010,7 +1012,11 @@ impl MultiPartUpload {
     }
 
     pub fn proxy_url(&self) -> Option<&[u8]> {
-        Some(&self.proxy)
+        if self.proxy.is_empty() {
+            None
+        } else {
+            Some(&self.proxy)
+        }
     }
 
     fn process_buffered(&mut self, part_size: usize) {

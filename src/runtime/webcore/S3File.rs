@@ -633,16 +633,12 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -660,16 +656,12 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -687,16 +679,12 @@ impl S3BlobStatTask {
         let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init).
-        let env = global.bun_vm().as_mut().transpiler.env_mut();
 
         s3::stat(
             credentials,
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)

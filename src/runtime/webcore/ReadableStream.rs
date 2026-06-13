@@ -365,15 +365,6 @@ impl ReadableStream {
             webcore::blob::store::Data::S3(s3) => {
                 let credentials = s3.get_credentials();
                 let path = s3.path();
-                // `Transpiler::env_mut` is the safe accessor for the
-                // process-singleton dotenv loader (set during init).
-                let proxy = global_this
-                    .bun_vm()
-                    .as_mut()
-                    .transpiler
-                    .env_mut()
-                    .get_http_proxy(true, None, None);
-                let proxy_url = proxy.as_ref().map(|p| p.href);
 
                 crate::webcore::s3::client::readable_stream(
                     credentials,
@@ -384,7 +375,6 @@ impl ReadableStream {
                     } else {
                         None
                     },
-                    proxy_url,
                     s3.request_payer,
                     global_this,
                 )

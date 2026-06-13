@@ -224,6 +224,16 @@ describe.concurrent("napi", () => {
     it("keeps arguments moved off the stack alive", async () => {
       await checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
     });
+    it("does not retain non-cell primitives from napi_create_int64", async () => {
+      // https://github.com/oven-sh/bun/issues/15055
+      // Calling napi_create_int64 many times in one native call should not
+      // bloat the handle scope's storage vector, since numbers are immediate
+      // values encoded directly in the JSValue and cannot be garbage
+      // collected. Before the fix, every number was appended to the scope's
+      // WTF::Vector and the storage lingered until the scope cell was swept.
+      const result = await checkSameOutput("test_napi_handle_scope_int64_does_not_bloat", []);
+      expect(result).toContain("PASS");
+    }, 15000);
   });
 
   describe("escapable_handle_scope", () => {

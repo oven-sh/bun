@@ -57,6 +57,11 @@ const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
 const kClearTimeout = Symbol("kClearTimeout");
+const kTimedOut = Symbol("timedOut");
+// Set once any 'error' event has been emitted on a ClientRequest, mirroring
+// Node's socket._hadError guard so the socket-close handler does not surface a
+// second, synthetic "socket hang up" error after a real one.
+const kErrored = Symbol("errored");
 
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
@@ -518,6 +523,7 @@ export {
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,
+  kErrored,
   kFetchRequest,
   kHandle,
   kHost,
@@ -538,6 +544,7 @@ export {
   kReusedSocket,
   kSignal,
   kSocketPath,
+  kTimedOut,
   kTimeoutTimer,
   kTls,
   kUpgradeOrConnect,

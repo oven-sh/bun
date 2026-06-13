@@ -5671,10 +5671,10 @@ extern "C" void JSC__JSValue__forEachPropertyEnumerableOwn(JSC::EncodedJSValue J
         if (property.isNull()) [[unlikely]]
             continue;
 
-        // ignore the internal native-pointer slot (a builtin "private name"
-        // that PrivateSymbolMode::Exclude does not filter). `constructor` is
-        // not an own enumerable property of functions/classes, so there is
-        // nothing to skip here; the shared console prelude still filters it.
+        // Skip the internal native-pointer slot (a builtin "private name" that
+        // PrivateSymbolMode::Exclude does not filter). A user-defined own
+        // enumerable `constructor` is filtered by the shared console prelude,
+        // not here.
         if (clientData->builtinNames().bunNativePtrPrivateName() == property)
             continue;
 

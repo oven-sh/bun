@@ -947,6 +947,12 @@ impl Framework {
             // releases the `Strong` held by its `JavascriptDefined` arm (the
             // only owning variant; the named styles are unit-like).
             while let Some(fsr_opts) = it.next()? {
+                if !fsr_opts.is_object() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{}]' is not an object",
+                        i
+                    )));
+                }
                 let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
                     Some(r) => r,
                     None => {

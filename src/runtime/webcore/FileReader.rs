@@ -955,7 +955,10 @@ impl FileReader {
             return Vec::<u8>::default();
         }
 
-        Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
+        // `take_buffer` (not a raw `mem::take` of `buffer()`): on Windows a
+        // read may still retain the buffer; take_buffer copies out the
+        // committed bytes and keeps the retained allocation alive.
+        Vec::<u8>::move_from_list(self.reader().take_buffer())
     }
 
     pub fn set_ref_or_unref(&self, enable: bool) {
@@ -967,7 +970,8 @@ impl FileReader {
 
     fn consume_reader_buffer(&self) {
         if self.buffered.get().capacity() == 0 {
-            self.buffered.set(mem::take(self.reader().buffer()));
+            // `take_buffer`, not a raw `mem::take` of `buffer()` — see drain().
+            self.buffered.set(self.reader().take_buffer());
         }
     }
 

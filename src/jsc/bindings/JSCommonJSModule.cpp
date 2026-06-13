@@ -126,10 +126,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSFunction* requireFunction = nullptr;
     const auto initializeModuleObject = [&]() {
         SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+        // Bind `require.resolve` to the module object (matches the binding
+        // used by `require` itself) so that the JS-side `requireResolve`
+        // builtin can forward a real parent to $resolveSync.
         resolveFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
-            moduleObject->filename(),
+            moduleObject,
             ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
@@ -302,17 +305,22 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    // This function is not bound with the module object. This is because nearly
-    // no one uses this and it is not worth creating an extra bound function for
-    // every single module. Instead, we can unwrap the bound function that we
-    // can see through the `this`.
+    // `require.resolve` is a bound function. Its `boundThis` is the synthetic
+    // JSCommonJSModule created for this require; we extract its filename
+    // string to resolve lookup paths from. (Older binding used a JSString
+    // directly — accept that shape too for robustness.)
     JSValue thisValue = callframe->thisValue();
     auto* requireResolveBound = dynamicDowncast<JSC::JSBoundFunction>(thisValue);
     if (!requireResolveBound) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
     JSValue boundThis = requireResolveBound->boundThis();
-    JSString* filename = dynamicDowncast<JSString>(boundThis);
+    JSString* filename = nullptr;
+    if (auto* boundModule = dynamicDowncast<Bun::JSCommonJSModule>(boundThis)) {
+        filename = dynamicDowncast<JSString>(boundModule->filename());
+    } else {
+        filename = dynamicDowncast<JSString>(boundThis);
+    }
     if (!filename) [[unlikely]] {
         return JSValue::encode(constructEmptyArray(globalObject, nullptr, 0));
     }
@@ -1651,10 +1659,17 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
 
     SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
+    // Bind `require.resolve` to the same synthetic JSCommonJSModule as
+    // `require` itself. The JS-side `requireResolve` builtin extracts
+    // `this.filename` for the `from` path and forwards the whole module
+    // object to `$resolveSync` so that a user-overridden
+    // `Module._resolveFilename` sees a proper `parent` (matching Node.js)
+    // even for a `createRequire(import.meta.url)` require that was never
+    // registered in `requireMap`.
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
-        moduleObject->filename(),
+        moduleObject,
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 

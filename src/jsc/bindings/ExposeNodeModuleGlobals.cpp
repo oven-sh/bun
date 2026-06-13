@@ -112,8 +112,11 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
         filename, filename, dirname, SourceCode());
     moduleObject->hasEvaluated = true;
 
+    // Bind `require.resolve` to the same synthetic module object as `require`
+    // so that the JS-side `requireResolve` builtin can forward a real parent
+    // module to $resolveSync (matters for user-overridden `_resolveFilename`).
     auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
-        globalObject->requireResolveFunctionUnbound(), filename,
+        globalObject->requireResolveFunctionUnbound(), moduleObject,
         ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
         makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );

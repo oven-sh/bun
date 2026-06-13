@@ -24,6 +24,9 @@
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
+#include <wtf/Scope.h>
+#include <wtf/Threading.h>
+
 using namespace JSC;
 using namespace WebCore;
 
@@ -575,6 +578,31 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
+
+    // ErrorInstance::finalizeUnconditionally reaches this callback from
+    // Heap::runEndPhase when GC collects stack frames of an error whose
+    // .stack was never accessed. runEndPhase deliberately nulls out the
+    // current thread's atom string table around
+    // finalizeUnconditionalFinalizers() — and when the end phase runs on the
+    // concurrent collector thread, the VM's atom table was never installed
+    // there in the first place. Formatting and source-mapping the stack trace
+    // copies and destroys WTF::Strings that can be atoms (source URLs,
+    // function names, the error's sourceURL slot): dropping the last
+    // reference to an atom calls AtomStringImpl::remove(), which dereferences
+    // the current thread's atom table — null (or the wrong thread's table)
+    // crashes. The mutator is suspended for the entire end phase, so
+    // temporarily installing the VM's own atom table is race-free; this is
+    // the same thing JSLock::didAcquireLock() does when a thread enters the
+    // VM. https://github.com/oven-sh/bun/issues/17087
+    auto& thread = WTF::Thread::currentSingleton();
+    WTF::AtomStringTable* previousAtomStringTable = thread.atomStringTable();
+    bool needsVMAtomStringTable = previousAtomStringTable != vm.atomStringTable();
+    if (needsVMAtomStringTable) [[unlikely]]
+        thread.setCurrentAtomStringTable(vm.atomStringTable());
+    auto restoreAtomStringTable = WTF::makeScopeExit([&] {
+        if (needsVMAtomStringTable) [[unlikely]]
+            thread.setCurrentAtomStringTable(previousAtomStringTable);
+    });
 
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);

@@ -22,6 +22,22 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# Mirrors assert_main() in upload-release.sh — signing is main-branch only.
+function Assert-Main {
+    if (-not $env:BUILDKITE_REPO) { throw "Cannot find repository for this build" }
+    if (-not $env:BUILDKITE_COMMIT) { throw "Cannot find commit for this build" }
+    if ($env:BUILDKITE_PULL_REQUEST_REPO -and $env:BUILDKITE_PULL_REQUEST_REPO -ne $env:BUILDKITE_REPO) {
+        throw "Cannot sign artifacts from a fork"
+    }
+    if ($env:BUILDKITE_PULL_REQUEST -and $env:BUILDKITE_PULL_REQUEST -ne "false") {
+        throw "Cannot sign artifacts from a pull request"
+    }
+    if ($env:BUILDKITE_BRANCH -ne "main") {
+        throw "Cannot sign artifacts from branch '$($env:BUILDKITE_BRANCH)' (main only)"
+    }
+}
+Assert-Main
+
 $ArtifactList = $Artifacts -split ","
 $BuildStepList = $BuildSteps -split ","
 

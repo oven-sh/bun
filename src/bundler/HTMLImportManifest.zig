@@ -57,6 +57,11 @@ fn writeEntryItem(
     loader: options.Loader,
     kind: bun.jsc.API.BuildArtifact.OutputKind,
 ) !void {
+    // An asset that reached the output directory under the `url` loader behaved
+    // exactly like `file` (its CSS references were either inlined elsewhere or
+    // above the inline limit), so report it as `file` to keep the manifest's
+    // loader vocabulary stable for consumers.
+    const normalized_loader: options.Loader = if (loader == .url) .file else loader;
     try writer.writeAll("{");
 
     if (input.len > 0) {
@@ -69,7 +74,7 @@ fn writeEntryItem(
     try bun.js_printer.writeJSONString(path, @TypeOf(writer), writer, .utf8);
 
     try writer.writeAll(",\"loader\":\"");
-    try writer.writeAll(@tagName(loader));
+    try writer.writeAll(@tagName(normalized_loader));
     try writer.writeAll("\",\"isEntry\":");
     try writer.writeAll(if (kind == .@"entry-point") "true" else "false");
     try writer.writeAll(",\"headers\":{");

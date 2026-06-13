@@ -33,6 +33,9 @@ export const enum Loader {
   sqlite_embedded = 17,
   html = 18,
   yaml = 19,
+  json5 = 20,
+  md = 21,
+  url = 22,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -54,6 +57,9 @@ export const LoaderKeys: {
   17: "sqlite_embedded";
   18: "html";
   19: "yaml";
+  20: "json5";
+  21: "md";
+  22: "url";
   jsx: 1;
   js: 2;
   ts: 3;
@@ -73,6 +79,9 @@ export const LoaderKeys: {
   sqlite_embedded: 17;
   html: 18;
   yaml: 19;
+  json5: 20;
+  md: 21;
+  url: 22;
 };
 export const enum FrameworkEntryPointType {
   client = 1,

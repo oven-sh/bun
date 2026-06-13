@@ -176,7 +176,14 @@ pub fn init(ast: Ast) BundledAst {
     };
 }
 
-/// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
+/// Populate `url_for_css` with a base64-encoded `data:` URI for this source,
+/// used when a CSS `url(...)` reference resolves to this file and the loader
+/// chose to inline the asset. Callers gate this: the `file` loader never calls
+/// this (except in standalone-HTML mode, where everything must inline), and
+/// the `url` loader only calls it when the `asset_inline_limit` threshold is
+/// satisfied (checked here via `inline_limit`). The fallback when no data URI
+/// is produced is the `unique_key` placeholder, which the linker rewrites to
+/// the hashed output path.
 pub fn addUrlForCss(
     this: *BundledAst,
     allocator: std.mem.Allocator,
@@ -184,13 +191,12 @@ pub fn addUrlForCss(
     mime_type_: ?[]const u8,
     unique_key: ?[]const u8,
     force_inline: bool,
+    inline_limit: u32,
 ) void {
     {
         const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
         const contents = source.contents;
-        // TODO: make this configurable
-        const COPY_THRESHOLD = 128 * 1024; // 128kb
-        const should_copy = !force_inline and contents.len >= COPY_THRESHOLD and unique_key != null;
+        const should_copy = !force_inline and contents.len >= inline_limit and unique_key != null;
         if (should_copy) return;
         this.url_for_css = url_for_css: {
 

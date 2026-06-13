@@ -520,7 +520,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch |err| bun.handleOom(err);
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .file, .url, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
                 }
             }

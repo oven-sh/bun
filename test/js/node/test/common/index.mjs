@@ -21,6 +21,7 @@ const {
   hasIntl,
   hasIPv6,
   hasMultiLocalhost,
+  hasSQLite,
   isAIX,
   isAlive,
   isDumbTerminal,
@@ -51,6 +52,7 @@ const {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   spawnPromisified,
 } = common;
 
@@ -76,6 +78,7 @@ export {
   hasIntl,
   hasIPv6,
   hasMultiLocalhost,
+  hasSQLite,
   isAIX,
   isAlive,
   isDumbTerminal,
@@ -106,5 +109,6 @@ export {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   spawnPromisified,
 };

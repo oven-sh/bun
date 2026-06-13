@@ -57,6 +57,8 @@ const noop = () => {};
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
+const hasSQLite = Boolean(process.versions.sqlite);
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -791,6 +793,12 @@ function skipIfWorker() {
   }
 }
 
+function skipIfSQLiteMissing() {
+  if (!hasSQLite) {
+    skip('missing SQLite');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1060,6 +1068,7 @@ const common = {
   hasCrypto,
   hasOpenSSL,
   hasQuic,
+  hasSQLite,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1094,6 +1103,7 @@ const common = {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   skipIfWorker,
   spawnPromisified,
 

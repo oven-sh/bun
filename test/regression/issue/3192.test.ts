@@ -1,3 +1,6 @@
+// https://github.com/oven-sh/bun/issues/3192
+// yarn lockfile must quote workspace:* versions
+
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -20,6 +23,7 @@ describe("issue #3192", () => {
         name: "package-b",
         version: "1.0.0",
       }),
+      "yarn.lock": "stale lockfile contents",
     });
 
     await using proc = Bun.spawn({
@@ -32,7 +36,7 @@ describe("issue #3192", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(exitCode).toBe(0);
+    expect(stderr).toContain("Saved yarn.lock");
 
     // Read the generated yarn.lock
     const yarnLock = await Bun.file(`${dir}/yarn.lock`).text();
@@ -42,5 +46,6 @@ describe("issue #3192", () => {
     // Good output: "package-b@packages/package-b", "package-b@workspace:*":
     expect(yarnLock).toContain('"package-b@workspace:*"');
     expect(yarnLock).not.toMatch(/package-b@workspace:\*[^"]/);
+    expect(exitCode).toBe(0);
   });
 });

@@ -7,7 +7,7 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 use core::ffi::{c_char, c_int, c_void};
-use core::mem::{MaybeUninit, size_of};
+use core::mem::{MaybeUninit, offset_of, size_of};
 use core::ptr;
 
 use bun_windows_sys as win32;
@@ -4630,18 +4630,26 @@ pub fn move_opened_file_at(
     // (PATH_MAX_WIDE*3+1, ≈98 KB) would just waste ~32 KB of stack on a
     // function called from already-deep install/bundler call chains. Any
     // `new_file_name.len() <= PATH_MAX_WIDE` still fits.
-    const STRUCT_BUF_LEN: usize =
-        size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
+    const FILE_NAME_TAIL_SIZE: usize = size_of::<u16>();
+    const STRUCT_BUF_LEN: usize = offset_of!(win32::FILE_RENAME_INFORMATION_EX, FileName)
+        + bun_paths::PATH_MAX_WIDE * FILE_NAME_TAIL_SIZE;
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
     struct AlignedBuf {
         _buf: [u8; STRUCT_BUF_LEN],
     }
     let mut rename_info_buf = MaybeUninit::<AlignedBuf>::uninit();
 
-    let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;
+    let file_name_len = new_file_name.len() * FILE_NAME_TAIL_SIZE;
+    let struct_len = offset_of!(win32::FILE_RENAME_INFORMATION_EX, FileName) + file_name_len;
     if struct_len > STRUCT_BUF_LEN {
         return bun_sys::Result::errno(E::NAMETOOLONG, bun_sys::Tag::NtSetInformationFile);
     }
+    let file_name_len = u32::try_from(file_name_len).expect("int cast"); // already checked error.NameTooLong
+    let root_directory = if bun_paths::is_absolute_windows_wtf16(new_file_name) {
+        ptr::null_mut()
+    } else {
+        new_dir_fd.native()
+    };
 
     // SAFETY: AlignedBuf is #[repr(align(8))] which matches FILE_RENAME_INFORMATION_EX alignment.
     // Kept as a raw pointer (not &mut) so provenance covers the full STRUCT_BUF_LEN bytes; the
@@ -4656,22 +4664,14 @@ pub fn move_opened_file_at(
     if replace_if_exists {
         flags |= win32::FILE_RENAME_REPLACE_IF_EXISTS;
     }
-    // SAFETY: rename_info is aligned, non-null, and points into uninitialized storage we own;
-    // ptr::write initializes the header without dropping prior (uninit) contents.
+    // SAFETY: rename_info is aligned, non-null, and points into storage we own.
+    // Zero the exact byte range sent to NtSetInformationFile so C padding stays
+    // initialized, then write fields individually so padding remains zero.
     unsafe {
-        ptr::write(
-            rename_info,
-            win32::FILE_RENAME_INFORMATION_EX {
-                Flags: flags,
-                RootDirectory: if bun_paths::is_absolute_windows_wtf16(new_file_name) {
-                    ptr::null_mut()
-                } else {
-                    new_dir_fd.native()
-                },
-                FileNameLength: u32::try_from(new_file_name.len() * 2).expect("int cast"), // already checked error.NameTooLong
-                FileName: [0; 1], // overwritten below
-            },
-        );
+        ptr::write_bytes(rename_info.cast::<u8>(), 0, struct_len);
+        ptr::addr_of_mut!((*rename_info).Flags).write(flags);
+        ptr::addr_of_mut!((*rename_info).RootDirectory).write(root_directory);
+        ptr::addr_of_mut!((*rename_info).FileNameLength).write(file_name_len);
     }
     // SAFETY: rename_info_buf has STRUCT_BUF_LEN bytes (>= struct_len, checked above) reserved for
     // the variable-length FileName tail. addr_of_mut! on the raw pointer preserves full-buffer
@@ -4683,7 +4683,7 @@ pub fn move_opened_file_at(
             new_file_name.len(),
         );
     }
-    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes
+    // SAFETY: src_fd valid; rename_info has struct_len initialized bytes.
     let rc = unsafe {
         ntdll::NtSetInformationFile(
             src_fd.native(),
@@ -4713,10 +4713,69 @@ pub fn move_opened_file_at(
         );
     }
 
-    if rc == win32::ntstatus::SUCCESS {
-        bun_sys::Result::success()
-    } else {
-        bun_sys::Result::errno(rc, bun_sys::Tag::NtSetInformationFile)
+    match rc {
+        x if x == win32::ntstatus::SUCCESS => bun_sys::Result::success(),
+        x if x == win32::ntstatus::INVALID_PARAMETER => {
+            // Some corporate antivirus and filesystem filter drivers reject the
+            // `FileRenameInformationEx` flags even on NTFS. Retry with the older
+            // rename information class instead of copying bytes: copying would
+            // expose partial destination contents and would not preserve the
+            // source-handle semantics of this helper.
+            let rename_info: *mut win32::FILE_RENAME_INFORMATION =
+                rename_info_buf.as_mut_ptr().cast();
+
+            let fallback_struct_len = offset_of!(win32::FILE_RENAME_INFORMATION, FileName)
+                + usize::try_from(file_name_len).expect("int cast");
+
+            // SAFETY: same stack buffer, alignment, and FileName-tail reasoning
+            // as the Ex call above. Zero the exact byte range sent to
+            // NtSetInformationFile, then write fields individually so C padding
+            // stays initialized.
+            unsafe {
+                ptr::write_bytes(rename_info.cast::<u8>(), 0, fallback_struct_len);
+                ptr::addr_of_mut!((*rename_info).ReplaceIfExists).write(if replace_if_exists {
+                    TRUE as BOOLEAN
+                } else {
+                    FALSE as BOOLEAN
+                });
+                ptr::addr_of_mut!((*rename_info).RootDirectory).write(root_directory);
+                ptr::addr_of_mut!((*rename_info).FileNameLength).write(file_name_len);
+                ptr::copy_nonoverlapping(
+                    new_file_name.as_ptr(),
+                    ptr::addr_of_mut!((*rename_info).FileName).cast::<u16>(),
+                    new_file_name.len(),
+                );
+            }
+
+            let fallback_rc = unsafe {
+                ntdll::NtSetInformationFile(
+                    src_fd.native(),
+                    &mut io_status_block,
+                    rename_info.cast::<c_void>(),
+                    u32::try_from(fallback_struct_len).expect("int cast"),
+                    win32::FileInformationClass::FileRenameInformation,
+                )
+            };
+            bun_sys::syslog!(
+                "moveOpenedFileAt({} ->> {} '{}', {}, legacy) = {}",
+                src_fd,
+                new_dir_fd,
+                bun_core::fmt::utf16(new_file_name),
+                if replace_if_exists {
+                    "replace_if_exists"
+                } else {
+                    "no flag"
+                },
+                format_args!("{:?}", fallback_rc)
+            );
+
+            if fallback_rc == win32::ntstatus::SUCCESS {
+                bun_sys::Result::success()
+            } else {
+                bun_sys::Result::errno(fallback_rc, bun_sys::Tag::NtSetInformationFile)
+            }
+        }
+        _ => bun_sys::Result::errno(rc, bun_sys::Tag::NtSetInformationFile),
     }
 }
 
@@ -4822,7 +4881,75 @@ pub fn rename_at_w(
     };
     let _close = bun_sys::CloseOnDrop::new(src_fd);
 
-    move_opened_file_at(src_fd, new_dir_fd, new_path_w, replace_if_exists)
+    move_opened_file_at_loose(src_fd, new_dir_fd, new_path_w, replace_if_exists)
+}
+
+unsafe fn nul_terminated_wide_len(ptr: LPCWSTR) -> usize {
+    let mut len = 0;
+    loop {
+        if unsafe { *ptr.add(len) } == 0 {
+            return len;
+        }
+        len += 1;
+    }
+}
+
+/// `MoveFileExW`, with a rename-only fallback for filter drivers that reject
+/// `FILE_RENAME_INFORMATION_EX` flags through the Win32 path.
+///
+/// This intentionally does not emulate `MOVEFILE_COPY_ALLOWED` after the
+/// Win32 call fails: copying into the final destination can expose truncated
+/// files, and copying is not equivalent to a rename for open source handles.
+///
+/// # Safety
+///
+/// `existing_file_name` must be a valid NUL-terminated UTF-16 string. When
+/// `new_file_name` is non-null, it must also be a valid NUL-terminated UTF-16
+/// string. This matches `MoveFileExW`'s raw pointer contract.
+pub unsafe fn move_file_ex_w(
+    existing_file_name: LPCWSTR,
+    new_file_name: LPCWSTR,
+    flags: DWORD,
+) -> bun_sys::Result<()> {
+    // SAFETY: Win32 validates the two NUL-terminated input strings. A bad
+    // pointer is caller UB for MoveFileExW itself, matching the raw API.
+    if unsafe { kernel32::MoveFileExW(existing_file_name, new_file_name, flags) } != FALSE {
+        return bun_sys::Result::success();
+    }
+
+    let err = Win32Error::get();
+    if err != Win32Error::INVALID_PARAMETER
+        || existing_file_name.is_null()
+        || new_file_name.is_null()
+    {
+        return bun_sys::Result::errno(err.to_e(), bun_sys::Tag::rename);
+    }
+
+    const RENAME_FALLBACK_FLAGS: DWORD =
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH;
+    if flags & !RENAME_FALLBACK_FLAGS != 0 {
+        return bun_sys::Result::errno(err.to_e(), bun_sys::Tag::rename);
+    }
+
+    // COPY_ALLOWED/WRITE_THROUGH only affect MoveFileExW copy/delete moves.
+    // The fallback below is deliberately rename-only: same-volume renames
+    // preserve the requested operation, while cross-volume moves fail loudly
+    // instead of copying into the final destination.
+
+    let existing_len = unsafe { nul_terminated_wide_len(existing_file_name) };
+    let new_len = unsafe { nul_terminated_wide_len(new_file_name) };
+    // SAFETY: both pointers were checked non-null above and are
+    // NUL-terminated, so the computed lengths are in-bounds.
+    let existing = unsafe { core::slice::from_raw_parts(existing_file_name, existing_len) };
+    let new = unsafe { core::slice::from_raw_parts(new_file_name, new_len) };
+
+    rename_at_w(
+        Fd::cwd(),
+        existing,
+        Fd::cwd(),
+        new,
+        (flags & MOVEFILE_REPLACE_EXISTING) != 0,
+    )
 }
 
 mod kernel32_2 {

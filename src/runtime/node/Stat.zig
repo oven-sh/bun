@@ -38,8 +38,8 @@ pub fn StatType(comptime big: bool) type {
             if (big) {
                 const sec: i64 = tv_sec;
                 const nsec: i64 = tv_nsec;
-                return @as(i64, sec * std.time.ms_per_s) +|
-                    @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
+                const total: i128 = @as(i128, sec) * std.time.ms_per_s + @divTrunc(@as(i128, nsec), std.time.ns_per_ms);
+                return @intCast(std.math.clamp(total, std.math.minInt(i64), std.math.maxInt(i64)));
             } else {
                 // Use floating-point arithmetic to preserve sub-millisecond precision.
                 // Node.js returns fractional milliseconds (e.g. 1773248895434.0544).

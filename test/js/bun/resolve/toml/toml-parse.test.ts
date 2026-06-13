@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("Bun.TOML.parse with non-string input throws", () => {
   expect(() => Bun.TOML.parse(SharedArrayBuffer as any)).toThrow();
@@ -86,4 +87,29 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   expect(Bun.TOML.parse("a = [1, 2, 3]")).toEqual({ a: [1, 2, 3] });
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
+});
+
+// https://github.com/oven-sh/bun/issues/30825
+// `\u{...}` escape with enough hex digits to overflow i64 used to panic
+// the debug lexer. The lexer now saturates the hex accumulator so the
+// `value > 1_114_111` range check fires normally, and (since #31252)
+// `Bun.TOML.parse` surfaces the logged range error as a throw.
+//
+// Run in a subprocess: without the fix the debug lexer panics, which
+// would take down the whole test runner if this ran inline. With the fix
+// the parser throws cleanly and the child exits 0 after printing "threw:".
+test("Bun.TOML.parse throws on out-of-range \\u{} escape (#30825)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { Bun.TOML.parse('key = "\\\\u{3333333316aaaaaaa}"'); console.log("no-throw"); } catch (e) { console.log("threw:", e.message); }`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toStartWith("threw:");
+  expect(exitCode).toBe(0);
 });

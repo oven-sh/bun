@@ -149,6 +149,96 @@ pub trait WatcherContext {
     }
 }
 
+// ─── exit coordination ──────────────────────────────────────────────────────
+//
+// Global list of running watchers so that `stop_all_for_exit` can signal them
+// before the process tears down heap memory. The watcher thread accesses
+// globals like the resolver's directory cache (a process-global `BSSMap`
+// singleton) whose storage is freed by `transpiler.deinit()` on the
+// `BUN_DESTRUCT_VM_ON_EXIT` path and poisoned by ASAN's `libc_exit` teardown
+// otherwise. Without stopping the thread first those accesses become
+// use-after-free / use-after-poison (observed on the x64-asan CI lane as a
+// crash in `bustDirCache` on the "File Watcher" thread).
+//
+// Pointers are stored as `usize` because a raw `*mut Watcher` is not `Send`;
+// every access below reconstitutes the pointer under `ACTIVE_WATCHERS` and the
+// watcher's own `mutex`, matching the alias-allowed `*Watcher` model the rest
+// of the port uses (see `VirtualMachine::bun_watcher_ptr`).
+static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::new());
+
+/// Set once `stop_all_for_exit` runs. `Global::is_exiting()` covers the plain
+/// `Global::exit` path, but `VirtualMachine::global_exit` calls
+/// `stop_all_for_exit` directly and tears the heap down *before* it reaches
+/// `Global::exit` (which is what sets `IS_EXITING`). The watcher thread's
+/// teardown guard reads this too, so it skips reclaiming its own Box on both
+/// exit paths rather than racing that teardown.
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `extern "C"` thunk matching `bun_core::Global::ExitFn`, registered once so
+/// `Global::exit` stops every watcher before the heap teardown / ASAN poison.
+extern "C" fn stop_all_for_exit_hook() {
+    stop_all_for_exit();
+}
+
+/// Returns `false` if the process is already exiting, in which case the caller
+/// must not spawn a watcher thread — it would race the exit-time teardown.
+/// Checks both exit predicates (same reason as the teardown guard in
+/// `thread_main`): `STOPPING_FOR_EXIT` covers `VirtualMachine::global_exit`
+/// (which calls `stop_all_for_exit` before `Global::exit` sets `IS_EXITING`),
+/// and `is_exiting()` covers a plain `Global::exit`. The check runs under the
+/// same lock `stop_all_for_exit` holds, so a watcher that wins the register
+/// race is already in the list when the stop sweep iterates.
+fn register_active(this: *mut Watcher) -> bool {
+    // Install the `Global::exit` hook on first use. `add_early_exit_callback`
+    // dedups, but a `Once` keeps the lock traffic off the common path.
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| bun_core::Global::add_early_exit_callback(stop_all_for_exit_hook));
+
+    let mut list = ACTIVE_WATCHERS.lock();
+    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+        || bun_core::Global::is_exiting()
+    {
+        return false;
+    }
+    list.push(this as usize);
+    true
+}
+
+fn unregister_active(this: *mut Watcher) {
+    let addr = this as usize;
+    let mut list = ACTIVE_WATCHERS.lock();
+    if let Some(idx) = list.iter().position(|&p| p == addr) {
+        list.swap_remove(idx);
+    }
+}
+
+/// Called from the exit path (main thread) before tearing down heap memory.
+/// Acquires each watcher's `mutex` — which serialises with the watcher
+/// thread's `on_file_update` dispatch (INotify/KEvent/Windows all hold
+/// `mutex` while dispatching) — then sets `running = false` and closes the
+/// platform handle so the next loop iteration exits. Any `bustDirCache`
+/// already in flight completes before this returns. Safe to call more than
+/// once; the platform `stop()` implementations are idempotent.
+pub fn stop_all_for_exit() {
+    // Read by the watcher thread's teardown guard so it skips reclaiming its
+    // Box on both exit paths (the direct `VirtualMachine::global_exit` call
+    // runs before `Global::exit` sets `IS_EXITING`).
+    STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
+    let list = ACTIVE_WATCHERS.lock();
+    for &addr in list.iter() {
+        // SAFETY: pointers in the list are live `Box<Watcher>` allocations
+        // (removed in `thread_main`/`shutdown` before the Box is reclaimed,
+        // both of which also take `ACTIVE_WATCHERS`). We hold that lock here,
+        // so no entry can be freed concurrently. The watcher's own `mutex`
+        // serialises the `running`/`platform` writes with the watcher thread.
+        let w = unsafe { &mut *(addr as *mut Watcher) };
+        w.mutex.lock();
+        w.running.store(false);
+        w.platform.stop();
+        w.mutex.unlock();
+    }
+}
+
 impl Watcher {
     /// Initializes a watcher. Each watcher is tied to some context type, which
     /// receives watch callbacks on the watcher thread. This function does not
@@ -223,18 +313,42 @@ impl Watcher {
         debug_assert!(!self.watchloop_handle.load());
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
-        let this = std::ptr::from_mut::<Watcher>(self) as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(
-            std::thread::Builder::new()
-                .name("FileWatcher".into())
-                .spawn(move || unsafe {
-                    let _ = Watcher::thread_main(this as *mut Watcher);
-                })
-                .expect("spawn FileWatcher thread"),
-        );
-        Ok(())
+        let this = std::ptr::from_mut::<Watcher>(self);
+        // If the process is already exiting, don't spawn — the watcher would
+        // race the exit-time teardown of the resolver's BSSMap singletons (and
+        // ASAN's `libc_exit` heap poisoning). Callers can't usefully recover
+        // and the process is about to die anyway. `register_active` also adds
+        // `self` to the global list so `stop_all_for_exit` can signal it.
+        if !register_active(this) {
+            return Ok(());
+        }
+        let this_addr = this as usize;
+        match std::thread::Builder::new()
+            .name("FileWatcher".into())
+            .spawn(move || {
+                // SAFETY: `this_addr` is the heap `Box<Watcher>` from init();
+                // it outlives the thread (shutdown()/stop_all_for_exit coordinate
+                // teardown via `running`/`close_descriptors`), and the watcher
+                // thread owns it — `thread_main` reclaims the Box on exit.
+                // thread_main handles its own errors (on_error + frees the Box);
+                // there's no thread to propagate its Result to, so discard it.
+                unsafe {
+                    let _ = Watcher::thread_main(this_addr as *mut Watcher);
+                }
+            }) {
+            Ok(handle) => {
+                self.thread = Some(handle);
+                Ok(())
+            }
+            Err(e) => {
+                // Spawn failed: drop the registration so the global list
+                // doesn't retain a pointer to a thread that never started.
+                // Keep the OS error in the panic message (matches the old
+                // `.expect("spawn FileWatcher thread")` diagnostic).
+                unregister_active(this);
+                panic!("spawn FileWatcher thread: {e}");
+            }
+        }
     }
 
     // not `impl Drop` — takes a flag and conditionally hands
@@ -261,6 +375,9 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
+            // No thread ever ran, so drop any registration before the Box is
+            // reclaimed (idempotent — usually a no-op on this path).
+            unregister_active(this);
             // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init()
             drop(unsafe { bun_core::heap::take(this) });
@@ -297,8 +414,17 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
+                    // Take `mutex` around `platform.stop()` and the `running`
+                    // read: `stop_all_for_exit` on the main thread holds the
+                    // same mutex while it calls `platform.stop()`, so without
+                    // this the two `stop()` calls race (a double-`CloseHandle`
+                    // on Windows). `running` is also written under `mutex` by
+                    // `stop_all_for_exit`/`shutdown`, so read it here too.
+                    me.mutex.lock();
                     me.platform.stop();
-                    if me.running.load() {
+                    let was_running = me.running.load();
+                    me.mutex.unlock();
+                    if was_running {
                         (me.on_error)(me.ctx, err);
                     }
                 }
@@ -319,6 +445,24 @@ impl Watcher {
         WatcherTrace::deinit();
 
         Output::flush();
+
+        // Drop out of the active list before the allocation goes away so a
+        // later `stop_all_for_exit` can't observe a dangling pointer.
+        unregister_active(this);
+
+        // If we were stopped for process exit, the main thread is now tearing
+        // the heap down (`transpiler.deinit()` on the destruct path, and under
+        // ASAN `libc_exit` poisoning it on the plain path). Don't reclaim the
+        // Box here: freeing on this thread would race that teardown. The process
+        // is about to die; let it reclaim everything. `STOPPING_FOR_EXIT` covers
+        // the `VirtualMachine::global_exit` path (which calls `stop_all_for_exit`
+        // before `Global::exit` sets `IS_EXITING`); `is_exiting()` covers a plain
+        // `Global::exit`.
+        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+            || bun_core::Global::is_exiting()
+        {
+            return Ok(());
+        }
 
         // SAFETY: `this` is the heap allocation from init(); the watcher thread
         // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
@@ -458,14 +602,25 @@ impl Watcher {
         event.udata = watchlist_id as _;
         let mut events: [KEvent; 1] = [event];
 
+        // `stop_all_for_exit` (main thread, under `mutex`) `take()`s the kqueue
+        // fd and closes it at exit. `add_file`/`add_directory` can run on a
+        // transpiler/bundler pool thread (the resolver auto-watch), also under
+        // `mutex` — serialised with `stop()`, but in either order. If `stop()`
+        // won first, the fd is gone: skip the registration instead of
+        // `unwrap()`-panicking (which aborts the process). Matches the Linux
+        // backend, where the same late add returns `EBADF` and is discarded.
+        let Some(kq) = self.platform.fd else {
+            return;
+        };
+
         // This took a lot of work to figure out the right permutation
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        // SAFETY: events ptr/len valid; kqueue fd unwrapped from Some
+        // SAFETY: events ptr/len valid; `kq` is the live kqueue fd.
         let _ = unsafe {
             libc::kevent(
-                self.platform.fd.unwrap().native(),
+                kq.native(),
                 events.as_ptr(),
                 1,
                 events.as_mut_ptr(),

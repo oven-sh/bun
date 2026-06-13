@@ -601,6 +601,30 @@ pub fn add_pre_exit_callback(function: ExitFn) {
     }
 }
 
+/// Callbacks run at the very top of `exit()` — BEFORE any heap teardown or the
+/// ASAN `libc_exit` that poisons freed memory. Used by `bun_watcher` to stop
+/// its background threads so they can't touch process-global singletons (the
+/// resolver's `BSSMap` dir cache) after the exit path frees/poisons them.
+/// `bun_watcher` sits above `bun_core`, so it registers its hook here rather
+/// than us calling into it (layering).
+static EARLY_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
+
+pub fn add_early_exit_callback(function: ExitFn) {
+    let mut cbs = EARLY_EXIT_CALLBACKS.lock();
+    if !cbs.iter().any(|f| *f as usize == function as usize) {
+        cbs.push(function);
+    }
+}
+
+fn run_early_exit_callbacks() {
+    // Run under the lock: these fire once at process exit, are few, and must
+    // not race a late registration from another thread.
+    let cbs = EARLY_EXIT_CALLBACKS.lock();
+    for callback in cbs.iter() {
+        callback();
+    }
+}
+
 pub(crate) fn run_exit_callbacks() {
     // Drain under lock, run outside it (callbacks may call `Bun__atexit`).
     let cbs: Vec<ExitFn> = core::mem::take(&mut *ON_EXIT_CALLBACKS.lock());
@@ -616,7 +640,7 @@ pub(crate) extern "C" fn bun_is_exiting() -> c_int {
     is_exiting() as c_int
 }
 
-pub(crate) fn is_exiting() -> bool {
+pub fn is_exiting() -> bool {
     IS_EXITING.load(Ordering::Relaxed)
 }
 
@@ -646,6 +670,25 @@ pub fn exit(code: u32) -> ! {
     // If we are crashing, allow the crash handler to finish it's work.
     // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
+
+    // Stop background threads (e.g. the file watcher) before tearing the heap
+    // down. Under ASAN, `libc_exit` below runs the leak/teardown pass which
+    // poisons freed memory; a live watcher thread would then touch the
+    // resolver's BSSMap singleton and trip use-after-poison. No-op when no
+    // watcher is active. `bun_watcher` registers its `stop_all_for_exit` hook
+    // here because it sits above `bun_core`.
+    run_early_exit_callbacks();
+
+    // Test-only (debug builds): linger after stopping watchers but before the
+    // heap teardown/poison so the `hot-reload-exit-race` regression test's
+    // delayed `bust_dir_cache` has time to land — on freed memory when the fix
+    // is absent, harmlessly when it's present (watchers already stopped above).
+    #[cfg(debug_assertions)]
+    if let Some(ms) = crate::env_var::BUN_INTERNAL_GLOBALEXIT_LINGER_MS.get() {
+        if ms != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+    }
 
     #[cfg(debug_assertions)]
     {

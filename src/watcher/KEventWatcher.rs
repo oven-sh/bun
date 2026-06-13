@@ -59,10 +59,14 @@ pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use bun_sys::c;
-    let fd: Fd = this
-        .platform
-        .fd
-        .expect("KEventWatcher has an invalid file descriptor");
+    // `Watcher::stop_all_for_exit` (main thread) calls `platform.stop()`, which
+    // `take()`s this `fd` and closes the kqueue, to break the loop at exit. It
+    // runs under `this.mutex`, which this read does not hold, so the field can
+    // become `None` here — bail out instead of panicking; `watch_loop`'s
+    // `running` check (cleared by the same `stop()`) then ends the loop.
+    let Some(fd) = this.platform.fd else {
+        return Ok(());
+    };
 
     // not initialized each time
     // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD)
@@ -80,6 +84,21 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             core::ptr::null(), // timeout
         )
     };
+
+    // `kevent` returns -1 on error — don't feed a negative count into the
+    // `usize::try_from` below. Discriminate like INotifyWatcher (line ~319):
+    // EINTR retries (macOS `kevent` doesn't honour SA_RESTART), anything else
+    // is persistent and propagates as `Err` so `thread_main`'s Err arm runs
+    // `on_error` and exits. The common exit case — EBADF after
+    // `stop_all_for_exit` closes the kqueue — is covered either way:
+    // `running` is already false, so `watch_loop` stops on the next check.
+    if count < 0 {
+        use bun_sys::E;
+        return match bun_sys::get_errno(count) {
+            E::EINTR | E::EAGAIN => Ok(()),
+            e => Err(bun_sys::Error::from_code(e, bun_sys::Tag::kevent)),
+        };
+    }
 
     // Give the events more time to coalesce
     if count < 128 / 2 {

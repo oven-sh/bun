@@ -25,6 +25,17 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     WTF::String keyString = moduleNameValue->getString(global);
     if (keyString.startsWith("bake:/"_s)) {
         auto& vm = JSC::getVM(global);
+        // Pass an empty referrer here rather than plumbing the source
+        // origin through for the #30651 dep == initiator discriminator.
+        // bakeModuleLoaderResolve's behavior depends on the referrer:
+        // with a `bake:/...` referrer, BakeProdResolve is fed the
+        // specifier as a referrer-relative path and rejects `bake:/...`
+        // inputs as "Non-relative import … in production assets". An
+        // empty referrer takes the `keyView.startsWith("bake:/")` branch
+        // (see bakeModuleLoaderResolve below) which calls BakeProdResolve
+        // with `"bake:/"` as the base instead. Bake dynamic imports
+        // therefore fall back to the coarse VM::hasPendingDynamicImport()
+        // gate on the WebKit side, matching pre-#30651 behavior.
         return JSC::importModule(global, JSC::Identifier::fromString(vm, keyString),
             JSC::Identifier(), WTF::move(parameters), nullptr);
     }
@@ -45,6 +56,9 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
+        // Same reasoning as the bake:/ specifier branch above — passing
+        // `refererString` here would route through BakeProdResolve again
+        // via bakeModuleLoaderResolve and throw "Non-relative import".
         return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
             JSC::Identifier(), WTF::move(parameters), nullptr);
     }

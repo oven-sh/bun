@@ -1151,7 +1151,7 @@ pub fn readable_stream(
                 if let Some(bytes) = readable.ptr.bytes() {
                     if let Some(err) = request_err {
                         bytes.on_data(crate::webcore::streams::StreamResult::Err(
-                            crate::webcore::streams::StreamError::JSValue(s3_error_to_js(
+                            crate::webcore::streams::StreamError::strong(s3_error_to_js(
                                 &err,
                                 &self_.global,
                                 Some(&self_.path),

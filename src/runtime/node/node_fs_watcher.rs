@@ -45,6 +45,9 @@ use super::win_watcher as path_watcher;
 pub struct FSWatcher {
     // codegen: jsc.Codegen.JSFSWatcher provides toJS/fromJS/fromJSDirect
     ctx: *mut VirtualMachine,
+    /// Schedule-time handle for `ctx`, for the watcher-thread completion
+    /// enqueue (the one access that must tolerate the VM being gone).
+    vm_handle: bun_jsc::virtual_machine::VmHandle,
     verbose: bool,
 
     mutex: Mutex,
@@ -95,14 +98,15 @@ impl FSWatcher {
     }
 
     /// `task` must point to a live heap-allocated `ConcurrentTask` node that
-    /// the caller releases ownership of; the concurrent queue takes ownership
-    /// and frees it on the JS thread after dispatch.
-    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
-        // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
-        // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
-        // documented cross-thread entry point and only touches the lock-free
-        // queue.
-        self.vm().event_loop_shared().enqueue_task_concurrent(task);
+    /// the caller releases ownership of. On `true` the concurrent queue takes
+    /// ownership and frees it on the JS thread after dispatch; on `false`
+    /// (VM already gone) the node was never linked and the payload never
+    /// runs, so the caller reclaims it (see `FSWatchTaskPosix::enqueue`).
+    #[must_use]
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) -> bool {
+        // Called from watcher threads: `ctx` may point at a worker VM freed
+        // by terminate() while an event was in flight — checked enqueue only.
+        VirtualMachine::try_enqueue_task_concurrent(self.vm_handle, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -230,10 +234,22 @@ impl FSWatchTaskPosix {
             // until the JS thread drains and `heap::take`s it in `dispatch`.
             unsafe {
                 (*that).concurrent_task.task = Task::init(that);
-                self.ctx()
+                if !self
+                    .ctx()
                     .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
                         core::ptr::addr_of_mut!((*that).concurrent_task),
-                    ));
+                    ))
+                {
+                    // VM gone: `dispatch`/`run` will never consume the clone.
+                    // Reclaim it here (entries own plain heap bytes, no JSC
+                    // state) and balance the `ref_task()` above — both the
+                    // entry frees and `pending_activity_count` are safe from
+                    // this thread (atomic counter, mutex-guarded flag).
+                    let mut clone = bun_core::heap::take(that);
+                    clone.clean_entries();
+                    drop(clone);
+                    self.ctx().unref_task();
+                }
             }
             return;
         }
@@ -1072,6 +1088,7 @@ impl FSWatcher {
 
         let ctx = bun_core::heap::into_raw(Box::new(FSWatcher {
             ctx: vm,
+            vm_handle: vm_ref.concurrent_handle(),
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
                 ..Default::default()

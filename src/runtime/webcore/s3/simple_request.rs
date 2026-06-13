@@ -117,9 +117,9 @@ pub struct S3HttpSimpleTask {
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
-    pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// Schedule-time handle of the owning VM. `None` only in the inert
+    /// `Default` placeholder (overwritten before the task escapes).
+    pub vm: Option<bun_jsc::virtual_machine::VmHandle>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: *mut c_void,
@@ -480,14 +480,15 @@ impl S3HttpSimpleTask {
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            this.vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // `vm` was captured at task creation and may denote a worker VM
+            // freed by terminate() while this request was in flight — checked
+            // enqueue only. `task` is the inline `concurrent_task` field of
+            // this heap request; the queue takes ownership of its `next` link
+            // (and leaves it untouched when the VM is gone).
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                this.vm.expect("vm set at task creation"),
+                task,
+            );
         }
     }
 }
@@ -627,7 +628,7 @@ pub(crate) fn execute_simple_s3_request(
         callback,
         range: options.range,
         headers,
-        vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+        vm: Some(VirtualMachine::get().concurrent_handle()),
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),

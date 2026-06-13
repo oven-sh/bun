@@ -33,7 +33,7 @@
 #include "SerializedScriptValue.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta, uint64_t bunVMGeneration);
 
 namespace WebCore {
 
@@ -131,7 +131,7 @@ void BroadcastChannel::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
     if (!m_hasRef) {
         m_hasRef = true;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1, WebCore::clientData(lexicalGlobalObject->vm())->bunVMGeneration);
     }
 }
 
@@ -139,7 +139,7 @@ void BroadcastChannel::jsUnref(JSGlobalObject* lexicalGlobalObject)
 {
     if (m_hasRef) {
         m_hasRef = false;
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
+        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1, WebCore::clientData(lexicalGlobalObject->vm())->bunVMGeneration);
     }
 }
 

@@ -107,6 +107,10 @@ class GlobalObject : public Bun::GlobalScope {
 public:
     // Move this to the front for better cache locality.
     void* m_bunVM;
+    // Schedule-time generation of `m_bunVM` (see Rust `live_vm_registry`);
+    // captured at construction, passed back across the ABI by concurrent
+    // producers so checked entry points can reject a freed-and-reused VM.
+    uint64_t m_bunVMGeneration;
 
     bool isShuttingDown() const
     {
@@ -350,6 +354,7 @@ public:
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
+    ALWAYS_INLINE uint64_t bunVMGeneration() const { return m_bunVMGeneration; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
     {

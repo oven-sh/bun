@@ -1249,6 +1249,10 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Captured at `create` so `work_pool_callback` never reads through
+        /// `global_object` off-thread — the owning VM may be a worker freed
+        /// by terminate() while the pool task was in flight.
+        pub vm: bun_jsc::virtual_machine::VmHandle,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1272,8 +1276,9 @@ mod _async_tasks {
         /// Deref the raw `global_object` pointer.
         ///
         /// Invariant: set from a live `&JSGlobalObject` in `create()` and never
-        /// null; the JSC global outlives every task (JSC_BORROW per LIFETIMES.tsv).
-        /// Safe to call from the work-pool thread for `bun_vm_concurrently()`.
+        /// null. JS-thread only: the work-pool completion goes through the
+        /// captured `vm` handle instead, because the owning worker VM (and its
+        /// global) may be freed by terminate() while the task is in flight.
         #[inline]
         pub fn global_object(&self) -> &JSGlobalObject {
             self.global_object.get()
@@ -1293,6 +1298,7 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: vm.concurrent_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1316,17 +1322,13 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers; the
-            // event-loop's concurrent queue is MPSC-safe.
-            let vm = this.global_object().bun_vm_concurrently();
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
-            unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
-                    std::ptr::from_mut::<Self>(this),
-                ));
-            }
+            // `this.vm` was captured at `create` and may denote a worker VM
+            // freed by terminate() while the pool task ran — checked enqueue
+            // only, and no reads through `global_object` on this thread.
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                this.vm,
+                ConcurrentTask::create_from(std::ptr::from_mut::<Self>(this)),
+            );
         }
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1602,8 +1604,8 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
-                evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+                // `vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+                evtloop: EventLoopHandle::init(vm.event_loop().cast()),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2183,6 +2185,10 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Captured at `create` so pool-thread completion never reads through
+        /// `global_object` off-thread (the owning VM may be a worker freed by
+        /// terminate() mid-flight).
+        pub vm: bun_jsc::virtual_machine::VmHandle,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2305,19 +2311,6 @@ mod _async_tasks {
             Box::new(init)
         }
 
-        /// Borrow the owning `JSGlobalObject`.
-        ///
-        /// SAFETY: `global_object` is set from a live `&JSGlobalObject` in
-        /// `create()` (never null) and the JSC_BORROW invariant (LIFETIMES.tsv)
-        /// guarantees the global outlives every task it spawns. The pointee is a
-        /// pinned JSC heap object; `bun_vm_concurrently()` is the only method we
-        /// call off-thread and it reads init-immutable state, so a shared borrow
-        /// is sound from both the JS thread and the work pool.
-        #[inline]
-        pub fn global_object(&self) -> &JSGlobalObject {
-            self.global_object.get()
-        }
-
         /// Free `root_path` — paired with the NUL-terminated duplication in
         /// `create()`. Idempotent (empty `Box` after first call).
         fn free_root_path(&mut self) {
@@ -2378,6 +2371,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm: vm.concurrent_handle(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2553,16 +2547,15 @@ mod _async_tasks {
                 }
             }
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
-            // `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // `self.vm` was captured at `create` and may denote a worker VM
+            // freed by terminate() while subtasks ran — checked enqueue only,
+            // and no reads through `global_object` on this thread.
+            // `ConcurrentTask::create` heap-allocates a fresh task; the queue
+            // takes ownership of it (or frees it when the VM is gone).
+            let _ = VirtualMachine::try_enqueue_task_concurrent(
+                self.vm,
+                ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self))),
+            );
         }
 
         fn clear_result_list(&mut self) {

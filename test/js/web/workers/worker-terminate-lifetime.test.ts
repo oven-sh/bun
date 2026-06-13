@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -116,6 +116,202 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Cross-thread completion delivery inside a worker goes through schedule-time
+// VM/loop handles validated against the live-VM registry (address +
+// generation). A broken handle capture (e.g. a zero generation) silently
+// drops the completion instead of delivering it, so each producer class below
+// would hang instead of resolving: the HTTP client thread (fetch), the
+// process waiter thread (Bun.spawn exit), and the work pool (node:fs async,
+// zlib native streams, Bun.password).
+test(
+  "cross-thread completions are delivered to live worker VMs",
+  async () => {
+    // The worker body lives in a real file: as a data: URL it exceeds
+    // macOS's 1024-byte path-resolution limit (NameTooLong).
+    using dir = tempDir("worker-live-delivery", {
+      "worker.ts": `
+        import { promises as fsPromises } from "node:fs";
+        import zlib from "node:zlib";
+
+        const results: Record<string, unknown> = {};
+        const server = Bun.serve({ port: 0, fetch: () => new Response("pong") });
+        results.fetch = await (await fetch("http://127.0.0.1:" + server.port + "/")).text();
+        server.stop(true);
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"] });
+        results.spawnExit = await child.exited;
+        results.statIsFile = (await fsPromises.stat(process.execPath)).isFile();
+        const gz: Buffer = await new Promise((resolve, reject) =>
+          zlib.gzip(Buffer.from("hello"), (e, d) => (e ? reject(e) : resolve(d))),
+        );
+        results.gunzip = (
+          await new Promise<Buffer>((resolve, reject) =>
+            zlib.gunzip(gz, (e, d) => (e ? reject(e) : resolve(d))),
+          )
+        ).toString();
+        const hash = await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+        results.password = await Bun.password.verify("pw", hash);
+        postMessage(results);
+      `,
+      "main.ts": `
+        const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const results = await new Promise((resolve, reject) => {
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+        });
+        worker.terminate();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      fetch: "pong",
+      spawnExit: 7,
+      statIsFile: true,
+      gunzip: "hello",
+      password: true,
+    });
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Same class as the fetch test below, for the process waiter thread: a worker
+// that spawned a subprocess is terminated (VM freed) before the subprocess
+// exits; the waiter thread then delivers the exit notification through the
+// EventLoopHandle captured at spawn time, which the registry check must drop
+// instead of enqueueing into the freed loop.
+test(
+  "terminating a worker with a subprocess in flight drops the waiter-thread completion",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workerCode =
+          "const child = Bun.spawn({ cmd: [process.execPath, \\"-e\\", \\"setTimeout(() => {}, 100000)\\"] });" +
+          "postMessage(child.pid);";
+        for (let i = 0; i < 3; i++) {
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(workerCode));
+          const pid = await new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+          worker.terminate();
+          await closed;
+          // Give the worker thread time to finish shutdown() and free its VM.
+          await Bun.sleep(300);
+          // Reap the orphan; the waiter thread now delivers the exit
+          // notification keyed by the freed worker's event loop. Tolerate the
+          // child having already died with the worker.
+          try {
+            process.kill(pid);
+          } catch {}
+          await Bun.sleep(300);
+        }
+        // Leave room for an in-progress sanitizer report to abort the process
+        // before we exit cleanly.
+        await Bun.sleep(1000);
+        console.log("done");
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  timeout,
+);
+
+// Regression: a worker terminated while a fetch was in flight freed its
+// VirtualMachine (and the event loop embedded in it) while the HTTP client
+// thread still held a pointer to it; the completion callback then read the
+// freed VM (heap-use-after-free in FetchTasklet::callback →
+// VirtualMachine::is_shutting_down) and pushed into the freed concurrent
+// queue. The corrupted queue surfaced in the wild as "Panic: invalid enum
+// value" in EventLoop.tickQueueWithCount on worker threads. Same class: any
+// cross-thread producer (work pool, watcher threads, napi) completing after
+// worker.terminate(). ASAN-only: without a sanitizer the stale write is
+// silent, so this test can only prove the bug on ASAN builds (the gate and
+// the asan CI lanes).
+test.skipIf(!isASAN)(
+  "terminating a worker with a fetch in flight does not touch the freed VM",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let releaseResponse = null;
+        let requestArrived = null;
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            requestArrived();
+            await new Promise(resolve => (releaseResponse = resolve));
+            return new Response("x".repeat(1024));
+          },
+        });
+        const url = "http://127.0.0.1:" + server.port + "/";
+        const workerCode =
+          "fetch(" + JSON.stringify(url) + ").then(r => r.text()).catch(() => {});" +
+          "postMessage('fetching');";
+        for (let i = 0; i < 3; i++) {
+          const arrived = new Promise(resolve => (requestArrived = resolve));
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(workerCode));
+          await new Promise(resolve => (worker.onmessage = resolve));
+          // The request is now in flight on the HTTP client thread.
+          await arrived;
+          const closed = new Promise(resolve => worker.addEventListener("close", resolve, { once: true }));
+          worker.terminate();
+          await closed;
+          // Give the worker thread time to finish shutdown() and free its VM.
+          await Bun.sleep(300);
+          // The HTTP thread now delivers the response to the freed VM.
+          releaseResponse();
+          await Bun.sleep(300);
+        }
+        // Leave room for an in-progress sanitizer report to abort the process
+        // before we exit cleanly.
+        await Bun.sleep(3000);
+        console.log("done");
+        server.stop(true);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Check stderr first: on failure the sanitizer report is the useful
+    // output, and asserting on it surfaces the report text in the diff.
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "done\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   },
   timeout,
 );

@@ -278,20 +278,6 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn enqueue_task_concurrent_wait_pid<T: bun_event_loop::Taskable>(self, task: *mut T) {
-        // SAFETY: bun_vm_concurrently() returns a valid &VirtualMachine; we need &mut for the
-        // intrusive concurrent queue push (which is itself thread-safe). The VM outlives the call.
-        let vm = self
-            .global_this
-            .bun_vm_concurrently()
-            .cast_const()
-            .cast_mut();
-        let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // SAFETY: see above — `vm` is a live VM pointer.
-        unsafe { &mut *vm }.enqueue_task_concurrent(concurrent);
-    }
-
-    #[inline]
     pub fn top_level_dir(self) -> &'a [u8] {
         bun_resolver::fs::FileSystem::get().top_level_dir
     }

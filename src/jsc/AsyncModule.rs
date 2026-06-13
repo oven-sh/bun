@@ -360,7 +360,7 @@ impl Queue {
         });
     }
 
-    pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
+    pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void, generation: u64) {
         bun_core::scoped_log!(AsyncModule, "onWake");
         let queue = ctx.cast::<Queue>();
         let task = ConcurrentTaskItem::create_from(queue);
@@ -372,8 +372,16 @@ impl Queue {
         // `from_field_ptr!` is sound. S017 does not apply: that rule forbids
         // widening from a `&mut self`-derived pointer, but `ctx` is a raw
         // `*mut` carried from the original allocation.
-        let vm = unsafe { &mut *bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
-        vm.enqueue_task_concurrent(task);
+        let vm: *mut VirtualMachine =
+            unsafe { bun_core::from_field_ptr!(VirtualMachine, modules, queue) };
+        // Checked: the wake can fire after a worker VM that owned `queue` was
+        // freed by terminate(); the pointer arithmetic above performs no read.
+        // `generation` was registered next to `ctx` (jsc_hooks), so the
+        // reassembled handle rejects a new VM reusing the freed address.
+        let _ = VirtualMachine::try_enqueue_task_concurrent(
+            crate::virtual_machine::VmHandle::from_raw_parts(vm as usize, generation),
+            task,
+        );
     }
 
     pub fn on_poll(&mut self) {

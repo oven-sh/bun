@@ -322,6 +322,10 @@ pub struct DevServer {
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
     /// lifetime.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
+    /// Schedule-time handle for `vm`, for the watcher-thread event enqueue
+    /// (the one access that must tolerate the VM being gone — nothing
+    /// structurally pins the dev server to the immortal main VM).
+    pub vm_handle: bun_jsc::virtual_machine::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
     /// However, a lot of testing in this mode is missing, so it may hit assertions.
@@ -546,6 +550,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
         w!(vm, bun_ptr::BackRef::new(options.vm));
+        w!(vm_handle, options.vm.concurrent_handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -1081,6 +1086,7 @@ impl Drop for DevServer {
                 inspector_server_id: _,
                 configuration_hash_key: _,
                 vm: _,
+                vm_handle: _,
                 server: _,
                 router: _,
                 route_bundles: _,

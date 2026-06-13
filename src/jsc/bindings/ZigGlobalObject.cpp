@@ -352,6 +352,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 }
 
 extern "C" void* Bun__getVM();
+extern "C" uint64_t Bun__getVmGeneration();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
@@ -479,7 +480,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
-    WebCore::JSVMClientData::create(&vm, Bun__getVM());
+    WebCore::JSVMClientData::create(&vm, Bun__getVM(), Bun__getVmGeneration());
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
@@ -974,6 +975,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
     : Base(vm, structure, methodTable)
     , m_bunVM(Bun__getVM())
+    , m_bunVMGeneration(Bun__getVmGeneration())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)
@@ -989,6 +991,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
     : Base(vm, structure, methodTable)
     , m_bunVM(Bun__getVM())
+    , m_bunVMGeneration(Bun__getVmGeneration())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_worldIsNormal(true)

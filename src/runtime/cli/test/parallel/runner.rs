@@ -709,7 +709,7 @@ pub fn run_as_worker(
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
-    vm_ref.is_shutting_down = true;
+    vm_ref.set_shutting_down();
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe { (*vm).global_exit() }

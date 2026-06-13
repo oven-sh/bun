@@ -76,15 +76,17 @@ JSGlobalObject* ScriptExecutionContext::globalObject()
     return m_globalObject;
 }
 
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta, uint64_t bunVMGeneration);
 
 void ScriptExecutionContext::refEventLoop()
 {
-    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, 1);
+    auto* clientData = WebCore::clientData(vm());
+    Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1, clientData->bunVMGeneration);
 }
 void ScriptExecutionContext::unrefEventLoop()
 {
-    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm())->bunVM, -1);
+    auto* clientData = WebCore::clientData(vm());
+    Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, -1, clientData->bunVMGeneration);
 }
 
 ScriptExecutionContext::~ScriptExecutionContext()

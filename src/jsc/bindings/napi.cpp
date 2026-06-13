@@ -3017,6 +3017,16 @@ extern "C" uint32_t napi_internal_get_version(napi_env env)
     return env->napiModule().nm_version;
 }
 
+extern "C" void* NapiEnv__bunVM(napi_env env)
+{
+    return env->bunVM();
+}
+
+extern "C" uint64_t NapiEnv__bunVMGeneration(napi_env env)
+{
+    return env->bunVMGeneration();
+}
+
 extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)
 {
     return env->globalObject();

@@ -218,13 +218,13 @@ impl YesTask {
         // backrefs (single-threaded shell).
         unsafe {
             match (*this).evtloop {
-                EventLoopHandle::Js { owner } => {
+                EventLoopHandle::Js { owner, generation } => {
                     owner.tick();
                     let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
                     });
-                    owner.enqueue_task_concurrent(ct);
+                    owner.enqueue_task_concurrent(ct, generation);
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

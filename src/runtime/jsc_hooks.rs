@@ -402,6 +402,10 @@ unsafe fn init_runtime_state(
                     t.resolver.opts.preserve_symlinks = preserve_symlinks;
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(ptr::addr_of_mut!((*vm).modules).cast()),
+                        // Registry generation of `vm`, carried next to the
+                        // context pointer so `on_wake_handler` can reject a
+                        // wake targeting a freed (terminated worker) VM.
+                        generation: (*vm).concurrent_handle().generation(),
                         handler: Some(bun_jsc::async_module::Queue::on_wake_handler),
                         on_dependency_error: Some(
                             bun_jsc::async_module::Queue::on_dependency_error,
@@ -856,7 +860,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
@@ -1008,7 +1012,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+    let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop();
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 

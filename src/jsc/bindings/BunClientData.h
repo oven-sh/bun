@@ -90,7 +90,7 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void*);
+    static void create(JSC::VM*, void*, uint64_t bunVMGeneration);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -120,6 +120,10 @@ public:
     }
 
     void* bunVM;
+    // Schedule-time generation of `bunVM` (see Rust `live_vm_registry`),
+    // captured at VM creation and passed back across the ABI so checked
+    // concurrent entry points can reject a new VM reusing a freed address.
+    uint64_t bunVMGeneration;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).

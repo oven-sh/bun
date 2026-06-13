@@ -2,7 +2,7 @@ use core::ffi::c_int;
 
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::event_loop::{EventLoop, JsTerminated};
+use crate::event_loop::JsTerminated;
 use crate::virtual_machine::VirtualMachine;
 
 bun_opaque::opaque_ffi! {
@@ -38,30 +38,41 @@ impl JSCDeferredWorkTask {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__eventLoop__incrementRefConcurrently(
-    jsc_vm: &VirtualMachine,
+    jsc_vm: *mut VirtualMachine,
     delta: c_int,
+    generation: u64,
 ) {
     crate::mark_binding!();
-    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
-    // `event_loop_shared()` is the safe accessor over the VM-owned EventLoop.
-    let event_loop: &EventLoop = jsc_vm.event_loop_shared();
+    // Checked: called from JSC helper threads, which can outlive a
+    // terminated worker's VM (the counter of a freed loop needs no
+    // balancing). C++ captured `(bunVM, generation)` at creation time
+    // (`JSVMClientData` / `Zig::GlobalObject`), so the reassembled handle
+    // rejects a new VM reusing the freed address.
+    let handle = crate::virtual_machine::VmHandle::from_raw_parts(jsc_vm as usize, generation);
     if delta > 0 {
-        event_loop.ref_concurrently();
+        VirtualMachine::try_ref_concurrently(handle);
     } else {
-        event_loop.unref_concurrently();
+        VirtualMachine::try_unref_concurrently(handle);
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
-    jsc_vm: &VirtualMachine,
+    jsc_vm: *mut VirtualMachine,
     task: *mut JSCDeferredWorkTask,
+    generation: u64,
 ) {
     crate::mark_binding!();
-    // C++ passes a non-null live `VirtualMachine*`; ABI-compatible with `&T`.
-    let loop_: &EventLoop = jsc_vm.event_loop_shared();
-    // `create_from` heap-allocates with the auto-delete bit set.
-    loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
+    // Checked: called from JSC concurrent threads, which can outlive a
+    // terminated worker's VM. `create_from` heap-allocates with the
+    // auto-delete bit set (freed by the checked enqueue when the VM is gone).
+    // C++ captured `(bunVM, generation)` at creation time
+    // (`JSVMClientData`), so the reassembled handle rejects a new VM reusing
+    // the freed address.
+    let _ = VirtualMachine::try_enqueue_task_concurrent(
+        crate::virtual_machine::VmHandle::from_raw_parts(jsc_vm as usize, generation),
+        ConcurrentTask::create_from(task),
+    );
 }
 
 /// # Safety

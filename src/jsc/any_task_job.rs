@@ -48,7 +48,13 @@ pub trait AnyTaskJobCtx: Sized {
 /// `run_from_js` (or on `init` failure). `ctx` is `pub` so callers can read
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
-    vm: bun_ptr::BackRef<VirtualMachine>,
+    /// Schedule-time handle — the owning worker VM may be freed by
+    /// terminate() while the pool task is in flight, so the pool-thread
+    /// completion goes through the registry-checked enqueue.
+    vm: crate::virtual_machine::VmHandle,
+    /// Captured at `create` so `run_task` (pool thread) never reads a field
+    /// of the VM, which may be freed while the pool task was in flight.
+    global: *mut JSGlobalObject,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -72,9 +78,10 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     /// (running `Drop for C`). The returned pointer is owned by the caller
     /// until handed to [`Self::schedule`].
     pub fn create(global: &JSGlobalObject, ctx: C) -> JsResult<*mut Self> {
-        let vm = bun_ptr::BackRef::new(global.bun_vm());
+        let vm = global.bun_vm().concurrent_handle();
         let job = bun_core::heap::into_raw(Box::new(Self {
             vm,
+            global: core::ptr::from_ref(global).cast_mut(),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
@@ -139,12 +146,15 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // in `create`; `task` points to `Self.task` and the job is live until
         // `run_from_js` reclaims it.
         let job = unsafe { &mut *Self::from_task_ptr(task) };
-        let vm = job.vm;
-        job.ctx.run(vm.global);
-        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
-        // ownership of it.
-        vm.event_loop_shared()
-            .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
+        job.ctx.run(job.global);
+        // `ConcurrentTask::create` heap-allocates a fresh task; the queue
+        // takes ownership of it (or frees it when the VM is gone). The VM may
+        // be a worker freed by terminate() while the pool task ran — checked
+        // enqueue only, and no field reads through it on this thread.
+        let _ = VirtualMachine::try_enqueue_task_concurrent(
+            job.vm,
+            ConcurrentTask::create(job.any_task.task()),
+        );
     }
 
     /// `AnyTask` callback — runs ON the JS thread. Reclaims the heap
@@ -154,7 +164,8 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // SAFETY: `this` was produced by `heap::into_raw` in `create` and is
         // uniquely owned here (the `AnyTask` fires exactly once).
         let mut this = unsafe { bun_core::heap::take(this) };
-        let vm = this.vm;
+        // JS thread — the job's VM is this thread's live VM.
+        let vm = this.vm.vm_on_owning_thread();
         if vm.is_shutting_down() {
             return Ok(());
         }

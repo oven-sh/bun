@@ -9,7 +9,7 @@ use bun_jsc::{
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
+use bun_jsc::event_loop::{EventLoop, LoopHandle};
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
@@ -574,7 +574,7 @@ struct PasswordJob<Op: PasswordOp> {
     op: Op,
     password: Box<[u8]>,
     promise: JSPromiseStrong,
-    event_loop: *mut EventLoop,
+    event_loop: LoopHandle,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -610,14 +610,14 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         unsafe {
             (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
-            ));
-        }
+        // `event_loop` was stored from the JS-thread VM at schedule time and
+        // may point into a worker VM freed by terminate() while the pool task
+        // ran — checked enqueue only. `task` is an intrusive field at a
+        // stable address; on a dead VM the result box leaks (same as a task
+        // left undrained in the dead worker's queue).
+        // SAFETY: `result` is the live heap allocation built above.
+        let ct = ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) });
+        let _ = EventLoop::try_enqueue_task_concurrent(self.event_loop, ct);
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
 }
@@ -695,8 +695,10 @@ impl JSPasswordObject {
             op,
             password,
             promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
+            event_loop: global_object
+                .bun_vm()
+                .event_loop_shared()
+                .concurrent_handle(),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

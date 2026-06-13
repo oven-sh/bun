@@ -61,10 +61,13 @@ pub struct StatWatcherScheduler {
     is_shutdown: AtomicBool,
     task: WorkPoolTask,
     main_thread: ThreadId,
-    // JSC_BORROW per LIFETIMES.tsv — VM outlives the scheduler. `BackRef` gives
-    // safe `&VirtualMachine` projection (Deref) at every read site;
-    // `event_loop_shared()` / `enqueue_task_concurrent` take `&self`.
+    // JS-thread reads only (`timer_callback` via `vm()`), where the VM
+    // driving the timer is necessarily live. The pool-thread completion
+    // enqueue does not touch this field; it goes through `vm_handle` below.
     vm: BackRef<VirtualMachine>,
+    /// Schedule-time handle for `vm`, for the pool-thread completion enqueue
+    /// (the one access that must tolerate the VM being gone).
+    vm_handle: bun_jsc::virtual_machine::VmHandle,
     watchers: WatcherQueue,
 
     pub event_loop_timer: EventLoopTimer,
@@ -189,6 +192,8 @@ impl StatWatcherScheduler {
             main_thread: thread::current().id(),
             // JSC_BORROW: `vm` is the live per-thread VM (never null).
             vm: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
+            // JS thread; the current VM is the one `vm` points at.
+            vm_handle: VirtualMachine::get().concurrent_handle(),
             watchers: WatcherQueue::default(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::StatWatcherScheduler),
             ref_count: ThreadSafeRefCount::init(),
@@ -330,12 +335,16 @@ impl StatWatcherScheduler {
                 ctx: core::ptr::NonNull::new(holder_ptr.cast()),
                 callback: update_timer,
             };
-            (*this)
-                .vm
-                .event_loop_shared()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(
-                    core::ptr::addr_of_mut!((*holder_ptr).task),
-                )));
+            // Checked: runs on the work-pool thread; the VM may be a worker
+            // freed by terminate() while the restat ran. On failure reclaim
+            // the holder here (plain `{ParentRef, AnyTask}` — no JSC state),
+            // since `update_timer` will never run to take it.
+            if !VirtualMachine::try_enqueue_task_concurrent(
+                (*this).vm_handle,
+                ConcurrentTask::create(Task::init(core::ptr::addr_of_mut!((*holder_ptr).task))),
+            ) {
+                drop(bun_core::heap::take(holder_ptr));
+            }
         }
     }
 
@@ -520,6 +529,9 @@ pub struct StatWatcher {
     // via `From<NonNull>` from `bun_vm_ptr()` so `as_ptr()` retains write
     // provenance for the one `rare_data()` (`&mut self`) call in `deinit`.
     ctx: BackRef<VirtualMachine>,
+    /// Schedule-time handle for `ctx`, for the pool-thread completion enqueue
+    /// (the one access that must tolerate the VM being gone).
+    vm_handle: bun_jsc::virtual_machine::VmHandle,
 
     ref_count: ThreadSafeRefCount<StatWatcher>,
 
@@ -680,7 +692,9 @@ impl StatWatcher {
         &self,
         task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
     ) {
-        self.ctx.event_loop_shared().enqueue_task_concurrent(task);
+        // Called from the work-pool thread: `ctx` may point at a worker VM
+        // freed by terminate() while the stat ran — checked enqueue only.
+        let _ = VirtualMachine::try_enqueue_task_concurrent(self.vm_handle, task);
     }
 
     /// Copy the last stat by value.
@@ -1007,6 +1021,8 @@ impl StatWatcher {
             // JSC_BORROW: `vm` is the live per-thread VM (never null). `From<NonNull>`
             // preserves the FFI write provenance for the `rare_data()` call in `deinit`.
             ctx: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
+            // JS thread; the current VM is the one `vm` points at.
+            vm_handle: VirtualMachine::get().concurrent_handle(),
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,

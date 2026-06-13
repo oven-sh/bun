@@ -197,6 +197,7 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 
 struct BunVirtualMachine;
 extern "C" BunVirtualMachine* Bun__getVM();
+extern "C" uint64_t Bun__getVmGeneration();
 
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
@@ -248,7 +249,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
     BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM);
+    WebCore::JSVMClientData::create(&vm, bunVM, Bun__getVmGeneration());
 
     JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
     Bake::GlobalObject* global = Bake::GlobalObject::create(

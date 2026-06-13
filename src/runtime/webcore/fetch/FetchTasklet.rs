@@ -43,6 +43,19 @@ type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
 
+/// `FetchTasklet` boxes whose owning worker VM was freed (terminated) while
+/// the HTTP thread held the last reference. They can never be fully
+/// reclaimed: `deinit()` drops JSC `Strong`/`Weak` handles into the dead
+/// VM's freed HandleSet, on any thread, at any time, including the
+/// `global_exit` drain that `dealloc_for_shutdown` parks into.
+/// [`FetchTasklet::free_native_data_for_dead_vm`] reclaims the plain-heap
+/// buffers first, so what parks here is the struct itself plus the handles
+/// only the (gone) JS thread could release. Kept reachable so LSan-enabled
+/// CI lanes don't report them as leaks; growth is bounded by in-flight
+/// requests that lose a terminate race.
+static DEAD_VM_TASKLETS: bun_threading::Guarded<Vec<usize>> =
+    bun_threading::Guarded::new(Vec::new());
+
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
 impl Taskable for FetchTasklet {
@@ -65,7 +78,13 @@ pub struct FetchTasklet {
     pub http: Option<Box<AsyncHTTP<'static>>>,
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
-    pub javascript_vm: &'static VirtualMachine,
+    /// Owning VM, captured at `get()` as a schedule-time handle: a worker
+    /// VM can be freed by terminate() while this tasklet is still referenced
+    /// from the HTTP thread, so holding a pointer alone could also pass an
+    /// address check after the allocation is reused. JS-thread paths use
+    /// `vm_on_owning_thread()` (VM provably alive there); HTTP-thread paths
+    /// go through the checked `VirtualMachine` accessors only.
+    pub javascript_vm: jsc::virtual_machine::VmHandle,
     pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
@@ -294,19 +313,6 @@ impl FetchTasklet {
         unsafe { &*this }
     }
 
-    /// Enqueue a concurrent task on the JS-thread event loop.
-    ///
-    /// Centralises the `(*vm.event_loop()).enqueue_task_concurrent(..)` raw
-    /// deref. `event_loop()` returns a self-ptr into the VirtualMachine that
-    /// is valid for the VM's lifetime; `enqueue_task_concurrent` takes `&self`
-    /// and is thread-safe (lock-free MPSC push). `task` is a live
-    /// `ConcurrentTaskItem` that the queue takes ownership of via its
-    /// intrusive `next` link.
-    #[inline]
-    fn enqueue_concurrent(vm: &VirtualMachine, task: core::ptr::NonNull<ConcurrentTask>) {
-        vm.event_loop_shared().enqueue_task_concurrent(task);
-    }
-
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
     /// synchronous delivery to `ByteStream::on_data`.
     ///
@@ -392,23 +398,83 @@ impl FetchTasklet {
             return;
         }
         let self_ = Self::from_raw_ref(this);
-        if self_.javascript_vm.is_shutting_down() {
-            // SAFETY: last ref; exclusive access. `deinit()` would run
-            // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
-            // reach into the VM's HandleSet from this (HTTP) thread — not
-            // thread-safe. Reclaim only the Rust-side boxes; the HandleSet is
-            // freed wholesale by `destructOnExit`.
-            unsafe { FetchTasklet::dealloc_for_shutdown(this) };
-            return;
+        // `javascript_vm` may denote a freed worker VM (terminated while
+        // this request was in flight on the HTTP thread) — only the checked
+        // accessors may resolve it.
+        let vm = self_.javascript_vm;
+        match VirtualMachine::live_shutting_down_state(vm) {
+            Some(false) => {
+                // this is really unlikely to happen, but can happen
+                // lets make sure that we always call deinit from main thread
+                // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`;
+                // the queue takes ownership of it (freed by the checked
+                // enqueue when the VM died between the check and the push —
+                // in which case fall through to the dead-VM parking below).
+                if VirtualMachine::try_enqueue_task_concurrent(
+                    vm,
+                    ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
+                ) {
+                    return;
+                }
+            }
+            Some(true) => {
+                // Only the never-freed main VM can be observed registered and
+                // shutting down (process exit) — see
+                // `live_shutting_down_state`. Park the intact box for the
+                // `global_exit` drain, which runs `deinit()` on the JS thread
+                // while the JSC VM is still alive.
+                // SAFETY: last ref; exclusive access.
+                unsafe { FetchTasklet::dealloc_for_shutdown(this) };
+                return;
+            }
+            None => {}
         }
-        // this is really unlikely to happen, but can happen
-        // lets make sure that we always call deinit from main thread
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
-        // takes ownership of it.
-        Self::enqueue_concurrent(
-            self_.javascript_vm,
-            ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
-        );
+        // The owning worker VM is gone. Nothing may ever touch this tasklet's
+        // JSC state again: `deinit()` (directly or via the global_exit drain)
+        // would drop the `Strong`/`Weak` fields into the dead VM's freed
+        // HandleSet. Reclaim the plain-heap buffers, then park the box
+        // forever — kept reachable so LSan-enabled CI lanes don't report it;
+        // bounded by requests that lose the terminate race.
+        // SAFETY: ref_count == 0 — this thread holds the only access.
+        unsafe { (*this).free_native_data_for_dead_vm() };
+        DEAD_VM_TASKLETS.lock().push(this as usize);
+    }
+
+    /// Reclaim, on the HTTP thread, the plain-heap allocations of a tasklet
+    /// about to park in [`DEAD_VM_TASKLETS`]. The last reference dropping
+    /// means the HTTP client is done with this request, so nothing writes
+    /// into these buffers anymore; the parked `http` mirror keeps dangling
+    /// views into them, but a parked tasklet is never read again.
+    ///
+    /// Deliberately skipped — everything whose teardown needs the (gone) JS
+    /// thread: the JSC handles (`response`, `promise`, `readable_stream_ref`,
+    /// `abort_reason`, `check_server_identity`, `signal`, `native_response`),
+    /// `sink` / `request_body_streaming_buffer` (their teardown drops stored
+    /// JS callbacks), the blob/stream arms of `request_body` (blob teardown
+    /// can release WTF strings — see the cross-thread string hazard note near
+    /// `Response::init`), and the `http` box itself (`AsyncHTTP::clear_data`
+    /// / `Drop` release `ZigStringSlice`s with the same hazard).
+    fn free_native_data_for_dead_vm(&mut self) {
+        // The `Sendfile` arm owns only an fd — native teardown, mirroring
+        // `HTTPRequestBody::detach`. An fd is a process-wide resource that
+        // would otherwise leak toward `EMFILE` under worker churn.
+        if let HTTPRequestBody::Sendfile(sendfile) = &mut self.request_body {
+            if sendfile.offset.max(sendfile.remain) > 0 {
+                sendfile.fd.close();
+            }
+            sendfile.offset = 0;
+            sendfile.remain = 0;
+        }
+        // Aliases `response_buffer` (freed below); drop the view first.
+        self.result.body = None;
+        drop(self.result.certificate_info.take());
+        drop(self.result.metadata.take());
+        drop(self.metadata.take());
+        self.request_headers = Headers::default();
+        self.url_proxy_buffer = Box::default();
+        self.hostname = None;
+        self.response_buffer = MutableString::default();
+        self.scheduled_response_buffer = MutableString::default();
     }
 
     // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -505,7 +571,10 @@ impl FetchTasklet {
         drop(boxed);
     }
 
-    /// Last-ref reclaim from the HTTP thread once the VM has begun shutdown.
+    /// Last-ref reclaim from the HTTP thread once the (never-freed) owning VM
+    /// has begun process exit. Not used for freed worker VMs — those park in
+    /// [`DEAD_VM_TASKLETS`] instead, because the drain below would `deinit()`
+    /// against a dead JSC heap.
     ///
     /// Neither `clear_data()` nor dropping the box is safe here:
     ///   * the JSC `Strong`/`Weak` fields touch the VM's HandleSet/WeakSet on
@@ -804,7 +873,9 @@ impl FetchTasklet {
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
 
-        let vm = self.javascript_vm;
+        // JS-thread path: the VM is this thread's own live VM. Copy the
+        // handle out so the borrow below doesn't pin `self`.
+        let vm = self.javascript_vm.vm_on_owning_thread();
         // vm is shutting down we cannot touch JS
         if vm.is_shutting_down() {
             // The certificate will never be checked; release the parked
@@ -1670,7 +1741,6 @@ impl FetchTasklet {
             http_.enable_response_body_streaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        let _ = self.javascript_vm;
         self.poll_ref.unref(bun_io::js_vm_ctx());
         // clean any remaining references
         self.clear_stream_cancel_handler();
@@ -1711,9 +1781,12 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
-        // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
-        // this tasklet (process-lifetime singleton on the JS thread).
-        let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
+        // `bun_vm()` is the live per-thread VM at `get()` time, but a worker
+        // VM can be freed by terminate() before this tasklet dies — which is
+        // why the field is a schedule-time handle, resolved off the JS thread
+        // only through the checked `VirtualMachine` accessors (see the
+        // `javascript_vm` field doc).
+        let jsc_vm = global_this.bun_vm().concurrent_handle();
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
@@ -1993,17 +2066,23 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub(crate) fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
-        if this_ref.javascript_vm.is_shutting_down() {
+        // Checked: the fetching VM may be a worker freed by terminate().
+        let vm = this_ref.javascript_vm;
+        if VirtualMachine::is_shutting_down_or_freed(vm) {
             return;
         }
         // ref until the main thread callback is called
         this_ref.ref_();
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
         // takes ownership of it.
-        Self::enqueue_concurrent(
-            this_ref.javascript_vm,
+        if !VirtualMachine::try_enqueue_task_concurrent(
+            vm,
             ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
-        );
+        ) {
+            // VM died between the check and the push; the callback will never
+            // run, so balance the ref taken above.
+            FetchTasklet::deref_from_thread(this);
+        }
     }
 
     /// This is ALWAYS called from the main thread
@@ -2293,7 +2372,21 @@ impl FetchTasklet {
             }
         }
         // will deinit when done with the http client (when is_done = true)
-        if task_ref.javascript_vm.is_shutting_down() {
+        // Checked accessors only: the fetching VM may be a worker freed by
+        // terminate() while this request was in flight.
+        let vm = task_ref.javascript_vm;
+        let queued = !VirtualMachine::is_shutting_down_or_freed(vm) && {
+            // `ct` is the inline `concurrent_task` field of the heap tasklet;
+            // the queue takes ownership of its `next` link. The embedded node
+            // is untouched when the checked enqueue loses the race.
+            let ct = core::ptr::NonNull::from(
+                task_ref
+                    .concurrent_task
+                    .from(task, AutoDeinit::ManualDeinit),
+            );
+            VirtualMachine::try_enqueue_task_concurrent(vm, ct)
+        };
+        if !queued {
             // VM teardown: the JS-thread side will never drain this buffer (its
             // on_progress_update bails the same way), so free the body bytes now.
             task_ref.scheduled_response_buffer = MutableString::default();
@@ -2305,8 +2398,8 @@ impl FetchTasklet {
                     http::http_thread().schedule_shutdown(http_);
                 }
             }
-            // We won the `has_schedule_callback` CAS above but are not
-            // enqueueing the on_progress_update task; undo the flag so a later
+            // We won the `has_schedule_callback` CAS above but did not
+            // enqueue the on_progress_update task; undo the flag so a later
             // (final) callback can re-enter this branch instead of taking the
             // already-scheduled early return.
             task_ref
@@ -2316,8 +2409,10 @@ impl FetchTasklet {
             if is_done {
                 // No on_progress_update will ever run for this final result, so
                 // release the JS-side ref it would have dropped, then the
-                // HTTP-side ref. The 1→0 transition runs `dealloc_for_shutdown`
-                // (Rust boxes only — JSC handles are leaked to destructOnExit).
+                // HTTP-side ref. The 1→0 transition parks the box: for the
+                // exiting main VM via `dealloc_for_shutdown` (deinit on the JS
+                // thread from the global_exit drain), for a freed worker VM in
+                // `DEAD_VM_TASKLETS` (never touched again).
                 // SAFETY: `task` is the live heap tasklet; both refs held.
                 FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.
@@ -2325,14 +2420,6 @@ impl FetchTasklet {
             }
             return;
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
-        // `ct` is the inline `concurrent_task` field of the heap tasklet; the
-        // queue takes ownership of its `next` link.
-        Self::enqueue_concurrent(task_ref.javascript_vm, ct);
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

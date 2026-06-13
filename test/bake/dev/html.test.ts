@@ -279,3 +279,41 @@ devTest("error report endpoint handles stack frames with very long absolute path
     await dev.fetch("/").expect.toInclude("<h1>Error Report</h1>");
   },
 });
+
+// https://github.com/oven-sh/bun/issues/31923
+// Editing an HTML file and its scripts in one watch batch makes all of them
+// entry points of the same incremental rebuild. The regenerated HTML module
+// must reference a bare script specifier (src="script.ts", no "./") by its
+// project-relative module key, not the absolute filesystem path.
+devTest("combined html+script rebuild resolves bare script specifiers", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["script.ts", "./other.ts"],
+      body: "<h1>Hello</h1>",
+    }),
+    "script.ts": `
+      console.log("v1");
+    `,
+    "other.ts": `
+      console.log("other v1");
+    `,
+  },
+  async test(dev) {
+    // Load the route once so the files enter the incremental graph.
+    await dev.fetch("/").expect.toInclude("<h1>Hello</h1>");
+
+    // Edit all files in one watch batch, making each an entry point of the
+    // same incremental rebuild.
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("script.ts", `console.log("v2");`);
+      await dev.write("other.ts", `console.log("other v2");`);
+    }
+
+    // A fresh page load boots from the regenerated route bundle.
+    await using c = await dev.client("/");
+    await c.expectMessage("v2", "other v2");
+    await dev.fetch("/").expect.toInclude("<h1>World</h1>");
+  },
+});

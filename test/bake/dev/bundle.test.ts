@@ -814,3 +814,65 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     await c.expectMessage("got: ALPHA BETA");
   },
 });
+
+// Regression: editing a file shared by several client component boundaries
+// crashed the dev server. `finalizeBundle` iterates
+// `incremental_result.client_components_affected` while `trace_dependencies`
+// re-appends every visited boundary to that same list (the trace bits were
+// just cleared), so with 3+ boundaries the Vec reallocates mid-iteration and
+// the stale iterator reads freed memory — caught as a use-after-free under
+// ASAN, and as `index out of bounds: the len is N but the index is N` in
+// release once the freed block is reused by `framework_routes_affected`.
+devTest("hot update touching multiple client component boundaries does not crash", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import * as A from '../components/A';
+      import * as B from '../components/B';
+      import * as C from '../components/C';
+      import * as D from '../components/D';
+      export default function (req, meta) {
+        // Client component exports are reference proxies on the server; only
+        // their existence is observable here.
+        return new Response('page: ' + [typeof A.a, typeof B.b, typeof C.c, typeof D.d].join(','));
+      }
+    `,
+    "components/A.ts": `
+      "use client";
+      import { shared } from './shared';
+      export const a = 'A' + shared;
+    `,
+    "components/B.ts": `
+      "use client";
+      import { shared } from './shared';
+      export const b = 'B' + shared;
+    `,
+    "components/C.ts": `
+      "use client";
+      import { shared } from './shared';
+      export const c = 'C' + shared;
+    `,
+    "components/D.ts": `
+      "use client";
+      import { shared } from './shared';
+      export const d = 'D' + shared;
+    `,
+    "components/shared.ts": `export const shared = '1';`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("page: object,object,object,object");
+    // Invalidate every client component boundary in a single hot update.
+    await dev.write("components/shared.ts", `export const shared = '2';`);
+    await dev.fetch("/").equals("page: object,object,object,object");
+    // A second round exercises the watcher entries recorded during the
+    // previous (SSR-duplicated) bundle.
+    await dev.write("components/shared.ts", `export const shared = '3';`);
+    await dev.fetch("/").equals("page: object,object,object,object");
+  },
+});

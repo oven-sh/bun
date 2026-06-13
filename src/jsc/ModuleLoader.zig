@@ -1160,6 +1160,16 @@ fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded:
             }
             return jsSyntheticModule(.@"bun:internal-for-testing", specifier);
         },
+        inline .@"internal:http2/util",
+        .@"internal:http2/core",
+        .@"internal:test/binding",
+        => |tag| {
+            if (!Environment.isDebug) {
+                if (!is_allowed_to_use_internal_testing_apis)
+                    return null;
+            }
+            return jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier);
+        },
         .@"bun:wrap" => .{
             .allocator = null,
             .source_code = String.init(Runtime.Runtime.sourceCode()),

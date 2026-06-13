@@ -77,10 +77,11 @@ pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
+    detached: bool,
 ) -> i32 {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (global, stdout_inherit, stderr_inherit);
+        let _ = (global, stdout_inherit, stderr_inherit, detached);
         return -1;
     }
     #[cfg(target_os = "macos")]
@@ -98,6 +99,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__ensure(
             std::ptr::from_ref(global.bun_vm()).cast_mut(),
             stdout_inherit,
             stderr_inherit,
+            detached,
         ) {
             Ok(fd) => fd,
             Err(err) => {
@@ -129,10 +131,15 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 #[cfg(target_os = "macos")]
-fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
+fn spawn(
+    vm: *mut VirtualMachine,
+    stdout_inherit: bool,
+    stderr_inherit: bool,
+    detached: bool,
+) -> Result<Fd, Error> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (vm, stdout_inherit, stderr_inherit);
+        let _ = (vm, stdout_inherit, stderr_inherit, detached);
         return Err(bun_core::err!("Unsupported"));
     }
     #[cfg(target_os = "macos")]
@@ -185,6 +192,10 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             },
             extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
             argv0: Some(exe.as_ptr()),
+            // setsid() in the child — new session, no controlling TTY. Same
+            // rationale as ChromeProcess.rs: keeps endpoint-protection
+            // /dev/tty writes off the parent's terminal.
+            detached,
             ..SpawnOptions::default()
         };
 

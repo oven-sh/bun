@@ -321,6 +321,10 @@ async function promptForBody(
   }
 
   const header = `${symbols.question} ${bold}Share your feedback with Bun's team${reset} ${dim}(Enter to send, Shift+Enter for a newline)${reset}`;
+  // Bracketed paste mode wraps pasted input in \x1b[200~ ... \x1b[201~ so a
+  // multi-line paste is inserted as text instead of the first newline
+  // submitting the message. Terminals without support ignore the sequence.
+  output.write("\x1b[?2004h");
   output.write(`${header}\n`);
   if (attachments.length > 0) {
     output.write(`${dim}+ ${attachments.map(file => file.filename).join(", ")}${reset}\n`);
@@ -330,12 +334,15 @@ async function promptForBody(
   const lines: string[] = [""];
   let currentLine = 0;
   let resolved = false;
+  let pasting = false;
+  let pastePrevWasCR = false;
 
   return await new Promise<string | undefined>(resolve => {
     const cleanup = (value?: string) => {
       if (resolved) return;
       resolved = true;
       input.removeListener("keypress", onKeypress);
+      output.write("\x1b[?2004l");
       if (typeof input.setRawMode === "function") {
         if (typeof hadRawMode === "boolean") {
           input.setRawMode(hadRawMode);
@@ -350,11 +357,21 @@ async function promptForBody(
       resolve(value);
     };
 
+    const appendText = (text: string) => {
+      lines[currentLine] += text;
+      output.write(text);
+    };
+
+    const insertNewline = () => {
+      lines.push("");
+      currentLine += 1;
+      output.write(`\n${inputPrefix}`);
+    };
+
     const onKeypress = (str: string, key: readline.Key) => {
       if (!key) {
         if (str) {
-          lines[currentLine] += str;
-          output.write(str);
+          appendText(str);
         }
         return;
       }
@@ -365,15 +382,57 @@ async function promptForBody(
         return;
       }
 
+      if (key.name === "paste-start") {
+        pasting = true;
+        pastePrevWasCR = false;
+        return;
+      }
+
+      if (key.name === "paste-end") {
+        pasting = false;
+        return;
+      }
+
+      if (pasting) {
+        // Pasted newlines are literal text, never a submit. \r\n is one newline.
+        const prevWasCR = pastePrevWasCR;
+        pastePrevWasCR = key.name === "return";
+        if (key.name === "return") {
+          insertNewline();
+          return;
+        }
+        if (key.name === "enter") {
+          if (!prevWasCR) {
+            insertNewline();
+          }
+          return;
+        }
+        if (key.name === "tab") {
+          appendText("\t");
+          return;
+        }
+        if (key.name && key.name.length > 1 && key.name !== "space") {
+          return;
+        }
+        if (str) {
+          appendText(str);
+        }
+        return;
+      }
+
       if (key.name === "return") {
         if (key.shift) {
-          lines.push("");
-          currentLine += 1;
-          output.write(`\n${inputPrefix}`);
+          insertNewline();
           return;
         }
         const message = lines.join("\n");
         cleanup(message);
+        return;
+      }
+
+      // Ctrl+J, or a pasted \n on terminals without bracketed paste support.
+      if (key.name === "enter") {
+        insertNewline();
         return;
       }
 
@@ -398,8 +457,7 @@ async function promptForBody(
       }
 
       if (str) {
-        lines[currentLine] += str;
-        output.write(str);
+        appendText(str);
       }
     };
 

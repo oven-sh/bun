@@ -290,11 +290,22 @@ describe.concurrent("console.table escapes control characters in string cells", 
     expect(exitCode).toBe(0);
   });
 
+  test("boxed String cells keep their [String: ...] type indicator", async () => {
+    // `new String(...)` renders as `[String: "..."]`, which already escapes via
+    // print_string, so the control-char promotion must not strip the wrapper.
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: new String("a\nb") }]);`);
+    expect(stdout).toContain("[String:");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
+  });
+
   test("plain string cells still render without surrounding quotes", async () => {
     // Bun deliberately prints clean string cells unquoted; the fix must not
-    // change that for strings that contain no control characters.
-    const { stdout, exitCode } = await tableOutput(`console.table([{ a: 42, b: "bun" }]);`);
+    // change that for strings with no control characters (including non-ASCII
+    // printables like "café").
+    const { stdout, exitCode } = await tableOutput(`console.table([{ a: 42, b: "bun", c: "café" }]);`);
     expect(stdout).toContain(" bun ");
+    expect(stdout).toContain("café");
     expect(stdout).not.toContain('"bun"');
     expect(stdout).not.toContain("'bun'");
     assertRectangular(stdout);

@@ -702,6 +702,12 @@ impl<'a> TablePrinter<'a> {
     /// instead of shown. Promoting such a cell to the quoted form has the
     /// formatter escape the whole string, so the table stays rectangular and
     /// the value is shown literally, matching Node (issue #32223).
+    ///
+    /// DEL/C1 (0x7F-0x9F) are intentionally excluded: they are zero-width in
+    /// both the width calculation and typical terminals (so they don't break
+    /// layout), and the quoted path uses `write_json_string`, which per JSON
+    /// only escapes 0x00-0x1F, so promoting them would quote the cell but still
+    /// leave the bytes raw.
     fn should_quote_string_cell(
         &self,
         value: JSValue,
@@ -713,6 +719,13 @@ impl<'a> TablePrinter<'a> {
             TagPayload::String | TagPayload::StringPossiblyFormatted
         ) {
             return Ok(true);
+        }
+        // A boxed `String` already renders as `[String: "..."]` with JSON
+        // escaping in `print_string`, so leave it unpromoted to keep that type
+        // indicator. `DerivedStringObject` is not special-cased there and falls
+        // through to raw bytes, so it still needs the scan below.
+        if tag.cell == jsc::JSType::StringObject {
+            return Ok(false);
         }
         if !value.is_string() {
             return Ok(false);

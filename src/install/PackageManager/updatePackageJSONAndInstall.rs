@@ -22,6 +22,35 @@ use super::{
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
+/// Prints `root` and stores the result as the cache entry's source contents,
+/// preserving the entry's indentation and trailing-newline style. Crashes the
+/// process on a print failure (mirrors the other package.json print sites).
+fn print_package_json_into_cache_entry(entry: &mut MapEntry, root: bun_ast::Expr) {
+    let preserve_trailing_newline = entry.source.contents.last() == Some(&b'\n');
+    let mut buffer_writer = js_printer::BufferWriter::init();
+    buffer_writer
+        .buffer
+        .list
+        .reserve((entry.source.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+    buffer_writer.append_newline = preserve_trailing_newline;
+    let mut writer = js_printer::BufferPrinter::init(buffer_writer);
+
+    if let Err(e) = js_printer::print_json(
+        &mut writer,
+        root,
+        &entry.source,
+        js_printer::PrintJsonOptions {
+            indent: entry.indentation,
+            mangled_props: None,
+            ..Default::default()
+        },
+    ) {
+        bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
+        Global::crash();
+    }
+    entry.source.contents = Cow::Owned(writer.ctx.written_without_trailing_zero().to_vec());
+}
+
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,
     ctx: Command::Context,
@@ -415,6 +444,10 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
+    // `bun update --latest` with no package names also updates the versions
+    // declared in the root package.json `catalog`/`catalogs`.
+    let mut editing_catalogs = false;
+
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
         strings::without_trailing_slash(FileSystem::instance().top_level_dir());
@@ -513,6 +546,30 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
+        if subcommand == Subcommand::Update && manager.update_requests.is_empty() {
+            let root_package_json_root: bun_ast::Expr = root_package_json.root;
+            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)? {
+                editing_catalogs = true;
+
+                // with `--latest`, the catalog entries were set to a temporary
+                // `latest` — re-print the root package.json into the cache
+                // entry so the install below resolves those instead of the
+                // on-disk versions. (Without `--latest` nothing was modified.)
+                if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
+                    print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+                    // keep the cached AST in sync with the printed source — it
+                    // is consumed by workspace resolution during install.
+                    if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+                        bun_core::pretty_errorln!(
+                            "package.json failed to parse due to error {}",
+                            err.name(),
+                        );
+                        Global::crash();
+                    }
+                }
+            }
+        }
+
         // SAFETY: root_package_json_path_buf[root_package_json_path_len] == 0 written above
         break 'root_package_json_path ZStr::from_buf(
             &root_package_json_path_buf[..],
@@ -564,6 +621,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                     ..Default::default()
                 },
             )?;
+
+            if editing_catalogs && manager.workspace_name_hash.is_none() {
+                // the current package.json IS the workspace root: commit the
+                // resolved catalog versions into the same AST before it is
+                // printed and written below.
+                let _ = PackageJSONEditor::edit_catalogs_after_update(
+                    manager,
+                    &new_package_json,
+                    EditOptions {
+                        exact_versions: manager.options.enable.exact_versions(),
+                        ..Default::default()
+                    },
+                )?;
+            }
         } else {
             let mut updates_slice: &mut [UpdateRequest] = &mut updates[..];
             PackageJSONEditor::edit(
@@ -609,6 +680,73 @@ fn update_package_json_and_install_with_manager_with_updates(
             .ctx
             .written_without_trailing_zero()
             .to_vec();
+    }
+
+    if editing_catalogs
+        && manager.workspace_name_hash.is_some()
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+    {
+        // the command ran from a workspace package: the catalogs live in the
+        // root package.json, a different file from the one written below.
+        // reshaped for borrowck — see `current_package_json_ptr` above.
+        let root_package_json_ptr: *mut MapEntry =
+            match manager.workspace_package_json_cache.get_with_path(
+                manager.log_mut(),
+                root_package_json_path.as_bytes(),
+                GetJSONOptions {
+                    guess_indentation: true,
+                    ..Default::default()
+                },
+            ) {
+                GetResult::ParseErr(err) => {
+                    let _ = manager
+                        .log_mut()
+                        .print(std::ptr::from_mut(Output::error_writer()));
+                    Output::err_generic(
+                        "failed to parse package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::ReadErr(err) => {
+                    Output::err_generic(
+                        "failed to read package.json \"{s}\": {s}",
+                        (BStr::new(root_package_json_path.as_bytes()), err.name()),
+                    );
+                    Global::crash();
+                }
+                GetResult::Entry(entry) => core::ptr::from_mut(entry),
+            };
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until
+        // the next `get_with_path`. `edit_catalogs_after_update` touches only
+        // disjoint manager fields.
+        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
+        let root_package_json_root: bun_ast::Expr = root_package_json.root;
+
+        let root_catalogs_changed = PackageJSONEditor::edit_catalogs_after_update(
+            manager,
+            &root_package_json_root,
+            EditOptions {
+                exact_versions: manager.options.enable.exact_versions(),
+                ..Default::default()
+            },
+        )?;
+
+        if root_catalogs_changed {
+            print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+
+            let root_package_json_file =
+                File::openat(Fd::cwd(), root_package_json_path, bun_sys::O::RDWR, 0)
+                    .map_err(Error::from)?;
+            root_package_json_file
+                .pwrite_all(&root_package_json.source.contents, 0)
+                .map_err(Error::from)?;
+            let _ = bun_sys::ftruncate(
+                root_package_json_file.handle,
+                root_package_json.source.contents.len() as i64,
+            );
+            let _ = root_package_json_file.close(); // close error is non-actionable
+        }
     }
 
     let _ = written;

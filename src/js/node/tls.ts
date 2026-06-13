@@ -12,6 +12,8 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
+const resetRootCertStore = $newCppFunction("NodeTLS.cpp", "resetRootCertStore", 1);
+const getUserRootCertificates = $newCppFunction("NodeTLS.cpp", "getUserRootCertificates", 0);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
@@ -958,6 +960,17 @@ const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
+  // The override is process-global (see root_certs.cpp), so ask native
+  // first: another Worker may have installed it and this VM's module
+  // state wouldn't know. undefined means "no override" — fall through to
+  // the (per-VM-cached) bundled/system/extra merge. A frozen array (maybe
+  // empty) means "override installed" — return it uncached so subsequent
+  // setDefaultCACertificates() calls from any Worker are reflected.
+  const override = getUserRootCertificates() as string[] | undefined;
+  if (override !== undefined) {
+    return override;
+  }
+
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
@@ -1014,6 +1027,23 @@ function getCACertificates(type = "default") {
   }
 }
 
+function setDefaultCACertificates(certs) {
+  if (!$isJSArray(certs)) {
+    throw $ERR_INVALID_ARG_TYPE("certs", "Array", certs);
+  }
+  for (let i = 0; i < certs.length; i++) {
+    if (typeof certs[i] !== "string" && !isArrayBufferView(certs[i])) {
+      throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, ["string", "ArrayBufferView"], certs[i]);
+    }
+  }
+
+  resetRootCertStore(certs);
+  // Drop any cached bundled+system+extra merge in THIS VM; other Workers'
+  // caches are bypassed on their next query because getUserRootCertificates()
+  // now returns the override (see cacheDefaultCACertificates).
+  defaultCACertificates = undefined;
+}
+
 function tlsCipherFilter(a: string) {
   return !a.startsWith("TLS_");
 }
@@ -1056,4 +1086,5 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
+  setDefaultCACertificates,
 } as any as typeof import("node:tls");

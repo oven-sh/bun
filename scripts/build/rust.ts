@@ -466,6 +466,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       : // armv8-a+crc isn't a CPU name — closest LLVM model with CRC baseline:
         "cortex-a72";
   rustflags.push(`-Ctarget-cpu=${cpuTarget}`);
+  // Parallelize the otherwise single-threaded rustc frontend (nightly-only).
+  rustflags.push("-Zthreads=8");
   // `bun_core::build_options::ENABLE_ASAN = cfg!(bun_asan)` — must agree with
   // the C++ `ASAN_ENABLED` macro so Global::exit() picks the same libc exit
   // path (`exit` vs `quick_exit`) that c-bindings.cpp registered Bun__onExit on.

@@ -1,12 +1,17 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv } from "harness";
+import { bunEnv, nodeExe } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
+import v8 from "node:v8";
 import { join } from "path";
 function jscSerializeRoundtrip(value: any) {
   const serialized = serialize(value);
   const cloned = deserialize(serialized);
   return cloned;
+}
+
+function v8SerializeRoundtrip(value: any) {
+  return v8.deserialize(v8.serialize(value));
 }
 
 function jscSerializeRoundtripCrossProcess(original: any) {
@@ -31,7 +36,12 @@ function jscSerializeRoundtripCrossProcess(original: any) {
   return deserialize(result.stdout);
 }
 
-for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSerializeRoundtripCrossProcess]) {
+for (const structuredCloneFn of [
+  structuredClone,
+  jscSerializeRoundtrip,
+  v8SerializeRoundtrip,
+  jscSerializeRoundtripCrossProcess,
+]) {
   describe(structuredCloneFn.name, () => {
     let primitives_tests = [
       { description: "primitive undefined", value: undefined },
@@ -161,6 +171,93 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       for (const value of input) {
         expect(cloned.has(value)).toBe(true);
       }
+    });
+
+    describe("Error", () => {
+      test("preserves message, name and stack", () => {
+        const input = new TypeError("typed");
+        const cloned = structuredCloneFn(input);
+        expect(cloned).toBeInstanceOf(TypeError);
+        expect(cloned).not.toBe(input);
+        expect(cloned.message).toBe("typed");
+        expect(cloned.name).toBe("TypeError");
+        expect(typeof cloned.stack).toBe("string");
+      });
+
+      test("without cause has no own cause property", () => {
+        const cloned = structuredCloneFn(new Error("plain"));
+        expect(Object.hasOwn(cloned, "cause")).toBe(false);
+        expect(cloned.cause).toBeUndefined();
+      });
+
+      test("preserves a string cause", () => {
+        const cloned = structuredCloneFn(new Error("x", { cause: "boom" }));
+        expect(Object.hasOwn(cloned, "cause")).toBe(true);
+        expect(cloned.cause).toBe("boom");
+        expect(cloned.message).toBe("x");
+      });
+
+      test("preserves a number cause", () => {
+        const cloned = structuredCloneFn(new Error("x", { cause: 42 }));
+        expect(cloned.cause).toBe(42);
+      });
+
+      test("preserves an explicit undefined cause", () => {
+        const cloned = structuredCloneFn(new Error("x", { cause: undefined }));
+        expect(Object.hasOwn(cloned, "cause")).toBe(true);
+        expect(cloned.cause).toBeUndefined();
+      });
+
+      test("preserves an object cause structurally", () => {
+        const cloned = structuredCloneFn(new Error("x", { cause: { code: 42, nested: { ok: true } } }));
+        expect(cloned.cause).toEqual({ code: 42, nested: { ok: true } });
+        expect(typeof cloned.cause).toBe("object");
+      });
+
+      test("preserves a nested Error cause as an Error", () => {
+        const inner = new RangeError("inner");
+        const cloned = structuredCloneFn(new Error("outer", { cause: inner }));
+        expect(cloned.cause).toBeInstanceOf(RangeError);
+        expect(cloned.cause.message).toBe("inner");
+        expect(Object.hasOwn(cloned.cause, "cause")).toBe(false);
+      });
+
+      test("preserves a chain of Error causes", () => {
+        const a = new Error("a");
+        const b = new Error("b", { cause: a });
+        const c = new Error("c", { cause: b });
+        const cloned = structuredCloneFn(c);
+        expect(cloned.message).toBe("c");
+        expect(cloned.cause).toBeInstanceOf(Error);
+        expect(cloned.cause.message).toBe("b");
+        expect(cloned.cause.cause).toBeInstanceOf(Error);
+        expect(cloned.cause.cause.message).toBe("a");
+        expect(Object.hasOwn(cloned.cause.cause, "cause")).toBe(false);
+      });
+
+      test("preserves identity for a self-referential cause", () => {
+        const e = new Error("self");
+        // @ts-expect-error
+        e.cause = e;
+        const cloned = structuredCloneFn(e);
+        expect(cloned.cause).toBe(cloned);
+        expect(cloned.message).toBe("self");
+      });
+
+      test("preserves identity when the same Error appears twice", () => {
+        const e = new Error("shared", { cause: "x" });
+        const cloned = structuredCloneFn([e, e]);
+        expect(cloned[0]).toBe(cloned[1]);
+        expect(cloned[0].cause).toBe("x");
+      });
+
+      test("preserves cause when nested inside containers", () => {
+        const e = new Error("e", { cause: [1, 2, 3] });
+        const cloned = structuredCloneFn({ arr: [e], map: new Map([["k", e]]) });
+        expect(cloned.arr[0]).toBeInstanceOf(Error);
+        expect(cloned.arr[0].cause).toEqual([1, 2, 3]);
+        expect(cloned.map.get("k")).toBe(cloned.arr[0]);
+      });
     });
 
     describe("bun blobs work", () => {
@@ -318,6 +415,44 @@ function createBlob(arr: number[]): Blob {
 
   return new Blob([view]);
 }
+
+test("Error blob serialized at version 13 (no cause field) still deserializes", () => {
+  // Captured from Bun 1.3.14: v8.serialize(e) where e = new Error("hi") with
+  // line/column/sourceURL/stack deleted. Ensures the version-gated cause read
+  // does not break previously-persisted blobs.
+  // prettier-ignore
+  const v13 = Buffer.from([
+    13, 0, 0, 0,            // version 13
+    55,                     // ErrorInstanceTag
+    0,                      // SerializableErrorType::Error
+    0, 0, 0, 0,             // message: isNull = false
+    2, 0, 0, 128, 104, 105, // message: "hi" (8-bit, length 2)
+    0, 0, 0, 0,             // line
+    0, 0, 0, 0,             // column
+    1, 0, 0, 0,             // sourceURL: isNull = true
+    1, 0, 0, 0,             // stack: isNull = true
+  ]);
+  for (const fn of [(b: Buffer) => v8.deserialize(b), (b: Buffer) => deserialize(b)]) {
+    const out = fn(v13);
+    expect(out).toBeInstanceOf(Error);
+    expect(out.message).toBe("hi");
+    expect(Object.hasOwn(out, "cause")).toBe(false);
+  }
+});
+
+test("Error cause parity tests also pass under node.js", async () => {
+  // error-cause-node-parity.test.mts is written with node:test, so bun test
+  // runs it natively; spawning `node --test` on the same file verifies Node
+  // agrees with every assertion.
+  await using proc = Bun.spawn({
+    cmd: [nodeExe() ?? "node", "--test", join(import.meta.dir, "error-cause-node-parity.test.mts")],
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: bunEnv,
+  });
+  expect(await proc.exited).toBe(0);
+});
 
 describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an

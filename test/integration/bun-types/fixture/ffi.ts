@@ -1,4 +1,4 @@
-import { dlopen, FFIType, JSCallback, read, suffix, type CString, type Pointer } from "bun:ffi";
+import { cc, CFunction, dlopen, FFIType, JSCallback, read, suffix, type CString, type Pointer } from "bun:ffi";
 import * as tsd from "./utilities";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
@@ -181,3 +181,63 @@ tsd.expectType<number>(read.f32(ptr, 0));
 tsd.expectType<number>(read.f64(ptr, 0));
 tsd.expectType<number>(read.ptr(ptr, 0));
 tsd.expectType<number>(read.intptr(ptr, 0));
+
+// Argument arity and types are inferred without `as const`
+const inferred = dlopen(path, {
+  add3: {
+    args: [FFIType.i32, FFIType.i32, FFIType.i32],
+    returns: FFIType.i32,
+  },
+});
+tsd.expectTypeEquals<Parameters<(typeof inferred)["symbols"]["add3"]>, [number, number, number]>(true);
+tsd.expectType<number>(inferred.symbols.add3(1, 2, 3));
+// @ts-expect-error too many arguments
+inferred.symbols.add3(1, 2, 3, 4);
+// @ts-expect-error not enough arguments
+inferred.symbols.add3(1, 2);
+
+// cc() infers the same way
+const compiled = cc({
+  source: "./add.c",
+  symbols: {
+    mul: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  },
+});
+tsd.expectType<number>(compiled.symbols.mul(1, 2));
+// @ts-expect-error too many arguments
+compiled.symbols.mul(1, 2, 3);
+
+// CFunction infers its call signature from the definition
+const getVersion = CFunction({
+  returns: FFIType.cstring,
+  args: [FFIType.i32],
+  ptr,
+});
+tsd.expectType<CString>(getVersion(1));
+// @ts-expect-error too many arguments
+getVersion(1, 2);
+getVersion.close();
+
+// JSCallback infers the callback signature from the definition
+new JSCallback(
+  (a, b) => {
+    tsd.expectType<number>(a);
+    tsd.expectType<bigint>(b);
+    return 0;
+  },
+  { args: [FFIType.i32, FFIType.i64], returns: FFIType.i32 },
+);
+
+// cstring arguments arrive as raw pointers, not CString
+new JSCallback(
+  arg => {
+    tsd.expectTypeEquals<typeof arg, Pointer | null>(true);
+  },
+  { args: [FFIType.cstring], returns: FFIType.void },
+);
+
+// @ts-expect-error the callback must return the declared return type
+new JSCallback(() => "not a number", { args: [], returns: FFIType.i32 });
+
+// narrower parameter annotations remain assignable
+new JSCallback((_p: Pointer) => {}, { args: [FFIType.ptr], returns: FFIType.void });

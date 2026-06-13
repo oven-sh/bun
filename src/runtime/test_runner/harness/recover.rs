@@ -6,11 +6,17 @@
 
 use core::cell::Cell;
 
+// musl and bionic (Android) lack getcontext/setcontext (obsoleted in
+// POSIX.1-2008, never implemented in bionic); both provide setjmp/longjmp.
 #[cfg(windows)]
 type Context = bun_sys::windows::CONTEXT;
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
 type Context = musl::jmp_buf;
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(
+    windows,
+    all(target_os = "linux", target_env = "musl"),
+    target_os = "android"
+)))]
 type Context = libc::ucontext_t;
 
 thread_local! {
@@ -96,13 +102,17 @@ unsafe extern "system" {
 }
 
 // darwin, bsd, gnu linux
-#[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+#[cfg(not(any(
+    windows,
+    all(target_os = "linux", target_env = "musl"),
+    target_os = "android"
+)))]
 unsafe extern "C" {
     pub fn setcontext(ucp: *const libc::ucontext_t) -> !;
 }
 
-// linux musl
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+// linux musl / android bionic
+#[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
 mod musl {
     use core::ffi::c_int;
     // This is a STACK VALUE (a zeroed `Context` lives on the caller's stack and
@@ -111,9 +121,10 @@ mod musl {
     // setjmp scribble past the allocation. musl's full `jmp_buf` is
     // `{ __jmp_buf __jb; unsigned long __fl; unsigned long __ss[16]; }`, where
     // `__jmp_buf` is 8 longs on x86_64 and 22 longs on aarch64 — i.e. 25 and 39
-    // longs total respectively. 64×u64 (512 bytes) over-reserves the full
-    // struct on every musl arch; alignment of `long` is at most 8, so
-    // align(16) over-aligns.
+    // longs total respectively. bionic's is `long[_JBLEN]` with _JBLEN = 11 on
+    // x86_64 and 32 on aarch64. 64×u64 (512 bytes) over-reserves the full
+    // struct on every musl and bionic arch; alignment of `long` is at most 8,
+    // so align(16) over-aligns.
     #[repr(C, align(16))]
     pub(super) struct jmp_buf {
         _buf: [u64; 64],
@@ -131,12 +142,16 @@ unsafe fn get_context(ctx: *mut Context) {
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
         unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
     {
         // SAFETY: ctx is a valid, writable, properly-aligned jmp_buf (caller contract).
         let _ = unsafe { musl::setjmp(ctx) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // The `libc` crate omits the getcontext(3) binding on Darwin and the
         // BSDs; declare it locally (uniform across all unix targets).
@@ -154,13 +169,17 @@ unsafe fn set_context(ctx: *const Context) -> ! {
         // this thread; the captured frame is still live (caller contract).
         unsafe { RtlRestoreContext(ctx, core::ptr::null()) };
     }
-    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    #[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "android"))]
     {
         // SAFETY: ctx points to a jmp_buf previously filled by setjmp on this
         // thread; the captured frame is still live (caller contract).
         unsafe { musl::longjmp(ctx, 1) };
     }
-    #[cfg(not(any(windows, all(target_os = "linux", target_env = "musl"))))]
+    #[cfg(not(any(
+        windows,
+        all(target_os = "linux", target_env = "musl"),
+        target_os = "android"
+    )))]
     {
         // SAFETY: ctx points to a ucontext_t previously filled by getcontext on
         // this thread; the captured frame is still live (caller contract).

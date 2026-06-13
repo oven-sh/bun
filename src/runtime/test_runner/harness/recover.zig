@@ -4,9 +4,13 @@
 //! Regains control of the calling thread when the function panics or behaves
 //! undefined.
 
+// musl and bionic (Android) lack getcontext/setcontext; fall back to
+// setjmp/longjmp which both libcs provide.
+const use_setjmp = builtin.os.tag == .linux and (builtin.abi == .musl or builtin.abi.isAndroid());
+
 const Context = if (builtin.os.tag == .windows)
     std.os.windows.CONTEXT
-else if (builtin.os.tag == .linux and builtin.abi == .musl)
+else if (use_setjmp)
     musl.jmp_buf
 else
     std.c.ucontext_t;
@@ -82,7 +86,7 @@ extern "ntdll" fn RtlRestoreContext(
 // darwin, bsd, gnu linux
 extern "c" fn setcontext(ucp: *const std.c.ucontext_t) noreturn;
 
-// linux musl
+// linux musl / android bionic
 const musl = struct {
     const jmp_buf = @cImport(@cInclude("setjmp.h")).jmp_buf;
     extern fn setjmp(env: *jmp_buf) c_int;
@@ -92,7 +96,7 @@ const musl = struct {
 inline fn getContext(ctx: *Context) void {
     if (builtin.os.tag == .windows) {
         std.os.windows.ntdll.RtlCaptureContext(ctx);
-    } else if (builtin.os.tag == .linux and builtin.abi == .musl) {
+    } else if (use_setjmp) {
         _ = musl.setjmp(ctx);
     } else {
         _ = std.debug.getContext(ctx);
@@ -102,7 +106,7 @@ inline fn getContext(ctx: *Context) void {
 inline fn setContext(ctx: *const Context) noreturn {
     if (builtin.os.tag == .windows) {
         RtlRestoreContext(ctx, null);
-    } else if (builtin.os.tag == .linux and builtin.abi == .musl) {
+    } else if (use_setjmp) {
         musl.longjmp(ctx, 1);
     } else {
         setcontext(ctx);

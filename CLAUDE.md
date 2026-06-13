@@ -202,6 +202,7 @@ Third-party C/C++ libraries are vendored locally and can be read from disk (thes
 - `vendor/mimalloc/` - mimalloc (memory allocator)
 - `vendor/nodejs/` - Node.js headers (compatibility)
 - `vendor/picohttpparser/` - PicoHTTPParser (HTTP parsing)
+- `vendor/react-compiler/` - React Compiler (Rust port, experimental; powers `bun build --react-compiler`)
 - `vendor/tinycc/` - TinyCC (FFI JIT compiler, fork: oven-sh/tinycc)
 - `vendor/WebKit/` - WebKit/JavaScriptCore (JS engine)
 - `vendor/zig/` - Zig toolchain (legacy; not used by the Rust build)

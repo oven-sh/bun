@@ -193,7 +193,7 @@ pub(crate) fn install_hoisted_packages(
 
         // Attempt to create a new node_modules folder
         if let Err(err) = sys::mkdir(bun_core::zstr!("node_modules"), 0o755) {
-            if err.errno != sys::E::EEXIST as _ {
+            if err.get_errno() != sys::E::EEXIST {
                 Output::err(
                     err,
                     "could not create the <b>\"node_modules\"<r> directory",

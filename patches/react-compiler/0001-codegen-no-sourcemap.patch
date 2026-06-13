@@ -1,0 +1,16 @@
+Disable oxc_codegen's default "sourcemap" feature — bun only consumes the
+generated `.code` string (the compiled source is re-parsed by bun's own
+parser, which produces the bundle's sourcemaps). This drops the optional
+oxc_sourcemap dependency, whose `crate-type = ["lib", "cdylib"]` forces a
+shared-library link step that fails under bun's static-relocation rustflags.
+--- a/compiler/crates/react_compiler_oxc/Cargo.toml
++++ b/compiler/crates/react_compiler_oxc/Cargo.toml
+@@ -16,7 +16,7 @@ oxc_allocator = "0.121"
+ oxc_span = "0.121"
+ oxc_diagnostics = "0.121"
+ oxc_syntax = "0.121"
+-oxc_codegen = "0.121"
++oxc_codegen = { version = "0.121", default-features = false }
+ indexmap = { version = "2", features = ["serde"] }
+ serde = { version = "1", features = ["derive"] }
+ serde_json = "1"

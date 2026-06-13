@@ -67,12 +67,14 @@ jobs:
       - name: Generate codegen
         # bun_runtime/bun_jsc/bun_core `include!()` files under
         # build/debug/codegen/; clippy can't lint those crates without them.
-        # `clone-lolhtml` fetches the vendored Rust path-dep
-        # (`src/lolhtml_sys/Cargo.toml` points at `vendor/lolhtml/c-api`).
+        # `clone-lolhtml` / `clone-react-compiler` fetch the vendored Rust
+        # path-deps (`src/lolhtml_sys/Cargo.toml` points at
+        # `vendor/lolhtml/c-api`, `src/react_compiler/Cargo.toml` at
+        # `vendor/react-compiler/compiler/crates/*`).
         run: |
           bun install --frozen-lockfile
           bun scripts/build.ts --configure-only
-          ninja -C build/debug codegen clone-lolhtml
+          ninja -C build/debug codegen clone-lolhtml clone-react-compiler
 
       - name: cargo clippy
         env:

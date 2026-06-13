@@ -29,6 +29,7 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
+import { reactCompiler } from "./react-compiler.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
@@ -61,6 +62,7 @@ export const allDeps: readonly Dependency[] = [
   highway,
   libuv,
   lolhtml,
+  reactCompiler,
   lshpack,
   lsqpack,
   mimalloc,
@@ -96,6 +98,7 @@ export {
   mimalloc,
   nodejsHeaders,
   picohttpparser,
+  reactCompiler,
   sqlite,
   tinycc,
   webkit,

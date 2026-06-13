@@ -1,0 +1,30 @@
+[package]
+name = "bun_react_compiler"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# React Compiler (Rust port) — vendored from facebook/react#36173 at a pinned
+# commit. The `vendor/` tree is excluded from the workspace so these stay
+# non-member path deps — their `[profile]` sections and dev-deps are ignored.
+# Source is fetched by `scripts/build/deps/react-compiler.ts` before the
+# workspace cargo build runs (same arrangement as `vendor/lolhtml`).
+react_compiler = { path = "../../vendor/react-compiler/compiler/crates/react_compiler" }
+react_compiler_oxc = { path = "../../vendor/react-compiler/compiler/crates/react_compiler_oxc" }
+react_compiler_hir = { path = "../../vendor/react-compiler/compiler/crates/react_compiler_hir" }
+
+# Pinned to the same minor as react_compiler_oxc's own oxc dependencies so
+# cargo unifies them — the `Program`/`Semantic` values we build here are passed
+# straight into `react_compiler_oxc::transform`.
+oxc_allocator = "0.121"
+oxc_ast = "0.121"
+oxc_ast_visit = "0.121"
+oxc_parser = "0.121"
+oxc_semantic = "0.121"
+oxc_span = "0.121"

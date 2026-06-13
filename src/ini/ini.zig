@@ -1015,6 +1015,12 @@ pub fn loadNpmrc(
         }
     }
 
+    if (out.get("block-exotic-subdeps")) |*block_exotic_subdeps| {
+        if (block_exotic_subdeps.asBool()) |value| {
+            install.block_exotic_subdeps = value;
+        }
+    }
+
     if (out.get("install-strategy")) |install_strategy_expr| {
         if (install_strategy_expr.asString(allocator)) |install_strategy_str| {
             if (bun.strings.eqlComptime(install_strategy_str, "hoisted")) {

@@ -3058,6 +3058,8 @@ pub const api = struct {
 
         public_hoist_pattern: ?install.PnpmMatcher = null,
         hoist_pattern: ?install.PnpmMatcher = null,
+
+        block_exotic_subdeps: ?bool = null,
     };
 
     pub const ClientServerModule = struct {

@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
 use bun_ast::Log;
-use bun_bundler::options_impl::TargetExt as _;
+use bun_bundler::bake_types::TargetExt as _;
 use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
@@ -38,6 +38,11 @@ use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
+// `AnyServerTag` + the four server aliases are named by the expansions of
+// `crate::server::any_server_dispatch{,_mut}!` (see `impl AnyServer` below).
+use crate::server::{
+    AnyServerTag, CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer,
+};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::webcore::{Request as WebRequest, Response};
 use bun_ast::Loader;
@@ -187,7 +192,7 @@ pub struct Options<'a> {
 // `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
 // required with no sensible zero value, so `Default` is intentionally NOT
 // implemented. Callers construct `Options` via struct-literal at the call site
-// (see `bake_body.rs::UserOptions::into_dev_server_options`).
+// (see `DevServer::from_server_config`).
 impl<'a> Options<'a> {
     /// Debug builds dump bundled sources to `.bake-debug` by default.
     pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if cfg!(debug_assertions) {
@@ -484,6 +489,158 @@ impl DeferredPromise {
     pub fn deinit_idempotently(&mut self) {
         self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices = Default::default();
+    }
+}
+
+impl DevServer {
+    /// Build the dev server for a `Bun.serve` instance whose config carried
+    /// `app` options (`Ok(None)` when it didn't). Consumes the framework and
+    /// bundler options out of `config.dev_server_options`; the arena that
+    /// backs `root` stays in the boxed options behind that handle, which must
+    /// outlive the returned `DevServer` (it lives in the server's config for
+    /// the server's lifetime).
+    pub fn from_server_config(
+        config: &mut crate::server::ServerConfig,
+    ) -> JsResult<Option<Box<DevServer>>> {
+        let broadcast_console_log_from_browser_to_server =
+            config.broadcast_console_log_from_browser_to_server_for_bake;
+        let Some(handle) = &mut config.dev_server_options else {
+            return Ok(None);
+        };
+        let bake_options = bake::UserOptions::from_erased_mut(handle);
+        init(Options {
+            arena: &bake_options.arena,
+            root: bake_options.root,
+            // Per-thread VM singleton; STATIC lifetime.
+            vm: VirtualMachine::get(),
+            // LAYERING: `UserOptions` carries the `bake_body` shapes;
+            // `Options` consumes the keystone shapes; `From` impls in
+            // `bake/mod.rs` bridge until the duplicates are collapsed.
+            framework: ::core::mem::take(&mut bake_options.framework).into(),
+            bundler_options: ::core::mem::take(&mut bake_options.bundler_options).into(),
+            broadcast_console_log_from_browser_to_server,
+            dump_sources: Options::DEFAULT_DUMP_SOURCES,
+            dump_state_on_crash: None,
+        })
+        .map(Some)
+    }
+}
+
+// ─── Host slot-seam bodies ───────────────────────────────────────────────────
+// `NewServer.dev_server` is `Option<crate::server::DevServerSlot>` — an
+// erased `(ptr, vtable)` pair owned by the host. These are the concrete
+// halves: the hook below boxes the dev server into the slot, the vtable
+// downcasts it for the host's calls, and the `Deref` impls are the typed
+// views the per-request paths (`as_deref{,_mut}` callers) consume.
+
+// Every body downcasts under the same slot contract: per
+// `DevServerSlot::from_raw`, `ptr` is the `Box<DevServer>` leaked by
+// `__bun_dev_server_from_server_config` below, and the calling slot carries
+// the (JS-thread) access claim.
+static DEV_SERVER_SLOT_VTABLE: crate::server::DevServerSlotVTable =
+    crate::server::DevServerSlotVTable {
+        // SAFETY: slot contract above; the slot's single drop call retakes the
+        // leaked box.
+        drop_fn: |ptr| drop(unsafe { Box::from_raw(ptr.cast::<DevServer>().as_ptr()) }),
+        // SAFETY: slot contract above.
+        memory_cost: |ptr| unsafe { ptr.cast::<DevServer>().as_ref() }.memory_cost(),
+        set_inspector_server_id: |ptr, id| {
+            // SAFETY: slot contract above.
+            unsafe { ptr.cast::<DevServer>().as_mut() }.inspector_server_id = id;
+        },
+        is_allowed_host: |ptr, req| {
+            // SAFETY: slot contract above.
+            unsafe { ptr.cast::<DevServer>().as_ref() }.is_allowed_host(req)
+        },
+        put_html_route: |ptr, path, route| {
+            // SAFETY: slot contract above.
+            unsafe { ptr.cast::<DevServer>().as_mut() }
+                .html_router
+                .put(path, route)
+        },
+        set_routes: |ptr, server| {
+            // SAFETY: slot contract above.
+            let dev = unsafe { ptr.cast::<DevServer>().as_mut() };
+            // Un-erase the `(SSL, DEBUG)` monomorphization the host dispatched
+            // away; `dev` and the server are disjoint heap allocations, so the
+            // two `&mut`s do not alias.
+            crate::server::any_server_dispatch_mut!(server, |s| dev.set_routes(s))
+        },
+    };
+
+/// Builds the dev server for a `Bun.serve` instance whose config carried
+/// dev-server options, boxed behind the host's erased slot (`Ok(None)` when
+/// the config carries none).
+#[unsafe(no_mangle)]
+fn __bun_dev_server_from_server_config(
+    config: &mut crate::server::ServerConfig,
+) -> JsResult<Option<crate::server::DevServerSlot>> {
+    Ok(DevServer::from_server_config(config)?.map(|dev| {
+        let ptr = ::core::ptr::NonNull::from(Box::leak(dev)).cast::<()>();
+        // SAFETY: `ptr` owns the boxed `DevServer` the vtable bodies downcast
+        // to; the slot's `drop_fn` reboxes exactly that allocation.
+        unsafe { crate::server::DevServerSlot::from_raw(ptr, &DEV_SERVER_SLOT_VTABLE) }
+    }))
+}
+
+// The typed views over the host's erased slot: field/method access through
+// `Option::as_deref{,_mut}` on `NewServer.dev_server` lands here. This is the
+// only downcast of the slot pointer.
+impl ::core::ops::Deref for crate::server::DevServerSlot {
+    type Target = DevServer;
+
+    fn deref(&self) -> &DevServer {
+        // SAFETY: every slot is constructed by
+        // `__bun_dev_server_from_server_config` with a leaked `Box<DevServer>`.
+        unsafe { self.as_ptr().cast::<DevServer>().as_ref() }
+    }
+}
+
+impl ::core::ops::DerefMut for crate::server::DevServerSlot {
+    fn deref_mut(&mut self) -> &mut DevServer {
+        // SAFETY: see `Deref`; `&mut self` carries the slot's exclusive claim.
+        unsafe { self.as_ptr().cast::<DevServer>().as_mut() }
+    }
+}
+
+// `AnyServer`'s dev-server accessors are defined here rather than in
+// `server/mod.rs` so the server module doesn't name `DevServer`:
+// `NewServer.dev_server` is the host's slot, these are the typed views
+// over it for the request paths that consult the dev server.
+impl AnyServer {
+    pub fn dev_server(&self) -> Option<&DevServer> {
+        crate::server::any_server_dispatch!(self, |s| s.dev_server.as_deref())
+    }
+
+    /// Mutable handle to the DevServer (when configured). HTMLBundle's request
+    /// path mutates DevServer state (`respond_for_html_bundle`).
+    #[allow(clippy::mut_from_ref)] // dispatched through the tagged raw `self.ptr`
+    pub fn dev_server_mut(&self) -> Option<&mut DevServer> {
+        crate::server::any_server_dispatch_mut!(self, |s| s.dev_server.as_deref_mut())
+    }
+}
+
+// Likewise for `AnyRequestContext`: the typed views over its erased
+// `dev_server_ptr()` accessor, for the JS entry points below that recover the
+// dev server from a `Request`.
+impl crate::server::AnyRequestContext {
+    pub fn dev_server(self) -> Option<&'static DevServer> {
+        // SAFETY: every slot pointer is the `Box<DevServer>` leaked by
+        // `__bun_dev_server_from_server_config`; the server backref outlives
+        // any `AnyRequestContext` (held only for the duration of a request
+        // callback), and `self` is a by-value tagged pointer, so there is no
+        // input lifetime to tie the borrow to.
+        self.dev_server_ptr()
+            .map(|ptr| unsafe { ptr.cast::<DevServer>().as_ref() })
+    }
+
+    /// Mutable access to the attached DevServer. The accessor above hands out
+    /// `&` only. The boxed dev server behind the slot has a stable address, so
+    /// deriving `&mut` from this is sound as long as the caller upholds the
+    /// usual single-writer rule on the JS thread.
+    pub fn dev_server_mut(self) -> Option<*mut DevServer> {
+        self.dev_server_ptr()
+            .map(|ptr| ptr.cast::<DevServer>().as_ptr())
     }
 }
 
@@ -1442,46 +1599,48 @@ pub(super) enum DevHandlerId {
     MemoryVisualizer,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
-/// DevTools `/.well-known/...` route. A rebound origin
-/// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
-/// non-loopback / non-IP / non-configured hostnames prevents the attacker's
-/// page from reading bundled source via same-origin fetch.
-pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
-    let Some(host) = req.header(b"host") else {
-        return false;
-    };
-    let host = host_without_port(host);
-    if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
-        return true;
-    }
-    const DOT_LOCALHOST: &[u8] = b".localhost";
-    if host.len() > DOT_LOCALHOST.len()
-        && strings::eql_case_insensitive_ascii(
-            &host[host.len() - DOT_LOCALHOST.len()..],
-            DOT_LOCALHOST,
-            true,
-        )
-    {
-        return true;
-    }
-    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
-        &host[1..host.len() - 1]
-    } else {
-        host
-    };
-    if strings::is_ip_address(ip) {
-        return true;
-    }
-    if let Some(server) = dev.server.as_ref() {
-        if let crate::server::server_config::Address::Tcp {
-            hostname: Some(h), ..
-        } = &server.config().address
-        {
-            return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+impl DevServer {
+    /// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
+    /// DevTools `/.well-known/...` route. A rebound origin
+    /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
+    /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
+    /// page from reading bundled source via same-origin fetch.
+    pub(crate) fn is_allowed_host(&self, req: &Request) -> bool {
+        let Some(host) = req.header(b"host") else {
+            return false;
+        };
+        let host = host_without_port(host);
+        if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
+            return true;
         }
+        const DOT_LOCALHOST: &[u8] = b".localhost";
+        if host.len() > DOT_LOCALHOST.len()
+            && strings::eql_case_insensitive_ascii(
+                &host[host.len() - DOT_LOCALHOST.len()..],
+                DOT_LOCALHOST,
+                true,
+            )
+        {
+            return true;
+        }
+        let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
+            &host[1..host.len() - 1]
+        } else {
+            host
+        };
+        if strings::is_ip_address(ip) {
+            return true;
+        }
+        if let Some(server) = self.server.as_ref() {
+            if let crate::server::server_config::Address::Tcp {
+                hostname: Some(h), ..
+            } = &server.config().address
+            {
+                return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+            }
+        }
+        false
     }
-    false
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
@@ -1510,7 +1669,7 @@ fn host_without_port(host: &[u8]) -> &[u8] {
 /// from the same-origin policy, so any page the developer visits could open
 /// `ws://localhost:<port>/_bun/hmr` and subscribe to hot-update payloads (the
 /// bundled source) — the browser still sends `Host: localhost`, so
-/// `is_allowed_dev_host` alone does not stop it. Browsers always include an
+/// `is_allowed_host` alone does not stop it. Browsers always include an
 /// `Origin` header on WebSocket handshakes; require its host to be the
 /// request's own host or a localhost name. Requests without an `Origin`
 /// header (non-browser clients) are allowed.
@@ -1579,7 +1738,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !is_allowed_dev_host(dev, req) {
+    if !dev.is_allowed_host(req) {
         return host_forbidden(resp);
     }
     match ID {
@@ -1685,7 +1844,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
-        if !is_allowed_dev_host(this, req) {
+        if !this.is_allowed_host(req) {
             return host_forbidden(res.as_any_response());
         }
         if !is_allowed_dev_origin(req) {
@@ -2104,7 +2263,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::Consumer(dev),
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -2304,6 +2463,10 @@ impl DevServer {
                                     unsafe { &mut *r },
                                     resp,
                                     global,
+                                    // Materialize the JS request through bake's
+                                    // `JSBunRequest` wrapper (carries the route
+                                    // params object).
+                                    CreateJsRequest::Custom(WebRequest::to_js_for_bake),
                                     Some(method),
                                 )? {
                                 Some(saved) => saved,
@@ -2794,6 +2957,9 @@ impl DevServer {
                     args.bundle_new_route,
                     args.new_route_params,
                 ],
+                // Materialize the JS request through bake's `JSBunRequest`
+                // wrapper (carries the route params object).
+                CreateJsRequest::Custom(WebRequest::to_js_for_bake),
             );
         Ok(())
     }
@@ -3317,8 +3483,9 @@ impl DevServer {
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
             unsafe { (*self_ptr).server_transpiler.assume_init_mut() },
-            Some(bundler::bundle_v2::BakeOptions {
+            Some(bundler::bundle_v2::FrameworkBundleOptions {
                 framework: self.framework.as_bundler_view(),
+                server_component_manifests: super::SERVER_COMPONENTS_MANIFESTS,
                 // SAFETY: sibling fields of `*self`; `BundleV2` stores them as
                 // raw pointers and never moves them.
                 client_transpiler: unsafe {
@@ -3345,7 +3512,7 @@ impl DevServer {
         bv2.asynchronous = true;
         let dev_handle = self.bundler_handle();
         bv2.dev_server = Some(dev_handle);
-        bv2.linker.dev_server = Some(dev_handle);
+        bv2.linker.has_dev_server = true;
 
         {
             self.graph_safety_lock.lock();
@@ -3354,17 +3521,14 @@ impl DevServer {
             self.graph_safety_lock.unlock();
         }
 
-        // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY
+        // LAYERING: `bun_bundler::bundle_v2::EntryPointList` is the TYPE_ONLY
         // mirror of this file's `EntryPointList` (moved down so `bun_bundler`
         // can name it without depending on `bun_runtime`). Convert by value —
         // both `Flags` are `#[repr(transparent)] u8` with identical bit layout.
-        let start_data = bv2.start_from_bake_dev_server(&{
-            let mut bt = bundler::bake_types::EntryPointList::empty();
+        let start_data = bv2.start_from_dev_server(&{
+            let mut bt = bundler::bundle_v2::EntryPointList::empty();
             for (k, v) in entry_points.set.iter() {
-                bun_core::handle_oom(
-                    bt.set
-                        .put(k, bundler::bake_types::EntryPointFlags(v.bits())),
-                );
+                bun_core::handle_oom(bt.set.put(k, bundler::bundle_v2::EntryPointFlags(v.bits())));
             }
             bt
         })?;
@@ -5301,7 +5465,7 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
-        if !is_allowed_dev_host(self, req) {
+        if !self.is_allowed_host(req) {
             host_forbidden(resp);
             return Ok(());
         }
@@ -6569,8 +6733,10 @@ impl DevServer {
         )?;
         Ok(())
     }
+}
 
-    pub fn on_plugins_resolved(
+impl crate::server::ServePluginsConsumer for DevServer {
+    fn on_plugins_resolved(
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> Result<(), bun_core::Error> {
@@ -6580,7 +6746,7 @@ impl DevServer {
         Ok(())
     }
 
-    pub fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error> {
+    fn on_plugins_rejected(&mut self) -> Result<(), bun_core::Error> {
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;

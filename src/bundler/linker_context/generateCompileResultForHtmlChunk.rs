@@ -151,7 +151,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             return;
         }
 
-        if self.linker.dev_server.is_some() {
+        if self.linker.has_dev_server {
             if !unique_key_for_additional_files.is_empty() {
                 element
                     .set_attribute(url_attribute, unique_key_for_additional_files)
@@ -321,7 +321,7 @@ impl<'a> HTMLLoader<'a> {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_head_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
             unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             if this.add_head_tags(end).is_err() {
                 return lol::Directive::Stop;
             }
@@ -338,7 +338,7 @@ impl<'a> HTMLLoader<'a> {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_body_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
             unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
                 if this.add_body_tags(end).is_err() {
@@ -362,7 +362,7 @@ impl<'a> HTMLLoader<'a> {
         // SAFETY: opaque_this was set to &mut HTMLLoader in on_html_tag; end is non-null from lol-html callback.
         let (this, end): (&mut Self, &mut lol::EndTag) =
             unsafe { (&mut *opaque_this.cast::<Self>(), &mut *end) };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>
                 if this.add_head_tags(end).is_err() {
@@ -410,7 +410,7 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let log: *mut Log = c.log;
     let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_to_standalone_html;
-    let has_dev_server = c.dev_server.is_some();
+    let has_dev_server = c.has_dev_server;
     let contents: &[u8] = &sources[source_index as usize].contents;
     let records = import_records[source_index as usize].as_slice();
 

@@ -34,6 +34,7 @@ pub mod shell;
 #[path = "api.rs"]
 pub mod api;
 pub mod dispatch;
+pub mod generated_classes_list;
 pub mod hw_exports;
 pub mod ipc_host;
 pub mod jsc_hooks;
@@ -42,11 +43,6 @@ pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
 pub mod timer;
-// `generated_classes_list.rs` lives under `src/jsc/` but every type it
-// aliases is defined in this crate (api/webcore/test_runner/bake) or a
-// same-tier dep, so it is `#[path]`-mounted here to avoid a bun_jsc cycle.
-#[path = "../jsc/generated_classes_list.rs"]
-pub mod generated_classes_list;
 pub use generated_classes_list::Classes as GeneratedClassesList;
 pub mod ffi_imports;
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs

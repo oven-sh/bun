@@ -14,7 +14,7 @@ use bun_clap::parse_param;
 use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
-use bun_core::{self, FeatureFlags, Global, Output, env_var};
+use bun_core::{self, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
@@ -372,7 +372,7 @@ const BAKE_DEBUG_PARAMS: &[ParamType] = &[
 ];
 macro_rules! maybe_bake_debug_params {
     () => {
-        if FeatureFlags::BAKE_DEBUGGING_FEATURES {
+        if crate::bake::DEBUGGING_FEATURES {
             BAKE_DEBUG_PARAMS
         } else {
             &[] as &[ParamType]
@@ -1437,7 +1437,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     }
 
     if cmd == CommandTag::BuildCommand {
-        if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
+        if opts.entry_points.is_empty() && !ctx.bundler_options.app {
             bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
                 bun_core::Global::package_json_version_with_sha
@@ -1830,7 +1830,7 @@ fn parse_build_command_options(
     let production = args.flag(b"--production");
 
     if args.flag(b"--app") {
-        if !FeatureFlags::bake() {
+        if !crate::bake::is_enabled() {
             Output::err_generic(
                 "To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"",
                 (),
@@ -1838,11 +1838,11 @@ fn parse_build_command_options(
             Global::crash();
         }
 
-        ctx.bundler_options.bake = true;
-        ctx.bundler_options.bake_debug_dump_server =
-            FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-dump-server-files");
-        ctx.bundler_options.bake_debug_disable_minify =
-            FeatureFlags::BAKE_DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
+        ctx.bundler_options.app = true;
+        ctx.bundler_options.debug_dump_server_files =
+            crate::bake::DEBUGGING_FEATURES && args.flag(b"--debug-dump-server-files");
+        ctx.bundler_options.debug_no_minify =
+            crate::bake::DEBUGGING_FEATURES && args.flag(b"--debug-no-minify");
     }
 
     if ctx.bundler_options.bytecode {
@@ -1982,7 +1982,7 @@ fn parse_build_command_options(
                     Global::exit(1);
                 }
 
-                if ctx.bundler_options.bake {
+                if ctx.bundler_options.app {
                     Output::err_generic(
                         "target must be 'bun' when using --app. Received: {}",
                         format_args!(

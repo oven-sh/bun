@@ -269,78 +269,119 @@ const DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[
     TARGET_MAIN_FIELD_NAMES[3],
 ];
 
-/// Bundler-only `Target` methods. Extension trait per PORTING.md crate-tier
-/// rule — the canonical `Target` lives in `bun_options_types` (lower tier) and
-/// cannot depend on `bake_types` / `StringHashMap`. Re-exported through
-/// `bun_bundler::options` so `use bun_bundler::options::TargetExt;` makes
-/// `.bake_graph()` etc. available on the single canonical type.
-pub trait TargetExt: Copy {
-    // `fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
-    // (PORTING.md "*_jsc alias" rule).
-
-    fn bake_graph(self) -> crate::bake_types::Graph;
-    fn out_extensions(self) -> StringHashMap<&'static [u8]>;
-
-    // Original comment:
-    // The neutral target is for people that don't want esbuild to try to
-    // pick good defaults for their platform. In that case, the list of main
-    // fields is empty by default. You must explicitly configure it yourself.
-    // array.set(Target.neutral, &listc);
-    fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => DEFAULT_MAIN_FIELDS_NODE,
-            Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
-            Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
-            Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        })
-    }
-
-    fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => &[b"node" as &[u8]][..],
-            Target::Browser => &[b"browser" as &[u8], b"module"][..],
-            Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
-            Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        })
+/// TYPE_ONLY subset of the framework fields the bundler/parser actually
+/// consult — host-owned bundler vocabulary (`built_in_modules`,
+/// `server_components`, `react_fast_refresh`, `is_built_in_react`,
+/// `client_css_in_js`). `bake_types` (and through it `bun_runtime::bake`)
+/// re-exports this as the one nominal type; the runtime projects its
+/// canonical `bake.Framework` superset into this view via `as_bundler_view`.
+/// `file_system_router_types` stays in the runtime because only
+/// `bake::FrameworkRouter` reads it.
+#[non_exhaustive]
+pub struct Framework {
+    pub built_in_modules: StringArrayHashMap<bun_options_types::BuiltInModule>,
+    /// Mirrors `Framework.server_components`.
+    pub server_components: Option<ServerComponents>,
+    /// Mirrors `Framework.react_fast_refresh` — read by the parser
+    /// (`js_parser/ast/Parser.rs:1997` resolves `framework.react_fast_refresh
+    /// .import_source`) when `features.react_fast_refresh` is on.
+    pub react_fast_refresh: Option<ReactFastRefresh>,
+    /// Mirrors `Framework.is_built_in_react` — read by
+    /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
+    pub is_built_in_react: bool,
+    /// Read by `entry_points.rs` (FallbackEntryPoint/ClientEntryPoint::generate).
+    pub client_css_in_js: ClientCssInJs,
+}
+impl Framework {
+    /// Construct the bundler-side TYPE_ONLY view. Called from
+    /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+    /// runtime owns the canonical `bake.Framework` and projects the
+    /// fields the bundler reads.
+    pub fn new(
+        built_in_modules: StringArrayHashMap<bun_options_types::BuiltInModule>,
+        server_components: Option<ServerComponents>,
+        react_fast_refresh: Option<ReactFastRefresh>,
+        is_built_in_react: bool,
+    ) -> Self {
+        Self {
+            built_in_modules,
+            server_components,
+            react_fast_refresh,
+            is_built_in_react,
+            client_css_in_js: ClientCssInJs::default(),
+        }
     }
 }
+/// `Framework.ServerComponents` — full string
+/// surface so the parser-side projection (ParseTask.rs `run_with_source_code`)
+/// can forward user-configured `serverRegisterServerReference` /
+/// `clientRegisterServerReference` instead of hardcoding defaults.
+#[derive(Default, Clone)]
+pub struct ServerComponents {
+    pub separate_ssr_graph: bool,
+    pub server_runtime_import: Box<[u8]>,
+    pub server_register_client_reference: Box<[u8]>,
+    pub server_register_server_reference: Box<[u8]>,
+    pub client_register_server_reference: Box<[u8]>,
+}
+#[derive(Clone)]
+pub struct ReactFastRefresh {
+    pub import_source: Box<[u8]>,
+}
 
-impl TargetExt for Target {
-    fn bake_graph(self) -> crate::bake_types::Graph {
-        match self {
-            Target::Browser => crate::bake_types::Graph::Client,
-            Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
-            Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
-        }
-    }
+// `Target::fromJS` lives in `bun_bundler_jsc::options_jsc::target_from_js`
+// (PORTING.md "*_jsc alias" rule); `from_api`/`to_api` on
+// `bun_options_types::TargetExt`.
 
-    fn out_extensions(self) -> StringHashMap<&'static [u8]> {
-        let mut exts = StringHashMap::<&'static [u8]>::default();
+// Original comment:
+// The neutral target is for people that don't want esbuild to try to
+// pick good defaults for their platform. In that case, the list of main
+// fields is empty by default. You must explicitly configure it yourself.
+// array.set(Target.neutral, &listc);
+fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+    EnumMap::from_fn(|k| match k {
+        Target::Node => DEFAULT_MAIN_FIELDS_NODE,
+        Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
+        Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
+        Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
+        Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
+    })
+}
 
-        const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
-            b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
-        ];
+fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
+    EnumMap::from_fn(|k| match k {
+        Target::Node => &[b"node" as &[u8]][..],
+        Target::Browser => &[b"browser" as &[u8], b"module"][..],
+        Target::Bun => &[b"bun" as &[u8], b"node"][..],
+        Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
+        Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
+    })
+}
 
-        if self == Target::Node {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
-                .expect("OOM");
-            for &ext in OUT_EXTENSIONS_LIST {
-                exts.put_static_key(ext, b".mjs").expect("OOM");
-            }
-        } else {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
-                .expect("OOM");
-            exts.put_static_key(b".mjs", b".js").expect("OOM");
-        }
+fn out_extensions(target: Target) -> StringHashMap<&'static [u8]> {
+    let mut exts = StringHashMap::<&'static [u8]>::default();
 
+    const OUT_EXTENSIONS_LIST: &[&[u8]] = &[
+        b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
+    ];
+
+    if target == Target::Node {
+        exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
+            .expect("OOM");
         for &ext in OUT_EXTENSIONS_LIST {
-            exts.put_static_key(ext, b".js").expect("OOM");
+            exts.put_static_key(ext, b".mjs").expect("OOM");
         }
-
-        exts
+    } else {
+        exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
+            .expect("OOM");
+        exts.put_static_key(b".mjs", b".js").expect("OOM");
     }
+
+    for &ext in OUT_EXTENSIONS_LIST {
+        exts.put_static_key(ext, b".js").expect("OOM");
+    }
+
+    exts
 }
 
 pub use bun_options_types::Format;
@@ -1376,7 +1417,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<&'a Framework>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1779,7 +1820,7 @@ impl<'a> BundleOptions<'a> {
             output_format: Format::Esm,
             append_package_version_in_query_string: false,
             tsconfig_override: None,
-            main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
+            main_fields: owned_string_list(default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
             entry_naming: Box::default(),
             asset_naming: Box::default(),
@@ -1880,7 +1921,7 @@ impl<'a> BundleOptions<'a> {
 
         if let Some(t) = transform.target {
             opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
+            opts.main_fields = owned_string_list(default_main_fields_map()[opts.target]);
         }
 
         {
@@ -1889,7 +1930,7 @@ impl<'a> BundleOptions<'a> {
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
-                Target::default_conditions_map()[opts.target],
+                default_conditions_map()[opts.target],
                 transform.allow_addons.unwrap_or(true),
                 &transform
                     .conditions
@@ -1952,7 +1993,7 @@ impl<'a> BundleOptions<'a> {
             opts.log_mut(),
             opts.target,
         );
-        opts.out_extensions = opts.target.out_extensions();
+        opts.out_extensions = out_extensions(opts.target);
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
 
@@ -2149,7 +2190,7 @@ impl TransformOptions {
             entry_point,
             // resolve_dir is cloned so
             // `TransformOptions` stays lifetime-free.
-            main_fields: Target::default_main_fields_map()[Target::Browser],
+            main_fields: default_main_fields_map()[Target::Browser],
             jsx: if loader.is_jsx() {
                 Some(jsx::Pragma::default())
             } else {

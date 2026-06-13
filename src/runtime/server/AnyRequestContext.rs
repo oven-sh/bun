@@ -9,7 +9,7 @@ use crate::webcore::CookieMap;
 
 pub use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
-use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
+use super::{DebugHTTPSServer, DebugHTTPServer, DevServerSlot, HTTPSServer, HTTPServer};
 
 // The six monomorphizations of `NewRequestContext` (ssl × debug × h3).
 type HttpCtx = RequestContext<HTTPServer, false, false, false>;
@@ -213,28 +213,18 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
-            // SAFETY: the server backref outlives any AnyRequestContext (held only
-            // for the duration of a request callback); `self` is a by-value tagged
-            // pointer, so there is no input lifetime to tie the borrow to.
-            unsafe { bun_ptr::detach_lifetime_ref(r) }
-        }))
-    }
-
-    /// Mutable access to the attached DevServer. The accessor above hands out
-    /// `&` only. The `Box` slot
-    /// inside `NewServer` has a stable address, so deriving `&mut` here is
-    /// sound as long as the caller upholds the usual single-writer rule on the
-    /// JS thread.
-    pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
+    /// Erased pointer to the dev server attached to this context's server
+    /// (`None` when none is attached or the context is detached). Only the
+    /// dev-server module knows the concrete type behind the slot; the typed
+    /// `dev_server()`/`dev_server_mut()` views over this accessor are defined
+    /// there, next to the slot's `Deref` impls.
+    pub fn dev_server_ptr(self) -> Option<core::ptr::NonNull<()>> {
         dispatch!(self, None, |_T, ctx| {
             let server = ctx.server?.as_ptr();
-            // SAFETY: `ctx.server` is a non-null backref that outlives this context
-            // and `dev_server` is a `Box` field never moved while requests are in
-            // flight, so dereferencing for exclusive access on the JS thread is sound.
-            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
-            Some(core::ptr::from_mut(ds))
+            // SAFETY: `ctx.server` is a non-null backref that outlives this
+            // context; the slot's pointee is a stable heap allocation never
+            // moved while requests are in flight.
+            unsafe { (*server).dev_server.as_ref().map(DevServerSlot::as_ptr) }
         })
     }
 

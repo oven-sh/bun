@@ -1,5 +1,10 @@
-use crate::BundledAst as JSAst;
-use crate::mal_prelude::*;
+//! Statement conversion for `Format::InternalBakeDev` output — the packed
+//! HMR-module shape decoded by `hmr-module.ts` / `hmr-runtime-client.ts`.
+//! Encoder and decoder live together here in bake; the bundler's chunk
+//! codegen reaches the encoder through the
+//! `__bun_bake_convert_stmts_for_chunk_hmr` link-time hook declared in
+//! `bun_bundler` (lib.rs, next to the `DevServerHandle` seam).
+
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast as js_ast;
@@ -8,9 +13,26 @@ use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
 use bun_ast::{ImportRecordTag, Loader};
+use bun_bundler::BundledAst as JSAst;
+use bun_bundler::linker_context_mod::{StmtList, StmtListWhich};
 use bun_collections::VecExt;
 
-use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
+/// CYCLEBREAK extern hook: called from the bundler's
+/// `generate_code_for_file_in_chunk_js` when the output format is
+/// `InternalBakeDev`. Defined here (not in `bun_bundler`) so the HMR module
+/// encoding lives beside the runtime that decodes it. `loaders`/`sources` are
+/// the parse graph's input-file columns, computed once by the caller.
+#[unsafe(no_mangle)]
+fn __bun_bake_convert_stmts_for_chunk_hmr(
+    stmts: &mut StmtList,
+    part_stmts: &[Stmt],
+    bump: &Bump,
+    ast: &mut JSAst<'_>,
+    loaders: &[Loader],
+    sources: &[bun_ast::Source],
+) -> Result<(), AllocError> {
+    convert_stmts_for_chunk_for_dev_server(stmts, part_stmts, bump, ast, loaders, sources)
+}
 
 /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
 /// The conversion logic is completely different for format .internal_bake_dev
@@ -42,21 +64,19 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///   ┃   };
 ///     }, false ],
 ///        ----- "is the module async?"
-pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    c: &mut LinkerContext,
+fn convert_stmts_for_chunk_for_dev_server<'bump>(
     stmts: &mut StmtList,
-    part_stmts: &[bun_ast::Stmt],
+    part_stmts: &[Stmt],
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
+    loaders: &[Loader],
+    sources: &[bun_ast::Source],
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);
     let mut esm_callbacks: Vec<Expr> = Vec::new();
 
-    let input_files = &c.parse_graph().input_files;
-    let loaders = input_files.items_loader();
-    let sources = input_files.items_source();
     for record in ast.import_records.as_mut_slice() {
         if record.path.is_disabled {
             continue;
@@ -312,7 +332,3 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
 
     Ok(())
 }
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

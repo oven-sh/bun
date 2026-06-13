@@ -38,7 +38,7 @@ pub fn compute_chunks(
 ) -> Result<Box<[Chunk]>, bun_core::Error> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
-    debug_assert!(this.dev_server.is_none()); // use
+    debug_assert!(!this.has_dev_server); // use
 
     let arena = Arena::new();
     let temp = &arena;

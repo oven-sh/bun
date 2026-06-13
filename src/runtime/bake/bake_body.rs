@@ -30,6 +30,9 @@ use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 // matching filename).
 use super::{dev_server, framework_router};
 
+use crate::server::server_config::DevelopmentOption;
+use crate::server::{DevServerOptions, ServerInitContext};
+
 // Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
@@ -260,6 +263,207 @@ impl UserOptions {
             allocations,
             arena,
         })
+    }
+
+    /// Build the dev-server options for `Bun.serve` when HTML imports or
+    /// framework routers appear in the `routes` object. `router_types` and
+    /// `allocations` are collected by the server's route parsing; the
+    /// framework (via [`Framework::auto`]) and the per-graph env/define
+    /// bundler options are derived here from the VM's transpiler options.
+    pub fn from_serve_routes(
+        global: &JSGlobalObject,
+        router_types: Vec<super::FileSystemRouterType>,
+        allocations: StringRefList,
+    ) -> JsResult<UserOptions> {
+        // NOTE: the arena is created here and moved into `UserOptions`
+        // (lives until the options are dropped).
+        let arena = Arena::new();
+
+        let root = arena_dupe_z(&arena, paths::fs::FileSystem::instance().top_level_dir());
+
+        // Convert the keystone `bake::FileSystemRouterType` (Cow-backed) into
+        // the body shape (`&'static` slices) by duping every string into the
+        // arena. Type duplication; remove once the two structs unify.
+        let router_types: Vec<FileSystemRouterType> = router_types
+            .into_iter()
+            .map(|t| convert_file_system_router_type(&arena, t))
+            .collect();
+
+        // SAFETY: `bun_vm()` returns the live VM for this global; we need
+        // `&mut Resolver` for `Framework::auto`.
+        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+        let framework = Framework::auto(&arena, resolver, router_types)
+            .map_err(|e| throw_core_error(global, e, "Framework::auto"))?;
+
+        let mut user_options = UserOptions {
+            arena,
+            allocations,
+            root,
+            framework,
+            bundler_options: SplitBundlerOptions::default(),
+        };
+
+        use bun_schema::api::DotEnvBehavior;
+        let o = &global.bun_vm().transpiler.options.transform_options;
+
+        match o.serve_env_behavior {
+            DotEnvBehavior::prefix => {
+                // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>` owned by the
+                // long-lived `transform_options`; dupe into the arena so the
+                // `&'static [u8]` field is backed by `UserOptions.arena`.
+                user_options.bundler_options.client.env_prefix = o
+                    .serve_env_prefix
+                    .as_deref()
+                    .map(|p| arena_dupe_z(&user_options.arena, p).as_bytes());
+                user_options.bundler_options.client.env = DotEnvBehavior::prefix;
+            }
+            DotEnvBehavior::load_all => {
+                user_options.bundler_options.client.env = DotEnvBehavior::load_all;
+            }
+            DotEnvBehavior::disable => {
+                user_options.bundler_options.client.env = DotEnvBehavior::disable;
+            }
+            _ => {}
+        }
+
+        if let Some(define) = &o.serve_define {
+            user_options.bundler_options.client.define = define.clone();
+            user_options.bundler_options.server.define = define.clone();
+            user_options.bundler_options.ssr.define = define.clone();
+        }
+
+        Ok(user_options)
+    }
+
+    /// Box and erase into the server's opaque options slot
+    /// (`ServerConfig::dev_server_options`). Paired with
+    /// [`UserOptions::from_erased_mut`].
+    fn erase(self) -> DevServerOptions {
+        unsafe fn drop_erased(ptr: NonNull<()>) {
+            // SAFETY: `ptr` came from `Box::into_raw` in `erase`, which
+            // transferred ownership to the handle calling us.
+            drop(unsafe { Box::from_raw(ptr.cast::<UserOptions>().as_ptr()) });
+        }
+        // SAFETY: `Box::into_raw` never returns null.
+        let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(self))) };
+        // SAFETY: ownership of the freshly boxed `UserOptions` transfers to
+        // the handle; `drop_erased` frees exactly that value once.
+        unsafe { DevServerOptions::from_raw(ptr.cast(), drop_erased) }
+    }
+
+    /// Downcast the server's opaque options slot back to the concrete type.
+    pub(crate) fn from_erased_mut(handle: &mut DevServerOptions) -> &mut UserOptions {
+        // SAFETY: per `DevServerOptions::from_raw`'s contract the only
+        // constructors are the `__bun_bake_dev_server_options_*` hooks below,
+        // which always erase a boxed `UserOptions` via `erase`; `&mut handle`
+        // uniquely borrows the box.
+        unsafe { &mut *handle.as_ptr().cast::<UserOptions>().as_ptr() }
+    }
+}
+
+// ─── `Bun.serve` options seam ────────────────────────────────────────────────
+// CYCLEBREAK extern hooks: `ServerConfig::from_js` reaches the two
+// `UserOptions` constructors through these link-time hooks (declared in the
+// dev-server seam section of `server/mod.rs`, same pattern as
+// `__bun_bake_convert_stmts_for_chunk_hmr` in `hmr_module_format.rs`) so the
+// server never names the concrete options type.
+
+/// Derive dev-server options from the HTML bundles and framework routers
+/// collected while parsing the `routes` object. `Ok(None)` when the routes
+/// need no dev server: nothing was collected, or HMR is disabled and no
+/// framework routers are present.
+#[unsafe(no_mangle)]
+fn __bun_bake_dev_server_options_from_serve_routes(
+    init_ctx: &mut ServerInitContext<'_>,
+    development: DevelopmentOption,
+) -> JsResult<Option<DevServerOptions>> {
+    if init_ctx.dedupe_html_bundle_map.is_empty() && init_ctx.framework_router_list.is_empty() {
+        return Ok(None);
+    }
+    if development.is_hmr_enabled() {
+        let options = UserOptions::from_serve_routes(
+            init_ctx.global,
+            core::mem::take(&mut init_ctx.framework_router_list),
+            core::mem::take(&mut init_ctx.js_string_allocations),
+        )?;
+        Ok(Some(options.erase()))
+    } else if !init_ctx.framework_router_list.is_empty() {
+        Err(init_ctx.global.throw_invalid_arguments(format_args!(
+            "FrameworkRouter is currently only supported when `development: true`",
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Read and parse the `app` option from the full `Bun.serve` options object.
+/// `Ok(None)` when the bake feature flag is disabled (the options object is
+/// not touched, so no user getter runs) or `app` is absent/falsy; errors when
+/// dev-server options were already derived from `routes` or `development` is
+/// `Production`.
+#[unsafe(no_mangle)]
+fn __bun_bake_dev_server_options_from_app(
+    serve_options: JSValue,
+    global: &JSGlobalObject,
+    has_existing_options: bool,
+    development: DevelopmentOption,
+) -> JsResult<Option<DevServerOptions>> {
+    if !super::is_enabled() {
+        return Ok(None);
+    }
+    let Some(app) = serve_options.get_truthy(global, "app")? else {
+        return Ok(None);
+    };
+    if has_existing_options {
+        // "app" is likely to be removed in favor of the HTML loader.
+        return Err(
+            global.throw_invalid_arguments(format_args!("'app' + HTML loader not supported.",))
+        );
+    }
+    if development == DevelopmentOption::Production {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'",
+        )));
+    }
+    Ok(Some(UserOptions::from_js(app, global)?.erase()))
+}
+
+/// Bridge the keystone `bake::FileSystemRouterType` (Cow-backed, populated by
+/// `server_body::AnyRoute::from_js`) into the body `FileSystemRouterType`
+/// (`&'static [u8]`-backed, consumed by `Framework::auto`). The duplication is
+/// a layering wart and this conversion stands in for an arena-dupe until the
+/// two structs unify. All bytes are duped into `arena` so the resulting
+/// `&'static` slices live as long as `UserOptions.arena`.
+fn convert_file_system_router_type(
+    arena: &Arena,
+    src: super::FileSystemRouterType,
+) -> FileSystemRouterType {
+    // NOTE: `arena_erase` is the single sanctioned `'bump → 'static` erasure
+    // for the `UserOptions.arena` self-referential pattern; `Framework::from_js`
+    // / `resolve` use it identically.
+    // TODO(refactor): thread a real `'bump` through `Framework`/
+    // `FileSystemRouterType` and remove this together with `arena_erase`.
+    fn dupe(arena: &Arena, bytes: &[u8]) -> &'static [u8] {
+        arena_erase(arena.alloc_slice_copy(bytes))
+    }
+    fn dupe_slice_of(
+        arena: &Arena,
+        v: &[std::borrow::Cow<'static, [u8]>],
+    ) -> &'static [&'static [u8]] {
+        let inner: Vec<&'static [u8]> = v.iter().map(|c| dupe(arena, c.as_ref())).collect();
+        arena_erase(arena.alloc_slice_copy(&inner))
+    }
+
+    FileSystemRouterType {
+        root: dupe(arena, src.root.as_ref()),
+        prefix: dupe(arena, src.prefix.as_ref()),
+        entry_server: dupe(arena, src.entry_server.as_ref()),
+        entry_client: src.entry_client.as_deref().map(|b| dupe(arena, b)),
+        ignore_underscores: src.ignore_underscores,
+        ignore_dirs: dupe_slice_of(arena, &src.ignore_dirs),
+        extensions: dupe_slice_of(arena, &src.extensions),
+        style: src.style,
+        allow_layouts: src.allow_layouts,
     }
 }
 
@@ -1469,10 +1673,26 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     })
 }
 
+/// CYCLEBREAK extern hook: the bundler's chunk codegen
+/// (`postProcessJSChunk`) splices the HMR runtime preamble for
+/// `Format::InternalBakeDev` output but cannot depend on this crate; it
+/// reaches the embedded bytes through this link-time hook (declared in
+/// `bun_bundler::bake_types`, next to the `DevServerHandle` seam). The
+/// NUL-terminated `&ZStr` flavour stays private to bake for JSC handoff; the
+/// bundler view is the plain byte slice (NUL excluded).
+#[unsafe(no_mangle)]
+fn __bun_bake_get_hmr_runtime(side: Side) -> bun_bundler::bake_types::HmrRuntime {
+    let rt = get_hmr_runtime(side);
+    bun_bundler::bake_types::HmrRuntime {
+        code: rt.code.as_bytes(),
+        line_count: rt.line_count,
+    }
+}
+
 // Note: `Mode`/`Side`/`Graph` are defined canonically in the parent
 // `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
 // `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
-// `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,
+// `crate::bake::Mode` and downstream callers (production.rs,
 // IncrementalGraph.rs) see one nominal type.
 pub(crate) use super::Mode;
 pub(crate) use bun_bundler::bake_types::{Graph, Side};

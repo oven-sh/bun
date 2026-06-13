@@ -766,3 +766,89 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
   },
   longTimeout,
 );
+
+// https://github.com/oven-sh/bun/issues/30436
+// Before the fix landed in #30412, `Bun.build({entrypoints:['missing.ts']})`
+// called from a `--hot` entry permanently disabled reload. `bustDirCacheFromSpecifier`
+// dropped the directory entries map; the rebuilt Entry had empty abs_path;
+// the dir-watch hash match silently missed on every subsequent atomic-rename
+// save (sed -i, vim, VS Code with atomic save, etc.). This guards against
+// the regression — the test reaches ≥ 3 reloads only if the dir-watch path
+// correctly re-triggers reload for the main entrypoint after the bust.
+it(
+  "Bun.build() with a failing entrypoint does not disable --hot reload",
+  async () => {
+    const root = hotRunnerRoot;
+    const rootTmp = root + ".tmp";
+    // Bun.build is awaited BEFORE the "Reloaded:" log so the parent
+    // directory-cache bust happens before the test triggers its first
+    // rename — without this ordering the rename can race Bun.build's
+    // completion and land on the still-populated cache, masking the bug.
+    const src = `
+globalThis.n = (globalThis.n ?? 0) + 1;
+if (!globalThis.done) {
+  globalThis.done = true;
+  try { await Bun.build({ entrypoints: ["nonexistent-entrypoint.ts"] }); } catch {}
+}
+console.log(\`[#!root] Reloaded: \${globalThis.n}\`);
+`;
+    writeFileSync(root, src);
+
+    try {
+      var runner = spawn({
+        cmd: [bunExe(), "--hot", "run", root],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "inherit",
+        stdin: "ignore",
+      });
+
+      var reloadCounter = 0;
+
+      // rm-then-rename into place matches what vim/sed/atomic-save editors
+      // do; `renameSync(tmp, root)` over an in-use script fails with EPERM
+      // on Windows, so rm first.
+      async function onReload() {
+        writeFileSync(rootTmp, src);
+        rmSync(root);
+        renameSync(rootTmp, root);
+      }
+
+      var str = "";
+      for await (const chunk of runner.stdout) {
+        str += new TextDecoder().decode(chunk);
+        var any = false;
+        if (!/\[#!root\].*[0-9]\n/g.test(str)) continue;
+
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!root]")) continue;
+          reloadCounter++;
+          str = "";
+
+          if (reloadCounter === 3) {
+            runner.unref();
+            runner.kill();
+            break;
+          }
+
+          expect(line).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+          any = true;
+        }
+
+        if (any) await onReload();
+      }
+
+      expect(reloadCounter).toBeGreaterThanOrEqual(3);
+    } finally {
+      // @ts-ignore
+      runner?.unref?.();
+      // @ts-ignore
+      runner?.kill?.(9);
+    }
+  },
+  // Finite timeout — a regression silently stalls the reload pipeline, so
+  // the stdout for-await never completes. Let the test runner abort on its
+  // own instead of running up against the file-level (Infinity) wall.
+  isDebug ? 30_000 : 10_000,
+);

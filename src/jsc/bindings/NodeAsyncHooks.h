@@ -1,5 +1,5 @@
 #include "config.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <wtf/PlatformCallingConventions.h>
 
 namespace Bun {

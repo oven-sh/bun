@@ -4,7 +4,7 @@
 #include "EventEmitter.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertBase.h"
@@ -67,7 +67,7 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     // TODO: properly propagate exception upwards (^ getIfPropertyExists)
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = static_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());
     impl->setThisObject(thisObject);
 

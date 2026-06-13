@@ -23,7 +23,7 @@
 
 #include "root.h"
 #include "DOMWrapperWorld-class.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace WebCore {
 
@@ -50,10 +50,10 @@ inline bool isWorldCompatible(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSV
 
 inline DOMWrapperWorld& currentWorld(JSC::JSGlobalObject& lexicalGlobalObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(&lexicalGlobalObject)->world();
+    return uncheckedDowncast<Bun::GlobalObject>(&lexicalGlobalObject)->world();
 }
 inline DOMWrapperWorld& worldForDOMObject(JSC::JSObject& object)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(object.globalObject())->world();
+    return uncheckedDowncast<Bun::GlobalObject>(object.globalObject())->world();
 };
 }

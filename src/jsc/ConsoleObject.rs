@@ -1246,7 +1246,7 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
-    let mut holder = crate::zig_exception::Holder::init();
+    let mut holder = crate::bun_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
@@ -1254,15 +1254,15 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let err = ZigString::init(b"trace output").to_error_instance(global);
     {
-        let exception = holder.zig_exception();
-        err.to_zig_exception(global, exception);
+        let exception = holder.bun_exception();
+        err.to_bun_exception(global, exception);
     }
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
     let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(
-        holder.zig_exception(),
+    vm.remap_bun_exception(
+        holder.bun_exception(),
         err,
         None,
         &mut need_to_clear,
@@ -1274,7 +1274,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut adapter = DynWriteAdapter::new(writer);
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
-        &holder.zig_exception().stack,
+        &holder.bun_exception().stack,
         Output::enable_ansi_colors_stderr(),
     );
 

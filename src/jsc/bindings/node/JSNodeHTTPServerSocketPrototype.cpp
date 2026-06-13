@@ -1,7 +1,7 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
 #include "JSSocketAddressDTO.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>

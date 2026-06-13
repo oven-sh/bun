@@ -1,6 +1,6 @@
 #include "napi.h"
 
-namespace Zig {
+namespace Bun {
 
 NapiWeakValue::~NapiWeakValue()
 {

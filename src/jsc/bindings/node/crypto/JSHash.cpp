@@ -289,12 +289,12 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSHashClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = bunGlobalObject->m_JSHashClassStructure.get(bunGlobalObject);
 
     // Handle new target
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSHashClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSHashClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor Hash cannot be invoked without 'new'"_s);
             return {};
@@ -321,7 +321,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         }
 
         if (original->m_zigHasher) {
-            zigHasher = ExternZigHash::getFromOther(zigGlobalObject, original->m_zigHasher);
+            zigHasher = ExternZigHash::getFromOther(bunGlobalObject, original->m_zigHasher);
         } else {
             md = original->m_ctx.getDigest();
         }
@@ -334,7 +334,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         md = ncrypto::getDigestByName(algorithm);
         if (!md) {
-            zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
+            zigHasher = ExternZigHash::getByName(bunGlobalObject, algorithm);
         }
     }
 

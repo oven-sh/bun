@@ -1147,27 +1147,27 @@ impl JSGlobalObject {
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToArrayBuffer(self, value)
+        BunGlobalObject__readableStreamToArrayBuffer(self, value)
     }
 
     pub fn readable_stream_to_bytes(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBytes(self, value)
+        BunGlobalObject__readableStreamToBytes(self, value)
     }
 
     pub fn readable_stream_to_text(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToText(self, value)
+        BunGlobalObject__readableStreamToText(self, value)
     }
 
     pub fn readable_stream_to_json(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToJSON(self, value)
+        BunGlobalObject__readableStreamToJSON(self, value)
     }
 
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBlob(self, value)
+        BunGlobalObject__readableStreamToBlob(self, value)
     }
 
     pub fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToFormData(self, value, content_type)
+        BunGlobalObject__readableStreamToFormData(self, value, content_type)
     }
 
     /// Returns a freshly-created `napi_env` owned by this global, for use by
@@ -1175,7 +1175,7 @@ impl JSGlobalObject {
     /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
     /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
-        ZigGlobalObject__makeNapiEnvForFFI(self)
+        BunGlobalObject__makeNapiEnvForFFI(self)
     }
 
     #[inline]
@@ -1394,7 +1394,7 @@ impl JSGlobalObject {
         v.event_loop_mut().ensure_waker();
         // C++ creates and returns a non-null global object; `console`/`worker_ptr`
         // are opaque round-trip pointers C++ stores into the new global.
-        let global = Zig__GlobalObject__create(
+        let global = Bun__GlobalObject__create(
             console,
             context_id,
             mini_mode,
@@ -1412,17 +1412,17 @@ impl JSGlobalObject {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject {
-        Zig__GlobalObject__createForTestIsolation(old_global, console)
+        Bun__GlobalObject__createForTestIsolation(old_global, console)
     }
 
     pub fn get_module_registry_map(global: &JSGlobalObject) -> *mut c_void {
-        Zig__GlobalObject__getModuleRegistryMap(global)
+        Bun__GlobalObject__getModuleRegistryMap(global)
     }
 
     pub fn reset_module_registry_map(global: &JSGlobalObject, map: *mut c_void) -> bool {
         // `map` is an opaque round-trip pointer previously returned by
         // `get_module_registry_map` (C++ owns it; never dereferenced as Rust data).
-        Zig__GlobalObject__resetModuleRegistryMap(global, map)
+        Bun__GlobalObject__resetModuleRegistryMap(global, map)
     }
 
     pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
@@ -1534,7 +1534,7 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
+pub(crate) unsafe extern "C" fn Bun__GlobalObject__resolve(
     res: *mut ErrorableString,
     global: *const JSGlobalObject,
     specifier: *mut BunString,
@@ -1557,7 +1557,7 @@ pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
+pub(crate) unsafe extern "C" fn Bun__GlobalObject__reportUncaughtException(
     global: *const JSGlobalObject,
     exception: *mut Exception,
 ) -> JSValue {
@@ -1574,7 +1574,7 @@ pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exc
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
+pub(crate) extern "C" fn Bun__GlobalObject__onCrash() {
     crate::mark_binding();
     Output::flush();
     panic!("A C++ exception occurred");
@@ -1583,7 +1583,7 @@ pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
 // LAYERING: `getBodyStreamOrBytesForWasmStreaming` deals entirely
 // in `webcore` types (`Response`, `Body.Value`, `Blob`, `ReadableStream`)
 // which live in `bun_runtime`. The exported `extern "C"` symbol
-// `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is therefore
+// `Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is therefore
 // defined in `bun_runtime::webcore::wasm_streaming` rather than here, to
 // avoid a forward dep cycle. See `src/runtime/webcore/wasm_streaming.rs`.
 
@@ -1664,27 +1664,27 @@ unsafe extern "C" {
 
     safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
 
-    safe fn ZigGlobalObject__readableStreamToArrayBuffer(
+    safe fn BunGlobalObject__readableStreamToArrayBuffer(
         this: &JSGlobalObject,
         value: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBytes(
+    safe fn BunGlobalObject__readableStreamToBytes(
         this: &JSGlobalObject,
         value: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToText(this: &JSGlobalObject, value: JSValue)
+    safe fn BunGlobalObject__readableStreamToText(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
+    safe fn BunGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToFormData(
+    safe fn BunGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
+    safe fn BunGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
 
-    safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
+    safe fn BunGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;
@@ -1701,10 +1701,10 @@ unsafe extern "C" {
     safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
 
     // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-    // the new ZigGlobalObject (never dereferenced as Rust data here — same
-    // contract as `Zig__GlobalObject__createForTestIsolation` below); remaining
+    // the new BunGlobalObject (never dereferenced as Rust data here — same
+    // contract as `Bun__GlobalObject__createForTestIsolation` below); remaining
     // args are by-value scalars.
-    safe fn Zig__GlobalObject__create(
+    safe fn Bun__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -1715,15 +1715,15 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
     // stores into the new global (never dereferenced as Rust data here).
-    safe fn Zig__GlobalObject__createForTestIsolation(
+    safe fn Bun__GlobalObject__createForTestIsolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
 
-    safe fn Zig__GlobalObject__getModuleRegistryMap(global: &JSGlobalObject) -> *mut c_void;
+    safe fn Bun__GlobalObject__getModuleRegistryMap(global: &JSGlobalObject) -> *mut c_void;
     // safe: `map` is the opaque round-trip pointer returned by
     // `getModuleRegistryMap` (C++ owns it; never dereferenced as Rust data).
-    safe fn Zig__GlobalObject__resetModuleRegistryMap(
+    safe fn Bun__GlobalObject__resetModuleRegistryMap(
         global: &JSGlobalObject,
         map: *mut c_void,
     ) -> bool;

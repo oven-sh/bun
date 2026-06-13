@@ -73,7 +73,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //     exceptionSourceURL = callFrame->sourceURL();
     // }
 
-    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    Bun::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);

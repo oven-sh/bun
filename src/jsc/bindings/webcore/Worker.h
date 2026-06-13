@@ -127,10 +127,10 @@ public:
     WorkerOptions& options() { return m_options; }
 
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
-    void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
-    void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
+    void dispatchOnline(Bun::GlobalObject* workerGlobalObject);
+    void fireEarlyMessages(Bun::GlobalObject* workerGlobalObject);
     void dispatchErrorWithMessage(WTF::String message);
-    bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
+    bool dispatchErrorWithValue(Bun::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 
     // Post a task to the parent's ScriptExecutionContext by stable identifier.
@@ -191,7 +191,7 @@ private:
     void* impl_ { nullptr };
 };
 
-JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+JSValue createNodeWorkerThreadsBinding(Bun::GlobalObject* globalObject);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

@@ -1174,7 +1174,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         // `zig_str` borrows `formatted`, which lives until this function
         // returns. The UTF-8 tag is what makes `to_error_instance` clone the
         // bytes (untagged strings are wrapped without copying — see
-        // Zig::toString in src/jsc/bindings/helpers.h), matching the
+        // Bun::toString in src/jsc/bindings/helpers.h), matching the
         // "Ensure we clone it" pattern in JSGlobalObject::create_error_instance.
         zig_str = ZigString::init_utf8(&formatted);
 

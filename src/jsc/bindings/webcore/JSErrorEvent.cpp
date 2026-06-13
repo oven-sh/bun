@@ -21,7 +21,7 @@
 #include "config.h"
 #include "JSErrorEvent.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"

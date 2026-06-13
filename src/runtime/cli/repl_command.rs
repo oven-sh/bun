@@ -296,7 +296,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 // Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
 unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-    // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
+    // Local shim for `JSGlobalObject::setTimeZone` (BunGlobalObject.cpp) until
     // bun_jsc grows a wrapper.
     fn JSGlobalObject__setTimeZone(
         global: *const JSGlobalObject,

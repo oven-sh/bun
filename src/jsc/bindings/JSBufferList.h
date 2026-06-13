@@ -2,7 +2,7 @@
 
 #include "root.h"
 #include <wtf/Deque.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -168,6 +168,6 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype);
 };
 
-JSValue getBufferList(Zig::GlobalObject* globalObject);
+JSValue getBufferList(Bun::GlobalObject* globalObject);
 
 }

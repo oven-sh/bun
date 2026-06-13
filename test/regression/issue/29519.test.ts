@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/29519
 //
-// Both --isolate and ShadowRealm construct a fresh Zig::GlobalObject on a
+// Both --isolate and ShadowRealm construct a fresh Bun::GlobalObject on a
 // warm VM. collectContinuously runs a dedicated collector thread so the
 // marker overlaps finishCreation/init; sloppy-mode indirect eval below grows
 // the global's JSSegmentedVariableObject::m_variables (the storage the
@@ -13,10 +13,10 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // is identical on Linux/macOS, so skip Windows to keep duration reasonable.
 // Both tests spawn independent subprocesses with no shared state, so run them
 // concurrently to halve wall-clock.
-describe.skipIf(isWindows).concurrent("Zig::GlobalObject creation on a warm VM under concurrent GC", () => {
+describe.skipIf(isWindows).concurrent("Bun::GlobalObject creation on a warm VM under concurrent GC", () => {
   test("bun test --isolate survives concurrent GC while swapping globals", async () => {
     const files: Record<string, string> = {};
-    // Six files is enough to recycle the Zig::GlobalObject IsoSubspace slot
+    // Six files is enough to recycle the Bun::GlobalObject IsoSubspace slot
     // a few times even without the collector thread getting lucky on timing.
     for (let i = 0; i < 6; i++) {
       // Indirect eval (`(0, eval)(…)`) runs in the global scope, so these go
@@ -60,7 +60,7 @@ describe.skipIf(isWindows).concurrent("Zig::GlobalObject creation on a warm VM u
   }, 120_000);
 
   // deriveShadowRealmGlobalObject() is the other path that constructs a
-  // Zig::GlobalObject on a warm VM; cover it under the same GC pressure so the
+  // Bun::GlobalObject on a warm VM; cover it under the same GC pressure so the
   // DeferGC there doesn't silently regress.
   test("ShadowRealm creation survives concurrent GC", async () => {
     const src = `

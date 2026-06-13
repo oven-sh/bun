@@ -59,7 +59,7 @@ mod dom_call_slowpath {
                 arguments_len: usize,
             ) -> JSValue {
                 // SAFETY: C++ DOMJIT slowpath caller passes a live global and a
-                // valid `[JSValue; arguments_len]` span (ZigLazyStaticFunctions).
+                // valid `[JSValue; arguments_len]` span (BunLazyStaticFunctions).
                 let (global, arguments) = unsafe {
                     (&*global, core::slice::from_raw_parts(arguments_ptr, arguments_len))
                 };

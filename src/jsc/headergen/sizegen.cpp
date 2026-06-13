@@ -5,7 +5,7 @@ using namespace std;
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "Path.h"
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "root.h"
 
 namespace Bun {

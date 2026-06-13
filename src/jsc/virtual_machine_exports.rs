@@ -12,7 +12,7 @@ use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
-// `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
+// `Bun__GlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
 // definition itself.
 //
 // `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
@@ -210,7 +210,7 @@ pub fn on_did_append_plugin(jsc_vm: &mut VirtualMachine, global: &JSGlobalObject
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__ZigGlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
+pub(crate) extern "C" fn Bun__GlobalObject__uvLoop(jsc_vm: &mut VirtualMachine) -> *mut c_void {
     jsc_vm.uv_loop().cast()
 }
 

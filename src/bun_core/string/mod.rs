@@ -1453,7 +1453,7 @@ impl ZigString {
     pub fn dupe_for_js(utf8: &[u8]) -> Result<ZigString, strings::ToUTF16Error> {
         if let Some(utf16) = strings::to_utf16_alloc(utf8, false, false)? {
             // Ownership transferred to JSC: `mark_global()` tags the buffer so
-            // `Zig::toString*` adopts it into a WTF string and `mi_free`s it on
+            // `Bun::toString*` adopts it into a WTF string and `mi_free`s it on
             // string death. `heap::release` is the hand-off-to-foreign-owner
             // spelling.
             let leaked: &'static mut [u16] = crate::heap::release(utf16.into_boxed_slice());

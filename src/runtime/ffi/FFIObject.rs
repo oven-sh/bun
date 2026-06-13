@@ -57,7 +57,7 @@ fn create_buffer_with_ctx(
     }
 }
 
-// ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
+// ── DOM-call C++ put helpers (generated in BunLazyStaticFunctions-inlines.h) ──
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
@@ -94,7 +94,7 @@ pub(crate) fn new_cstring(
 // DOMJIT fast-path descriptor + slow-path host fn, represented here as a const
 // descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
 // by the C++ codegen, not the runtime descriptor; it lives in the generated
-// `ZigLazyStaticFunctions-inlines.h` already.
+// `BunLazyStaticFunctions-inlines.h` already.
 pub(crate) const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
     function_name: "ptr",
@@ -145,7 +145,7 @@ pub mod reader {
 
     // Same DOMCall shape as `DOM_CALL` above. The
     // `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the
+    // (generated `Reader__*__put` in BunLazyStaticFunctions-inlines.h); the
     // runtime descriptor here only needs the `put` extern.
     pub(crate) const DOM_CALLS: &[(&str, DomCall)] = &[
         (
@@ -408,7 +408,7 @@ pub mod reader {
 
     // The DOMJIT fast-path (no type checks) readers — called directly from
     // JIT code — live on the C++ side (generated
-    // `ZigLazyStaticFunctions-inlines.h`); only the slow paths above are here.
+    // `BunLazyStaticFunctions-inlines.h`); only the slow paths above are here.
 }
 
 pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {

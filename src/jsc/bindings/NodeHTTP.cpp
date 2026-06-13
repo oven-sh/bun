@@ -1,6 +1,6 @@
 #include "root.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
 #include "BunClientData.h"
@@ -560,7 +560,7 @@ extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
     JSValue methodString,
@@ -814,7 +814,7 @@ extern "C" void NodeHTTPServer__writeHead_https(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
@@ -837,7 +837,7 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
     size_t any_server,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
@@ -1128,7 +1128,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
+JSValue createNodeHTTPInternalBinding(Bun::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();

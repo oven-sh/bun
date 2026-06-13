@@ -34,7 +34,7 @@ public:
 
     BUN_EXPORT Local<Context> GetCurrentContext();
 
-    Zig::GlobalObject* globalObject() { return m_globalObject; }
+    Bun::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }
     shim::GlobalInternals* globalInternals() { return m_globalInternals; }
     HandleScope* currentHandleScope();
@@ -48,7 +48,7 @@ public:
     TaggedPointer* falseSlot() { return &m_roots[Isolate::kFalseValueRootIndex]; }
 
     shim::GlobalInternals* m_globalInternals;
-    Zig::GlobalObject* m_globalObject;
+    Bun::GlobalObject* m_globalObject;
 
     uintptr_t m_padding[78];
 

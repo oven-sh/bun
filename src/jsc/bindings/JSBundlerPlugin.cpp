@@ -9,7 +9,7 @@
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "helpers.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <wtf/text/WTFString.h>
@@ -590,7 +590,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, Bu
     }
 }
 
-extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)
+extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Bun::GlobalObject* globalObject, BunPluginTarget target)
 {
     return JSBundlerPlugin::create(
         globalObject->vm(),

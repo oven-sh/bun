@@ -15,7 +15,7 @@
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/ASCIICType.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
 #include "JavaScriptCore/JSMapInlines.h"
@@ -539,11 +539,11 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSC::Structure* structure = zigGlobalObject->m_JSMIMETypeClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSC::Structure* structure = bunGlobalObject->m_JSMIMETypeClassStructure.get(bunGlobalObject);
 
     JSC::JSValue newTarget = callFrame->newTarget();
-    if (zigGlobalObject->m_JSMIMETypeClassStructure.constructor(zigGlobalObject) != newTarget) [[unlikely]] {
+    if (bunGlobalObject->m_JSMIMETypeClassStructure.constructor(bunGlobalObject) != newTarget) [[unlikely]] {
         if (!newTarget) {
             throwTypeError(globalObject, scope, "Class constructor MIMEType cannot be invoked without 'new'"_s);
             return {};
@@ -570,7 +570,7 @@ JSC_DEFINE_HOST_FUNCTION(constructMIMEType, (JSGlobalObject * globalObject, Call
 
     // 3. Create and parse parameters
     // We need the structure for JSMIMEParams to create the map and the instance
-    JSC::Structure* paramsStructure = zigGlobalObject->m_JSMIMEParamsClassStructure.get(zigGlobalObject);
+    JSC::Structure* paramsStructure = bunGlobalObject->m_JSMIMEParamsClassStructure.get(bunGlobalObject);
     JSMap* paramsMap = JSMap::create(vm, globalObject->mapStructure());
     RETURN_IF_EXCEPTION(scope, {}); // OOM check for map
 

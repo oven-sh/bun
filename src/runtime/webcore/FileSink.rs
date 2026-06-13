@@ -1732,7 +1732,7 @@ impl FileSink {
 // function-pointer variables). C++ declares them via
 // `BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream)` and compares the
 // resulting symbol address against the handler passed to `JSValue::then` in
-// `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
+// `Bun::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
 // exports the address of an 8-byte data slot, which never equals the shim's
 // code address → RELEASE_ASSERT_NOT_REACHED at runtime.
 bun_jsc::jsc_host_abi! {

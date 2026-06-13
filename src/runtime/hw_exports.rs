@@ -11,7 +11,7 @@
 //!       → `src/jsc/rare_data.rs`
 //!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`
-//!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
+//!   - `Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
 //!       → `src/runtime/webcore/wasm_streaming.rs`
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
@@ -23,7 +23,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{BunStackFrame, CallFrame, JSGlobalObject, JSInternalPromise, JSValue};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -73,13 +73,13 @@ pub fn log_unhandled_exception(exception: JSValue) {
 /// underlying method serializes on `remap_stack_frames_mutex`.
 ///
 /// # Safety
-/// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
+/// `frames` must point to a live array of `frames_count` `BunStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 // Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
-    frames: *mut ZigStackFrame,
+    frames: *mut BunStackFrame,
     frames_count: usize,
 ) {
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
@@ -697,7 +697,7 @@ pub fn bindgen_node_os_dispatch_set_priority2(
 // `NewRuntimeFunction` here.
 //
 // ABI: `generate-js2native.ts` declares these on the C++ side as
-// `extern "C" SYSV_ABI ...(Zig::GlobalObject*)` (the `callJS2Native` switch
+// `extern "C" SYSV_ABI ...(Bun::GlobalObject*)` (the `callJS2Native` switch
 // dispatches through them), so the Rust thunk MUST be `jsc` (sysv64 on
 // win-x64), not plain `c`. With `c`, the win-x64 callee read `global` from
 // RCX while C++ passed it in RDI → garbage `&JSGlobalObject` propagated into

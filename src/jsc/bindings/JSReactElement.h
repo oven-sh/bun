@@ -2,7 +2,7 @@
 #include "root.h"
 #include "headers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 using namespace JSC;
 

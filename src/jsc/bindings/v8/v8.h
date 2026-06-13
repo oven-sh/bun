@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #define V8_UNIMPLEMENTED()                                                                                          \
     do {                                                                                                            \

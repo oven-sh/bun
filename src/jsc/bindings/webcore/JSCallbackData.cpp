@@ -28,7 +28,7 @@
 
 #include "config.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "JSCallbackData.h"
 

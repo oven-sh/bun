@@ -1,7 +1,7 @@
 #include "ErrorCode.h"
 #include "root.h"
 #include "Secrets.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSPromise.h>

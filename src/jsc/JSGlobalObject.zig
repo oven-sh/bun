@@ -665,41 +665,41 @@ pub const JSGlobalObject = opaque {
         return bun.jsc.fromJSHostCallGeneric(this, @src(), JSC__JSGlobalObject__handleRejectedPromises, .{this}) catch return;
     }
 
-    extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
+    extern fn BunGlobalObject__readableStreamToBlob(*JSGlobalObject, JSValue) JSValue;
 
     pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
+        return BunGlobalObject__readableStreamToArrayBuffer(this, value);
     }
 
     pub fn readableStreamToBytes(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBytes(this, value);
+        return BunGlobalObject__readableStreamToBytes(this, value);
     }
 
     pub fn readableStreamToText(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToText(this, value);
+        return BunGlobalObject__readableStreamToText(this, value);
     }
 
     pub fn readableStreamToJSON(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToJSON(this, value);
+        return BunGlobalObject__readableStreamToJSON(this, value);
     }
 
     pub fn readableStreamToBlob(this: *JSGlobalObject, value: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToBlob(this, value);
+        return BunGlobalObject__readableStreamToBlob(this, value);
     }
 
     pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
-        return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
+        return BunGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
-    extern fn ZigGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
+    extern fn BunGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
 
     pub fn makeNapiEnvForFFI(this: *JSGlobalObject) *napi.NapiEnv {
-        return ZigGlobalObject__makeNapiEnvForFFI(this);
+        return BunGlobalObject__makeNapiEnvForFFI(this);
     }
 
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
@@ -860,7 +860,7 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__requestTermination(this: *JSGlobalObject) void;
 
-    extern fn Zig__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
+    extern fn Bun__GlobalObject__create(*anyopaque, i32, bool, bool, ?*anyopaque) *JSGlobalObject;
     pub fn create(
         v: *jsc.VirtualMachine,
         console: *anyopaque,
@@ -873,7 +873,7 @@ pub const JSGlobalObject = opaque {
         defer trace.end();
 
         v.eventLoop().ensureWaker();
-        const global = Zig__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
+        const global = Bun__GlobalObject__create(console, context_id, mini_mode, eval_mode, worker_ptr);
 
         // JSC might mess with the stack size.
         bun.StackCheck.configureThread();
@@ -881,19 +881,19 @@ pub const JSGlobalObject = opaque {
         return global;
     }
 
-    extern fn Zig__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
+    extern fn Bun__GlobalObject__createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject;
     pub fn createForTestIsolation(old_global: *JSGlobalObject, console: *anyopaque) *JSGlobalObject {
-        return Zig__GlobalObject__createForTestIsolation(old_global, console);
+        return Bun__GlobalObject__createForTestIsolation(old_global, console);
     }
 
-    extern fn Zig__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
+    extern fn Bun__GlobalObject__getModuleRegistryMap(*JSGlobalObject) *anyopaque;
     pub fn getModuleRegistryMap(global: *JSGlobalObject) *anyopaque {
-        return Zig__GlobalObject__getModuleRegistryMap(global);
+        return Bun__GlobalObject__getModuleRegistryMap(global);
     }
 
-    extern fn Zig__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
+    extern fn Bun__GlobalObject__resetModuleRegistryMap(*JSGlobalObject, *anyopaque) bool;
     pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
-        return Zig__GlobalObject__resetModuleRegistryMap(global, map);
+        return Bun__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *bun.String) callconv(.c) void {
@@ -1045,10 +1045,10 @@ pub const JSGlobalObject = opaque {
     pub const Extern = [_][]const u8{ "create", "getModuleRegistryMap", "resetModuleRegistryMap" };
 
     comptime {
-        @export(&resolve, .{ .name = "Zig__GlobalObject__resolve" });
-        @export(&reportUncaughtException, .{ .name = "Zig__GlobalObject__reportUncaughtException" });
-        @export(&onCrash, .{ .name = "Zig__GlobalObject__onCrash" });
-        @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
+        @export(&resolve, .{ .name = "Bun__GlobalObject__resolve" });
+        @export(&reportUncaughtException, .{ .name = "Bun__GlobalObject__reportUncaughtException" });
+        @export(&onCrash, .{ .name = "Bun__GlobalObject__onCrash" });
+        @export(&jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming), .{ .name = "Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming" });
     }
 };
 

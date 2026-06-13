@@ -74,19 +74,19 @@ private:
 // Wrapper class used to open a new handle scope and close it when this instance goes out of scope
 class NapiHandleScope {
 public:
-    NapiHandleScope(Zig::GlobalObject* globalObject);
+    NapiHandleScope(Bun::GlobalObject* globalObject);
     ~NapiHandleScope();
 
     // Create a new handle scope in the given environment
-    static NapiHandleScopeImpl* open(Zig::GlobalObject* globalObject, bool escapable);
+    static NapiHandleScopeImpl* open(Bun::GlobalObject* globalObject, bool escapable);
 
     // Closes the most recently created handle scope in the given environment and restores the old one.
     // Asserts that `current` is the active handle scope.
-    static void close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current);
+    static void close(Bun::GlobalObject* globalObject, NapiHandleScopeImpl* current);
 
 private:
     NapiHandleScopeImpl* m_impl;
-    Zig::GlobalObject* m_globalObject;
+    Bun::GlobalObject* m_globalObject;
 };
 
 // Create a new handle scope in the given environment

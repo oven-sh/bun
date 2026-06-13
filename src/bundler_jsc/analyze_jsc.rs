@@ -2,7 +2,7 @@
 //! `ModuleInfoDeserialized` into a `JSC::JSModuleRecord`. Aliased back so the
 //! `extern "C"` symbol names are still discoverable from C++.
 //!
-//! Note: the `zig__renderDiff` export lives in
+//! Note: the `bun__renderDiff` export lives in
 //! `bun_runtime::test_runner::diff_format` instead — `DiffFormatter` is a
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
@@ -13,7 +13,7 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+pub(crate) extern "C" fn bun__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,

@@ -244,11 +244,13 @@ pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachi
 
 // ── bundler analyze ─────────────────────────────────────────────────────────
 // REAL: src/bundler/analyze_transpiled_module.rs
-// zig__ModuleInfoDeserialized__deinit
+// bun__ModuleInfoDeserialized__deinit
 
 // REAL: src/bundler_jsc/analyze_jsc.rs
-// zig__ModuleInfoDeserialized__toJSModuleRecord
-// zig__renderDiff
+// bun__ModuleInfoDeserialized__toJSModuleRecord
+
+// REAL: src/runtime/test_runner/diff_format.rs
+// bun__renderDiff
 
 // ════════════════════════════════════════════════════════════════════════════
 // Genuinely unimplemented — no C++ body. Kept so the
@@ -291,6 +293,3 @@ pub(crate) extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_vo
 pub(crate) extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> JSValue {
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
-
-// (zig__renderDiff now defined in src/runtime/test_runner/diff_format.rs.)
-// (zig__ModuleInfoDeserialized__toJSModuleRecord now defined in src/bundler_jsc/analyze_jsc.rs.)

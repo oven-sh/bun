@@ -69,4 +69,4 @@ private:
     bool m_profileRestoreBreakpointActiveValue { false };
 };
 
-} // namespace Zig
+} // namespace Bun

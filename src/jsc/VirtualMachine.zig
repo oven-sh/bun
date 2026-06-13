@@ -955,7 +955,7 @@ pub fn onExit(this: *VirtualMachine) void {
     }
 }
 
-extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
+extern fn Bun__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
@@ -979,7 +979,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
         // / postgres / etc. socket is an LSAN leak under
         // BUN_DESTRUCT_VM_ON_EXIT.
         if (this.rare_data) |rare| rare.closeAllSocketGroups(this);
-        Zig__GlobalObject__destructOnExit(this.global);
+        Bun__GlobalObject__destructOnExit(this.global);
         // lastChanceToFinalize() above runs Listener/Server finalize → their
         // own embedded group.closeAll() → sockets land in loop.closed_head.
         // The pre-JSC drain in closeAllSocketGroups() can't see those (the
@@ -2499,7 +2499,7 @@ pub fn removeListeningSocketForWatchMode(this: *VirtualMachine, socket: bun.FD) 
 }
 
 /// `bun test --isolate`: tear down per-file OS resources, bump the generation
-/// so stale callbacks self-cancel, then create a fresh `ZigGlobalObject` on
+/// so stale callbacks self-cancel, then create a fresh `BunGlobalObject` on
 /// the same `JSC::VM` and point `this.global` at it. The old global is
 /// gcUnprotect'd; its module graph becomes collectable on the next GC.
 pub fn swapGlobalForTestIsolation(this: *VirtualMachine) void {

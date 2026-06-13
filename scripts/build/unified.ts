@@ -50,7 +50,7 @@ import { slash } from "./shell.ts";
 const noUnify: readonly string[] = [
   // Heavy single-file TUs that already saturate a core. Bundling them with
   // siblings would serialize work that should run in parallel.
-  "src/jsc/bindings/ZigGlobalObject.cpp",
+  "src/jsc/bindings/BunGlobalObject.cpp",
   "src/jsc/bindings/BunObject.cpp",
   "src/jsc/bindings/bindings.cpp",
   "src/jsc/bindings/BunProcess.cpp",

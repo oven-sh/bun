@@ -59,7 +59,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 {
     auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
-    auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
+    auto* isolate = uncheckedDowncast<Bun::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
     auto& vm = JSC::getVM(globalObject);
 
     WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
@@ -88,7 +88,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     ImplicitArgs implicit_args = {
         .unused = nullptr,
         .isolate = isolate,
-        // Context is always a reinterpret pointer to Zig::GlobalObject
+        // Context is always a reinterpret pointer to Bun::GlobalObject
         .context = reinterpret_cast<void*>(globalObject),
         .return_value = TaggedPointer(),
         // target holds the Function being called, which contains the FunctionTemplate

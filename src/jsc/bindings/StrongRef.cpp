@@ -4,7 +4,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include "BunClientData.h"
 #include "wtf/DebugHeap.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 extern "C" __attribute__((__always_inline__)) void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
 {

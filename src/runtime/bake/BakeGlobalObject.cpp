@@ -50,7 +50,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
     }
 
     // TODO: make static cast instead of jscast
-    return uncheckedDowncast<Zig::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
+    return uncheckedDowncast<Bun::GlobalObject>(global)->moduleLoaderImportModule(global, moduleLoader, moduleNameValue, WTF::move(parameters), sourceOrigin, false);
 }
 
 JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
@@ -87,7 +87,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
         }
     }
 
-    return Zig::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
+    return Bun::GlobalObject::moduleLoaderResolve(jsGlobal, loader, key, referrer, WTF::move(origin), useImportMap);
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
@@ -163,12 +163,12 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
+            return Bun::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, WTF::move(parameters), WTF::move(script));
+    auto result = Bun::GlobalObject::moduleLoaderFetch(globalObject, loader, key, WTF::move(parameters), WTF::move(script));
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     return result;
 }
@@ -200,7 +200,7 @@ extern "C" BunVirtualMachine* Bun__getVM();
 
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
-    const auto& parent = Zig::GlobalObject::globalObjectMethodTable();
+    const auto& parent = Bun::GlobalObject::globalObjectMethodTable();
 #define INHERIT_HOOK_METHOD(name) \
     parent.name
 
@@ -231,7 +231,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
     return table;
 }
 
-// A lot of this function is taken from 'Zig__GlobalObject__create'
+// A lot of this function is taken from 'Bun__GlobalObject__create'
 // TODO: remove this entire method
 extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
 {
@@ -240,7 +240,7 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
         BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
     }
     // We need to unsafely ref this so it stays alive, later in
-    // `Zig__GlobalObject__destructOnExit` will call
+    // `Bun__GlobalObject__destructOnExit` will call
     // `vm.derefSuppressingSaferCPPChecking()` to free it.
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;

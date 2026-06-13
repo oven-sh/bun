@@ -44,10 +44,10 @@ class String;
 class OrdinalNumber;
 } // namespace WTF
 
-namespace Zig {
-class GlobalObject;
+namespace Bun {
 class JSCStackTrace;
-} // namespace Zig
+class GlobalObject;
+} // namespace Bun
 
 using JSC::EncodedJSValue;
 using JSC::PropertyName;
@@ -60,7 +60,7 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 // Main stack trace formatting function
 WTF::String formatStackTrace(
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     const WTF::String& name,
     const WTF::String& message,
@@ -83,15 +83,12 @@ JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, void* bunErrorData);
 JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, JSC::JSObject* errorInstance, void* bunErrorData);
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
-} // namespace Bun
-
-namespace Zig {
 
 // GlobalObject member function for creating CallSite objects
 void createCallSitesFromFrames(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
-    Zig::JSCStackTrace& stackTrace,
+    Bun::JSCStackTrace& stackTrace,
     JSC::MarkedArgumentBuffer& callSites);
 
-} // namespace Zig
+} // namespace Bun

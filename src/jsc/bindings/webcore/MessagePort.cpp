@@ -187,7 +187,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     Ref vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+    if (Bun::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
     auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));

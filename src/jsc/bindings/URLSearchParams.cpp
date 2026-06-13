@@ -33,7 +33,7 @@ namespace WebCore {
 
 extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const ZigString* input)
 {
-    String str = Zig::toString(*input);
+    String str = Bun::toString(*input);
     auto result = URLSearchParams::create(str, nullptr);
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(result)));
 }
@@ -49,7 +49,7 @@ typedef void (*URLSearchParams__toStringCallback)(void* ctx, const ZigString* st
 extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
     String str = urlSearchParams->toString();
-    auto zig = Zig::toZigString(str);
+    auto zig = Bun::toZigString(str);
     callback(ctx, &zig);
 }
 

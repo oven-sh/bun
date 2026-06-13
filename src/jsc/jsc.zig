@@ -1,5 +1,5 @@
 //! Bindings to JavaScriptCore and other JavaScript primatives such as
-//! VirtualMachine, JSGlobalObject (Zig::GlobalObject), and the event loop.
+//! VirtualMachine, JSGlobalObject (Bun::GlobalObject), and the event loop.
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
@@ -14,7 +14,7 @@ else
 /// Web Template Framework
 pub const wtf = @import("./WTF.zig").WTF;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// Binding for JSCInitialize in BunGlobalObject.cpp
 pub fn initialize(eval_mode: bool) void {
     markBinding(@src());
     bun.analytics.Features.jsc += 1;

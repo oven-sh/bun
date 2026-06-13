@@ -1,6 +1,6 @@
 comptime {
     if (bun.Environment.isWindows) {
-        @export(&Bun__ZigGlobalObject__uvLoop, .{ .name = "Bun__ZigGlobalObject__uvLoop" });
+        @export(&Bun__GlobalObject__uvLoop, .{ .name = "Bun__GlobalObject__uvLoop" });
     }
 }
 
@@ -146,7 +146,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
+pub fn Bun__GlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
 }
 

@@ -123,7 +123,7 @@ unsafe extern "C" {
         reason: JSValue,
     );
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
-    safe fn ZigGlobalObject__createNativeReadableStream(
+    safe fn BunGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
         native_ptr: JSValue,
     ) -> JSValue;
@@ -310,7 +310,7 @@ impl ReadableStream {
 
     pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
-            ZigGlobalObject__createNativeReadableStream(global_this, native)
+            BunGlobalObject__createNativeReadableStream(global_this, native)
         })
     }
 

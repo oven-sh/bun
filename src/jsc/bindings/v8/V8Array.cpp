@@ -25,7 +25,7 @@ namespace v8 {
 // Array::New with elements and length
 Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 {
-    Zig::GlobalObject* globalObject = isolate->globalObject();
+    Bun::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -53,7 +53,7 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
 // Array::New with just length
 Local<Array> Array::New(Isolate* isolate, int length)
 {
-    Zig::GlobalObject* globalObject = isolate->globalObject();
+    Bun::GlobalObject* globalObject = isolate->globalObject();
     auto& vm = isolate->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -69,7 +69,7 @@ MaybeLocal<Array> Array::New(Local<Context> context, size_t length,
     std::function<MaybeLocal<v8::Value>()> next_value_callback)
 {
     Isolate* isolate = context->GetIsolate();
-    Zig::GlobalObject* globalObject = context->globalObject();
+    Bun::GlobalObject* globalObject = context->globalObject();
     auto& vm = isolate->vm();
 
     EscapableHandleScope handleScope(isolate);
@@ -123,7 +123,7 @@ void Array::CheckCast(Value* obj)
 Maybe<void> Array::Iterate(Local<Context> context, IterationCallback callback, void* callback_data)
 {
     const JSArray* jsArray = localToObjectPointer<JSArray>();
-    Zig::GlobalObject* globalObject = context->globalObject();
+    Bun::GlobalObject* globalObject = context->globalObject();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

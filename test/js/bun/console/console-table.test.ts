@@ -229,7 +229,7 @@ test("console.table repeat 50", () => {
 // escapes). Node escapes them instead. These tests drive the real
 // `console.table` through a subprocess and assert the table is undamaged.
 describe.concurrent("console.table escapes control characters in string cells", () => {
-  async function tableOutput(code: string): Promise<string> {
+  async function tableOutput(code: string): Promise<{ stdout: string; exitCode: number }> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", code],
       env: bunEnv,
@@ -238,8 +238,7 @@ describe.concurrent("console.table escapes control characters in string cells", 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error(stderr); // surface stderr in the failure output
-    expect(exitCode).toBe(0);
-    return stdout;
+    return { stdout, exitCode };
   }
 
   // A well-formed table is rectangular: every non-empty line is framed by box
@@ -256,44 +255,49 @@ describe.concurrent("console.table escapes control characters in string cells", 
   }
 
   test("ANSI escape sequences are shown literally, not rendered", async () => {
-    const out = await tableOutput(String.raw`console.table([{ value: "\x1b[32mhello\x1b[0m" }]);`);
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ value: "\x1b[32mhello\x1b[0m" }]);`);
     // The raw ESC byte must not leak into the output; it is escaped instead.
-    expect(out).not.toContain("\x1b");
-    expect(out).toContain("hello");
-    assertRectangular(out);
+    expect(stdout).not.toContain("\x1b");
+    expect(stdout).toContain("hello");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
   });
 
   test("embedded newline keeps the row on a single line", async () => {
-    const out = await tableOutput(String.raw`console.table([{ v: "a\nb" }]);`);
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "a\nb" }]);`);
     // Before the fix the literal newline split the data row, leaving a line
     // ("b │") that is not framed by the box border. assertRectangular catches it.
-    assertRectangular(out);
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
   });
 
   test("embedded tab and carriage return do not corrupt the table", async () => {
-    const out = await tableOutput(String.raw`console.table([{ v: "x\ty\rz" }]);`);
-    expect(out).not.toContain("\t");
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "x\ty\rz" }]);`);
+    expect(stdout).not.toContain("\t");
     // Normalize real CRLF line endings first; any remaining lone \r is a raw
     // carriage return that leaked into a cell.
-    expect(out.replace(/\r\n/g, "\n")).not.toContain("\r");
-    assertRectangular(out);
+    expect(stdout.replace(/\r\n/g, "\n")).not.toContain("\r");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
   });
 
   test("other C0 control characters (NUL, vertical tab, form feed) are escaped", async () => {
-    const out = await tableOutput(String.raw`console.table([{ v: "a\x00b\x0bc\x0cd" }]);`);
-    expect(out).not.toContain("\x00");
-    expect(out).not.toContain("\x0b");
-    expect(out).not.toContain("\x0c");
-    assertRectangular(out);
+    const { stdout, exitCode } = await tableOutput(String.raw`console.table([{ v: "a\x00b\x0bc\x0cd" }]);`);
+    expect(stdout).not.toContain("\x00");
+    expect(stdout).not.toContain("\x0b");
+    expect(stdout).not.toContain("\x0c");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
   });
 
   test("plain string cells still render without surrounding quotes", async () => {
     // Bun deliberately prints clean string cells unquoted; the fix must not
     // change that for strings that contain no control characters.
-    const out = await tableOutput(`console.table([{ a: 42, b: "bun" }]);`);
-    expect(out).toContain(" bun ");
-    expect(out).not.toContain('"bun"');
-    expect(out).not.toContain("'bun'");
-    assertRectangular(out);
+    const { stdout, exitCode } = await tableOutput(`console.table([{ a: 42, b: "bun" }]);`);
+    expect(stdout).toContain(" bun ");
+    expect(stdout).not.toContain('"bun"');
+    expect(stdout).not.toContain("'bun'");
+    assertRectangular(stdout);
+    expect(exitCode).toBe(0);
   });
 });

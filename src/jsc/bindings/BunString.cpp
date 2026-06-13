@@ -208,7 +208,13 @@ BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     WTF::String str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
+        // toWTFString only yields a null string after throwing. Fuzzilli has
+        // repeatedly hit it returning null with no pending exception under GC
+        // pressure; map that to Empty so the Zig-side `Dead => pending
+        // exception` invariant in String.fromJS holds. exceptionForInspection()
+        // reads the pending exception without disturbing any Throw/CatchScope,
+        // so callers that inspect errors (e.g. ZigException.cpp) still work.
+        return globalObject->vm().exceptionForInspection() ? BunString { BunStringTag::Dead } : BunString { BunStringTag::Empty };
     }
     if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };
@@ -243,7 +249,11 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSValue value)
 {
     auto str = value.toWTFString(globalObject);
     if (str.isNull()) [[unlikely]] {
-        return { BunStringTag::Dead };
+        // See fromJS: Dead only when a real exception is pending, else Empty.
+        // toStringRef is called during error inspection (ZigException.cpp) with
+        // an exception already pending, so we must not add a verifying
+        // ThrowScope here; exceptionForInspection() reads it harmlessly.
+        return globalObject->vm().exceptionForInspection() ? BunString { BunStringTag::Dead } : BunString { BunStringTag::Empty };
     }
     if (str.length() == 0) [[unlikely]] {
         return { BunStringTag::Empty };

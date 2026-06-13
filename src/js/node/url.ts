@@ -44,7 +44,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Url.prototype = {};
+$toClass(Url, "Url");
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 

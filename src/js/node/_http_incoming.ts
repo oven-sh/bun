@@ -188,7 +188,7 @@ function onDataIncomingMessage(
 }
 
 const IncomingMessagePrototype = {
-  constructor: IncomingMessage,
+  // "constructor" is defined (non-enumerable, like Node's) by $toClass below.
   __proto__: Readable.prototype,
   httpVersion: "1.1",
   _construct(callback) {
@@ -413,8 +413,7 @@ const IncomingMessagePrototype = {
     this[fakeSocketSymbol] = value;
   },
 } satisfies typeof import("node:http").IncomingMessage.prototype;
-IncomingMessage.prototype = IncomingMessagePrototype;
-$setPrototypeDirect.$call(IncomingMessage, Readable);
+$toClass(IncomingMessage, "IncomingMessage", Readable, IncomingMessagePrototype);
 
 function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)

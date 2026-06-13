@@ -76,8 +76,8 @@ function EventEmitter(opts) {
     }
   }
 }
-Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {});
+$toClass(EventEmitter, "EventEmitter");
+const EventEmitterPrototype = EventEmitter.prototype;
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -85,8 +85,6 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   return this;
 };
 Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "setMaxListeners" });
-
-EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return _getMaxListeners(this);

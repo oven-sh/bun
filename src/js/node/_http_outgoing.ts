@@ -193,7 +193,7 @@ function OutgoingMessage(options) {
   this[kHighWaterMark] = options?.highWaterMark ?? (process.platform === "win32" ? 16 * 1024 : 64 * 1024);
 }
 const OutgoingMessagePrototype = {
-  constructor: OutgoingMessage,
+  // "constructor" is defined (non-enumerable, like Node's) by $toClass below.
   __proto__: Stream.prototype,
 
   // These are fields which we do not use in our implementation, but are observable in Node.js.
@@ -511,7 +511,7 @@ const OutgoingMessagePrototype = {
     return this;
   },
 };
-OutgoingMessage.prototype = OutgoingMessagePrototype;
+$toClass(OutgoingMessage, "OutgoingMessage", Stream, OutgoingMessagePrototype);
 ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
   __proto__: null,
   get: deprecate(
@@ -579,7 +579,6 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
     "DEP0066",
   ),
 });
-$setPrototypeDirect.$call(OutgoingMessage, Stream);
 
 export default {
   OutgoingMessage,

@@ -21,11 +21,16 @@ function ReadStream(fd): void {
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
-
+// Defined before $toClass so $toClass keeps this lazy accessor as the "prototype".
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.ReadStream.prototype);
+    Object.defineProperty(Prototype, "constructor", {
+      value: ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
@@ -95,13 +100,20 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
+    // Once materialized, match the descriptor of a regular function's "prototype".
+    Object.defineProperty(ReadStream, "prototype", {
+      value: Prototype,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     return Prototype;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
+$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
@@ -125,7 +137,13 @@ function WriteStream(fd): void {
 Object.defineProperty(WriteStream, "prototype", {
   get() {
     const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    // Once materialized, match the descriptor of a regular function's "prototype".
+    Object.defineProperty(WriteStream, "prototype", {
+      value: Real,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -190,7 +208,7 @@ Object.defineProperty(WriteStream, "prototype", {
 
     return Real;
   },
-  enumerable: true,
+  enumerable: false,
   configurable: true,
 });
 

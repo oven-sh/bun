@@ -2711,3 +2711,142 @@ it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred b
   expect(stdout).toContain('PINGS:["4141414141414141","4242424242424242"]');
   expect(exitCode).toBe(0);
 });
+
+it("http2 server sends GOAWAY PROTOCOL_ERROR when a request header block contains :status", async () => {
+  // A response pseudo-header in a request triggers a GOAWAY (an encode)
+  // while the freshly decoded header is still in use.
+  const delivered = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    delivered.push(headers);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  const frames = [];
+  const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+  const socket = net.connect(port, "127.0.0.1", () => {
+    socket.write(http2utils.kClientMagic);
+    socket.write(new http2utils.SettingsFrame(false).data);
+    // HEADERS on stream 1 with END_HEADERS | END_STREAM. 0x88 is the fully
+    // indexed static-table entry ":status: 200".
+    socket.write(new http2utils.HeadersFrame(1, Buffer.from([0x88]), 0, true, true).data);
+  });
+  socket.on("error", onSocketError);
+  let received = Buffer.alloc(0);
+  socket.on("data", chunk => {
+    received = Buffer.concat([received, chunk]);
+    while (received.length >= 9) {
+      const length = received.readUIntBE(0, 3);
+      if (received.length < 9 + length) break;
+      const frame = {
+        type: received[3],
+        streamId: received.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(received.subarray(9, 9 + length)),
+      };
+      received = received.subarray(9 + length);
+      frames.push(frame);
+      if (frame.type === 7) {
+        onExchanged();
+        return;
+      }
+    }
+  });
+  socket.on("close", () => onExchanged());
+
+  try {
+    await exchanged;
+    const goaway = frames.find(f => f.type === 7);
+    expect(goaway).toBeDefined();
+    // GOAWAY payload: last stream id (4 bytes), error code (4 bytes), debug data.
+    expect(goaway.payload.readUInt32BE(4)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+    expect(goaway.payload.subarray(8).toString()).toContain(":status");
+    // The malformed request never reaches the application.
+    expect(delivered).toEqual([]);
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
+it("http2 decoded header bytes stay intact across interleaved decode/encode and GC", async () => {
+  // Server and client share one thread, so each request/response interleaves
+  // HPACK decodes and encodes on the same thread-local scratch buffer.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const assert = require("node:assert");
+
+      const server = http2.createServer();
+      server.on("stream", (stream, headers) => {
+        const res = { ":status": 200 };
+        for (const name in headers) {
+          if (name.startsWith("x-")) res["e-" + name] = headers[name];
+        }
+        res[http2.sensitiveHeaders] = ["e-x-secret"];
+        stream.respond(res);
+        stream.end("done");
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        try {
+          const port = server.address().port;
+          const client = http2.connect("http://127.0.0.1:" + port);
+          client.on("error", err => {
+            console.error(err);
+            process.exit(1);
+          });
+          const pSuffix = Buffer.alloc(64, "p").toString();
+          const qSuffix = Buffer.alloc(48, "q").toString();
+          for (let i = 0; i < 40; i++) {
+            const reqHeaders = { ":path": "/" + i };
+            for (let j = 0; j < 12; j++) {
+              // Fixed values are HPACK dynamic-table indexed after round 0;
+              // varying values are literal every round.
+              reqHeaders["x-fixed-" + j] = "value-" + j + "-" + pSuffix;
+              reqHeaders["x-vary-" + j] = i + "-" + j + "-" + qSuffix;
+            }
+            reqHeaders["x-secret"] = "hunter2-" + i;
+            reqHeaders[http2.sensitiveHeaders] = ["x-secret"];
+            const resHeaders = await new Promise((resolve, reject) => {
+              const req = client.request(reqHeaders);
+              req.on("response", resolve);
+              req.on("error", reject);
+              req.resume();
+              req.end();
+            });
+            assert.strictEqual(resHeaders[":status"], 200);
+            for (let j = 0; j < 12; j++) {
+              assert.strictEqual(resHeaders["e-x-fixed-" + j], reqHeaders["x-fixed-" + j]);
+              assert.strictEqual(resHeaders["e-x-vary-" + j], reqHeaders["x-vary-" + j]);
+            }
+            assert.strictEqual(resHeaders["e-x-secret"], "hunter2-" + i);
+            assert.ok(resHeaders[http2.sensitiveHeaders].includes("e-x-secret"));
+            if (i % 8 === 0) Bun.gc(true);
+          }
+          client.close();
+          server.close();
+          console.log("OK");
+        } catch (err) {
+          console.error(err);
+          process.exit(1);
+        }
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, `subprocess stderr:\n${stderr}`).toContain("OK");
+  expect(exitCode).toBe(0);
+});

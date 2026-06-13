@@ -2091,7 +2091,72 @@ impl AbortListener for SignalRef {
     }
 }
 
-type HeaderValue = lshpack::DecodeResult;
+/// Owned copy of one decoded HPACK header. `lshpack::DecodeResult` borrows a
+/// thread-local scratch buffer that the next decode/encode reuses (e.g.
+/// `send_go_away` → `encode` while a decoded header is still in use), so the
+/// bytes are copied out at the decode boundary. Name and value share one
+/// buffer, split at `name_len`; small headers are stored inline.
+pub(crate) struct HeaderValue {
+    data: HeaderValueData,
+    name_len: usize,
+    never_index: bool,
+    well_know: u16,
+    /// offset of the next header position in src
+    next: usize,
+}
+
+/// Inline capacity (name + value combined); typical headers avoid a heap allocation.
+const HEADER_VALUE_INLINE_CAP: usize = 160;
+
+enum HeaderValueData {
+    Inline {
+        buf: [u8; HEADER_VALUE_INLINE_CAP],
+        len: usize,
+    },
+    Heap(Vec<u8>),
+}
+
+impl HeaderValue {
+    fn new(name: &[u8], value: &[u8], never_index: bool, well_know: u16, next: usize) -> Self {
+        let total = name.len() + value.len();
+        let data = if total <= HEADER_VALUE_INLINE_CAP {
+            let mut buf = [0u8; HEADER_VALUE_INLINE_CAP];
+            buf[..name.len()].copy_from_slice(name);
+            buf[name.len()..total].copy_from_slice(value);
+            HeaderValueData::Inline { buf, len: total }
+        } else {
+            let mut data = Vec::with_capacity(total);
+            data.extend_from_slice(name);
+            data.extend_from_slice(value);
+            HeaderValueData::Heap(data)
+        };
+        Self {
+            data,
+            name_len: name.len(),
+            never_index,
+            well_know,
+            next,
+        }
+    }
+
+    #[inline]
+    fn bytes(&self) -> &[u8] {
+        match &self.data {
+            HeaderValueData::Inline { buf, len } => &buf[..*len],
+            HeaderValueData::Heap(data) => data,
+        }
+    }
+
+    #[inline]
+    fn name(&self) -> &[u8] {
+        &self.bytes()[..self.name_len]
+    }
+
+    #[inline]
+    fn value(&self) -> &[u8] {
+        &self.bytes()[self.name_len..]
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
@@ -2137,7 +2202,15 @@ impl H2FrameParser {
     pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(bun_core::Error::from);
+                let decoded = hpack.decode(src_buffer).map_err(bun_core::Error::from)?;
+                // Copy out of the decoder's scratch buffer (see `HeaderValue`).
+                return Ok(HeaderValue::new(
+                    decoded.name,
+                    decoded.value,
+                    decoded.never_index,
+                    decoded.well_know,
+                    decoded.next,
+                ));
             }
             Err(bun_core::err!("UnableToDecode"))
         })
@@ -3276,10 +3349,10 @@ impl H2FrameParser {
             bun_output::scoped_log!(
                 H2FrameParser,
                 "header {} {}",
-                BStr::new(header.name),
-                BStr::new(header.value)
+                BStr::new(header.name()),
+                BStr::new(header.value())
             );
-            if self.is_server.get() && header.name == b":status" {
+            if self.is_server.get() && header.name() == b":status" {
                 self.send_go_away(
                     stream_id,
                     ErrorCode::PROTOCOL_ERROR,
@@ -3293,7 +3366,7 @@ impl H2FrameParser {
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
             stream.header_block_size +=
-                header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+                header.name().len() + header.value().len() + HPACK_ENTRY_OVERHEAD;
             stream.header_block_count += 1;
 
             // Check against maxHeaderListSize / maxHeaderListPairs.
@@ -3306,7 +3379,7 @@ impl H2FrameParser {
                 continue;
             }
 
-            let is_pseudo_header = header.name.first() == Some(&b':');
+            let is_pseudo_header = header.name().first() == Some(&b':');
             if is_pseudo_header {
                 if seen_regular_header {
                     malformed = true;
@@ -3314,8 +3387,8 @@ impl H2FrameParser {
             } else {
                 seen_regular_header = true;
             }
-            if is_pseudo_header || header.name == b"content-length" {
-                if let Some(idx) = single_value_headers_index_of(header.name) {
+            if is_pseudo_header || header.name() == b"content-length" {
+                if let Some(idx) = single_value_headers_index_of(header.name()) {
                     if single_value_headers[idx] {
                         malformed = true;
                     }
@@ -3324,14 +3397,14 @@ impl H2FrameParser {
             }
 
             if malformed
-                || is_malformed_field_name(header.name)
-                || is_malformed_field_value(header.value)
-                || is_forbidden_connection_specific_header(header.name, header.value)
+                || is_malformed_field_name(header.name())
+                || is_malformed_field_value(header.value())
+                || is_forbidden_connection_specific_header(header.name(), header.value())
                 || (is_pseudo_header
                     && !if self.is_server.get() {
-                        is_valid_request_pseudo_header(header.name)
+                        is_valid_request_pseudo_header(header.name())
                     } else {
-                        is_valid_response_pseudo_header(header.name)
+                        is_valid_response_pseudo_header(header.name())
                     })
             {
                 malformed = true;
@@ -3341,7 +3414,7 @@ impl H2FrameParser {
                 headers.push(&global_object, js_header_name)?;
                 headers.push(
                     &global_object,
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?,
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value())?,
                 )?;
                 if header.never_index {
                     if sensitive_headers.is_undefined() {
@@ -3352,9 +3425,9 @@ impl H2FrameParser {
                 }
             } else {
                 let js_header_name =
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?;
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name())?;
                 let js_header_value =
-                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?;
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value())?;
 
                 if header.never_index {
                     if sensitive_headers.is_undefined() {

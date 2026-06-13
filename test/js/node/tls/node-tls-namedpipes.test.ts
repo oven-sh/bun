@@ -101,9 +101,7 @@ it.if(isWindows)(
     // Mock STARTTLS server over a named pipe: greet, reply PROCEED to STARTTLS,
     // then send mock TLS records. Those bytes must reach the TLS layer (OpenSSL
     // rejects them) rather than re-surface as cleartext `data` on the original
-    // pipe socket. The named-pipe upgrade leaves the native handle in place, so
-    // before the fix those bytes re-entered this handler and attempted a second
-    // upgrade (the #32239 "Invalid socket" pattern).
+    // pipe socket, whose native handle the named-pipe upgrade leaves in place.
     const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
 
     const server = net.createServer(serverSocket => {
@@ -144,8 +142,8 @@ it.if(isWindows)(
           socket.write("STARTTLS");
           return;
         }
-        // The legitimate upgrade (on PROCEED) and the buggy re-entry (on
-        // re-emitted ciphertext) both land here, mirroring the issue's handler.
+        // The handler upgrades on any post-greeting data, so a chunk re-emitted
+        // as cleartext after the upgrade would be counted as a second upgrade.
         upgraded = true;
         upgrades++;
         const tlsSocket = connect({ socket, rejectUnauthorized: false });
@@ -174,12 +172,9 @@ it.if(isWindows)(
 it.if(isWindows)(
   "tls.connect({ socket }) does not re-emit post-upgrade bytes on a server-accepted named-pipe socket (STARTTLS) #32242",
   async () => {
-    // Same regression as above, but the upgraded socket is the one a named-pipe
-    // *server* accepted (driven by ServerHandlers.data, not SocketHandlers2.data).
-    // The connecting side plays the mock peer; the accepted socket runs the
-    // STARTTLS handler and upgrades via `tls.connect({ socket })`. If the feeder
-    // were not consulted in ServerHandlers.data, the post-upgrade bytes would
-    // re-enter this handler and attempt a second upgrade.
+    // Same as above, but the upgraded socket is the one a named-pipe *server*
+    // accepted. The connecting side plays the mock peer; the accepted socket
+    // runs the STARTTLS handler and upgrades via `tls.connect({ socket })`.
     const pipe_name = `\\\\.\\pipe\\test\\${randomUUID()}`;
 
     const { promise, resolve } = Promise.withResolvers<{ upgrades: number; outcome: string; message: string }>();
@@ -200,8 +195,8 @@ it.if(isWindows)(
           serverSocket.write("STARTTLS");
           return;
         }
-        // The legitimate upgrade (on PROCEED) and the buggy re-entry (on
-        // re-emitted ciphertext) both land here.
+        // The handler upgrades on any post-greeting data, so a chunk re-emitted
+        // as cleartext after the upgrade would be counted as a second upgrade.
         upgraded = true;
         upgrades++;
         const tlsSocket = connect({ socket: serverSocket, rejectUnauthorized: false });
@@ -233,9 +228,9 @@ it.if(isWindows)(
       const result = await promise;
 
       // The post-upgrade bytes reached the accepted socket's TLS layer via the
-      // ServerHandlers.data feeder (the outcome is a TLS-level event, not the
-      // accepted socket closing idle). Exactly one upgrade happens and it never
-      // fails with "Invalid socket".
+      // feeder (the outcome is a TLS-level event, not the accepted socket
+      // closing idle). Exactly one upgrade happens and it never fails with
+      // "Invalid socket".
       expect(result.message).not.toContain("Invalid socket");
       expect(result.outcome).not.toBe("accepted-close");
       expect(result.upgrades).toBe(1);

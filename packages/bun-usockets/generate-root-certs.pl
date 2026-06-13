@@ -271,9 +271,15 @@ while (<TXT>) {
       last if (/^CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST/);
       chomp;
     }
-    # now scan the trust part to determine how we should trust this cert
+    # now scan the trust part to determine how we should trust this cert.
+    # A trust object is terminated by a blank line; comments can appear
+    # inside it (e.g. "# For Server Distrust After:" before a
+    # CKA_NSS_SERVER_DISTRUST_AFTER block) and must be skipped rather than
+    # treated as the end of the object, otherwise the CKA_TRUST_* bits that
+    # follow the comment are never read and the cert is wrongly dropped.
     while (<TXT>) {
-      last if (/^#/);
+      last if (/^\s*$/);
+      next if (/^#/);
       if (/^CKA_TRUST_([A-Z_]+)\s+CK_TRUST\s+CKT_NSS_([A-Z_]+)\s*$/) {
         if ( !is_in_list($1,@valid_mozilla_trust_purposes) ) {
           report "Warning: Unrecognized trust purpose for cert: $caname. Trust purpose: $1. Trust Level: $2";

@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -205,6 +205,32 @@ it("write result is not cumulative", async () => {
   expect(await writer.write("world!")).toBe(6);
   await writer.end();
   await util.promisify(fs.close)(fd);
+});
+
+it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
+  // Regression: `__doClose` runs `finalize()` now that it detaches the
+  // wrapper. `finalize()` used to `pending.deinit()`, which wiped the
+  // backpressure promise's Strong before `onWrite` could fulfil it,
+  // leaving `await p` hung forever.
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const writer = child.stdin;
+  // 1 MiB overflows the default 64 KiB pipe capacity on Linux/macOS, so
+  // this write() goes .pending and returns a promise.
+  const p = writer.write(Buffer.alloc(1024 * 1024, 0x61));
+  expect(p).toBeInstanceOf(Promise);
+  writer.close();
+  expect(await p).toBeGreaterThanOrEqual(0);
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  if (exitCode !== 0) {
+    expect(stderr).toBe("");
+  }
+  expect(exitCode).toBe(0);
 });
 
 if (isWindows) {

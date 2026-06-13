@@ -536,7 +536,7 @@ impl<'a, F> ColMut<'a, F> {
     }
 }
 
-/// Index-based comparison context for `sort` / `sort_span` / `sort_unstable`.
+/// Index-based comparison context for `sort` / `sort_unstable`.
 pub trait SortContext {
     fn less_than(&self, a_index: usize, b_index: usize) -> bool;
 }
@@ -1208,19 +1208,9 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         self.sort_internal::<C, true>(0, self.len, ctx);
     }
 
-    /// Stable sort of `[a, b)` by index-based context.
-    pub fn sort_span<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, true>(a, b, ctx);
-    }
-
     /// Unstable sort by index-based context.
     pub fn sort_unstable<C: SortContext>(&mut self, ctx: &C) {
         self.sort_internal::<C, false>(0, self.len, ctx);
-    }
-
-    /// Unstable sort of `[a, b)` by index-based context.
-    pub fn sort_span_unstable<C: SortContext>(&mut self, a: usize, b: usize, ctx: &C) {
-        self.sort_internal::<C, false>(a, b, ctx);
     }
 
     pub fn capacity_in_bytes(capacity: usize) -> usize {

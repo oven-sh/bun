@@ -281,10 +281,6 @@ impl<
         Ok(())
     }
 
-    pub fn put_context(&mut self, key: K, value: V, _ctx: Ctx) -> Result<(), AllocError> {
-        self.put(key, value)
-    }
-
     pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, V>, AllocError> {
         self.ensure_unused_capacity(1)?;
         Ok(self.get_or_put_assume_capacity(key))

@@ -321,8 +321,32 @@ pub mod semver_string {
             const MAX_INLINE_LEN_M1: usize = String::MAX_INLINE_LEN - 1;
             match buf.len() {
                 0..=MAX_INLINE_LEN_M1 => true,
+                // A string of exactly MAX_INLINE_LEN bytes is only inlinable when its
+                // final byte's top bit is clear — that bit distinguishes inline data
+                // from a packed pointer. Non-ASCII strings of exactly 8 bytes hit this.
                 Self::MAX_INLINE_LEN => buf[Self::MAX_INLINE_LEN - 1] & 0x80 == 0,
                 _ => false,
+            }
+        }
+
+        /// Caller must ensure `in_.len() <= MAX_INLINE_LEN`.
+        /// Unrolled per length so this compiles to direct loads instead of a
+        /// memcpy libcall — short strings dominate lockfile/install parsing.
+        #[inline]
+        fn inline_bytes(in_: &[u8]) -> [u8; Self::MAX_INLINE_LEN] {
+            match in_.len() {
+                0 => [0, 0, 0, 0, 0, 0, 0, 0],
+                1 => [in_[0], 0, 0, 0, 0, 0, 0, 0],
+                2 => [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
+                3 => [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
+                4 => [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
+                5 => [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
+                6 => [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
+                7 => [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
+                Self::MAX_INLINE_LEN => [
+                    in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
+                ],
+                _ => unreachable!(),
             }
         }
 
@@ -347,133 +371,34 @@ pub mod semver_string {
         // bun_install (or bun_install_types) as inherent helpers there.
 
         pub fn init(buf: &[u8], in_: &[u8]) -> String {
-            match in_.len() {
-                0 => String::default(),
-                1 => String {
-                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
-                },
-                2 => String {
-                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
-                },
-                3 => String {
-                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
-                },
-                4 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
-                },
-                5 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
-                },
-                6 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
-                },
-                7 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
-                },
-                Self::MAX_INLINE_LEN => {
-                    // If they use the final bit, then it's a big string.
-                    // This should only happen for non-ascii strings that are exactly 8 bytes.
-                    // so that's an edge-case
-                    if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
-                        let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                        let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
-                        String {
-                            bytes: packed.to_ne_bytes(),
-                        }
-                    } else {
-                        String {
-                            bytes: [
-                                in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
-                            ],
-                        }
-                    }
+            if Self::can_inline(in_) {
+                String {
+                    bytes: Self::inline_bytes(in_),
                 }
-                _ => {
-                    let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                    let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
-                    String {
-                        bytes: packed.to_ne_bytes(),
-                    }
+            } else {
+                let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
+                let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
+                String {
+                    bytes: packed.to_ne_bytes(),
                 }
             }
         }
 
         pub fn init_inline(in_: &[u8]) -> String {
             debug_assert!(Self::can_inline(in_));
-            match in_.len() {
-                0 => String::default(),
-                1 => String {
-                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
-                },
-                2 => String {
-                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
-                },
-                3 => String {
-                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
-                },
-                4 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
-                },
-                5 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
-                },
-                6 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
-                },
-                7 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
-                },
-                8 => String {
-                    bytes: [
-                        in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
-                    ],
-                },
-                _ => unreachable!(),
+            String {
+                bytes: Self::inline_bytes(in_),
             }
         }
 
         pub fn init_append_if_needed(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
-            Ok(match in_.len() {
-                0 => String::default(),
-                1 => String {
-                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
-                },
-                2 => String {
-                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
-                },
-                3 => String {
-                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
-                },
-                4 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
-                },
-                5 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
-                },
-                6 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
-                },
-                7 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
-                },
-
-                Self::MAX_INLINE_LEN => {
-                    // If they use the final bit, then it's a big string.
-                    // This should only happen for non-ascii strings that are exactly 8 bytes.
-                    // so that's an edge-case
-                    if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
-                        Self::init_append(buf, in_)?
-                    } else {
-                        String {
-                            bytes: [
-                                in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
-                            ],
-                        }
-                    }
-                }
-
-                _ => Self::init_append(buf, in_)?,
-            })
+            if Self::can_inline(in_) {
+                Ok(String {
+                    bytes: Self::inline_bytes(in_),
+                })
+            } else {
+                Self::init_append(buf, in_)
+            }
         }
 
         pub fn init_append(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {

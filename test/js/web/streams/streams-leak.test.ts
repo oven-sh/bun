@@ -11,6 +11,16 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   // the scavenger releases them, so commit charge ran ahead of RSS
   // until VirtualAlloc(MEM_COMMIT) failed in
   // pas_compact_heap_reservation_try_allocate.
+  //
+  // The server and the consumer below share this event loop, so the pull
+  // callback paces itself on an ack per chunk: it writes chunk i+1 only
+  // after the consumer has read chunk i. At most one chunk is ever in
+  // flight, so writes cannot coalesce on the wire and the consumer
+  // observes one small read per write regardless of machine load (on
+  // busy CI runners, unpaced writes coalesced into as few as 10 reads
+  // and starved the sample-size assertion below).
+  const CHUNKS_TO_WRITE = 64;
+  let ack: (() => void) | undefined;
   using server = Bun.serve({
     port: 0,
     fetch() {
@@ -18,10 +28,12 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
         new ReadableStream({
           type: "direct",
           async pull(controller) {
-            for (let i = 0; i < 1000; i++) {
+            for (let i = 0; i < CHUNKS_TO_WRITE; i++) {
+              const { promise, resolve } = Promise.withResolvers<void>();
+              ack = resolve;
               controller.write("x\n");
               await controller.flush();
-              await Bun.sleep(0);
+              await promise;
             }
             controller.close();
           },
@@ -32,14 +44,17 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
 
   const resp = await fetch(server.url);
   const chunks: Uint8Array[] = [];
-  for await (const chunk of resp.body!) chunks.push(chunk);
+  for await (const chunk of resp.body!) {
+    chunks.push(chunk);
+    ack!();
+  }
 
-  // Some chunks coalesce on the wire; we just need a meaningful sample
-  // of small reads through the native pull path.
+  // One read per paced write; a meaningful sample of small reads through
+  // the native pull path.
   expect(chunks.length).toBeGreaterThan(20);
 
   // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until a read fills it). 2KB of ~few-byte
+  // tail subarray is reused until a read fills it). 128 bytes of 2-byte
   // chunks fits well inside one 256KB buffer, so the whole stream should
   // share a handful at most. Pre-fix every chunk had its own 256KB
   // buffer, so this was ~chunks.length.
@@ -48,7 +63,7 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
 
   let backingBytes = 0;
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
-  // Pre-fix this was ~chunks.length * 256KB ≈ 25–250 MB.
+  // Pre-fix this was ~chunks.length * 256KB ≈ 16 MB.
   expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
 });
 

@@ -82,7 +82,25 @@ pub fn writeBind(
             }
             const parameter_field = parameter_fields[i];
             const is_custom_type = std.math.maxInt(short) < parameter_field;
-            break :brk if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            if (is_custom_type) break :brk .text;
+            // A parameter_field of 0 means the type is unspecified — Parse
+            // was sent with OID 0 so Postgres infers the type from context
+            // (e.g. from `${payload}::jsonb` in the query). The first loop
+            // already chose format=text for this slot, so we must pick a
+            // text-serializing branch here. Values that Signature.generate
+            // classified as `.json` (plain objects and arrays) would
+            // otherwise fall through to the else branch below and get
+            // stringified with `Object.prototype.toString` — producing
+            // `[object Object]` for objects and a comma-joined list for
+            // arrays, both of which fail any jsonb/json cast. Route them
+            // through the JSON branch so the payload is valid JSON, which
+            // also matches what the prepared path does once
+            // ParameterDescription identifies the parameter as jsonb.
+            if (parameter_field == 0) {
+                const inferred = try types.Tag.fromJS(globalObject, value);
+                if (inferred == .json or inferred == .jsonb) break :brk inferred;
+            }
+            break :brk @enumFromInt(@as(short, @intCast(parameter_field)));
         };
         if (value.isEmptyOrUndefinedOrNull()) {
             debug("  -> NULL", .{});

@@ -4,7 +4,7 @@ description: An internal version of the 'oven-sh/setup-bun' action.
 inputs:
   bun-version:
     type: string
-    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
+    description: "The version of bun to install: 'latest', 'canary', '1.2.0', etc."
     default: latest
     required: false
   baseline:
@@ -14,8 +14,8 @@ inputs:
     required: false
   download-url:
     type: string
-    description: "The base URL to download bun from."
-    default: "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases"
+    description: "Override base URL to download bun from. When unset, downloads from GitHub Releases and checks against SHASUMS256.txt."
+    default: ""
     required: false
 
 runs:
@@ -23,7 +23,19 @@ runs:
   steps:
     - name: Setup Bun
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.bun-version }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_DOWNLOAD_URL: ${{ inputs.download-url }}
+        BUN_BIN_DIR: ${{ runner.temp }}/.bun/bin
+        BUN_WORK_DIR: ${{ runner.temp }}/.bun/download
       run: |
+        set -euo pipefail
+        # Do all download/verify/unzip work outside the checkout so callers
+        # that commit "all changes" afterwards (autofix-ci) don't pick up
+        # the .zip / SHASUMS256.txt as untracked files.
+        mkdir -p "$BUN_WORK_DIR"
+        cd "$BUN_WORK_DIR"
         case "$(uname -s)" in
           Linux*)  os=linux;;
           Darwin*) os=darwin;;
@@ -33,19 +45,42 @@ runs:
           arm64 | aarch64)  arch=aarch64;;
           *)                arch=x64;;
         esac
-        case "${{ inputs.baseline }}" in
+        case "$INPUT_BASELINE" in
           true | 1) target="bun-${os}-${arch}-baseline";;
           *)        target="bun-${os}-${arch}";;
         esac
-        case "${{ inputs.bun-version }}" in
+        case "$INPUT_VERSION" in
           latest) release="latest";;
           canary) release="canary";;
-          *)      release="bun-v${{ inputs.bun-version }}";;
+          *)      release="bun-v${INPUT_VERSION}";;
         esac
-        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
-        unzip ${target}.zip
-        mkdir -p ${{ runner.temp }}/.bun/bin
-        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
-        chmod +x ${{ runner.temp }}/.bun/bin/*
-        ln -fs ${{ runner.temp }}/.bun/bin/bun ${{ runner.temp }}/.bun/bin/bunx
-        echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}
+
+        if [ -n "$INPUT_DOWNLOAD_URL" ]; then
+          # Explicit override: caller is responsible for the source.
+          curl --fail --retry 5 -LO "${INPUT_DOWNLOAD_URL}/${release}/${target}.zip"
+        else
+          # GitHub Releases: /releases/latest/download/<asset> for latest,
+          # /releases/download/<tag>/<asset> for everything else.
+          if [ "$release" = "latest" ]; then
+            base="https://github.com/oven-sh/bun/releases/latest/download"
+          else
+            base="https://github.com/oven-sh/bun/releases/download/${release}"
+          fi
+          curl --fail --retry 5 -LO "${base}/${target}.zip"
+          # canary zips are clobbered on every main push but SHASUMS256.txt
+          # only regenerates on the daily release cron, so they routinely
+          # disagree. Tagged + latest releases are stable, check those.
+          if [ "$release" != "canary" ]; then
+            curl --fail --retry 5 -LO "${base}/SHASUMS256.txt"
+            shacheck="sha256sum"
+            command -v "$shacheck" >/dev/null 2>&1 || shacheck="shasum -a 256"
+            grep " ${target}.zip\$" SHASUMS256.txt | $shacheck -c -
+          fi
+        fi
+
+        unzip "${target}.zip"
+        mkdir -p "$BUN_BIN_DIR"
+        mv "${target}"/bun* "$BUN_BIN_DIR"/
+        chmod +x "$BUN_BIN_DIR"/*
+        ln -fs "$BUN_BIN_DIR"/bun "$BUN_BIN_DIR"/bunx
+        echo "$BUN_BIN_DIR" >> "$GITHUB_PATH"
